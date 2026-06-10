@@ -1,0 +1,7 @@
+package: basic_examples
+title: Basic Fala examples
+description: Neutral document workflow examples for Fala.
+tags: ["example"]
+version: "1"
+pipelines:
+  - basic_enrichment.yaml

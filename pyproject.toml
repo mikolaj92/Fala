@@ -1,0 +1,24 @@
+[project]
+name = "fala"
+version = "0.1.0"
+description = "Workflow orchestration and observability for document processes"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0",
+  "httpx>=0.27.0",
+  "pydantic>=2.7.0",
+  "pyyaml>=6.0.0",
+]
+
+[project.scripts]
+fala = "fala.cli:main"
+fala-worker = "fala.worker_cli:main"
+process-runtime = "fala.cli:main"
+process-runtime-worker = "fala.worker_cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fala"]
