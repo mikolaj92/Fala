@@ -51,6 +51,31 @@ Every step is a program boundary:
 - `http`: Fala posts context to an external service
 - `queue`: external workers claim work and write output through the API
 
+## Work Item Claim Policy
+
+Pipelines can choose how ready work items are claimed. Fala does not attach
+business meaning to a work item; the host application decides whether it
+represents a PDF, image, record, batch, tenant job, or another unit of work.
+
+```yaml
+pipeline: ordered_workflow
+work_items:
+  claim_strategy: sequential
+  order_by: index
+steps:
+  - id: process
+    adapter:
+      kind: queue
+      queue: ordered.process
+```
+
+Supported strategies:
+
+- `parallel` (default): workers may claim ready processes from different work
+  items independently.
+- `sequential`: workers only claim from the first non-terminal work item,
+  ordered by the initial input value named by `order_by`.
+
 ## Package YAML
 
 ```yaml

@@ -33,6 +33,7 @@ from fala.models import (
     RuntimeState,
     RuntimeStateSummary,
     RuntimeStepSnapshot,
+    WorkItemPolicy,
     WorkflowPackageSpec,
     WorkflowWorkerSpec,
 )
@@ -104,6 +105,7 @@ __all__ = [
     "SQLiteStateStore",
     "StateStore",
     "SubprocessAdapter",
+    "WorkItemPolicy",
     "WorkflowPackageSpec",
     "WorkflowWorkerSpec",
     "create_runtime_router",

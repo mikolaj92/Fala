@@ -231,6 +231,10 @@ class PipelineScheduler:
         adapter_kind: str | None = None,
         lease_seconds: float = 300.0,
     ) -> ClaimedProcess | None:
+        document_ids = await self._claimable_work_item_ids(
+            run_id=run_id,
+            document_ids=document_ids,
+        )
         for document_id in sorted(document_ids):
             await self.schedule_ready(run_id=run_id, document_id=document_id)
             statuses = await self.store.list_statuses(run_id=run_id, document_id=document_id)
@@ -298,6 +302,69 @@ class PipelineScheduler:
                     context=context,
                 )
         return None
+
+    async def _claimable_work_item_ids(
+        self,
+        *,
+        run_id: str,
+        document_ids: list[str],
+    ) -> list[str]:
+        if self.pipeline.work_items.claim_strategy == "parallel":
+            return document_ids
+
+        ordered = [
+            (
+                await self._work_item_order_key(
+                    run_id=run_id,
+                    document_id=document_id,
+                ),
+                document_id,
+            )
+            for document_id in document_ids
+        ]
+        for _key, document_id in sorted(ordered):
+            await self.schedule_ready(run_id=run_id, document_id=document_id)
+            statuses = await self.store.list_statuses(run_id=run_id, document_id=document_id)
+            if self._work_item_terminal(statuses=statuses):
+                continue
+            return [document_id]
+        return []
+
+    async def _work_item_order_key(
+        self,
+        *,
+        run_id: str,
+        document_id: str,
+    ) -> tuple[int, str]:
+        document_input = await self.store.get_document_input(
+            run_id=run_id,
+            document_id=document_id,
+        )
+        if document_input is None:
+            return (10**9, document_id)
+        raw_index = document_input.values.get(self.pipeline.work_items.order_by)
+        try:
+            return (int(raw_index), document_id)
+        except (TypeError, ValueError):
+            return (10**9, document_id)
+
+    def _work_item_terminal(self, *, statuses: dict[str, ProcessStatus]) -> bool:
+        step_statuses = [statuses.get(step.id) for step in self.pipeline.steps]
+        if not step_statuses:
+            return False
+        has_failure = any(
+            status in {ProcessStatus.failed, ProcessStatus.cancelled}
+            for status in step_statuses
+        )
+        has_live = any(
+            status in {ProcessStatus.running, ProcessStatus.queued}
+            for status in step_statuses
+        )
+        has_unresolved = any(
+            status in {None, ProcessStatus.waiting}
+            for status in step_statuses
+        )
+        return not has_live and (not has_unresolved or has_failure)
 
     async def recover_expired_claims(self, *, run_id: str, document_id: str) -> None:
         statuses = await self.store.list_statuses(run_id=run_id, document_id=document_id)

@@ -143,6 +143,13 @@ class CombineSpec(BaseModel):
     emit_partial: bool = False
 
 
+class WorkItemPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim_strategy: Literal["parallel", "sequential"] = "parallel"
+    order_by: str = Field(default="index", min_length=1)
+
+
 class PipelineSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -152,6 +159,7 @@ class PipelineSpec(BaseModel):
     tags: list[str] = Field(default_factory=list)
     version: str = "1"
     input_values: dict[str, str] = Field(default_factory=dict)
+    work_items: WorkItemPolicy = Field(default_factory=WorkItemPolicy)
     steps: list[ProcessSpec]
     combines: list[CombineSpec] = Field(default_factory=list)
 

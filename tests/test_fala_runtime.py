@@ -52,6 +52,7 @@ from fala import (
     RetryPolicy,
     ScheduledProcess,
     SQLiteStateStore,
+    WorkItemPolicy,
     WorkflowPackageSpec,
     WorkflowWorkerSpec,
     load_pipeline_yaml,
@@ -2021,6 +2022,9 @@ class ProcessRuntimeTests(unittest.TestCase):
                     title: Demo pipeline
                     description: Demo workflow
                     tags: [demo, generic]
+                    work_items:
+                      claim_strategy: sequential
+                      order_by: priority
                     steps:
                       - id: first
                         title: First step
@@ -2041,6 +2045,8 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(spec.title, "Demo pipeline")
             self.assertEqual(spec.description, "Demo workflow")
             self.assertEqual(spec.tags, ["demo", "generic"])
+            self.assertEqual(spec.work_items.claim_strategy, "sequential")
+            self.assertEqual(spec.work_items.order_by, "priority")
             self.assertEqual(spec.combines[0].id, "bundle")
             self.assertEqual(spec.steps[0].title, "First step")
             self.assertEqual(spec.steps[0].description, "First worker boundary")
@@ -2460,6 +2466,115 @@ class ProcessRuntimeTests(unittest.TestCase):
             )
         )
         self.assertIsNone(second_claim)
+
+    def test_scheduler_claims_work_items_in_parallel_by_default(self) -> None:
+        store = InMemoryStateStore()
+        pipeline = PipelineSpec(
+            id="parallel_claim_test",
+            steps=[
+                ProcessSpec(
+                    id="process",
+                    adapter=AdapterSpec(kind="queue", queue="test.process"),
+                )
+            ],
+        )
+        scheduler = PipelineScheduler(pipeline, store)
+        for index, document_id in enumerate(("z-first.item", "a-second.item"), start=1):
+            asyncio.run(
+                scheduler.initialize_document(
+                    run_id="run_parallel_claim",
+                    document_id=document_id,
+                    values={"index": index},
+                )
+            )
+
+        first_claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_parallel_claim",
+                document_ids=["z-first.item", "a-second.item"],
+                worker_id="worker-1",
+                adapter_kind="queue",
+            )
+        )
+        second_claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_parallel_claim",
+                document_ids=["z-first.item", "a-second.item"],
+                worker_id="worker-2",
+                adapter_kind="queue",
+            )
+        )
+
+        self.assertIsNotNone(first_claim)
+        self.assertIsNotNone(second_claim)
+        assert first_claim is not None
+        assert second_claim is not None
+        self.assertNotEqual(first_claim.document_id, second_claim.document_id)
+
+    def test_scheduler_claims_work_items_sequentially_by_input_order(self) -> None:
+        store = InMemoryStateStore()
+        pipeline = PipelineSpec(
+            id="sequential_claim_test",
+            work_items=WorkItemPolicy(claim_strategy="sequential", order_by="index"),
+            steps=[
+                ProcessSpec(
+                    id="process",
+                    adapter=AdapterSpec(kind="queue", queue="test.process"),
+                )
+            ],
+        )
+        scheduler = PipelineScheduler(pipeline, store)
+        for index, document_id in enumerate(("z-first.item", "a-second.item"), start=1):
+            asyncio.run(
+                scheduler.initialize_document(
+                    run_id="run_sequential_claim",
+                    document_id=document_id,
+                    values={"index": index},
+                )
+            )
+
+        first_claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_sequential_claim",
+                document_ids=["z-first.item", "a-second.item"],
+                worker_id="worker-1",
+                adapter_kind="queue",
+            )
+        )
+        self.assertIsNotNone(first_claim)
+        assert first_claim is not None
+        self.assertEqual(first_claim.document_id, "z-first.item")
+
+        blocked_claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_sequential_claim",
+                document_ids=["z-first.item", "a-second.item"],
+                worker_id="worker-2",
+                adapter_kind="queue",
+            )
+        )
+        self.assertIsNone(blocked_claim)
+
+        asyncio.run(
+            store.put_output(
+                run_id="run_sequential_claim",
+                document_id="z-first.item",
+                process_id="process",
+                output=ProcessOutput(values={"ok": True}),
+            )
+        )
+        second_claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_sequential_claim",
+                document_ids=["z-first.item", "a-second.item"],
+                worker_id="worker-3",
+                adapter_kind="queue",
+            )
+        )
+
+        self.assertIsNotNone(second_claim)
+        assert second_claim is not None
+        self.assertEqual(second_claim.document_id, "a-second.item")
 
     def test_sqlite_scheduler_claims_process_atomically_across_store_instances(self) -> None:
         pipeline = PipelineSpec(
