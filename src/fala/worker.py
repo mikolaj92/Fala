@@ -11,10 +11,11 @@ from fala.models import (
     AdapterKind,
     AdapterSpec,
     ProcessEvent,
-    ProcessExecutionContext,
     ProcessOutput,
     ProcessSpec,
     ProcessStatus,
+    ResourceSpec,
+    RuntimeWorkerStatus,
 )
 from fala.scheduler import ClaimedProcess
 
@@ -25,6 +26,7 @@ class ProcessWorkerResult(BaseModel):
     claimed: ClaimedProcess | None
     completed: bool = False
     error: str | None = None
+    error_kind: str | None = None
 
 
 class AdapterProcessRuntimeWorker:
@@ -37,16 +39,22 @@ class AdapterProcessRuntimeWorker:
         pipeline_id: str,
         worker_id: str,
         adapter_kind: AdapterKind,
+        capabilities: list[str] | None = None,
+        resources: ResourceSpec | dict[str, Any] | None = None,
         adapters: AdapterRegistry | None = None,
         lease_seconds: float = 300.0,
         renew_interval_seconds: float | None = None,
+        error_kind: str | None = "worker_error",
     ) -> None:
         self.client = client
         self.pipeline_id = pipeline_id
         self.worker_id = worker_id
         self.adapter_kind = adapter_kind
+        self.capabilities = list(capabilities or [])
+        self.resources = ResourceSpec.model_validate(resources or {})
         self.adapters = adapters or AdapterRegistry.default()
         self.lease_seconds = lease_seconds
+        self.error_kind = error_kind
         self.renew_interval_seconds = (
             renew_interval_seconds
             if renew_interval_seconds is not None
@@ -59,17 +67,31 @@ class AdapterProcessRuntimeWorker:
         run_id: str,
         process_id: str | None = None,
     ) -> ProcessWorkerResult:
+        await self._heartbeat(
+            run_id=run_id,
+            process_id=process_id,
+            status=RuntimeWorkerStatus.idle,
+        )
         claim = await self.client.claim_next(
             run_id=run_id,
             pipeline_id=self.pipeline_id,
             worker_id=self.worker_id,
             process_id=process_id,
             adapter_kind=self.adapter_kind,
+            capabilities=self.capabilities,
+            resources=self.resources,
             lease_seconds=self.lease_seconds,
         )
         if claim is None:
             return ProcessWorkerResult(claimed=None)
 
+        await self._heartbeat(
+            run_id=run_id,
+            process_id=process_id,
+            status=RuntimeWorkerStatus.working,
+            current_document_id=claim.document_id,
+            current_process_id=claim.process.id,
+        )
         step = _process_spec_from_claim(claim)
         renew_task = self._start_renew_loop(claim)
         try:
@@ -95,16 +117,34 @@ class AdapterProcessRuntimeWorker:
                 ),
             )
         except BaseException as exc:
+            error_kind = self.error_kind
             await self._stop_renew_loop(renew_task)
+            await self._heartbeat(
+                run_id=run_id,
+                process_id=process_id,
+                status=RuntimeWorkerStatus.error,
+                current_document_id=claim.document_id,
+                current_process_id=claim.process.id,
+                metadata={"error": str(exc), "error_kind": error_kind},
+            )
             await self.client.write_status(
                 run_id=claim.run_id,
                 document_id=claim.document_id,
                 process_id=claim.process.id,
                 status=ProcessStatus.failed,
                 worker_id=self.worker_id,
-                data={"worker_id": self.worker_id, "attempt": claim.attempt, "error": str(exc)},
+                data={
+                    "worker_id": self.worker_id,
+                    "attempt": claim.attempt,
+                    "error": str(exc),
+                    "error_kind": error_kind,
+                },
             )
-            return ProcessWorkerResult(claimed=claim, error=str(exc))
+            return ProcessWorkerResult(
+                claimed=claim,
+                error=str(exc),
+                error_kind=error_kind,
+            )
         await self._stop_renew_loop(renew_task)
 
         await self.client.write_output(
@@ -114,6 +154,11 @@ class AdapterProcessRuntimeWorker:
             output=output,
             pipeline_id=self.pipeline_id,
             worker_id=self.worker_id,
+        )
+        await self._heartbeat(
+            run_id=run_id,
+            process_id=process_id,
+            status=RuntimeWorkerStatus.idle,
         )
         return ProcessWorkerResult(claimed=claim, completed=True)
 
@@ -154,6 +199,13 @@ class AdapterProcessRuntimeWorker:
         while True:
             await asyncio.sleep(self.renew_interval_seconds)
             try:
+                await self._heartbeat(
+                    run_id=claim.run_id,
+                    process_id=claim.process.id,
+                    status=RuntimeWorkerStatus.working,
+                    current_document_id=claim.document_id,
+                    current_process_id=claim.process.id,
+                )
                 renewed = await self.client.renew_claim(
                     run_id=claim.run_id,
                     document_id=claim.document_id,
@@ -167,13 +219,45 @@ class AdapterProcessRuntimeWorker:
             if renewed is None:
                 return
 
+    async def _heartbeat(
+        self,
+        *,
+        run_id: str,
+        process_id: str | None = None,
+        status: RuntimeWorkerStatus,
+        current_document_id: str | None = None,
+        current_process_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            await self.client.worker_heartbeat(
+                run_id=run_id,
+                worker_id=self.worker_id,
+                pipeline_id=self.pipeline_id,
+                process_id=process_id,
+                adapter_kind=self.adapter_kind,
+                capabilities=self.capabilities,
+                resources=self.resources,
+                status=status,
+                current_document_id=current_document_id,
+                current_process_id=current_process_id,
+                metadata=metadata,
+            )
+        except Exception:
+            return
+
 
 def _process_spec_from_claim(claim: ClaimedProcess) -> ProcessSpec:
     return ProcessSpec(
         id=claim.process.id,
+        capability=claim.process.capability,
         needs=claim.process.needs,
         adapter=AdapterSpec.model_validate(claim.process.adapter),
         timeout_seconds=claim.process.timeout_seconds,
+        priority=claim.process.priority,
+        max_concurrency=claim.process.max_concurrency,
+        resource_pool=claim.process.resource_pool,
+        resources=claim.process.resources,
         config=claim.process.config or claim.context.config,
     )
 

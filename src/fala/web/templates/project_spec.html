@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Project spec</h1>
+      {% if spec %}
+        <p class="mt-1 text-sm text-muted-foreground">{{ spec.project_id or "unnamed" }} &middot; bootstrap runbook</p>
+      {% else %}
+        <p class="mt-1 text-sm text-muted-foreground">No fala-project.yaml configured for this control plane.</p>
+      {% endif %}
+    </div>
+    <div class="flex gap-2">
+      <a class="btn btn-outline" href="/project">Project</a>
+      <a class="btn btn-outline" href="/api/process-runtime/project/spec{% if request.url.query %}?{{ request.url.query }}{% endif %}">JSON</a>
+    </div>
+  </div>
+
+  {% if not spec %}
+    <section class="card p-6 text-sm text-muted-foreground">
+      Start Fala from a generated workspace or pass <code>--project-dir</code> / <code>--project-yaml</code>.
+    </section>
+  {% else %}
+    <section class="card p-4">
+      <form class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" method="get" action="/project/spec">
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">Base URL</span>
+          <input class="input" name="base_url" value="{{ spec.base_url }}">
+        </label>
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">Run id</span>
+          <input class="input" name="run_id" value="{{ spec.run_id }}">
+        </label>
+        <div class="flex items-end gap-2">
+          <button class="btn btn-outline" type="submit">Refresh</button>
+        </div>
+      </form>
+    </section>
+
+    <div class="fala-card-grid">
+      <section class="card p-4">
+        <div class="text-xs text-muted-foreground">Readiness</div>
+        <div class="mt-1 text-2xl font-bold">{{ "ok" if spec.ok else "blocked" }}</div>
+        <div class="mt-1 text-xs text-muted-foreground">{{ spec.readiness.error_count }} errors &middot; {{ spec.readiness.warning_count }} warnings</div>
+      </section>
+      <section class="card p-4">
+        <div class="text-xs text-muted-foreground">Packages</div>
+        <div class="mt-1 text-2xl font-bold">{{ spec.package_index.package_count }}</div>
+        <div class="mt-1 text-xs text-muted-foreground">{{ spec.package_index.pipeline_count }} pipelines</div>
+      </section>
+      <section class="card p-4">
+        <div class="text-xs text-muted-foreground">Intake</div>
+        <div class="mt-1 text-2xl font-bold">{{ spec.intake.document_count }}</div>
+        <div class="mt-1 text-xs text-muted-foreground">{{ spec.routes.count }} routes</div>
+      </section>
+      <section class="card p-4">
+        <div class="text-xs text-muted-foreground">Workers</div>
+        <div class="mt-1 text-2xl font-bold">{{ spec.worker_commands.worker_count }}</div>
+        <div class="mt-1 text-xs text-muted-foreground">{{ spec.run_id }}</div>
+      </section>
+    </div>
+
+    <section class="card overflow-hidden">
+      <div class="border-b p-4">
+        <h2 class="text-lg font-semibold">Packages</h2>
+      </div>
+      <table class="fala-table">
+        <thead>
+          <tr>
+            <th>Package</th>
+            <th>Version</th>
+            <th>Pipelines</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for package in spec.package_index.packages %}
+            <tr>
+              <td class="font-mono text-sm">{{ package.package_id }}</td>
+              <td>{{ package.version }}</td>
+              <td>
+                {% for pipeline in package.pipelines %}
+                  <span class="badge badge-outline">{{ pipeline.pipeline_id }}</span>
+                {% endfor %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card overflow-hidden">
+      <div class="border-b p-4">
+        <h2 class="text-lg font-semibold">Worker commands</h2>
+      </div>
+      {% if spec.worker_commands.workers %}
+        <table class="fala-table">
+          <thead>
+            <tr>
+              <th>Worker</th>
+              <th>Scope</th>
+              <th>Command</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for worker in spec.worker_commands.workers %}
+              <tr>
+                <td class="font-mono text-sm">{{ worker.worker_id }}</td>
+                <td class="font-mono text-xs">{{ worker.package_id }} / {{ worker.pipeline_id }} / {{ worker.process_id or "any" }}</td>
+                <td class="font-mono text-xs">{{ worker.shell }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="p-6 text-sm text-muted-foreground">No package workers declared.</div>
+      {% endif %}
+    </section>
+
+    <section class="card overflow-hidden">
+      <div class="border-b p-4">
+        <h2 class="text-lg font-semibold">Policies</h2>
+      </div>
+      <table class="fala-table">
+        <tbody>
+          <tr>
+            <td>Alerts</td>
+            <td>{{ spec.alerts.rule_count }} rules</td>
+          </tr>
+          <tr>
+            <td>Lifecycle</td>
+            <td>{{ spec.lifecycle.run_retention.older_than_days }} days &middot; {{ spec.lifecycle.run_retention.statuses|join(", ") }}</td>
+          </tr>
+          <tr>
+            <td>Routes</td>
+            <td>{{ spec.routes.count }} route rules from <span class="font-mono text-xs">{{ spec.routes.path }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+</div>
+{% endblock %}

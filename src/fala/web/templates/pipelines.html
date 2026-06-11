@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% macro resource_badges(resources) -%}
+  {% if resources and (resources.cpu_cores or resources.memory_mb or resources.disk_mb or resources.gpu_count or resources.labels or resources.units) %}
+    {% if resources.cpu_cores %}<span class="badge badge-outline">cpu {{ resources.cpu_cores }}</span>{% endif %}
+    {% if resources.memory_mb %}<span class="badge badge-outline">mem {{ resources.memory_mb }}MB</span>{% endif %}
+    {% if resources.disk_mb %}<span class="badge badge-outline">disk {{ resources.disk_mb }}MB</span>{% endif %}
+    {% if resources.gpu_count %}<span class="badge badge-outline">gpu {{ resources.gpu_count }}</span>{% endif %}
+    {% for label in resources.labels %}<span class="badge badge-outline">{{ label }}</span>{% endfor %}
+    {% for key, value in resources.units.items() %}<span class="badge badge-outline">{{ key }} {{ value }}</span>{% endfor %}
+  {% endif %}
+{%- endmacro %}
+
+<div class="space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">Pipelines</h1>
+    <p class="mt-1 text-sm text-muted-foreground">Configured workflow packages and pipelines.</p>
+    <div class="mt-3 flex flex-wrap gap-2 text-xs">
+      {% if readiness.ok %}
+        <span class="badge fala-status-completed">readiness ok</span>
+      {% else %}
+        <span class="badge fala-status-failed">readiness blocked</span>
+      {% endif %}
+      <span class="badge badge-outline">{{ readiness.package_count }} packages</span>
+      {% if readiness.warning_count %}<span class="badge fala-status-running">{{ readiness.warning_count }} warnings</span>{% endif %}
+      {% if readiness.error_count %}<span class="badge fala-status-failed">{{ readiness.error_count }} errors</span>{% endif %}
+      <a class="badge badge-outline" href="/api/process-runtime/packages/readiness">Readiness JSON</a>
+    </div>
+  </div>
+
+  <section class="card p-6">
+    <h2 class="text-xl font-semibold">Packages</h2>
+    <div class="mt-4 grid gap-3 md:grid-cols-2">
+      {% for package in packages %}
+        <div class="border border-border p-4">
+          <div class="font-mono text-sm">{{ package.id }}</div>
+          {% if package.title %}<div class="mt-1 font-medium">{{ package.title }}</div>{% endif %}
+          {% if package.description %}<div class="mt-1 text-sm text-muted-foreground">{{ package.description }}</div>{% endif %}
+          <div class="mt-2 flex flex-wrap gap-1">
+            {% for pipeline in package.pipelines %}
+              <span class="badge badge-outline">{{ pipeline }}</span>
+            {% endfor %}
+          </div>
+          {% if package.readiness %}
+            <div class="mt-3 border border-border p-3 text-xs">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="font-semibold">Readiness</div>
+                <div class="flex flex-wrap gap-1">
+                  {% if package.readiness.ok %}
+                    <span class="badge fala-status-completed">ok</span>
+                  {% else %}
+                    <span class="badge fala-status-failed">blocked</span>
+                  {% endif %}
+                  {% if package.readiness.warning_count %}
+                    <span class="badge fala-status-running">{{ package.readiness.warning_count }} warnings</span>
+                  {% endif %}
+                  {% if package.readiness.error_count %}
+                    <span class="badge fala-status-failed">{{ package.readiness.error_count }} errors</span>
+                  {% endif %}
+                  {% if package.readiness.info_count %}
+                    <span class="badge badge-outline">{{ package.readiness.info_count }} info</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="mt-3 grid gap-2 text-muted-foreground">
+                <div>{{ package.readiness.routeable_document_type_ids|length }} / {{ package.readiness.document_type_ids|length }} routeable document types</div>
+                <div>{{ package.readiness.covered_queue_process_count }} / {{ package.readiness.queue_process_count }} queue processes covered by package workers</div>
+                <div>{{ package.readiness.invalid_worker_command_count }} invalid worker commands</div>
+                {% if package.readiness.sample_files %}
+                  <div class="flex flex-wrap gap-1">
+                    {% for key, present in package.readiness.sample_files.items() %}
+                      <span class="badge {% if present %}fala-status-completed{% else %}badge-outline{% endif %}">{{ key }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+              {% if package.readiness.issues %}
+                <div class="mt-3 grid gap-1">
+                  {% for issue in package.readiness.issues %}
+                    <div>
+                      <span class="badge {% if issue.severity == 'error' %}fala-status-failed{% elif issue.severity == 'warning' %}fala-status-running{% else %}badge-outline{% endif %}">{{ issue.severity }}</span>
+                      <span class="font-mono">{{ issue.code }}</span>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% endif %}
+              <div class="mt-3">
+                <a class="badge badge-outline" href="/api/process-runtime/packages/{{ package.id|urlencode }}/readiness">JSON</a>
+              </div>
+            </div>
+          {% endif %}
+          {% if package.document_types or package.artifact_kinds or package.capabilities %}
+            <div class="mt-3 grid gap-2 text-xs text-muted-foreground">
+              <div>{{ package.document_types|length }} document types</div>
+              <div>{{ package.artifact_kinds|length }} artifact kinds</div>
+              <div class="flex flex-wrap gap-1">
+                {% for capability in package.capabilities %}
+                  <span class="badge">{{ capability.id }}</span>
+                {% else %}
+                  <span>No capabilities</span>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+          {% if package.workers %}
+            <div class="mt-3 space-y-2 text-xs">
+              {% for worker in package.workers %}
+                <div>
+                  <span class="font-mono">{{ worker.id }}</span>
+                  <span class="text-muted-foreground">{{ worker.pipeline_id }} / {{ worker.process_id or "any" }}</span>
+                  <div class="mt-1 flex flex-wrap gap-1">{{ resource_badges(worker.resources) }}</div>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="text-sm text-muted-foreground">No packages configured.</div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card overflow-hidden">
+    <table class="fala-table">
+      <thead>
+        <tr>
+          <th>Pipeline</th>
+          <th>Package</th>
+          <th>Steps</th>
+          <th>Combines</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pipeline in pipelines %}
+          <tr>
+            <td>
+              <div class="font-mono text-sm">{{ pipeline.id }}</div>
+              {% if pipeline.title %}<div class="text-sm">{{ pipeline.title }}</div>{% endif %}
+            </td>
+            <td>{{ pipeline.package_id or "—" }}</td>
+            <td>
+              <div class="flex flex-wrap gap-1">
+                {% for step in pipeline.steps %}
+                  <span class="badge badge-outline">
+                    {{ step.id }} · {{ step.capability or step.adapter.kind }}
+                    {% if step.priority %} · p{{ step.priority }}{% endif %}
+                    {% if step.max_concurrency %} · max {{ step.max_concurrency }}{% endif %}
+                    {% if step.resource_pool != "default" %} · pool {{ step.resource_pool }}{% endif %}
+                  </span>
+                  {{ resource_badges(step.resources) }}
+                {% endfor %}
+              </div>
+            </td>
+            <td>
+              <div class="flex flex-wrap gap-1">
+                {% for combine in pipeline.combines %}
+                  <span class="badge">{{ combine.id }}</span>
+                {% else %}
+                  <span class="text-muted-foreground">—</span>
+                {% endfor %}
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="text-sm text-muted-foreground">No pipelines configured.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,70 @@
+<section id="run-lineage" class="card p-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-xl font-semibold">Document lineage</h2>
+      <p class="mt-1 text-sm text-muted-foreground">Root and spawned documents for this run.</p>
+    </div>
+    <div class="flex flex-wrap gap-2 text-xs">
+      <span class="badge">{{ lineage.node_count }} nodes</span>
+      <span class="badge">{{ lineage.edge_count }} edges</span>
+      <a class="badge badge-outline" href="/api/runs/{{ run_id }}/process-runtime/document-lineage">JSON</a>
+    </div>
+  </div>
+
+  {% if not lineage.nodes %}
+    <div class="mt-4 border border-border bg-muted p-4 text-sm text-muted-foreground">
+      No documents in this run.
+    </div>
+  {% else %}
+    <div class="mt-4 overflow-x-auto border border-border">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-border text-left text-xs text-muted-foreground">
+            <th class="px-3 py-2">Document</th>
+            <th class="px-3 py-2">Pipeline</th>
+            <th class="px-3 py-2">Parent</th>
+            <th class="px-3 py-2">Children</th>
+            <th class="px-3 py-2">State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for node in lineage.nodes %}
+            <tr class="border-b border-border last:border-0">
+              <td class="px-3 py-2">
+                <div class="font-mono">{{ node.title or node.document_id }}</div>
+                <div class="mt-1 break-all font-mono text-xs text-muted-foreground">{{ node.document_id }}</div>
+                {% if node.document_type %}
+                  <div class="mt-1 text-xs"><span class="badge badge-outline">{{ node.document_type }}</span></div>
+                {% endif %}
+              </td>
+              <td class="px-3 py-2 font-mono text-xs">{{ node.pipeline_id or "—" }}</td>
+              <td class="px-3 py-2 text-xs text-muted-foreground">
+                {% if node.parent_document_id %}
+                  <div class="font-mono">{{ node.parent_document_id }}</div>
+                  <div>{{ node.parent_process_id or "—" }}</div>
+                {% else %}
+                  root
+                {% endif %}
+              </td>
+              <td class="px-3 py-2 text-xs">
+                {% if node.child_document_ids %}
+                  <div class="max-w-md break-all font-mono text-muted-foreground">{{ node.child_document_ids|join(", ") }}</div>
+                {% else %}
+                  <span class="text-muted-foreground">—</span>
+                {% endif %}
+              </td>
+              <td class="px-3 py-2">
+                <span class="badge fala-status-{{ node.status }}">{{ node.status }}</span>
+                <div class="mt-2 flex flex-wrap gap-1 text-xs">
+                  <span class="badge badge-outline">{{ node.process_count }} processes</span>
+                  <span class="badge badge-outline">{{ node.output_count }} outputs</span>
+                  <span class="badge badge-outline">{{ node.event_count }} events</span>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</section>

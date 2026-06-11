@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div
+  class="space-y-6"
+  hx-get="/queue?limit={{ broker.filters.limit }}{% if broker.filters.queue %}&broker_queue={{ broker.filters.queue|urlencode }}{% endif %}{% if broker.filters.state is not none %}&broker_state={{ broker.filters.state|urlencode }}{% endif %}"
+  hx-trigger="every 5s"
+  hx-swap="outerHTML"
+>
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">Queue</h1>
+    <p class="mt-1 text-sm text-muted-foreground">Active Fala runtime work.</p>
+  </div>
+
+  <div class="fala-card-grid">
+    <section class="card p-4">
+      <div class="text-xs text-muted-foreground">Pending</div>
+      <div class="mt-1 text-2xl font-bold">{{ queue.pending_count }}</div>
+    </section>
+    <section class="card p-4">
+      <div class="text-xs text-muted-foreground">Running</div>
+      <div class="mt-1 text-2xl font-bold">{{ 1 if queue.running else 0 }}</div>
+    </section>
+    <section class="card p-4">
+      <div class="text-xs text-muted-foreground">Paused</div>
+      <div class="mt-1 text-2xl font-bold">{{ queue.paused_count or 0 }}</div>
+    </section>
+  </div>
+
+  <section class="card overflow-hidden">
+    {% if queue.executions %}
+      <table class="fala-table">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Status</th>
+            <th>Current</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in queue.executions %}
+            <tr>
+              <td><a class="font-mono text-sm underline-offset-4 hover:underline" href="/runs/{{ run.run_id }}">{{ run.run_id }}</a></td>
+              <td><span class="badge fala-status-{{ run.status }}">{{ run.status }}</span></td>
+              <td>
+                {% if run.current_process_id %}
+                  <div class="font-mono text-xs">{{ run.current_document_id }}</div>
+                  <div class="text-xs text-muted-foreground">{{ run.current_process_id }} · {{ run.current_status }}</div>
+                {% else %}
+                  <span class="text-muted-foreground">—</span>
+                {% endif %}
+              </td>
+              <td class="text-xs text-muted-foreground">{{ run.updated_at or "—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="p-8 text-sm text-muted-foreground">No queued or running processes.</div>
+    {% endif %}
+  </section>
+
+  {% include "queue_broker_partial.html" %}
+</div>
+{% endblock %}

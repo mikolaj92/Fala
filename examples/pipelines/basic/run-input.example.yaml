@@ -1,0 +1,15 @@
+run_id: run_basic_example
+pipeline_id: basic_enrichment
+title: Basic enrichment example run
+metadata:
+  package_id: basic_examples
+  example: true
+documents:
+  - document_id: sample.txt
+    title: Sample document
+    document_type: generic_document
+    media_type: text/plain
+    values:
+      source: sample.txt
+    metadata:
+      sample: true

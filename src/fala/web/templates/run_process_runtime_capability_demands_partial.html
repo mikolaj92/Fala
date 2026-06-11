@@ -1,0 +1,91 @@
+<section id="capability-demands" class="card p-6" hx-get="/runs/{{ run_id }}/process-runtime/capability-demands" hx-trigger="every 15s" hx-swap="outerHTML">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-xl font-semibold">Capability demand</h2>
+      <p class="mt-1 text-sm text-muted-foreground">Worker demand grouped by reusable capability.</p>
+    </div>
+    <div class="flex flex-wrap gap-2 text-xs">
+      <span class="badge">{{ demands.count }} capabilities</span>
+      <span class="badge">{{ demands.claimable_queued_count }} claimable</span>
+      <span class="badge">{{ demands.running_count }} running</span>
+      {% if demands.worker_deficit_count %}
+        <span class="badge fala-status-failed">deficit {{ demands.worker_deficit_count }}</span>
+      {% endif %}
+      <a class="badge badge-outline" href="/api/runs/{{ run_id }}/process-runtime/capability-demands">JSON</a>
+    </div>
+  </div>
+
+  {% if not demands.demands %}
+    <div class="mt-4 border border-border bg-muted p-4 text-sm text-muted-foreground">
+      No queue-backed capability demand right now.
+    </div>
+  {% else %}
+    <div class="mt-4 overflow-x-auto border border-border">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-border text-left text-xs text-muted-foreground">
+            <th class="px-3 py-2">Capability</th>
+            <th class="px-3 py-2">Backlog</th>
+            <th class="px-3 py-2">Workers</th>
+            <th class="px-3 py-2">Pipelines</th>
+            <th class="px-3 py-2">Processes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for demand in demands.demands %}
+            <tr class="border-b border-border last:border-0">
+              <td class="px-3 py-2">
+                <div class="font-mono">{{ demand.capability or "unknown" }}</div>
+                <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                  {% if demand.operation_type %}<span class="badge badge-outline">{{ demand.operation_type }}</span>{% endif %}
+                  {% if demand.adapter_kind %}<span class="badge badge-outline">{{ demand.adapter_kind }}</span>{% endif %}
+                  <span class="badge badge-outline">pool {{ demand.resource_pool }}</span>
+                </div>
+              </td>
+              <td class="px-3 py-2">
+                <div class="flex flex-wrap gap-1 text-xs">
+                  <span class="badge">{{ demand.queued_count }} queued</span>
+                  <span class="badge">{{ demand.claimable_queued_count }} claimable</span>
+                  <span class="badge">{{ demand.running_count }} running</span>
+                  {% if demand.resource_blocked_count %}
+                    <span class="badge fala-status-running">{{ demand.resource_blocked_count }} blocked</span>
+                  {% endif %}
+                </div>
+              </td>
+              <td class="px-3 py-2">
+                <div class="flex flex-wrap gap-1 text-xs">
+                  <span class="badge">target {{ demand.target_worker_count }}</span>
+                  <span class="badge">healthy {{ demand.healthy_worker_count }}</span>
+                  {% if demand.worker_deficit_count %}
+                    <span class="badge fala-status-failed">deficit {{ demand.worker_deficit_count }}</span>
+                  {% endif %}
+                </div>
+                {% if demand.package_worker_ids %}
+                  <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                    {% for worker_id in demand.package_worker_ids %}
+                      <span class="badge badge-outline">{{ worker_id }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </td>
+              <td class="px-3 py-2">
+                <div class="flex flex-wrap gap-1 text-xs">
+                  {% for pipeline_id in demand.pipeline_ids %}
+                    <span class="badge badge-outline">{{ pipeline_id }}</span>
+                  {% endfor %}
+                </div>
+              </td>
+              <td class="px-3 py-2">
+                <div class="flex flex-wrap gap-1 text-xs">
+                  {% for process_id in demand.process_ids %}
+                    <span class="badge badge-outline">{{ process_id }}</span>
+                  {% endfor %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</section>

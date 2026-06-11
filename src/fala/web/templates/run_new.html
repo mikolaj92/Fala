@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">New run</h1>
+      <p class="mt-1 text-sm text-muted-foreground">Batch document launcher.</p>
+    </div>
+    <a class="btn btn-outline" href="/runs">Runs</a>
+  </div>
+
+  {% if error %}
+    <div class="border border-red-500 bg-red-500/10 p-3 text-sm text-red-700">{{ error }}</div>
+  {% endif %}
+
+  <form class="grid gap-4" method="post" action="/runs/new" enctype="multipart/form-data">
+    <section class="card p-4">
+      <div class="grid gap-4 md:grid-cols-2">
+        <label class="grid gap-1 text-sm">
+          <span class="text-xs font-medium text-muted-foreground">Run ID</span>
+          <input class="input" name="run_id" value="{{ form.run_id or '' }}">
+        </label>
+        <label class="grid gap-1 text-sm">
+          <span class="text-xs font-medium text-muted-foreground">Title</span>
+          <input class="input" name="title" value="{{ form.title or '' }}">
+        </label>
+        <label class="grid gap-1 text-sm">
+          <span class="text-xs font-medium text-muted-foreground">Pipeline</span>
+          <select class="select" name="pipeline_id">
+            <option value=""></option>
+            {% for pipeline in pipelines %}
+              <option value="{{ pipeline.id }}" {% if form.pipeline_id == pipeline.id %}selected{% endif %}>
+                {{ pipeline.title or pipeline.id }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="grid gap-1 text-sm">
+          <span class="text-xs font-medium text-muted-foreground">Document Type</span>
+          <input class="input" name="document_type" value="{{ form.document_type or '' }}">
+        </label>
+        <label class="grid gap-1 text-sm">
+          <span class="text-xs font-medium text-muted-foreground">Media Type</span>
+          <input class="input" name="media_type" value="{{ form.media_type or '' }}">
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <input class="input" type="checkbox" name="auto_route" value="1" {% if form.auto_route %}checked{% endif %}>
+          <span>Auto route</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="card p-4">
+      <label class="grid gap-1 text-sm">
+        <span class="text-xs font-medium text-muted-foreground">Documents</span>
+        <textarea class="textarea min-h-40 font-mono text-xs" name="documents">{{ form.documents or '' }}</textarea>
+      </label>
+    </section>
+
+    <section class="card p-4">
+      <label class="grid gap-1 text-sm">
+        <span class="text-xs font-medium text-muted-foreground">Upload Files</span>
+        <input class="input" type="file" name="files" multiple>
+      </label>
+    </section>
+
+    <section class="card p-4">
+      <label class="grid gap-1 text-sm">
+        <span class="text-xs font-medium text-muted-foreground">Metadata</span>
+        <textarea class="textarea min-h-24 font-mono text-xs" name="metadata">{{ form.metadata or '' }}</textarea>
+      </label>
+    </section>
+
+    <div class="flex justify-end gap-2">
+      <a class="btn btn-outline" href="/runs">Cancel</a>
+      <button class="btn btn-primary" type="submit">Create run</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

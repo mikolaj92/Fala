@@ -1,0 +1,2 @@
+document_id,title,path,source_uri,document_type,relation,parent_document_id,parent_process_id,media_type,source_sha256,value.source,metadata.sample
+sample.txt,Sample document,incoming/sample.txt,,generic_document,,,,text/plain,,sample.txt,true

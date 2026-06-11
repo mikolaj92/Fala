@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from fala.adapters import AdapterRegistry
+from fala.lineage import output_with_lineage
 from fala.models import (
     CombinedProjection,
     DocumentRunResult,
@@ -164,6 +165,16 @@ class PipelineRunner:
                     config=step.config,
                 )
                 output = await self._run_adapter(step, context)
+                output = output_with_lineage(
+                    output,
+                    context=context,
+                    step=step,
+                    need_outputs={
+                        dep: outputs[dep]
+                        for dep in step.needs
+                        if dep in outputs
+                    },
+                )
                 await self.store.put_output(
                     run_id=run_id,
                     document_id=document_id,
@@ -303,6 +314,7 @@ class PipelineRunner:
             document_id=document_id,
             process_id=process_id,
             status=status,
+            **_process_metadata_args(self.pipeline.id, _step_by_id(self.pipeline, process_id)),
         )
         await self.store.append_event(
             ProcessEvent(
@@ -314,3 +326,19 @@ class PipelineRunner:
                 data=data,
             )
         )
+
+
+def _step_by_id(pipeline: PipelineSpec, process_id: str) -> ProcessSpec:
+    for step in pipeline.steps:
+        if step.id == process_id:
+            return step
+    raise ValueError(f"Unknown process id: {process_id}")
+
+
+def _process_metadata_args(pipeline_id: str, step: ProcessSpec) -> dict[str, str | None]:
+    return {
+        "pipeline_id": pipeline_id,
+        "capability": step.capability,
+        "adapter_kind": step.adapter.kind,
+        "resource_pool": step.resource_pool,
+    }

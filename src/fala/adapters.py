@@ -81,7 +81,7 @@ class SubprocessAdapter:
             raise ProcessAdapterError(f"Process {spec.id!r} subprocess timed out") from exc
 
         if proc.returncode != 0:
-            message = stderr.decode("utf-8", errors="replace").strip()
+            message = stderr_text.strip()
             raise ProcessAdapterError(
                 f"Process {spec.id!r} subprocess failed with exit {proc.returncode}: {message}"
             )
@@ -168,6 +168,22 @@ class QueueProcessAdapter:
         )
 
 
+class ManualProcessAdapter:
+    """Manual gates must be completed through the runtime control plane."""
+
+    async def run(
+        self,
+        spec: ProcessSpec,
+        context: ProcessExecutionContext,
+        *,
+        event_sink: EventSink | None = None,
+    ) -> ProcessOutput:
+        raise ProcessAdapterError(
+            f"Process {spec.id!r} manual adapter cannot run in-process; "
+            "write a ProcessOutput through complete-process or the runtime API"
+        )
+
+
 class ExternalCommandAdapter:
     """Run a claimed process through a worker-local command.
 
@@ -242,6 +258,7 @@ class AdapterRegistry:
                 "subprocess": SubprocessAdapter(),
                 "http": HTTPProcessAdapter(),
                 "queue": QueueProcessAdapter(),
+                "manual": ManualProcessAdapter(),
             }
         )
 
@@ -460,4 +477,3 @@ def _decode_subprocess_json(text: str, process_id: str) -> Any:
     raise ProcessAdapterError(
         f"Process {process_id!r} subprocess returned non-JSON stdout: {text!r}"
     )
-

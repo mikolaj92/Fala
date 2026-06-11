@@ -1,0 +1,353 @@
+<section id="run-provenance" class="card p-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-xl font-semibold">Run provenance</h2>
+      <p class="mt-1 text-sm text-muted-foreground">Persisted run input, routing, plan, and contract snapshot.</p>
+    </div>
+    <div class="flex flex-wrap gap-2 text-xs">
+      {% if page.has_provenance %}
+        <span class="badge">schema {{ provenance.schema_version }}</span>
+        <span class="badge">{{ provenance.document_count }} docs</span>
+        <span class="badge">{{ pipeline_ids|length }} pipelines</span>
+        <span class="badge">{{ append_batches|length }} appends</span>
+        <span class="badge {% if contract_drift.ok %}fala-status-completed{% elif contract_drift.drifted %}fala-status-warning{% else %}badge-outline{% endif %}">
+          contracts {{ contract_drift.status or "unknown" }}
+        </span>
+        {% if route_report %}
+          <span class="badge">{{ route_report.routed_count }} routed</span>
+        {% endif %}
+      {% else %}
+        <span class="badge badge-outline">no provenance</span>
+      {% endif %}
+      <a class="badge badge-outline" href="/api/process-runtime/runs/{{ run_id }}/provenance">JSON</a>
+    </div>
+  </div>
+
+  {% if not page.has_provenance %}
+    <div class="mt-4 border border-border bg-muted p-4 text-sm text-muted-foreground">
+      No provenance snapshot recorded for this run.
+    </div>
+  {% else %}
+    <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div class="border border-border p-3">
+        <div class="text-xs text-muted-foreground">run input</div>
+        <div class="mt-1 break-all font-mono text-xs">{{ provenance.run_input_sha256 }}</div>
+      </div>
+      <div class="border border-border p-3">
+        <div class="text-xs text-muted-foreground">pipeline contracts</div>
+        <div class="mt-1 break-all font-mono text-xs">{{ provenance.pipeline_contracts_sha256 }}</div>
+      </div>
+      <div class="border border-border p-3">
+        <div class="text-xs text-muted-foreground">plan</div>
+        <div class="mt-1 break-all font-mono text-xs">{{ provenance.plan_sha256 }}</div>
+      </div>
+      <div class="border border-border p-3">
+        <div class="text-xs text-muted-foreground">route report</div>
+        <div class="mt-1 break-all font-mono text-xs">{{ provenance.route_report_sha256 or "-" }}</div>
+      </div>
+    </div>
+
+    {% if contract_drift %}
+      <div class="mt-4 border border-border p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 class="font-semibold">Contract drift</h3>
+          <div class="flex flex-wrap gap-1 text-xs">
+            <span class="badge {% if contract_drift.ok %}fala-status-completed{% elif contract_drift.drifted %}fala-status-warning{% else %}badge-outline{% endif %}">
+              {{ contract_drift.status or "unknown" }}
+            </span>
+            <span class="badge badge-outline">{{ contract_drift.changed_pipeline_ids|length }} changed</span>
+            <span class="badge badge-outline">{{ contract_drift.missing_pipeline_ids|length }} missing</span>
+          </div>
+        </div>
+        <div class="mt-2 grid gap-2 text-xs md:grid-cols-2">
+          <div>
+            <div class="text-muted-foreground">stored contracts hash</div>
+            <div class="break-all font-mono">{{ contract_drift.stored_pipeline_contracts_sha256 or "-" }}</div>
+          </div>
+          <div>
+            <div class="text-muted-foreground">current contracts hash</div>
+            <div class="break-all font-mono">{{ contract_drift.current_pipeline_contracts_sha256 or "-" }}</div>
+          </div>
+        </div>
+        {% if contract_drift_rows %}
+          <div class="mt-3 overflow-x-auto border border-border">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                  <th class="px-3 py-2">Pipeline</th>
+                  <th class="px-3 py-2">Status</th>
+                  <th class="px-3 py-2">Stored</th>
+                  <th class="px-3 py-2">Current</th>
+                  <th class="px-3 py-2">Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in contract_drift_rows %}
+                  <tr class="border-b border-border last:border-0">
+                    <td class="px-3 py-2 font-mono">{{ row.pipeline_id }}</td>
+                    <td class="px-3 py-2">
+                      <span class="badge {% if row.status == 'unchanged' %}fala-status-completed{% elif row.status in ['changed', 'missing_current', 'missing_snapshot'] %}fala-status-warning{% else %}badge-outline{% endif %}">
+                        {{ row.status }}
+                      </span>
+                      {% if row.error %}
+                        <div class="mt-1 text-xs text-muted-foreground">{{ row.error }}</div>
+                      {% endif %}
+                    </td>
+                    <td class="px-3 py-2 break-all font-mono text-xs">{{ row.stored_sha256 or "-" }}</td>
+                    <td class="px-3 py-2 break-all font-mono text-xs">{{ row.current_sha256 or "-" }}</td>
+                    <td class="px-3 py-2 break-all font-mono text-xs text-muted-foreground">{{ row.source or "-" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="mt-4 grid gap-4 xl:grid-cols-3">
+      <div class="border border-border p-3">
+        <h3 class="font-semibold">Document summary</h3>
+        <div class="mt-2 flex flex-wrap gap-1 text-xs">
+          {% for key, value in document_summary.items() %}
+            <span class="badge badge-outline">{{ key }}={{ value }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="border border-border p-3">
+        <h3 class="font-semibold">Plan summary</h3>
+        <div class="mt-2 grid gap-1 text-sm">
+          <div>process instances: {{ plan.process_instance_count or 0 }}</div>
+          <div>queued: {{ plan.queued_count or 0 }}</div>
+          <div>waiting: {{ plan.waiting_count or 0 }}</div>
+          <div>worker demands: {{ plan.worker_demand_count or 0 }}</div>
+        </div>
+      </div>
+      <div class="border border-border p-3">
+        <h3 class="font-semibold">Pipeline ids</h3>
+        <div class="mt-2 flex flex-wrap gap-1 text-xs">
+          {% for pipeline_id in pipeline_ids %}
+            <span class="badge badge-outline">{{ pipeline_id }}</span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    {% if route_report %}
+      <div class="mt-4 border border-border p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 class="font-semibold">Route report</h3>
+          <div class="flex flex-wrap gap-1 text-xs">
+            <span class="badge">{{ route_report.document_count }} docs</span>
+            <span class="badge">{{ route_report.routed_count }} routed</span>
+            <span class="badge badge-outline">{{ route_report.unrouted_count }} unrouted</span>
+            <span class="badge badge-outline">{{ route_report.matched_candidate_count or 0 }} / {{ route_report.candidate_count or 0 }} candidates</span>
+          </div>
+        </div>
+        <div class="mt-3 overflow-x-auto border border-border">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                <th class="px-3 py-2">Document</th>
+                <th class="px-3 py-2">Original</th>
+                <th class="px-3 py-2">Routed</th>
+                <th class="px-3 py-2">Routes</th>
+                <th class="px-3 py-2">Candidates</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in route_documents %}
+                <tr class="border-b border-border last:border-0">
+                  <td class="px-3 py-2">
+                    <div class="font-mono">{{ item.document_id }}</div>
+                    {% if item.changed %}<span class="badge">changed</span>{% endif %}
+                  </td>
+                  <td class="px-3 py-2 text-xs text-muted-foreground">
+                    <div>{{ item.original.pipeline_id or "-" }}</div>
+                    <div>{{ item.original.document_type or "-" }}</div>
+                    <div>{{ item.original.media_type or "-" }}</div>
+                  </td>
+                  <td class="px-3 py-2 text-xs">
+                    <div>{{ item.routed.pipeline_id or "-" }}</div>
+                    <div>{{ item.routed.document_type or "-" }}</div>
+                    <div>{{ item.routed.media_type or "-" }}</div>
+                  </td>
+                  <td class="px-3 py-2">
+                    <div class="grid gap-2 text-xs">
+                      {% for route in item.routes %}
+                        <div>
+                          <div class="font-mono">{{ route.route_id or "route" }}</div>
+                          <div class="text-muted-foreground">{{ route.kind }} -> {{ route.pipeline_id or "-" }} / {{ route.document_type or "-" }}</div>
+                          <div class="mt-1 flex flex-wrap gap-1">
+                            {% for evidence in route.evidence %}
+                              <span class="badge badge-outline">{{ evidence.field }}={{ evidence.value }}</span>
+                            {% endfor %}
+                          </div>
+                        </div>
+                      {% endfor %}
+                    </div>
+                  </td>
+                  <td class="px-3 py-2">
+                    <div class="grid gap-2 text-xs">
+                      <div class="text-muted-foreground">
+                        {{ item.matched_candidate_count or 0 }} / {{ item.candidate_count or 0 }} matched
+                      </div>
+                      {% for candidate in item.candidates %}
+                        <div>
+                          <div class="font-mono">
+                            {{ candidate.route_id or "route" }}
+                            <span class="badge {% if candidate.match %}fala-status-completed{% else %}badge-outline{% endif %}">
+                              {% if candidate.match %}matched{% else %}rejected{% endif %}
+                            </span>
+                          </div>
+                          {% if candidate.reasons %}
+                            <div class="mt-1 flex flex-wrap gap-1">
+                              {% for reason in candidate.reasons %}
+                                <span class="badge badge-outline">{{ reason.reason }}</span>
+                              {% endfor %}
+                            </div>
+                          {% endif %}
+                        </div>
+                      {% endfor %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if append_batches %}
+      <div class="mt-4 border border-border p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h3 class="font-semibold">Append batches</h3>
+          <span class="badge">{{ append_batches|length }} appends</span>
+        </div>
+        <div class="mt-3 overflow-x-auto border border-border">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                <th class="px-3 py-2">Batch</th>
+                <th class="px-3 py-2">Documents</th>
+                <th class="px-3 py-2">Scheduled</th>
+                <th class="px-3 py-2">Input hash</th>
+                <th class="px-3 py-2">Route report</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for batch in append_batches %}
+                <tr class="border-b border-border last:border-0">
+                  <td class="px-3 py-2">
+                    <div class="font-mono">{{ batch.batch_id }}</div>
+                    <div class="mt-1 text-xs text-muted-foreground">{{ batch.appended_at }}</div>
+                    <div class="mt-1 text-xs text-muted-foreground">{{ batch.pipeline_id or "-" }}</div>
+                  </td>
+                  <td class="px-3 py-2">
+                    <div>{{ batch.document_count }} input</div>
+                    <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                      {% for document_id in batch.document_ids[:6] %}
+                        <span class="badge badge-outline">{{ document_id }}</span>
+                      {% endfor %}
+                      {% if batch.document_ids|length > 6 %}
+                        <span class="badge">{{ batch.document_ids|length - 6 }} more</span>
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td class="px-3 py-2 text-xs">
+                    <div>{{ batch.scheduled_count }} scheduled</div>
+                    {% if batch.schedule_summary %}
+                      <div>queued {{ batch.schedule_summary.queued_counts }}</div>
+                      <div>waiting {{ batch.schedule_summary.waiting_counts }}</div>
+                    {% endif %}
+                  </td>
+                  <td class="px-3 py-2 break-all font-mono text-xs">{{ batch.append_input_sha256 }}</td>
+                  <td class="px-3 py-2 text-xs">
+                    {% if batch.route_report %}
+                      <div class="break-all font-mono">{{ batch.route_report_sha256 }}</div>
+                      <div class="mt-1">{{ batch.route_report.routed_count }} routed / {{ batch.route_report.unrouted_count }} unrouted</div>
+                    {% else %}
+                      <span class="text-muted-foreground">none</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if process_rows %}
+      <div class="mt-4 border border-border p-3">
+        <h3 class="font-semibold">Process plan</h3>
+        <div class="mt-3 overflow-x-auto border border-border">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                <th class="px-3 py-2">Process</th>
+                <th class="px-3 py-2">Pipeline</th>
+                <th class="px-3 py-2">Queued</th>
+                <th class="px-3 py-2">Waiting</th>
+                <th class="px-3 py-2">Resources</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for process in process_rows %}
+                <tr class="border-b border-border last:border-0">
+                  <td class="px-3 py-2 font-mono">{{ process.process_id }}</td>
+                  <td class="px-3 py-2">{{ process.pipeline_id }}</td>
+                  <td class="px-3 py-2">{{ process.queued_count or 0 }}</td>
+                  <td class="px-3 py-2">{{ process.waiting_count or 0 }}</td>
+                  <td class="px-3 py-2 text-xs">
+                    <span class="badge badge-outline">{{ process.resource_pool or "default" }}</span>
+                    {% if process.resources %}
+                      {% for key, value in process.resources.items() %}
+                        {% if value %}
+                          <span class="badge badge-outline">{{ key }}={{ value }}</span>
+                        {% endif %}
+                      {% endfor %}
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if contract_rows %}
+      <div class="mt-4 border border-border p-3">
+        <h3 class="font-semibold">Pipeline contract snapshot</h3>
+        <div class="mt-3 overflow-x-auto border border-border">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border text-left text-xs text-muted-foreground">
+                <th class="px-3 py-2">Pipeline</th>
+                <th class="px-3 py-2">Package</th>
+                <th class="px-3 py-2">Steps</th>
+                <th class="px-3 py-2">Combines</th>
+                <th class="px-3 py-2">Reduces</th>
+                <th class="px-3 py-2">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for contract in contract_rows %}
+                <tr class="border-b border-border last:border-0">
+                  <td class="px-3 py-2 font-mono">{{ contract.pipeline_id }}</td>
+                  <td class="px-3 py-2">{{ contract.package_id or "-" }}</td>
+                  <td class="px-3 py-2">{{ contract.step_count }}</td>
+                  <td class="px-3 py-2">{{ contract.combine_count }}</td>
+                  <td class="px-3 py-2">{{ contract.reduce_count }}</td>
+                  <td class="px-3 py-2 break-all font-mono text-xs text-muted-foreground">{{ contract.source or "-" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+  {% endif %}
+</section>

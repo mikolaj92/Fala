@@ -8,19 +8,26 @@ input_values:
 steps:
   - id: ingest
     title: Ingest
+    capability: ingest_document
+    priority: 20
+    max_concurrency: 4
     adapter:
       kind: subprocess
       command: ["python", "steps/ingest.py"]
       cwd: "."
   - id: enrich
     title: Enrich
+    capability: enrich_document
     needs: [ingest]
+    priority: 10
+    max_concurrency: 2
     adapter:
       kind: subprocess
       command: ["python", "steps/enrich.py"]
       cwd: "."
   - id: export
     title: Export
+    capability: export_document
     needs: [enrich]
     adapter:
       kind: subprocess
@@ -30,3 +37,7 @@ combines:
   - id: document_result
     mode: latest
     needs: [ingest, enrich, export]
+reduces:
+  - id: exported_documents
+    process_id: export
+    mode: collect_values

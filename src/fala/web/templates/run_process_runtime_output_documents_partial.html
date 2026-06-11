@@ -1,0 +1,96 @@
+<section id="run-output-documents" class="card p-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-xl font-semibold">Output documents</h2>
+      <p class="mt-1 text-sm text-muted-foreground">Typed document products emitted by process outputs.</p>
+    </div>
+    <div class="flex flex-wrap gap-2 text-xs">
+      <span class="badge">{{ page.count }} documents</span>
+      {% for key, value in page.filters.items() %}
+        <span class="badge badge-outline">{{ key }}={{ value }}</span>
+      {% endfor %}
+      <a class="badge badge-outline" href="/api/runs/{{ run_id }}/process-runtime/output-documents">JSON</a>
+    </div>
+  </div>
+
+  {% if not page.output_documents %}
+    <div class="mt-4 border border-border bg-muted p-4 text-sm text-muted-foreground">
+      No output documents yet.
+    </div>
+  {% else %}
+    <div class="mt-4 overflow-x-auto border border-border">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-border text-left text-xs text-muted-foreground">
+            <th class="px-3 py-2">Product</th>
+            <th class="px-3 py-2">Source</th>
+            <th class="px-3 py-2">Process</th>
+            <th class="px-3 py-2">Artifact</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in page.output_documents %}
+            <tr class="border-b border-border last:border-0">
+              <td class="px-3 py-2">
+                <div class="font-mono">{{ item.title or item.output_document_id }}</div>
+                <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                  <span class="badge badge-outline">{{ item.document_type }}</span>
+                  <span class="badge badge-outline">{{ item.relation }}</span>
+                  {% if item.media_type %}<span class="badge">{{ item.media_type }}</span>{% endif %}
+                </div>
+                {% if item.uri %}
+                  <div class="mt-1 break-all font-mono text-xs text-muted-foreground">{{ item.uri }}</div>
+                {% endif %}
+                {% if item.value_keys or item.metadata_keys %}
+                  <div class="mt-2 flex flex-wrap gap-1 text-xs">
+                    {% for key in item.value_keys %}
+                      <span class="badge">value: {{ key }}</span>
+                    {% endfor %}
+                    {% for key in item.metadata_keys %}
+                      <span class="badge badge-outline">meta: {{ key }}</span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </td>
+              <td class="px-3 py-2">
+                <div class="font-mono">{{ item.source_title or item.source_document_id }}</div>
+                <div class="mt-1 break-all font-mono text-xs text-muted-foreground">{{ item.source_document_id }}</div>
+                <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                  {% if item.pipeline_id %}<span class="badge badge-outline">{{ item.pipeline_id }}</span>{% endif %}
+                  {% if item.source_document_type %}<span class="badge badge-outline">{{ item.source_document_type }}</span>{% endif %}
+                  {% if item.parent_document_id %}<span class="badge badge-outline">child</span>{% endif %}
+                </div>
+              </td>
+              <td class="px-3 py-2">
+                <div class="font-mono text-xs">{{ item.process_id }}</div>
+                <div class="mt-1"><span class="badge fala-status-{{ item.status }}">{{ item.status }}</span></div>
+              </td>
+              <td class="px-3 py-2">
+                {% if item.artifact_id %}
+                  <div class="font-mono text-xs">{{ item.artifact_id }}</div>
+                  {% if item.artifact %}
+                    <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                      <span class="badge badge-outline">{{ item.artifact.kind }}</span>
+                      <a
+                        class="badge badge-outline"
+                        href="/api/runs/{{ run_id }}/process-runtime/{{ item.source_document_id|urlencode }}/processes/{{ item.process_id|urlencode }}/artifacts/{{ item.artifact_id|urlencode }}/download"
+                      >download</a>
+                    </div>
+                  {% endif %}
+                {% else %}
+                  <span class="text-xs text-muted-foreground">no artifact</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if page.count > (page.output_documents|length) %}
+      <div class="mt-3 text-xs text-muted-foreground">
+        Showing {{ page.output_documents|length }} of {{ page.count }} output documents.
+      </div>
+    {% endif %}
+  {% endif %}
+</section>

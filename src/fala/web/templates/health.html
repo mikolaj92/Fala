@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">Health</h1>
+    <p class="mt-1 text-sm text-muted-foreground">Fala web panel is mounted.</p>
+  </div>
+  <div class="fala-card-grid">
+    <section class="card p-4">
+      <div class="text-xs text-muted-foreground">Packages</div>
+      <div class="mt-1 text-2xl font-bold">{{ packages_count }}</div>
+    </section>
+    <section class="card p-4">
+      <div class="text-xs text-muted-foreground">Pipelines</div>
+      <div class="mt-1 text-2xl font-bold">{{ pipelines_count }}</div>
+    </section>
+  </div>
+</div>
+{% endblock %}

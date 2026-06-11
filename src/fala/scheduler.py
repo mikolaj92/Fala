@@ -1,31 +1,67 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from fala.models import (
     ArtifactRef,
+    ChildDocumentWaitSpec,
     PipelineSpec,
     ProcessAction,
     ProcessClaim,
+    ProcessConditionSpec,
     ProcessEvent,
     ProcessExecutionContext,
     ProcessInput,
     ProcessOutput,
     ProcessSpec,
     ProcessStatus,
+    ResourceQuantity,
+    ResourceSpec,
+    RuntimeDocument,
 )
 from fala.store import StateStore
+
+
+def process_condition_matches(
+    condition: ProcessConditionSpec,
+    *,
+    document: Any | None = None,
+    input: ProcessInput | None = None,
+) -> bool:
+    document_type = getattr(document, "document_type", None)
+    media_type = getattr(document, "media_type", None)
+    metadata = getattr(document, "metadata", None) or {}
+    values = input.values if input is not None else {}
+    if condition.document_types and document_type not in set(condition.document_types):
+        return False
+    if condition.media_types and not _matches_any_media_type(
+        media_type,
+        condition.media_types,
+    ):
+        return False
+    if not _expected_items_match(condition.metadata, metadata):
+        return False
+    if not _expected_items_match(condition.values, values):
+        return False
+    return True
 
 
 class ScheduledProcess(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    capability: str | None = None
     needs: list[str] = Field(default_factory=list)
     adapter: dict
     timeout_seconds: float | None = None
+    priority: int = 0
+    max_concurrency: int | None = None
+    resource_pool: str = "default"
+    resources: ResourceSpec = Field(default_factory=ResourceSpec)
     config: dict = Field(default_factory=dict)
 
 
@@ -134,6 +170,11 @@ class PipelineScheduler:
         await self.recover_expired_claims(run_id=run_id, document_id=document_id)
         statuses = await self.store.list_statuses(run_id=run_id, document_id=document_id)
         outputs = await self.store.list_outputs(run_id=run_id, document_id=document_id)
+        document = await self.store.get_document(run_id=run_id, document_id=document_id)
+        base_input = await self.store.get_document_input(
+            run_id=run_id,
+            document_id=document_id,
+        )
         queued: list[ScheduledProcess] = []
         waiting: list[str] = []
         running: list[str] = []
@@ -183,7 +224,104 @@ class PipelineScheduler:
                 cancelled.append(step.id)
                 continue
 
+            if not process_condition_matches(
+                step.when,
+                document=document,
+                input=base_input,
+            ):
+                skipped.append(step.id)
+                await self.store.clear_claim(
+                    run_id=run_id,
+                    document_id=document_id,
+                    process_id=step.id,
+                )
+                if current_status != ProcessStatus.skipped:
+                    await self._set_status(
+                        run_id=run_id,
+                        document_id=document_id,
+                        step=step,
+                        status=ProcessStatus.skipped,
+                        event_type="process.skipped",
+                        data={
+                            "reason": "condition_not_matched",
+                            "when": step.when.model_dump(mode="json"),
+                        },
+                    )
+                    statuses[step.id] = ProcessStatus.skipped
+                continue
+
+            skipped_needs = [
+                need
+                for need in step.needs
+                if statuses.get(need) == ProcessStatus.skipped and need not in outputs
+            ]
+            if skipped_needs:
+                skipped.append(step.id)
+                await self.store.clear_claim(
+                    run_id=run_id,
+                    document_id=document_id,
+                    process_id=step.id,
+                )
+                if current_status != ProcessStatus.skipped:
+                    await self._set_status(
+                        run_id=run_id,
+                        document_id=document_id,
+                        step=step,
+                        status=ProcessStatus.skipped,
+                        event_type="process.skipped",
+                        data={
+                            "reason": "dependency_skipped",
+                            "skipped_needs": skipped_needs,
+                        },
+                    )
+                    statuses[step.id] = ProcessStatus.skipped
+                continue
+
             if self._is_ready(step, outputs=set(outputs)):
+                child_wait = await self._pending_child_wait(
+                    step,
+                    run_id=run_id,
+                    document_id=document_id,
+                )
+                if child_wait is not None:
+                    waiting.append(step.id)
+                    await self._set_waiting_for_children(
+                        run_id=run_id,
+                        document_id=document_id,
+                        step=step,
+                        current_status=current_status,
+                        data=child_wait,
+                    )
+                    continue
+
+                retry_after = await self._pending_retry_after(
+                    run_id=run_id,
+                    document_id=document_id,
+                    step=step,
+                    current_status=current_status,
+                )
+                if retry_after is not None:
+                    waiting.append(step.id)
+                    continue
+
+                if step.adapter.kind == "manual":
+                    waiting.append(step.id)
+                    if current_status != ProcessStatus.waiting:
+                        await self._set_status(
+                            run_id=run_id,
+                            document_id=document_id,
+                            step=step,
+                            status=ProcessStatus.waiting,
+                            event_type="process.manual_required",
+                            data={
+                                "needs": step.needs,
+                                "priority": step.priority,
+                                "resource_pool": step.resource_pool,
+                                "resources": step.resources.model_dump(mode="json"),
+                            },
+                        )
+                    continue
+
                 scheduled = self._scheduled_process(step)
                 queued.append(scheduled)
                 if current_status != ProcessStatus.queued:
@@ -193,7 +331,13 @@ class PipelineScheduler:
                         step=step,
                         status=ProcessStatus.queued,
                         event_type="process.queued",
-                        data={"needs": step.needs},
+                        data={
+                            "needs": step.needs,
+                            "priority": step.priority,
+                            "max_concurrency": step.max_concurrency,
+                            "resource_pool": step.resource_pool,
+                            "resources": step.resources.model_dump(mode="json"),
+                        },
                     )
                 continue
 
@@ -229,14 +373,31 @@ class PipelineScheduler:
         worker_id: str | None = None,
         process_id: str | None = None,
         adapter_kind: str | None = None,
+        capabilities: list[str] | None = None,
+        resources: ResourceSpec | dict | None = None,
+        resource_pools: dict[str, ResourceSpec | dict] | None = None,
+        resource_pool_usage: dict[str, ResourceQuantity | dict] | None = None,
         lease_seconds: float = 300.0,
     ) -> ClaimedProcess | None:
         document_ids = await self._claimable_work_item_ids(
             run_id=run_id,
             document_ids=document_ids,
         )
-        for document_id in sorted(document_ids):
+        capability_set = set(capabilities or [])
+        worker_resources = ResourceSpec.model_validate(resources or {})
+        pool_limits = _normalize_resource_pools(resource_pools)
+        pool_usage = _normalize_resource_pool_usage(resource_pool_usage)
+        sorted_document_ids = sorted(document_ids)
+        for document_id in sorted_document_ids:
             await self.schedule_ready(run_id=run_id, document_id=document_id)
+
+        running_counts = await self._running_counts(
+            run_id=run_id,
+            document_ids=sorted_document_ids,
+        )
+        step_positions = {step.id: index for index, step in enumerate(self.pipeline.steps)}
+        candidates: list[tuple[int, str, int, ProcessSpec, dict[str, ProcessOutput]]] = []
+        for document_id in sorted_document_ids:
             statuses = await self.store.list_statuses(run_id=run_id, document_id=document_id)
             outputs = await self.store.list_outputs(run_id=run_id, document_id=document_id)
             for step in self.pipeline.steps:
@@ -244,63 +405,96 @@ class PipelineScheduler:
                     continue
                 if adapter_kind is not None and step.adapter.kind != adapter_kind:
                     continue
+                if step.adapter.kind == "manual":
+                    continue
+                if capability_set and step.capability not in capability_set:
+                    continue
+                if not resources_compatible(step.resources, worker_resources):
+                    continue
+                if not resource_pool_allows(
+                    step.resources,
+                    pool_id=step.resource_pool,
+                    pool_limits=pool_limits,
+                    pool_usage=pool_usage,
+                ):
+                    continue
                 if step.id in outputs:
                     continue
                 if statuses.get(step.id) != ProcessStatus.queued:
                     continue
-
-                previous_claim = await self.store.get_claim(
-                    run_id=run_id,
-                    document_id=document_id,
-                    process_id=step.id,
-                )
-                attempt = (previous_claim.attempt if previous_claim else 0) + 1
-                now = self._now()
-                expires_at = now + timedelta(seconds=lease_seconds)
-                claim = ProcessClaim(
-                    run_id=run_id,
-                    document_id=document_id,
-                    process_id=step.id,
-                    worker_id=worker_id,
-                    attempt=attempt,
-                    claimed_at=now,
-                    expires_at=expires_at,
-                )
-                if not await self.store.try_claim_process(claim):
+                if self._concurrency_saturated(step, running_counts=running_counts):
                     continue
-                await self.store.append_event(
-                    ProcessEvent(
-                        run_id=run_id,
-                        document_id=document_id,
-                        process_id=step.id,
-                        type="process.claimed",
-                        status=ProcessStatus.running,
-                        data={
-                            "worker_id": worker_id,
-                            "adapter_kind": step.adapter.kind,
-                            "needs": step.needs,
-                            "attempt": attempt,
-                            "claim_expires_at": expires_at.isoformat(),
-                        },
+
+                candidates.append(
+                    (
+                        -step.priority,
+                        document_id,
+                        step_positions[step.id],
+                        step,
+                        outputs,
                     )
                 )
-                context = await self._build_execution_context(
-                    step=step,
+
+        for _priority, document_id, _step_index, step, outputs in sorted(candidates):
+            previous_claim = await self.store.get_claim(
+                run_id=run_id,
+                document_id=document_id,
+                process_id=step.id,
+            )
+            attempt = (previous_claim.attempt if previous_claim else 0) + 1
+            now = self._now()
+            expires_at = now + timedelta(seconds=lease_seconds)
+            claim = ProcessClaim(
+                run_id=run_id,
+                document_id=document_id,
+                process_id=step.id,
+                worker_id=worker_id,
+                attempt=attempt,
+                claimed_at=now,
+                expires_at=expires_at,
+            )
+            if not await self.store.try_claim_process(claim):
+                continue
+            await self.store.append_event(
+                ProcessEvent(
                     run_id=run_id,
                     document_id=document_id,
-                    attempt=attempt,
-                    outputs=outputs,
+                    process_id=step.id,
+                    type="process.claimed",
+                    status=ProcessStatus.running,
+                    data={
+                        "worker_id": worker_id,
+                        "adapter_kind": step.adapter.kind,
+                        "capability": step.capability,
+                        "worker_capabilities": sorted(capability_set),
+                        "needs": step.needs,
+                        "priority": step.priority,
+                        "max_concurrency": step.max_concurrency,
+                        "resource_pool": step.resource_pool,
+                        "resources": step.resources.model_dump(mode="json"),
+                        "worker_resources": worker_resources.model_dump(mode="json"),
+                        "attempt": attempt,
+                        "claim_expires_at": expires_at.isoformat(),
+                    },
                 )
-                return ClaimedProcess(
-                    pipeline_id=self.pipeline.id,
-                    run_id=run_id,
-                    document_id=document_id,
-                    process=self._scheduled_process(step),
-                    worker_id=worker_id,
-                    attempt=attempt,
-                    claim_expires_at=expires_at,
-                    context=context,
-                )
+            )
+            context = await self._build_execution_context(
+                step=step,
+                run_id=run_id,
+                document_id=document_id,
+                attempt=attempt,
+                outputs=outputs,
+            )
+            return ClaimedProcess(
+                pipeline_id=self.pipeline.id,
+                run_id=run_id,
+                document_id=document_id,
+                process=self._scheduled_process(step),
+                worker_id=worker_id,
+                attempt=attempt,
+                claim_expires_at=expires_at,
+                context=context,
+            )
         return None
 
     async def _claimable_work_item_ids(
@@ -385,19 +579,29 @@ class PipelineScheduler:
                 continue
 
             if claim.attempt < step.retry.max_attempts:
+                retry_after = self._retry_after(step)
+                next_status = (
+                    ProcessStatus.waiting
+                    if retry_after is not None
+                    else ProcessStatus.queued
+                )
+                event_data = {
+                    "worker_id": claim.worker_id,
+                    "attempt": claim.attempt,
+                    "max_attempts": step.retry.max_attempts,
+                    "claim_expires_at": claim.expires_at.isoformat(),
+                    "next_status": next_status.value,
+                }
+                if retry_after is not None:
+                    event_data["retry_after"] = retry_after.isoformat()
+                    event_data["retry_delay_seconds"] = step.retry.delay_seconds
                 await self._set_status(
                     run_id=run_id,
                     document_id=document_id,
                     step=step,
-                    status=ProcessStatus.queued,
+                    status=next_status,
                     event_type="process.claim_expired",
-                    data={
-                        "worker_id": claim.worker_id,
-                        "attempt": claim.attempt,
-                        "max_attempts": step.retry.max_attempts,
-                        "claim_expires_at": claim.expires_at.isoformat(),
-                        "next_status": ProcessStatus.queued.value,
-                    },
+                    data=event_data,
                 )
                 continue
 
@@ -536,6 +740,7 @@ class PipelineScheduler:
             document_id=document_id,
             process_id=process_id,
             status=ProcessStatus.skipped,
+            **_process_metadata_args(self.pipeline.id, self._step_by_id(process_id)),
         )
         await self.store.append_event(
             ProcessEvent(
@@ -584,8 +789,13 @@ class PipelineScheduler:
         document_id: str,
         process_id: str,
         reason: str | None = None,
+        error_kind: str | None = None,
         data: dict | None = None,
     ) -> ProcessControlResult:
+        if error_kind is None:
+            data_error_kind = (data or {}).get("error_kind")
+            if isinstance(data_error_kind, str) and data_error_kind:
+                error_kind = data_error_kind
         self._require_process(process_id)
         step = self._step_by_id(process_id)
         claim = await self.store.get_claim(
@@ -611,6 +821,7 @@ class PipelineScheduler:
         event_data = {
             **(data or {}),
             "reason": reason,
+            "error_kind": error_kind,
             "attempt": attempt,
             "max_attempts": step.retry.max_attempts,
             "affected": descendants,
@@ -618,12 +829,28 @@ class PipelineScheduler:
         if claim is not None:
             event_data["worker_id"] = claim.worker_id
 
-        if claim is not None and attempt < step.retry.max_attempts:
+        retry_allowed = _failure_retry_allowed(step, error_kind)
+        if claim is not None and attempt < step.retry.max_attempts and retry_allowed:
+            retry_after = self._retry_after(step)
+            next_status = (
+                ProcessStatus.waiting
+                if retry_after is not None
+                else ProcessStatus.queued
+            )
+            retry_event_data = {
+                **event_data,
+                "next_status": next_status.value,
+                "retry_allowed": True,
+            }
+            if retry_after is not None:
+                retry_event_data["retry_after"] = retry_after.isoformat()
+                retry_event_data["retry_delay_seconds"] = step.retry.delay_seconds
             await self.store.set_status(
                 run_id=run_id,
                 document_id=document_id,
                 process_id=process_id,
-                status=ProcessStatus.queued,
+                status=next_status,
+                **_process_metadata_args(self.pipeline.id, step),
             )
             await self.store.append_event(
                 ProcessEvent(
@@ -631,8 +858,8 @@ class PipelineScheduler:
                     document_id=document_id,
                     process_id=process_id,
                     type="process.retry_scheduled",
-                    status=ProcessStatus.queued,
-                    data={**event_data, "next_status": ProcessStatus.queued.value},
+                    status=next_status,
+                    data=retry_event_data,
                 )
             )
             schedule = await self.schedule_ready(run_id=run_id, document_id=document_id)
@@ -646,6 +873,7 @@ class PipelineScheduler:
                 schedule=schedule,
             )
 
+        terminal_reason = _failure_terminal_reason(step, error_kind)
         await self.store.clear_claim(
             run_id=run_id,
             document_id=document_id,
@@ -656,6 +884,7 @@ class PipelineScheduler:
             document_id=document_id,
             process_id=process_id,
             status=ProcessStatus.failed,
+            **_process_metadata_args(self.pipeline.id, step),
         )
         await self.store.append_event(
             ProcessEvent(
@@ -664,7 +893,12 @@ class PipelineScheduler:
                 process_id=process_id,
                 type="process.failed",
                 status=ProcessStatus.failed,
-                data={**event_data, "next_status": ProcessStatus.failed.value},
+                data={
+                    **event_data,
+                    "next_status": ProcessStatus.failed.value,
+                    "retry_allowed": False,
+                    "terminal_reason": terminal_reason,
+                },
             )
         )
         schedule = await self.schedule_ready(run_id=run_id, document_id=document_id)
@@ -703,14 +937,111 @@ class PipelineScheduler:
     def _missing_needs(self, step: ProcessSpec, *, outputs: set[str]) -> list[str]:
         return [need for need in step.needs if need not in outputs]
 
+    async def _pending_child_wait(
+        self,
+        step: ProcessSpec,
+        *,
+        run_id: str,
+        document_id: str,
+    ) -> dict[str, Any] | None:
+        wait = step.wait_for_children
+        if wait is None:
+            return None
+        children = await self._matching_child_documents(
+            wait,
+            run_id=run_id,
+            document_id=document_id,
+        )
+        required_statuses = {status.value for status in wait.required_statuses}
+        waiting_children = [
+            child
+            for child in children
+            if child.status.value not in required_statuses
+        ]
+        if len(children) >= wait.min_count and not waiting_children:
+            return None
+        status_counts = Counter(child.status.value for child in children)
+        return {
+            "reason": "waiting_for_children",
+            "filters": {
+                "from_processes": wait.from_processes,
+                "document_types": wait.document_types,
+                "relations": wait.relations,
+                "required_statuses": sorted(required_statuses),
+                "min_count": wait.min_count,
+            },
+            "matched_child_count": len(children),
+            "ready_child_count": len(children) - len(waiting_children),
+            "waiting_child_count": len(waiting_children),
+            "missing_child_count": max(wait.min_count - len(children), 0),
+            "status_counts": dict(sorted(status_counts.items())),
+            "waiting_child_document_ids": [
+                child.document_id for child in waiting_children
+            ],
+        }
+
+    async def _matching_child_documents(
+        self,
+        wait: ChildDocumentWaitSpec,
+        *,
+        run_id: str,
+        document_id: str,
+    ) -> list[RuntimeDocument]:
+        children = await self.store.list_document_records(
+            run_id=run_id,
+            parent_document_id=document_id,
+        )
+        from_processes = set(wait.from_processes)
+        document_types = set(wait.document_types)
+        relations = set(wait.relations)
+        return [
+            child
+            for child in children
+            if (not from_processes or child.parent_process_id in from_processes)
+            and (not document_types or child.document_type in document_types)
+            and (not relations or child.relation in relations)
+        ]
+
     def _scheduled_process(self, step: ProcessSpec) -> ScheduledProcess:
         return ScheduledProcess(
             id=step.id,
+            capability=step.capability,
             needs=step.needs,
             adapter=step.adapter.model_dump(mode="json"),
             timeout_seconds=step.timeout_seconds,
+            priority=step.priority,
+            max_concurrency=step.max_concurrency,
+            resource_pool=step.resource_pool,
+            resources=step.resources,
             config=step.config,
         )
+
+    async def _running_counts(
+        self,
+        *,
+        run_id: str,
+        document_ids: list[str],
+    ) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for document_id in document_ids:
+            statuses = await self.store.list_statuses(
+                run_id=run_id,
+                document_id=document_id,
+            )
+            for process_id, status in statuses.items():
+                if status == ProcessStatus.running:
+                    counts[process_id] = counts.get(process_id, 0) + 1
+        return counts
+
+    def _concurrency_saturated(
+        self,
+        step: ProcessSpec,
+        *,
+        running_counts: dict[str, int],
+    ) -> bool:
+        if step.max_concurrency is None:
+            return False
+        return running_counts.get(step.id, 0) >= step.max_concurrency
 
     async def _build_execution_context(
         self,
@@ -740,6 +1071,7 @@ class PipelineScheduler:
             run_id=run_id,
             document_id=document_id,
             process_id=step.id,
+            capability=step.capability,
             attempt=attempt,
             input=ProcessInput(
                 artifacts=artifacts,
@@ -829,6 +1161,7 @@ class PipelineScheduler:
             document_id=document_id,
             process_id=process_id,
             status=status,
+            **_process_metadata_args(self.pipeline.id, self._step_by_id(process_id)),
         )
         await self.store.clear_projections(run_id=run_id, document_id=document_id)
         await self.store.append_event(
@@ -855,6 +1188,32 @@ class PipelineScheduler:
     def _now(self) -> datetime:
         return datetime.now(timezone.utc)
 
+    def _retry_after(self, step: ProcessSpec) -> datetime | None:
+        if step.retry.delay_seconds <= 0:
+            return None
+        return self._now() + timedelta(seconds=step.retry.delay_seconds)
+
+    async def _pending_retry_after(
+        self,
+        *,
+        run_id: str,
+        document_id: str,
+        step: ProcessSpec,
+        current_status: ProcessStatus | None,
+    ) -> datetime | None:
+        if current_status != ProcessStatus.waiting or step.retry.delay_seconds <= 0:
+            return None
+
+        events = await self.store.list_events(
+            run_id=run_id,
+            document_id=document_id,
+            process_id=step.id,
+        )
+        retry_after = _latest_retry_after(events)
+        if retry_after is None or retry_after <= self._now():
+            return None
+        return retry_after
+
     async def _set_status(
         self,
         *,
@@ -870,6 +1229,7 @@ class PipelineScheduler:
             document_id=document_id,
             process_id=step.id,
             status=status,
+            **_process_metadata_args(self.pipeline.id, step),
         )
         await self.store.append_event(
             ProcessEvent(
@@ -881,3 +1241,232 @@ class PipelineScheduler:
                 data=data,
             )
         )
+
+    async def _set_waiting_for_children(
+        self,
+        *,
+        run_id: str,
+        document_id: str,
+        step: ProcessSpec,
+        current_status: ProcessStatus | None,
+        data: dict,
+    ) -> None:
+        if current_status != ProcessStatus.waiting:
+            await self._set_status(
+                run_id=run_id,
+                document_id=document_id,
+                step=step,
+                status=ProcessStatus.waiting,
+                event_type="process.waiting_for_children",
+                data=data,
+            )
+            return
+
+        events = await self.store.list_events(
+            run_id=run_id,
+            document_id=document_id,
+            process_id=step.id,
+            descending=True,
+            limit=1,
+        )
+        if events and events[0].type == "process.waiting_for_children":
+            return
+        await self.store.append_event(
+            ProcessEvent(
+                run_id=run_id,
+                document_id=document_id,
+                process_id=step.id,
+                type="process.waiting_for_children",
+                status=ProcessStatus.waiting,
+                data=data,
+            )
+        )
+
+
+def _latest_retry_after(events: list[ProcessEvent]) -> datetime | None:
+    for event in reversed(events):
+        if event.type not in {"process.retry_scheduled", "process.claim_expired"}:
+            continue
+        retry_after = _parse_retry_after(event.data.get("retry_after"))
+        if retry_after is not None:
+            return retry_after
+    return None
+
+
+def _parse_retry_after(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _process_metadata_args(pipeline_id: str, step: ProcessSpec) -> dict[str, str | None]:
+    return {
+        "pipeline_id": pipeline_id,
+        "capability": step.capability,
+        "adapter_kind": step.adapter.kind,
+        "resource_pool": step.resource_pool,
+    }
+
+
+def resources_compatible(
+    required: ResourceSpec,
+    available: ResourceSpec,
+) -> bool:
+    if not required.has_requirements():
+        return True
+    for field in ("cpu_cores", "memory_mb", "disk_mb", "gpu_count"):
+        required_value = getattr(required, field)
+        if required_value is None:
+            continue
+        available_value = getattr(available, field)
+        if available_value is None or available_value < required_value:
+            return False
+    if not set(required.labels).issubset(set(available.labels)):
+        return False
+    for key, required_value in required.units.items():
+        if available.units.get(key, 0) < required_value:
+            return False
+    return True
+
+
+def resource_pool_allows(
+    required: ResourceSpec,
+    *,
+    pool_id: str,
+    pool_limits: dict[str, ResourceSpec],
+    pool_usage: dict[str, ResourceQuantity],
+) -> bool:
+    limit = pool_limits.get(pool_id)
+    if limit is None:
+        return True
+    used = pool_usage.get(pool_id, ResourceQuantity())
+    for field in ("cpu_cores", "memory_mb", "disk_mb", "gpu_count"):
+        limit_value = getattr(limit, field)
+        required_value = getattr(required, field)
+        if limit_value is None or required_value is None:
+            continue
+        if getattr(used, field) + required_value > limit_value:
+            return False
+    for key, limit_value in limit.units.items():
+        required_value = required.units.get(key)
+        if required_value is None:
+            continue
+        if used.units.get(key, 0) + required_value > limit_value:
+            return False
+    return True
+
+
+def _failure_retry_allowed(step: ProcessSpec, error_kind: str | None) -> bool:
+    if error_kind is not None and error_kind in set(step.retry.terminal_error_kinds):
+        return False
+    retry_kinds = set(step.retry.retry_error_kinds)
+    if retry_kinds:
+        return error_kind in retry_kinds
+    return True
+
+
+def _failure_terminal_reason(step: ProcessSpec, error_kind: str | None) -> str | None:
+    if error_kind is not None and error_kind in set(step.retry.terminal_error_kinds):
+        return "terminal_error_kind"
+    retry_kinds = set(step.retry.retry_error_kinds)
+    if retry_kinds and error_kind not in retry_kinds:
+        return "non_retryable_error_kind"
+    return "max_attempts_exhausted"
+
+
+def resource_usage_add(
+    lhs: ResourceQuantity,
+    rhs: ResourceSpec,
+) -> ResourceQuantity:
+    units = dict(lhs.units)
+    for key, value in rhs.units.items():
+        units[key] = units.get(key, 0) + value
+    return ResourceQuantity(
+        cpu_cores=lhs.cpu_cores + (rhs.cpu_cores or 0),
+        memory_mb=lhs.memory_mb + (rhs.memory_mb or 0),
+        disk_mb=lhs.disk_mb + (rhs.disk_mb or 0),
+        gpu_count=lhs.gpu_count + (rhs.gpu_count or 0),
+        units=units,
+    )
+
+
+def resource_usage_remaining(
+    *,
+    limit: ResourceSpec,
+    used: ResourceQuantity,
+) -> ResourceQuantity:
+    return ResourceQuantity(
+        cpu_cores=_remaining(limit.cpu_cores, used.cpu_cores),
+        memory_mb=int(_remaining(limit.memory_mb, used.memory_mb)),
+        disk_mb=int(_remaining(limit.disk_mb, used.disk_mb)),
+        gpu_count=int(_remaining(limit.gpu_count, used.gpu_count)),
+        units={
+            key: max(0.0, value - used.units.get(key, 0.0))
+            for key, value in limit.units.items()
+        },
+    )
+
+
+def resource_pool_saturated(
+    *,
+    limit: ResourceSpec,
+    used: ResourceQuantity,
+) -> bool:
+    if not limit.has_requirements():
+        return False
+    for field in ("cpu_cores", "memory_mb", "disk_mb", "gpu_count"):
+        limit_value = getattr(limit, field)
+        if limit_value is not None and getattr(used, field) >= limit_value:
+            return True
+    return any(used.units.get(key, 0) >= value for key, value in limit.units.items())
+
+
+def _remaining(limit_value: float | int | None, used_value: float | int) -> float:
+    if limit_value is None:
+        return 0.0
+    return max(0.0, float(limit_value) - float(used_value))
+
+
+def _normalize_resource_pools(
+    resource_pools: dict[str, ResourceSpec | dict] | None,
+) -> dict[str, ResourceSpec]:
+    return {
+        pool_id: ResourceSpec.model_validate(value)
+        for pool_id, value in (resource_pools or {}).items()
+    }
+
+
+def _normalize_resource_pool_usage(
+    resource_pool_usage: dict[str, ResourceQuantity | dict] | None,
+) -> dict[str, ResourceQuantity]:
+    return {
+        pool_id: ResourceQuantity.model_validate(value)
+        for pool_id, value in (resource_pool_usage or {}).items()
+    }
+
+
+def _expected_items_match(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
+    for key, expected_value in expected.items():
+        if actual.get(key) != expected_value:
+            return False
+    return True
+
+
+def _matches_any_media_type(actual: str | None, allowed: list[str]) -> bool:
+    if actual is None:
+        return False
+    return any(_media_type_matches(actual, item) for item in allowed)
+
+
+def _media_type_matches(actual: str, allowed: str) -> bool:
+    if actual == allowed:
+        return True
+    if allowed.endswith("/*"):
+        return actual.startswith(f"{allowed[:-2]}/")
+    return False

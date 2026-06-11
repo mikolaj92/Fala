@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Project operations</h1>
+      {% if project %}
+        <p class="mt-1 text-sm text-muted-foreground">{{ project.project_id or "unnamed" }} &middot; health, backlog, workers, supervision</p>
+      {% else %}
+        <p class="mt-1 text-sm text-muted-foreground">No fala-project.yaml configured for this control plane.</p>
+      {% endif %}
+    </div>
+    <div class="flex gap-2">
+      <a class="btn btn-outline" href="/project">Project</a>
+      <a class="btn btn-outline" href="/project/alerts{% if request.url.query %}?{{ request.url.query }}{% endif %}">Alerts</a>
+      <a class="btn btn-outline" href="/project/supervision{% if request.url.query %}?{{ request.url.query }}{% endif %}">Supervision</a>
+      <a class="btn btn-outline" href="/api/process-runtime/project/operations{% if request.url.query %}?{{ request.url.query }}{% endif %}">JSON</a>
+    </div>
+  </div>
+
+  {% if error %}
+    <section class="card border-destructive p-4 text-sm text-destructive">
+      {{ error }}
+    </section>
+  {% endif %}
+
+  {% if not project %}
+    <section class="card p-6 text-sm text-muted-foreground">
+      Start Fala from a generated workspace or pass <code>--project-dir</code> / <code>--project-yaml</code>.
+    </section>
+  {% else %}
+    <section class="card p-4">
+      <form class="grid gap-4 md:grid-cols-[repeat(6,minmax(0,1fr))_auto]" method="get" action="/project/operations">
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">Package</span>
+          <input class="input" name="package_id" value="{{ filters.package_id or '' }}">
+        </label>
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">Pipeline</span>
+          <input class="input" name="pipeline_id" value="{{ filters.pipeline_id or '' }}">
+        </label>
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">Document type</span>
+          <input class="input" name="document_type" value="{{ filters.document_type or '' }}">
+        </label>
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">Operation</span>
+          <input class="input" name="operation_type" value="{{ filters.operation_type or '' }}">
+        </label>
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">Worker stale seconds</span>
+          <input class="input" name="stale_after_seconds" type="number" min="1" value="{{ filters.stale_after_seconds }}">
+        </label>
+        <label class="space-y-1">
+          <span class="text-xs text-muted-foreground">Limit</span>
+          <input class="input" name="limit" value="{{ limit }}">
+        </label>
+        <div class="flex items-end gap-2">
+          <button class="btn btn-outline" type="submit">Filter</button>
+          <a class="btn btn-outline" href="/project/operations">Clear</a>
+        </div>
+      </form>
+    </section>
+
+    {% if operations %}
+      <div class="fala-card-grid">
+        <section class="card p-4">
+          <div class="text-xs text-muted-foreground">Status</div>
+          <div class="mt-1 text-2xl font-bold">{{ operations.status }}</div>
+          <div class="mt-1 text-xs text-muted-foreground">{{ operations.run_count }} project runs</div>
+        </section>
+        <section class="card p-4">
+          <div class="text-xs text-muted-foreground">Queue</div>
+          <div class="mt-1 text-2xl font-bold">{{ operations.queue.queued_count }}</div>
+          <div class="mt-1 text-xs text-muted-foreground">{{ operations.queue.running_count }} running &middot; {{ operations.queue.waiting_count }} waiting</div>
+        </section>
+        <section class="card p-4">
+          <div class="text-xs text-muted-foreground">Workers</div>
+          <div class="mt-1 text-2xl font-bold">{{ operations.healthy_worker_count }} / {{ operations.worker_count }}</div>
+          <div class="mt-1 text-xs text-muted-foreground">{{ operations.queue.worker_deficit_count }} worker deficit</div>
+        </section>
+        <section class="card p-4">
+          <div class="text-xs text-muted-foreground">Supervision</div>
+          <div class="mt-1 text-2xl font-bold">{{ operations.supervision.issue_count }}</div>
+          <div class="mt-1 text-xs text-muted-foreground">{{ operations.supervision.dead_letter_count }} DLQ &middot; {{ operations.supervision.stuck_work_count }} stuck &middot; {{ operations.supervision.stream_lag_count }} lag</div>
+        </section>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-2">
+        <section class="card overflow-hidden">
+          <div class="border-b p-4">
+            <h2 class="text-lg font-semibold">Capability demand</h2>
+          </div>
+          {% if operations.capability_demands["items"] %}
+            <table class="fala-table">
+              <thead>
+                <tr>
+                  <th>Capability</th>
+                  <th>Run</th>
+                  <th>Queue</th>
+                  <th>Workers</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in operations.capability_demands["items"] %}
+                  <tr>
+                    <td>
+                      <div class="font-mono text-sm">{{ item.capability or item.process_id }}</div>
+                      {% if item.operation_type %}
+                        <div class="text-xs text-muted-foreground">{{ item.operation_type }}</div>
+                      {% endif %}
+                      <div class="text-xs text-muted-foreground">{{ item.package_id or "unpackaged" }} &middot; {{ item.pipeline_id or "no pipeline" }}</div>
+                    </td>
+                    <td><a class="font-mono text-sm underline-offset-4 hover:underline" href="/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
+                    <td class="text-sm">{{ item.queued_count }} queued &middot; {{ item.claimable_queued_count }} claimable</td>
+                    <td class="text-sm">{{ item.healthy_worker_count }} healthy / {{ item.target_worker_count }} target</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <div class="p-6 text-sm text-muted-foreground">No worker demand.</div>
+          {% endif %}
+        </section>
+
+        <section class="card overflow-hidden">
+          <div class="border-b p-4">
+            <h2 class="text-lg font-semibold">Health issues</h2>
+          </div>
+          {% if operations.issues["items"] %}
+            <table class="fala-table">
+              <thead>
+                <tr>
+                  <th>Issue</th>
+                  <th>Run</th>
+                  <th>Scope</th>
+                  <th>Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in operations.issues["items"] %}
+                  <tr>
+                    <td>
+                      <span class="badge fala-status-{{ item.severity }}">{{ item.severity }}</span>
+                      <div class="mt-1 font-mono text-sm">{{ item.code }}</div>
+                    </td>
+                    <td><a class="font-mono text-sm underline-offset-4 hover:underline" href="/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
+                    <td>
+                      <div class="font-mono text-xs">{{ item.package_id or "unpackaged" }}</div>
+                      <div class="font-mono text-xs text-muted-foreground">{{ item.pipeline_id or "no pipeline" }} / {{ item.process_id or "all" }}</div>
+                      {% if item.operation_type %}
+                        <div class="font-mono text-xs text-muted-foreground">{{ item.operation_type }}</div>
+                      {% endif %}
+                    </td>
+                    <td>{{ item.count }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <div class="p-6 text-sm text-muted-foreground">No health issues.</div>
+          {% endif %}
+        </section>
+      </div>
+
+      <section class="card overflow-hidden">
+        <div class="border-b p-4">
+          <h2 class="text-lg font-semibold">Runs</h2>
+        </div>
+        {% if operations.runs %}
+          <table class="fala-table">
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>Status</th>
+                <th>Queue</th>
+                <th>Workers</th>
+                <th>Documents</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for run in operations.runs %}
+                <tr>
+                  <td><a class="font-mono text-sm underline-offset-4 hover:underline" href="/runs/{{ run.run_id }}">{{ run.run_id }}</a></td>
+                  <td><span class="badge fala-status-{{ run.status }}">{{ run.status }}</span></td>
+                  <td>{{ run.queued_count }} queued &middot; {{ run.running_count }} running</td>
+                  <td>{{ run.worker_deficit_count }} deficit</td>
+                  <td>{{ run.matched_document_count }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="p-6 text-sm text-muted-foreground">No project runs.</div>
+        {% endif %}
+      </section>
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

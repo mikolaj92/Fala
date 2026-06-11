@@ -1,0 +1,52 @@
+<section id="run-reductions" class="card p-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-xl font-semibold">Run reductions</h2>
+      <p class="mt-1 text-sm text-muted-foreground">Declared run-level aggregations over process outputs.</p>
+    </div>
+    <div class="flex flex-wrap gap-2 text-xs">
+      <span class="badge">{{ reductions.count }} reductions</span>
+      <a class="badge badge-outline" href="/api/runs/{{ run_id }}/process-runtime/reductions">JSON</a>
+    </div>
+  </div>
+
+  {% if not reductions.reductions %}
+    <div class="mt-4 border border-border bg-muted p-4 text-sm text-muted-foreground">
+      No reductions declared for registered pipelines.
+    </div>
+  {% else %}
+    <div class="mt-4 grid gap-3">
+      {% for reduction in reductions.reductions %}
+        <div class="border border-border p-3">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div class="font-mono text-sm">{{ reduction.title or reduction.id }}</div>
+              {% if reduction.title %}
+                <div class="mt-1 font-mono text-xs text-muted-foreground">{{ reduction.id }}</div>
+              {% endif %}
+              {% if reduction.description %}
+                <div class="mt-1 text-xs text-muted-foreground">{{ reduction.description }}</div>
+              {% endif %}
+            </div>
+            <div class="flex flex-wrap justify-end gap-1 text-xs">
+              <span class="badge">{{ reduction.mode }}</span>
+              <span class="badge badge-outline">{{ reduction.pipeline_id }}</span>
+              <span class="badge badge-outline">{{ reduction.result_count }} rows</span>
+            </div>
+          </div>
+          {% if reduction.tags %}
+            <div class="mt-2 flex flex-wrap gap-1 text-xs">
+              {% for tag in reduction.tags %}
+                <span class="badge badge-outline">{{ tag }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
+          <details class="mt-3 text-xs" open>
+            <summary class="cursor-pointer text-muted-foreground">output values</summary>
+            <pre class="mt-2 max-h-56 overflow-auto whitespace-pre-wrap border border-border p-2 font-mono text-[11px]">{{ reduction.output["values"]|tojson }}</pre>
+          </details>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>
