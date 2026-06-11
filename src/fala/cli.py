@@ -2486,6 +2486,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             ],
             capability_streams_by_step=scaffold_input["capability_streams_by_step"],
             step_policy_by_step=scaffold_input["step_policy_by_step"],
+            step_guidance_by_step=scaffold_input["step_guidance_by_step"],
             blueprint_id=scaffold_input["blueprint_id"],
         )
 
@@ -4683,6 +4684,9 @@ def _scaffold_input_from_args(args: argparse.Namespace) -> dict[str, Any]:
             "capability_output_schema_by_step": capability_output_schema_by_step,
             "capability_streams_by_step": capability_streams_by_step,
             "step_policy_by_step": step_policy_by_step,
+            "step_guidance_by_step": _copy_scaffold_schema_map(
+                blueprint.step_guidance_by_step
+            ),
         }
 
     return {
@@ -4716,6 +4720,7 @@ def _scaffold_input_from_args(args: argparse.Namespace) -> dict[str, Any]:
             args.stream_contract
         ),
         "step_policy_by_step": _parse_scaffold_step_policy_map(args.step_policy),
+        "step_guidance_by_step": None,
     }
 
 
@@ -4839,6 +4844,9 @@ def _init_project_command(args: argparse.Namespace) -> dict[str, Any]:
                 ),
                 step_policy_by_step=_copy_scaffold_schema_map(
                     blueprint.step_policy_by_step
+                ),
+                step_guidance_by_step=_copy_scaffold_schema_map(
+                    blueprint.step_guidance_by_step
                 ),
                 blueprint_id=blueprint.id,
             )
@@ -6265,6 +6273,7 @@ def _scaffold_workflow_package(
     capability_output_schema_by_step: dict[str, dict[str, Any]] | None = None,
     capability_streams_by_step: dict[str, list[StreamSpec]] | None = None,
     step_policy_by_step: dict[str, dict[str, Any]] | None = None,
+    step_guidance_by_step: dict[str, dict[str, Any]] | None = None,
     blueprint_id: str | None = None,
 ) -> dict[str, Any]:
     media_types = document_media_types or ["application/octet-stream"]
@@ -6331,6 +6340,11 @@ def _scaffold_workflow_package(
     _validate_scaffold_partial_step_mapping(
         "step policy",
         step_policy_by_step,
+        steps,
+    )
+    _validate_scaffold_partial_step_mapping(
+        "step guidance",
+        step_guidance_by_step,
         steps,
     )
     resolved_needs_by_step = {
@@ -6518,6 +6532,35 @@ def _scaffold_workflow_package(
                 run_id=f"run_{pipeline_id}_sample",
                 package=package,
                 pipeline=pipeline,
+                step_guidance_by_step={
+                    step_id: _scaffold_step_guidance(
+                        step_id=step_id,
+                        document_type=document_type,
+                        capability=capability_by_step[step_id],
+                        operation_type=operation_type_by_step[step_id],
+                        artifact_kind=artifact_kind_by_step[step_id],
+                        needs=resolved_needs_by_step[step_id],
+                        accepts_document_types=_scaffold_capability_document_inputs(
+                            step_id,
+                            needs=resolved_needs_by_step[step_id],
+                            default_document_type=document_type,
+                            accepted_document_types_by_step=accepted_document_types_by_step,
+                        ),
+                        accepts_artifact_kinds=[
+                            artifact_kind_by_step[need]
+                            for need in resolved_needs_by_step[step_id]
+                        ],
+                        emits_document_types=list(
+                            (emitted_document_types_by_step or {}).get(step_id, [])
+                        ),
+                        streams=_scaffold_capability_streams(
+                            step_id,
+                            capability_streams_by_step=capability_streams_by_step,
+                        ),
+                        guidance=(step_guidance_by_step or {}).get(step_id),
+                    )
+                    for step_id in steps
+                },
             ),
         ),
         _write_new_file(
@@ -6547,6 +6590,32 @@ def _scaffold_workflow_package(
                     streams=_scaffold_capability_streams(
                         step_id,
                         capability_streams_by_step=capability_streams_by_step,
+                    ),
+                    guidance=_scaffold_step_guidance(
+                        step_id=step_id,
+                        document_type=document_type,
+                        capability=capability_by_step[step_id],
+                        operation_type=operation_type_by_step[step_id],
+                        artifact_kind=artifact_kind_by_step[step_id],
+                        needs=resolved_needs_by_step[step_id],
+                        accepts_document_types=_scaffold_capability_document_inputs(
+                            step_id,
+                            needs=resolved_needs_by_step[step_id],
+                            default_document_type=document_type,
+                            accepted_document_types_by_step=accepted_document_types_by_step,
+                        ),
+                        accepts_artifact_kinds=[
+                            artifact_kind_by_step[need]
+                            for need in resolved_needs_by_step[step_id]
+                        ],
+                        emits_document_types=list(
+                            (emitted_document_types_by_step or {}).get(step_id, [])
+                        ),
+                        streams=_scaffold_capability_streams(
+                            step_id,
+                            capability_streams_by_step=capability_streams_by_step,
+                        ),
+                        guidance=(step_guidance_by_step or {}).get(step_id),
                     ),
                 ),
             )
@@ -7214,6 +7283,7 @@ def _scaffold_readme(
     run_id: str,
     package: WorkflowPackageSpec,
     pipeline: PipelineSpec,
+    step_guidance_by_step: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     package_id = package.id
     pipeline_id = pipeline.id
@@ -7279,6 +7349,8 @@ def _scaffold_readme(
         "Generated by `fala scaffold`.\n"
         "\n"
         f"{_scaffold_contract_summary(package)}"
+        "\n"
+        f"{_scaffold_guidance_summary(pipeline, step_guidance_by_step or {})}"
         "\n"
         f"{_scaffold_policy_summary(pipeline)}"
         "\n"
@@ -7465,6 +7537,38 @@ def _scaffold_contract_summary(package: WorkflowPackageSpec) -> str:
         f"- Capabilities: {capabilities}\n"
         f"- Stream contracts: {stream_count}\n"
     )
+
+
+def _scaffold_guidance_summary(
+    pipeline: PipelineSpec,
+    step_guidance_by_step: dict[str, dict[str, Any]],
+) -> str:
+    lines = [
+        "## Worker Guidance",
+        "",
+        "| Step | Role | Intent | Outputs |",
+        "| --- | --- | --- | --- |",
+    ]
+    for step in pipeline.steps:
+        guidance = step_guidance_by_step.get(step.id) or {}
+        outputs = guidance.get("outputs") if isinstance(guidance.get("outputs"), dict) else {}
+        output_bits = [str(outputs.get("artifact_kind") or "-")]
+        streams = outputs.get("streams") if isinstance(outputs, dict) else []
+        if streams:
+            output_bits.append("streams: " + ", ".join(str(item) for item in streams))
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    step.id,
+                    str(guidance.get("role") or _title_from_id(step.id)),
+                    str(guidance.get("intent") or "-"),
+                    ", ".join(output_bits),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _scaffold_policy_summary(pipeline: PipelineSpec) -> str:
@@ -7970,6 +8074,51 @@ def _pipeline_yaml(pipeline: PipelineSpec) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _scaffold_step_guidance(
+    *,
+    step_id: str,
+    document_type: str,
+    capability: str,
+    operation_type: str,
+    artifact_kind: str,
+    needs: list[str],
+    accepts_document_types: list[str],
+    accepts_artifact_kinds: list[str],
+    emits_document_types: list[str],
+    streams: list[StreamSpec],
+    guidance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    stream_ids = [stream.stream_id for stream in streams]
+    result: dict[str, Any] = {
+        "role": _title_from_id(step_id),
+        "operation_type": operation_type,
+        "capability": capability,
+        "artifact_kind": artifact_kind,
+        "intent": (
+            f"Implement {operation_type} work for capability {capability} "
+            f"in a {document_type} workflow."
+        ),
+        "inputs": {
+            "needs": list(needs),
+            "document_types": list(accepts_document_types),
+            "artifact_kinds": list(accepts_artifact_kinds),
+        },
+        "outputs": {
+            "artifact_kind": artifact_kind,
+            "document_types": list(emits_document_types),
+            "streams": stream_ids,
+        },
+        "replace_sample_with": [
+            "Read source documents and upstream artifacts from ProcessExecutionContext.",
+            "Write durable artifacts under artifact_root(context, PROCESS_ID).",
+            "Return ProcessOutput values that match the capability output schema.",
+        ],
+    }
+    if guidance:
+        result.update(guidance)
+    return result
+
+
 def _step_program_source(
     *,
     step_id: str,
@@ -7977,6 +8126,7 @@ def _step_program_source(
     artifact_value_schema: dict[str, Any],
     output_schema: dict[str, Any],
     streams: list[StreamSpec] | None = None,
+    guidance: dict[str, Any] | None = None,
 ) -> str:
     stream_specs = [
         stream.model_dump(mode="json", by_alias=True)
@@ -7993,6 +8143,11 @@ def _step_program_source(
         sort_dicts=False,
         width=88,
     )
+    guidance_literal = pprint.pformat(
+        guidance or {},
+        sort_dicts=False,
+        width=88,
+    )
     return f'''from __future__ import annotations
 
 from fala.sdk import artifact, artifact_root, emit_event, output, output_document, run_stdio, stream_chunk, write_json
@@ -8002,13 +8157,18 @@ OUTPUT_KIND = {artifact_kind!r}
 ARTIFACT_VALUE_SCHEMA = {artifact_schema_literal}
 OUTPUT_SCHEMA = {output_schema_literal}
 STREAMS = {stream_literal}
+WORKER_GUIDANCE = {guidance_literal}
 
 
 def run(context):
     emit_event(
         "process.progress",
         status="running",
-        data={{"process_id": PROCESS_ID, "stage": "started"}},
+        data={{
+            "process_id": PROCESS_ID,
+            "stage": "started",
+            "worker_guidance": WORKER_GUIDANCE,
+        }},
     )
     result = _sample_values(OUTPUT_SCHEMA, context)
     artifact_payload = _sample_values(ARTIFACT_VALUE_SCHEMA, context)
@@ -8019,7 +8179,10 @@ def run(context):
     return output(
         values=result,
         artifacts=[artifact(OUTPUT_KIND, path)],
-        metadata={{"capability": context.get("capability")}},
+        metadata={{
+            "capability": context.get("capability"),
+            "worker_guidance": WORKER_GUIDANCE,
+        }},
         stream_chunks=[
             _sample_stream_chunk(stream, context)
             for stream in STREAMS

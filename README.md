@@ -1088,8 +1088,9 @@ uv run fala scaffold \
 Custom blueprint fields match the generated runtime contract surface: document
 type/media/extensions/value schema/metadata schema, extra document types,
 extra document relations, operation types, per-step accepted/emitted document
-types, step ids, DAG `needs`, capabilities, artifact kinds, optional artifact media/extensions/value schemas, capability
-output schemas, stream specs, step policy, and child wait barriers such as
+types, step ids, DAG `needs`, capabilities, artifact kinds, optional artifact
+media/extensions/value schemas, capability output schemas, stream specs, step
+policy, implementation guidance, and child wait barriers such as
 `policy.wait_for_children`.
 
 The scaffold writes `process-runtime-package.yaml`, pipeline YAML,
@@ -1098,10 +1099,13 @@ file, `README.scaffold.md`, `Makefile`, `contracts/` editable schema/policy
 templates, SDK-backed step programs, document/artifact/capability declarations,
 document input value schemas, starter JSON Schema contracts, stream contracts,
 and queue worker manifests when `--adapter-kind queue` is used. The generated
-README summarizes the contract surface, step policy, worker mode, manual gates,
-and operator commands. The generated Makefile gives the same bootstrap path as
-targets: `make bootstrap`, `make create`, `make run-local`, `make serve`, and
-`make worker`. The sample run input is a normal `RuntimeRunInput` with
+README summarizes the contract surface, worker guidance, step policy, worker
+mode, manual gates, and operator commands. Each generated `steps/*.py` file
+contains `WORKER_GUIDANCE` with the step role, operation type, expected inputs,
+outputs, streams, and what to replace in the sample implementation. The
+generated Makefile gives the same bootstrap path as targets: `make bootstrap`,
+`make create`, `make run-local`, `make serve`, and `make worker`. The sample run
+input is a normal `RuntimeRunInput` with
 sample document `values` and `metadata` from the scaffolded schemas; validate it
 or create the first run
 with:

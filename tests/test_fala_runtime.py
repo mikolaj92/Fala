@@ -1533,10 +1533,19 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertIn("sync-contracts", readme_text)
             self.assertIn("--contract-dir contracts", readme_text)
             self.assertIn("## Contract Surface", readme_text)
+            self.assertIn("## Worker Guidance", readme_text)
             self.assertIn("Document types: generic_document", readme_text)
+            self.assertIn("| ingest | Ingest | Implement ingest work", readme_text)
             self.assertIn("## Step Policy", readme_text)
             self.assertIn("| ingest | subprocess | ingest_document | - | 0 | - | default |", readme_text)
             self.assertIn("editable copies live in `contracts/`", readme_text)
+            ingest_step_text = (package_dir / "steps" / "ingest.py").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("WORKER_GUIDANCE", ingest_step_text)
+            self.assertIn("'operation_type': 'ingest'", ingest_step_text)
+            self.assertIn("'artifact_kind': 'ingest_output'", ingest_step_text)
+            self.assertIn('"worker_guidance": WORKER_GUIDANCE', ingest_step_text)
             makefile_text = (package_dir / "Makefile").read_text(
                 encoding="utf-8"
             )
@@ -3351,6 +3360,14 @@ class ProcessRuntimeTests(unittest.TestCase):
             step["id"]: step for step in digitalization["steps"]
         }
         self.assertEqual(
+            digitalization_steps["extract"]["guidance"]["operation_type"],
+            "extract",
+        )
+        self.assertIn(
+            "artifact_kind",
+            digitalization_steps["extract"]["guidance"]["outputs"],
+        )
+        self.assertEqual(
             digitalization_steps["ingest"]["accepts_document_types"],
             ["generic_document", "page_document"],
         )
@@ -4068,6 +4085,12 @@ class ProcessRuntimeTests(unittest.TestCase):
                             max_attempts: 3
                             delay_seconds: 10
                             retry_error_kinds: [transient_io]
+                        guidance:
+                          role: OCR extractor
+                          intent: Extract invoice page text for accounting review.
+                          replace_sample_with:
+                            - Call OCR or document parser.
+                            - Emit page stream chunks.
                       - id: approve
                         capability: approve_invoice
                         operation_type: approve
@@ -4118,6 +4141,14 @@ class ProcessRuntimeTests(unittest.TestCase):
             }
             self.assertEqual(inspected_steps["ingest"]["needs"], [])
             self.assertEqual(inspected_steps["extract"]["needs"], ["ingest"])
+            self.assertEqual(
+                inspected_steps["extract"]["guidance"]["role"],
+                "OCR extractor",
+            )
+            self.assertIn(
+                "document parser",
+                inspected_steps["extract"]["guidance"]["replace_sample_with"][0],
+            )
             self.assertEqual(inspected_steps["approve"]["needs"], ["extract"])
             self.assertEqual(inspected_steps["approve"]["operation_type"], "approve")
             self.assertEqual(inspected_steps["triage"]["needs"], [])
@@ -4179,6 +4210,14 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertIn("capability: extract_invoice", pipeline_text)
             self.assertIn("kind: manual", pipeline_text)
             self.assertIn('needs: ["extract", "approve", "triage"]', pipeline_text)
+            extract_step_text = (package_dir / "steps" / "extract.py").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("'role': 'OCR extractor'", extract_step_text)
+            self.assertIn(
+                "'intent': 'Extract invoice page text for accounting review.'",
+                extract_step_text,
+            )
 
             validate = _run_cli(
                 "--pipeline-dir",

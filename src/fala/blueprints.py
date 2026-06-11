@@ -47,6 +47,7 @@ class _ScaffoldBlueprint:
     capability_output_schema_by_step: dict[str, dict[str, Any]] | None = None
     capability_streams_by_step: dict[str, tuple[StreamSpec, ...]] | None = None
     step_policy_by_step: dict[str, dict[str, Any]] | None = None
+    step_guidance_by_step: dict[str, dict[str, Any]] | None = None
 
 
 def _stream_text_value_schema() -> dict[str, Any]:
@@ -2127,6 +2128,7 @@ def _scaffold_blueprint_summary(blueprint: _ScaffoldBlueprint) -> dict[str, Any]
     artifact_extensions_by_step = blueprint.artifact_extensions_by_step or {}
     capability_streams_by_step = blueprint.capability_streams_by_step or {}
     step_policy_by_step = blueprint.step_policy_by_step or {}
+    step_guidance_by_step = blueprint.step_guidance_by_step or {}
     operation_type_by_step = blueprint.operation_type_by_step or {}
     resolved_operation_types = [
         operation_type_by_step.get(step_id) or operation_type_for_step(step_id)
@@ -2181,6 +2183,32 @@ def _scaffold_blueprint_summary(blueprint: _ScaffoldBlueprint) -> dict[str, Any]
                     }.items()
                     if value is not None
                 },
+                "guidance": _step_guidance_summary(
+                    step_id=step_id,
+                    document_type=blueprint.document_type,
+                    capability=blueprint.capability_by_step[step_id],
+                    operation_type=(
+                        operation_type_by_step.get(step_id)
+                        or operation_type_for_step(step_id)
+                    ),
+                    artifact_kind=blueprint.artifact_kind_by_step[step_id],
+                    accepts_document_types=list(
+                        accepted_document_types_by_step.get(step_id)
+                        or (
+                            (blueprint.document_type,)
+                            if step_id == blueprint.steps[0]
+                            else ()
+                        )
+                    ),
+                    emits_document_types=list(
+                        emitted_document_types_by_step.get(step_id) or ()
+                    ),
+                    streams=[
+                        stream.model_dump(mode="json", exclude_none=True)
+                        for stream in capability_streams_by_step.get(step_id, ())
+                    ],
+                    guidance=step_guidance_by_step.get(step_id),
+                ),
             }
         )
     return {
@@ -2313,7 +2341,72 @@ def _blueprint_search_text(summary: dict[str, Any]) -> str:
             values.append(str(stream.get("stream_id") or ""))
             values.extend(str(item) for item in stream.get("kinds") or [])
             values.extend(str(item) for item in stream.get("consumers") or [])
+        guidance = step.get("guidance")
+        if isinstance(guidance, dict):
+            _extend_search_values(values, guidance)
     return "\n".join(values).lower()
+
+
+def _extend_search_values(values: list[str], value: Any) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            values.append(str(key))
+            _extend_search_values(values, item)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _extend_search_values(values, item)
+        return
+    if value is not None:
+        values.append(str(value))
+
+
+def _step_guidance_summary(
+    *,
+    step_id: str,
+    document_type: str,
+    capability: str,
+    operation_type: str,
+    artifact_kind: str,
+    accepts_document_types: list[str],
+    emits_document_types: list[str],
+    streams: list[dict[str, Any]],
+    guidance: dict[str, Any] | None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "role": _title_from_id(step_id),
+        "operation_type": operation_type,
+        "capability": capability,
+        "artifact_kind": artifact_kind,
+        "intent": (
+            f"Implement {operation_type} work for capability {capability} "
+            f"in a {document_type} workflow."
+        ),
+        "replace_sample_with": [
+            "Read source documents and upstream artifacts from ProcessExecutionContext.",
+            "Write durable artifacts under artifact_root(context, PROCESS_ID).",
+            "Return ProcessOutput values that match the capability output schema.",
+        ],
+        "inputs": {
+            "document_types": accepts_document_types,
+        },
+        "outputs": {
+            "artifact_kind": artifact_kind,
+            "document_types": emits_document_types,
+            "streams": [
+                stream.get("stream_id") or stream.get("stream")
+                for stream in streams
+                if isinstance(stream, dict)
+            ],
+        },
+    }
+    if guidance:
+        result.update(guidance)
+    return result
+
+
+def _title_from_id(value: str) -> str:
+    return value.replace("_", " ").replace("-", " ").strip().title() or value
 
 
 def get_scaffold_blueprint(blueprint_id: str) -> ScaffoldBlueprint | None:
@@ -2345,6 +2438,7 @@ def scaffold_blueprint_from_mapping(
     capability_output_schema_by_step: dict[str, dict[str, Any]] = {}
     capability_streams_by_step: dict[str, tuple[StreamSpec, ...]] = {}
     step_policy_by_step: dict[str, dict[str, Any]] = {}
+    step_guidance_by_step: dict[str, dict[str, Any]] = {}
 
     for index, raw_step in enumerate(raw_steps):
         step_source = f"{source}.steps[{index}]"
@@ -2415,6 +2509,11 @@ def scaffold_blueprint_from_mapping(
                 raw_step["policy"],
                 source=f"{step_source}.policy",
             )
+        if raw_step.get("guidance") is not None:
+            step_guidance_by_step[step_id] = _plain_mapping(
+                raw_step["guidance"],
+                source=f"{step_source}.guidance",
+            )
 
     _validate_blueprint_needs(
         needs_by_step,
@@ -2479,6 +2578,7 @@ def scaffold_blueprint_from_mapping(
         capability_output_schema_by_step=capability_output_schema_by_step or None,
         capability_streams_by_step=capability_streams_by_step or None,
         step_policy_by_step=step_policy_by_step or None,
+        step_guidance_by_step=step_guidance_by_step or None,
     )
 
 

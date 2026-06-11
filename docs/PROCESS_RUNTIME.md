@@ -1131,9 +1131,12 @@ Blueprints are bootstrap presets only. They generate normal
 templates, worker manifests, step programs, child document output contracts,
 artifact media contracts, artifact value schemas, capability output schemas, and
 common stream contracts. The generated README summarizes the contract surface,
-step policy, worker mode, manual gates, and operator commands. The generated
-Makefile exposes the same bootstrap path as targets: `make bootstrap`,
-`make create`, `make run-local`, `make serve`, and `make worker`.
+worker guidance, step policy, worker mode, manual gates, and operator commands.
+Each generated `steps/*.py` file contains `WORKER_GUIDANCE` with the role,
+operation type, expected inputs, outputs, streams, and what to replace in the
+sample implementation. The generated Makefile exposes the same bootstrap path as
+targets: `make bootstrap`, `make create`, `make run-local`, `make serve`, and
+`make worker`.
 Blueprints also prefill conservative step policy such as retry, SLA, priority,
 max concurrency, resource pools, child wait barriers, and manual review gates
 where the workflow shape calls for them. They avoid hard worker resource
