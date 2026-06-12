@@ -1249,6 +1249,106 @@ class RuntimeProcessPage(BaseModel):
     processes: list[RuntimeProcessRecord] = Field(default_factory=list)
 
 
+class RuntimeStepReportItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    document_id: str
+    document_title: str | None = None
+    document_type: RuntimeId | None = None
+    document_relation: RuntimeId | None = None
+    parent_document_id: str | None = None
+    pipeline_id: RuntimeId | None = None
+    process_id: RuntimeId
+    position: int = Field(ge=0)
+    title: str | None = None
+    capability: RuntimeId | None = None
+    operation_type: RuntimeId | None = None
+    adapter_kind: AdapterKind | None = None
+    priority: int = 0
+    resource_pool: RuntimeId = "default"
+    status: ProcessStatus | Literal["unknown"]
+    status_category: Literal["waiting", "queued", "running", "terminal", "unknown"]
+    needs: list[str] = Field(default_factory=list)
+    blocked_by: list[str] = Field(default_factory=list)
+    is_blocked: bool = False
+    is_active: bool = False
+    is_terminal: bool = False
+    has_claim: bool = False
+    worker_id: str | None = None
+    attempt: int | None = None
+    claim_expires_at: datetime | None = None
+    has_output: bool = False
+    output_value_keys: list[str] = Field(default_factory=list)
+    artifact_count: int = Field(default=0, ge=0)
+    output_document_count: int = Field(default=0, ge=0)
+    metadata_keys: list[str] = Field(default_factory=list)
+    stream_count: int = Field(default=0, ge=0)
+    stream_chunk_count: int = Field(default=0, ge=0)
+    stream_artifact_count: int = Field(default=0, ge=0)
+    stream_checkpoint_count: int = Field(default=0, ge=0)
+
+
+class RuntimeDocumentStepReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    document_id: str
+    document_title: str | None = None
+    document_type: RuntimeId | None = None
+    document_relation: RuntimeId | None = None
+    parent_document_id: str | None = None
+    parent_process_id: RuntimeId | None = None
+    child_document_ids: list[str] = Field(default_factory=list)
+    child_document_count: int = Field(default=0, ge=0)
+    pipeline_id: RuntimeId | None = None
+    process_count: int = Field(default=0, ge=0)
+    terminal_process_count: int = Field(default=0, ge=0)
+    active_process_count: int = Field(default=0, ge=0)
+    blocked_process_count: int = Field(default=0, ge=0)
+    completed_process_count: int = Field(default=0, ge=0)
+    failed_process_count: int = Field(default=0, ge=0)
+    skipped_process_count: int = Field(default=0, ge=0)
+    cancelled_process_count: int = Field(default=0, ge=0)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    progress: float = Field(default=0.0, ge=0.0, le=1.0)
+    steps: list[RuntimeStepReportItem] = Field(default_factory=list)
+
+
+class RuntimeStepReportSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_count: int = Field(default=0, ge=0)
+    process_count: int = Field(default=0, ge=0)
+    terminal_process_count: int = Field(default=0, ge=0)
+    active_process_count: int = Field(default=0, ge=0)
+    blocked_process_count: int = Field(default=0, ge=0)
+    completed_process_count: int = Field(default=0, ge=0)
+    failed_process_count: int = Field(default=0, ge=0)
+    skipped_process_count: int = Field(default=0, ge=0)
+    cancelled_process_count: int = Field(default=0, ge=0)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    pipeline_counts: dict[str, int] = Field(default_factory=dict)
+    operation_type_counts: dict[str, int] = Field(default_factory=dict)
+    claim_count: int = Field(default=0, ge=0)
+    output_count: int = Field(default=0, ge=0)
+    artifact_count: int = Field(default=0, ge=0)
+    output_document_count: int = Field(default=0, ge=0)
+    stream_chunk_count: int = Field(default=0, ge=0)
+    progress: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class RuntimeStepReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool = True
+    run_id: str
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    summary: RuntimeStepReportSummary = Field(default_factory=RuntimeStepReportSummary)
+    documents: list[RuntimeDocumentStepReport] = Field(default_factory=list)
+    steps: list[RuntimeStepReportItem] = Field(default_factory=list)
+
+
 class RuntimeDeadLetterItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

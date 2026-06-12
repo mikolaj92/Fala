@@ -29,6 +29,7 @@ from fala.models import (
     RuntimeRunHealth,
     RuntimeStuckWorkPage,
     RuntimeState,
+    RuntimeStepReport,
     RuntimeStreamBatch,
     RuntimeStreamCheckpoint,
     RuntimeStreamChunk,
@@ -739,6 +740,13 @@ class ProcessRuntimeClient:
         )
         response.raise_for_status()
         return RuntimeState.model_validate(response.json())
+
+    async def get_step_report(self, *, run_id: str) -> RuntimeStepReport:
+        response = await self._client.get(
+            f"/api/runs/{self._part(run_id)}/process-runtime/report",
+        )
+        response.raise_for_status()
+        return RuntimeStepReport.model_validate(response.json())
 
     async def get_queue_metrics(self, *, run_id: str) -> RuntimeQueueMetrics:
         response = await self._client.get(

@@ -120,7 +120,11 @@ from fala.postgres_store import (  # noqa: E402
     POSTGRES_SCHEMA_SQL,
     POSTGRES_TRY_CLAIM_STATUS_SQL,
 )
-from fala.state import build_runtime_document_state, build_runtime_state  # noqa: E402
+from fala.state import (  # noqa: E402
+    build_runtime_document_state,
+    build_runtime_state,
+    build_runtime_step_report,
+)
 from fala.worker_cli import (
     _build_parser as build_runtime_worker_parser,
     main as runtime_worker_cli_main,
@@ -1038,6 +1042,119 @@ class ProcessRuntimeTests(unittest.TestCase):
         self.assertEqual(state.summary.artifact_count, 1)
         self.assertEqual(payload["documents"][0]["steps"][0]["status"], "completed")
         self.assertEqual(payload["summary"]["process_count"], 2)
+
+    def test_runtime_step_report_tracks_progress_and_blockers(self) -> None:
+        pipeline = PipelineSpec(
+            id="report_flow",
+            steps=[
+                ProcessSpec(id="first", adapter=AdapterSpec(kind="queue", queue="first")),
+                ProcessSpec(
+                    id="second",
+                    needs=["first"],
+                    adapter=AdapterSpec(kind="queue", queue="second"),
+                ),
+                ProcessSpec(
+                    id="third",
+                    needs=["second"],
+                    adapter=AdapterSpec(kind="queue", queue="third"),
+                ),
+            ],
+        )
+        output = ProcessOutput(values={"text": "ok"})
+        document = build_runtime_document_state(
+            document_id="doc.pdf",
+            pipeline_id="report_flow",
+            pipeline=pipeline,
+            statuses={
+                "first": ProcessStatus.completed,
+                "second": ProcessStatus.queued,
+                "third": ProcessStatus.waiting,
+            },
+            claims={},
+            outputs={"first": output},
+            projections={},
+            events=[],
+        )
+        report = build_runtime_step_report(
+            build_runtime_state(run_id="run_report", documents=[document])
+        )
+
+        self.assertEqual(report.summary.document_count, 1)
+        self.assertEqual(report.summary.process_count, 3)
+        self.assertEqual(report.summary.terminal_process_count, 1)
+        self.assertEqual(report.summary.completed_process_count, 1)
+        self.assertEqual(report.summary.blocked_process_count, 1)
+        self.assertAlmostEqual(report.summary.progress, 1 / 3)
+        self.assertEqual(report.documents[0].progress, 1 / 3)
+        self.assertEqual([step.process_id for step in report.steps], ["first", "second", "third"])
+        self.assertEqual(report.steps[0].status_category, "terminal")
+        self.assertEqual(report.steps[1].blocked_by, [])
+        self.assertEqual(report.steps[2].blocked_by, ["second"])
+        self.assertTrue(report.steps[2].is_blocked)
+
+    def test_runtime_step_report_is_available_from_api_and_client(self) -> None:
+        pipeline = PipelineSpec(
+            id="report_flow",
+            steps=[
+                ProcessSpec(id="first", adapter=AdapterSpec(kind="queue", queue="first")),
+                ProcessSpec(
+                    id="second",
+                    needs=["first"],
+                    adapter=AdapterSpec(kind="queue", queue="second"),
+                ),
+            ],
+        )
+        service = RuntimeService(
+            registry=PipelineRegistry([pipeline]),
+            store=InMemoryStateStore(),
+        )
+        app = FastAPI()
+        app.include_router(create_runtime_router(service), prefix="/api")
+
+        async def run_client() -> None:
+            async with ProcessRuntimeClient(
+                "http://runtime.test",
+                transport=httpx.ASGITransport(app=app),
+            ) as client:
+                await client.initialize_document(
+                    run_id="run_report",
+                    document_id="doc.pdf",
+                    pipeline_id="report_flow",
+                    values={"source": "doc.pdf"},
+                )
+                initial = await client.get_step_report(run_id="run_report")
+                self.assertEqual(initial.summary.process_count, 2)
+                self.assertEqual(initial.summary.status_counts["queued"], 1)
+                self.assertEqual(initial.summary.status_counts["waiting"], 1)
+                self.assertEqual(initial.steps[1].blocked_by, ["first"])
+
+                claimed = await client.claim_next(
+                    run_id="run_report",
+                    pipeline_id="report_flow",
+                    worker_id="worker-1",
+                )
+                self.assertIsNotNone(claimed)
+                running = await client.get_step_report(run_id="run_report")
+                self.assertEqual(running.steps[0].status, ProcessStatus.running)
+                self.assertTrue(running.steps[0].is_active)
+                self.assertEqual(running.steps[0].worker_id, "worker-1")
+                self.assertEqual(running.summary.active_process_count, 1)
+
+                await client.write_output(
+                    run_id="run_report",
+                    document_id="doc.pdf",
+                    process_id="first",
+                    output=ProcessOutput(values={"ok": True}),
+                    pipeline_id="report_flow",
+                    worker_id="worker-1",
+                )
+                after_output = await client.get_step_report(run_id="run_report")
+                self.assertEqual(after_output.steps[0].status, ProcessStatus.completed)
+                self.assertEqual(after_output.steps[1].status, ProcessStatus.queued)
+                self.assertEqual(after_output.steps[1].blocked_by, [])
+                self.assertAlmostEqual(after_output.summary.progress, 0.5)
+
+        asyncio.run(run_client())
 
     def test_runtime_cli_validates_initializes_and_claims_from_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5088,6 +5205,15 @@ class ProcessRuntimeTests(unittest.TestCase):
                 runtime_state_schema["schema"]["$defs"]["RuntimeStateSummary"][
                     "properties"
                 ],
+            )
+            runtime_step_report_schema = _run_cli("schema", "runtime-step-report")
+            self.assertEqual(
+                runtime_step_report_schema["model"],
+                "runtime-step-report",
+            )
+            self.assertIn(
+                "steps",
+                runtime_step_report_schema["schema"]["properties"],
             )
             process_record_schema = _run_cli("schema", "runtime-process-record")
             self.assertEqual(process_record_schema["model"], "runtime-process-record")
@@ -9565,6 +9691,45 @@ class ProcessRuntimeTests(unittest.TestCase):
                         "pipelines": [{"id": "pipeline", "package_id": "vendor_review"}],
                     },
                 )
+            if request.url.path.endswith("/process-runtime/report"):
+                step = {
+                    "run_id": "run_http",
+                    "document_id": "folder/doc.pdf",
+                    "pipeline_id": "pipeline",
+                    "process_id": "extract",
+                    "position": 0,
+                    "status": "running",
+                    "status_category": "running",
+                    "is_active": True,
+                    "has_claim": True,
+                    "worker_id": "worker-http",
+                }
+                return httpx.Response(
+                    200,
+                    json={
+                        "ok": True,
+                        "run_id": "run_http",
+                        "summary": {
+                            "document_count": 1,
+                            "process_count": 1,
+                            "active_process_count": 1,
+                            "status_counts": {"running": 1},
+                            "pipeline_counts": {"pipeline": 1},
+                        },
+                        "documents": [
+                            {
+                                "run_id": "run_http",
+                                "document_id": "folder/doc.pdf",
+                                "pipeline_id": "pipeline",
+                                "process_count": 1,
+                                "active_process_count": 1,
+                                "status_counts": {"running": 1},
+                                "steps": [step],
+                            }
+                        ],
+                        "steps": [step],
+                    },
+                )
             if request.url.path.endswith("/process-runtime") and request.method == "GET":
                 return httpx.Response(
                     200,
@@ -9679,6 +9844,9 @@ class ProcessRuntimeTests(unittest.TestCase):
                 state = await client.get_state(run_id="run_http")
                 self.assertEqual(state.documents[0].event_count, 3)
                 self.assertEqual(state.documents[0].events, [])
+                report = await client.get_step_report(run_id="run_http")
+                self.assertEqual(report.summary.process_count, 1)
+                self.assertEqual(report.steps[0].worker_id, "worker-http")
                 attached = await client.attach_run(
                     run_id="run_http",
                     pipeline_id="pipeline",
@@ -9752,39 +9920,43 @@ class ProcessRuntimeTests(unittest.TestCase):
         self.assertEqual(requests[4].url.params["include_events"], "false")
         self.assertEqual(
             requests[5].url.raw_path.decode("utf-8"),
-            "/api/runs/run_http/process-runtime/attach",
+            "/api/runs/run_http/process-runtime/report",
         )
-        self.assertEqual(json.loads(requests[5].content)["pipeline_id"], "pipeline")
         self.assertEqual(
             requests[6].url.raw_path.decode("utf-8"),
+            "/api/runs/run_http/process-runtime/attach",
+        )
+        self.assertEqual(json.loads(requests[6].content)["pipeline_id"], "pipeline")
+        self.assertEqual(
+            requests[7].url.raw_path.decode("utf-8"),
             "/api/runs/run_http/process-runtime/claim",
         )
-        self.assertEqual(json.loads(requests[6].content)["capabilities"], [])
+        self.assertEqual(json.loads(requests[7].content)["capabilities"], [])
         self.assertEqual(
-            requests[7].url.raw_path.decode("utf-8").split("?", 1)[0],
+            requests[8].url.raw_path.decode("utf-8").split("?", 1)[0],
             "/api/runs/run_http/process-runtime/folder%2Fdoc.pdf/processes/extract/output",
         )
-        self.assertEqual(requests[7].url.params["pipeline_id"], "pipeline")
-        self.assertEqual(requests[7].url.params["worker_id"], "worker-http")
+        self.assertEqual(requests[8].url.params["pipeline_id"], "pipeline")
+        self.assertEqual(requests[8].url.params["worker_id"], "worker-http")
         self.assertEqual(
-            requests[8].url.raw_path.decode("utf-8"),
+            requests[9].url.raw_path.decode("utf-8"),
             "/api/runs/run_http/process-runtime/folder%2Fdoc.pdf/schedule",
         )
         self.assertEqual(
-            requests[9].url.raw_path.decode("utf-8"),
+            requests[10].url.raw_path.decode("utf-8"),
             "/api/runs/run_http/process-runtime/folder%2Fdoc.pdf/processes/extract/actions",
         )
-        action_payload = json.loads(requests[9].content)
+        action_payload = json.loads(requests[10].content)
         self.assertEqual(action_payload["action"], "retry")
         self.assertEqual(action_payload["pipeline_id"], "pipeline")
         self.assertEqual(action_payload["reason"], "operator retry")
         self.assertEqual(
-            requests[10].url.raw_path.decode("utf-8").split("?", 1)[0],
+            requests[11].url.raw_path.decode("utf-8").split("?", 1)[0],
             "/api/runs/run_http/process-runtime/folder%2Fdoc.pdf/events",
         )
-        self.assertEqual(requests[10].url.params["process_id"], "extract")
-        self.assertEqual(requests[10].url.params["after_event_id"], "event_previous")
-        self.assertEqual(requests[10].url.params["limit"], "10")
+        self.assertEqual(requests[11].url.params["process_id"], "extract")
+        self.assertEqual(requests[11].url.params["after_event_id"], "event_previous")
+        self.assertEqual(requests[11].url.params["limit"], "10")
 
     def test_runtime_client_streams_process_events(self) -> None:
         store = InMemoryStateStore()

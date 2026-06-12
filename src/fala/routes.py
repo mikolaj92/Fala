@@ -1570,6 +1570,11 @@ def create_runtime_router(
         guard(run_id)
         return await service.load_state(run_id, include_events=include_events)
 
+    @router.get("/runs/{run_id}/process-runtime/report")
+    async def get_run_process_runtime_report(run_id: str) -> dict[str, Any]:
+        guard(run_id)
+        return (await service.step_report(run_id)).model_dump(mode="json")
+
     @router.get("/runs/{run_id}/process-runtime/metrics")
     async def get_run_process_runtime_metrics(run_id: str) -> dict[str, Any]:
         guard(run_id)

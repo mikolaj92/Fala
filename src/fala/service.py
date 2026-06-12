@@ -87,6 +87,7 @@ from fala.models import (
     RuntimeStreamCheckpoint,
     RuntimeStreamChunk,
     RuntimeState,
+    RuntimeStepReport,
     RuntimeTrace,
     RuntimeWorkerHeartbeat,
     RuntimeWorkerDemand,
@@ -111,6 +112,7 @@ from fala.schema_validation import validate_json_value
 from fala.state import (
     build_runtime_document_state,
     build_runtime_state,
+    build_runtime_step_report,
     runtime_step_snapshot,
     runtime_stream_snapshots,
 )
@@ -2776,6 +2778,10 @@ class RuntimeService:
     ) -> dict[str, Any]:
         state = await self.load_state_model(run_id, include_events=include_events)
         return state.model_dump(mode="json")
+
+    async def step_report(self, run_id: str) -> RuntimeStepReport:
+        state = await self.load_state_model(run_id, include_events=False)
+        return build_runtime_step_report(state)
 
     async def document_registry(
         self,

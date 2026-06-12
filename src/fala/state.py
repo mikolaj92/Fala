@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from fala.models import (
     CombinedProjection,
@@ -13,6 +14,10 @@ from fala.models import (
     ProcessStatus,
     ResourceSpec,
     RuntimeDocument,
+    RuntimeDocumentStepReport,
+    RuntimeStepReport,
+    RuntimeStepReportItem,
+    RuntimeStepReportSummary,
     RuntimeDocumentState,
     RuntimeState,
     RuntimeStateSummary,
@@ -33,6 +38,140 @@ def build_runtime_state(
         run_id=run_id,
         summary=runtime_state_summary(documents_list),
         documents=documents_list,
+    )
+
+
+def build_runtime_step_report(state: RuntimeState) -> RuntimeStepReport:
+    documents: list[RuntimeDocumentStepReport] = []
+    steps: list[RuntimeStepReportItem] = []
+
+    for document in state.documents:
+        document_steps: list[RuntimeStepReportItem] = []
+        output_process_ids = set(document.outputs)
+        for position, step in enumerate(document.steps):
+            status = _status_value(step.status)
+            blocked_by = [
+                process_id
+                for process_id in step.needs
+                if process_id not in output_process_ids
+            ]
+            claim = step.claim
+            item = RuntimeStepReportItem(
+                run_id=state.run_id,
+                document_id=document.document_id,
+                document_title=document.document.title if document.document else None,
+                document_type=(
+                    document.document.document_type if document.document else None
+                ),
+                document_relation=(
+                    document.document.relation
+                    if document.document
+                    else document.relation
+                ),
+                parent_document_id=document.parent_document_id,
+                pipeline_id=document.pipeline_id,
+                process_id=step.id,
+                position=position,
+                title=step.title,
+                capability=step.capability,
+                operation_type=step.operation_type,
+                adapter_kind=step.adapter_kind,
+                priority=step.priority,
+                resource_pool=step.resource_pool,
+                status=step.status,
+                status_category=_status_category(status),
+                needs=list(step.needs),
+                blocked_by=blocked_by,
+                is_blocked=bool(blocked_by) and not _is_terminal_status(status),
+                is_active=status == ProcessStatus.running.value or step.has_claim,
+                is_terminal=_is_terminal_status(status),
+                has_claim=step.has_claim,
+                worker_id=claim.worker_id if claim is not None else None,
+                attempt=claim.attempt if claim is not None else None,
+                claim_expires_at=claim.expires_at if claim is not None else None,
+                has_output=step.has_output,
+                output_value_keys=list(step.output_value_keys),
+                artifact_count=step.artifact_count,
+                output_document_count=step.output_document_count,
+                metadata_keys=list(step.metadata_keys),
+                stream_count=step.stream_count,
+                stream_chunk_count=step.stream_chunk_count,
+                stream_artifact_count=step.stream_artifact_count,
+                stream_checkpoint_count=step.stream_checkpoint_count,
+            )
+            document_steps.append(item)
+            steps.append(item)
+
+        document_counts = _step_report_counts(document_steps)
+        documents.append(
+            RuntimeDocumentStepReport(
+                run_id=state.run_id,
+                document_id=document.document_id,
+                document_title=document.document.title if document.document else None,
+                document_type=(
+                    document.document.document_type if document.document else None
+                ),
+                document_relation=(
+                    document.document.relation
+                    if document.document
+                    else document.relation
+                ),
+                parent_document_id=document.parent_document_id,
+                parent_process_id=document.parent_process_id,
+                child_document_ids=list(document.child_document_ids),
+                child_document_count=document.child_document_count,
+                pipeline_id=document.pipeline_id,
+                process_count=len(document_steps),
+                terminal_process_count=document_counts["terminal_process_count"],
+                active_process_count=document_counts["active_process_count"],
+                blocked_process_count=document_counts["blocked_process_count"],
+                completed_process_count=document_counts["completed_process_count"],
+                failed_process_count=document_counts["failed_process_count"],
+                skipped_process_count=document_counts["skipped_process_count"],
+                cancelled_process_count=document_counts["cancelled_process_count"],
+                status_counts=document_counts["status_counts"],
+                progress=document_counts["progress"],
+                steps=document_steps,
+            )
+        )
+
+    counts = _step_report_counts(steps)
+    pipeline_counts: dict[str, int] = {}
+    operation_type_counts: dict[str, int] = {}
+    for document in documents:
+        pipeline_counts[document.pipeline_id or "unknown"] = (
+            pipeline_counts.get(document.pipeline_id or "unknown", 0) + 1
+        )
+    for step in steps:
+        if step.operation_type is not None:
+            operation_type_counts[step.operation_type] = (
+                operation_type_counts.get(step.operation_type, 0) + 1
+            )
+
+    return RuntimeStepReport(
+        run_id=state.run_id,
+        summary=RuntimeStepReportSummary(
+            document_count=len(documents),
+            process_count=len(steps),
+            terminal_process_count=counts["terminal_process_count"],
+            active_process_count=counts["active_process_count"],
+            blocked_process_count=counts["blocked_process_count"],
+            completed_process_count=counts["completed_process_count"],
+            failed_process_count=counts["failed_process_count"],
+            skipped_process_count=counts["skipped_process_count"],
+            cancelled_process_count=counts["cancelled_process_count"],
+            status_counts=counts["status_counts"],
+            pipeline_counts=pipeline_counts,
+            operation_type_counts=operation_type_counts,
+            claim_count=sum(1 for step in steps if step.has_claim),
+            output_count=sum(1 for step in steps if step.has_output),
+            artifact_count=sum(step.artifact_count for step in steps),
+            output_document_count=sum(step.output_document_count for step in steps),
+            stream_chunk_count=sum(step.stream_chunk_count for step in steps),
+            progress=counts["progress"],
+        ),
+        documents=documents,
+        steps=steps,
     )
 
 
@@ -88,6 +227,54 @@ def runtime_state_summary(
         stream_checkpoint_count=stream_checkpoint_count,
         event_count=sum(document.event_count for document in documents),
     )
+
+
+def _step_report_counts(
+    steps: Sequence[RuntimeStepReportItem],
+) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+    for step in steps:
+        status = _status_value(step.status)
+        status_counts[status] = status_counts.get(status, 0) + 1
+    terminal_process_count = sum(1 for step in steps if step.is_terminal)
+    return {
+        "terminal_process_count": terminal_process_count,
+        "active_process_count": sum(1 for step in steps if step.is_active),
+        "blocked_process_count": sum(1 for step in steps if step.is_blocked),
+        "completed_process_count": status_counts.get(ProcessStatus.completed.value, 0),
+        "failed_process_count": status_counts.get(ProcessStatus.failed.value, 0),
+        "skipped_process_count": status_counts.get(ProcessStatus.skipped.value, 0),
+        "cancelled_process_count": status_counts.get(ProcessStatus.cancelled.value, 0),
+        "status_counts": status_counts,
+        "progress": terminal_process_count / len(steps) if steps else 0.0,
+    }
+
+
+def _status_value(status: ProcessStatus | str) -> str:
+    if isinstance(status, ProcessStatus):
+        return status.value
+    return status
+
+
+def _is_terminal_status(status: str) -> bool:
+    return status in {
+        ProcessStatus.completed.value,
+        ProcessStatus.failed.value,
+        ProcessStatus.skipped.value,
+        ProcessStatus.cancelled.value,
+    }
+
+
+def _status_category(status: str) -> str:
+    if _is_terminal_status(status):
+        return "terminal"
+    if status == ProcessStatus.running.value:
+        return "running"
+    if status == ProcessStatus.queued.value:
+        return "queued"
+    if status == ProcessStatus.waiting.value:
+        return "waiting"
+    return "unknown"
 
 
 def build_runtime_document_state(
