@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import shlex
 import subprocess
 import time
@@ -405,10 +406,17 @@ def _read_xlsx_workbook(path: Path) -> dict[str, dict[str, Any]]:
         sheet_targets = _read_sheet_targets(archive)
         workbook: dict[str, dict[str, Any]] = {}
         for sheet_name, target in sheet_targets.items():
-            xml_path = target if target.startswith("xl/") else f"xl/{target.lstrip('/')}"
+            xml_path = _xlsx_workbook_part_path(target)
             rows, formulas = _read_sheet_xml(archive.read(xml_path), shared_strings)
             workbook[sheet_name] = {"rows": rows, "formulas": formulas}
         return workbook
+
+
+def _xlsx_workbook_part_path(target: str) -> str:
+    clean = target.lstrip("/")
+    if clean.startswith("xl/"):
+        return posixpath.normpath(clean)
+    return posixpath.normpath(posixpath.join("xl", clean))
 
 
 def _read_shared_strings(archive: zipfile.ZipFile) -> list[str]:

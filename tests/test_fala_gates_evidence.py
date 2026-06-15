@@ -97,7 +97,37 @@ gates:
     assert report.results[0].data["exit_code"] == 7
 
 
-def _write_minimal_workbook(path: Path) -> None:
+def test_xlsx_workbook_gate_accepts_absolute_relationship_targets(tmp_path: Path) -> None:
+    workbook = tmp_path / "workbook.xlsx"
+    _write_minimal_workbook(workbook, absolute_targets=True)
+
+    config = tmp_path / "gates.yaml"
+    config.write_text(
+        """
+gates:
+  - id: workbook_contract
+    type: xlsx_workbook
+    path: workbook.xlsx
+    sheets: [SDS_Working_Sheet, 15_Methodology_Cards]
+    headers:
+      SDS_Working_Sheet: [source_file, name, cas]
+      15_Methodology_Cards: [source_file, calculation_formula]
+    formulas:
+      - sheet: 15_Methodology_Cards
+        header: calculation_formula
+        row: 2
+        contains: A2
+""",
+        encoding="utf-8",
+    )
+
+    report = run_gate_suite_from_file(config)
+
+    assert report.ok is True
+    assert report.passed == 1
+
+
+def _write_minimal_workbook(path: Path, *, absolute_targets: bool = False) -> None:
     workbook_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
           xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
@@ -107,10 +137,12 @@ def _write_minimal_workbook(path: Path) -> None:
   </sheets>
 </workbook>
 """
-    rels_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    sheet1_target = "/xl/worksheets/sheet1.xml" if absolute_targets else "worksheets/sheet1.xml"
+    sheet2_target = "/xl/worksheets/sheet2.xml" if absolute_targets else "worksheets/sheet2.xml"
+    rels_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="{sheet1_target}"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="{sheet2_target}"/>
 </Relationships>
 """
     sheet1_xml = """<?xml version="1.0" encoding="UTF-8"?>
