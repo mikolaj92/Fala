@@ -402,6 +402,31 @@ artifact summaries, dependency output summaries, value keys, process id, documen
 id, capability, attempt, and worker id when known.
 Business logic still stays outside the framework.
 
+## Evidence Packs And Quality Gates
+
+Fala can run generic release or MVP gates from YAML and write one evidence pack
+for the run:
+
+```bash
+uv run fala run-gates \
+  --config mvp-gates.yaml \
+  --base-dir . \
+  --evidence-output evidence-pack.json \
+  --output gate-report.json
+```
+
+Supported generic gates:
+
+- `artifact_exists`: local/file URI artifact presence, size, and optional SHA-256.
+- `command`: subprocess exit-code checks for test or validation commands.
+- `json_metric`: JSON metric assertions with dot/index paths.
+- `xlsx_workbook`: XLSX sheet/header/formula contract checks without
+  domain-specific workbook logic.
+
+Evidence packs include artifact manifests, checksums, gate results, workflow/run
+ids, status, and user metadata. Fala owns the evidence/gate mechanics; workflow
+projects provide domain-specific artifacts and gate config.
+
 Example worker secret and sandbox policy:
 
 ```yaml

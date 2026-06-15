@@ -56,6 +56,26 @@ from fala.embedded import (
     resolve_embedded_runtime_config,
     run_embedded_adapter_until_idle,
 )
+from fala.evidence import (
+    ArtifactManifest,
+    ArtifactManifestEntry,
+    EvidencePack,
+    artifact_entry,
+    build_artifact_manifest,
+    build_evidence_pack,
+    write_evidence_pack,
+)
+from fala.gates import (
+    GateResult,
+    GateRunReport,
+    GateSpec,
+    GateSuiteSpec,
+    XlsxFormulaExpectation,
+    load_gate_suite,
+    run_gate,
+    run_gate_suite,
+    run_gate_suite_from_file,
+)
 from fala.intake import (
     apply_auto_document_routes,
     apply_document_routes,

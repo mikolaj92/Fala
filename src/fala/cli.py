@@ -41,6 +41,7 @@ from fala.contract_lint import (
 from fala.deployment import render_control_plane_deployment_manifest
 from fala.deployment import render_worker_deployment_manifest
 from fala.deployment import render_worker_autoscaling_manifest
+from fala.gates import run_gate_suite_from_file
 from fala.intake import (
     auto_document_routes_from_registry,
     coerce_document_routes,
@@ -304,6 +305,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "project-smoke",
             "project-supervision",
             "replay-dead-letter",
+            "run-gates",
             "stuck-work",
             "queue-metrics",
             "capability-demands",
@@ -410,6 +412,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Validate ProcessExecutionContext JSON from a file or stdin.",
     )
     validate_context.add_argument("--file", default="-", help="JSON file path, or '-' for stdin.")
+
+    run_gates = subparsers.add_parser(
+        "run-gates",
+        help="Run generic quality gates from a YAML config.",
+    )
+    run_gates.add_argument("--config", required=True, help="Gate suite YAML file.")
+    run_gates.add_argument(
+        "--base-dir",
+        default=None,
+        help="Base directory for relative artifact paths. Defaults to the config directory.",
+    )
+    run_gates.add_argument(
+        "--evidence-output",
+        default=None,
+        help="Optional evidence-pack JSON path to write.",
+    )
+    run_gates.add_argument(
+        "--output",
+        default=None,
+        help="Optional gate report JSON path to write.",
+    )
 
     step_replay = subparsers.add_parser(
         "step-replay",
@@ -2449,6 +2472,17 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
                 else []
             ),
         }
+
+    if args.command == "run-gates":
+        report = run_gate_suite_from_file(
+            args.config,
+            base_dir=args.base_dir,
+            evidence_output=args.evidence_output,
+        )
+        payload = report.model_dump(mode="json")
+        if args.output:
+            _write_json_output(args.output, payload)
+        return payload
 
     if args.command == "inspect-run-input":
         return _inspect_runtime_run_input(args.run_input)
