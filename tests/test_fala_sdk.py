@@ -5,24 +5,43 @@ import json
 import os
 import sys
 import hashlib
+import threading
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fala.embedded import (
+    EmbeddedRuntimeConfigError,
+    RuntimeServiceConcurrencyError,
+    SyncRuntimeDriver,
+    resolve_embedded_runtime_config,
+)
 from fala.sdk import (
+    ArtifactNotFoundError,
+    JsonArtifact,
+    JsonNeed,
     PROCESS_RUNTIME_EVENT_PREFIX,
+    StepContract,
     artifact,
     artifact_root,
+    build_step_env,
     emit_event,
     initial,
+    latest_input_artifact,
     output,
     output_document,
     path_from_artifact,
     path_from_uri,
+    read_json_artifact,
     read_needed_json,
+    replay_step_manifest,
+    require_artifact_path,
+    run_step,
     run_stdio,
     stream_chunk,
+    write_json_artifact,
     write_json,
 )
 
@@ -136,6 +155,164 @@ class ProcessRuntimeSDKTests(unittest.TestCase):
         self.assertEqual(ref["metadata"]["size_bytes"], expected_size)
         self.assertEqual(ref["metadata"]["filename"], "payload.json")
 
+    def test_input_artifact_helpers_read_latest_json_and_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            older = root / "older.json"
+            newer = root / "newer.json"
+            bad = root / "bad.json"
+            older.write_text(json.dumps({"version": 1}), encoding="utf-8")
+            newer.write_text(json.dumps({"version": 2}), encoding="utf-8")
+            bad.write_text("{not json", encoding="utf-8")
+            context = {
+                "input": {
+                    "artifacts": [
+                        artifact("payload", older),
+                        artifact("payload", newer),
+                        artifact("bad", bad),
+                    ]
+                }
+            }
+
+            latest = latest_input_artifact(context, "payload")
+            path = require_artifact_path(context, "payload")
+            value = read_json_artifact(context, "payload")
+            written = write_json_artifact(
+                context,
+                "emit",
+                "result",
+                {"ok": True},
+                filename="result.json",
+            )
+
+            self.assertEqual(latest["uri"], newer.resolve().as_uri())
+            self.assertEqual(path, newer.resolve())
+            self.assertEqual(value, {"version": 2})
+            self.assertEqual(written["kind"], "result")
+            self.assertIn("sha256", written["metadata"])
+            with self.assertRaises(ArtifactNotFoundError):
+                latest_input_artifact(context, "missing")
+            with self.assertRaises(json.JSONDecodeError):
+                read_json_artifact(context, "bad")
+
+    def test_read_json_artifact_resolves_content_addressed_uri(self) -> None:
+        from fala.artifacts import FileArtifactStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "payload.json"
+            source.write_text(json.dumps({"stored": True}), encoding="utf-8")
+            store = FileArtifactStore(root / "artifact-store")
+            ref = store.put_file(kind="payload", path=source)
+            old_root = os.environ.get("FALA_ARTIFACT_STORE_ROOT")
+            os.environ["FALA_ARTIFACT_STORE_ROOT"] = str(store.root)
+            try:
+                value = read_json_artifact(
+                    {"input": {"artifacts": [ref.model_dump(mode="json")]}},
+                    "payload",
+                )
+            finally:
+                if old_root is None:
+                    os.environ.pop("FALA_ARTIFACT_STORE_ROOT", None)
+                else:
+                    os.environ["FALA_ARTIFACT_STORE_ROOT"] = old_root
+
+        self.assertEqual(value, {"stored": True})
+
+    def test_build_step_env_sets_artifact_paths_without_domain_names(self) -> None:
+        env = build_step_env(
+            process_artifact_root="/tmp/process-artifacts",
+            artifact_store_root="/tmp/artifact-store",
+            artifact_store="file:/tmp/artifact-store",
+            artifact_cache_root="/tmp/cache",
+            base_env={"KEEP": "1"},
+        )
+
+        self.assertEqual(env["KEEP"], "1")
+        self.assertEqual(env["PROCESS_RUNTIME_ARTIFACT_ROOT"], "/tmp/process-artifacts")
+        self.assertEqual(env["FALA_ARTIFACT_STORE_ROOT"], "/tmp/artifact-store")
+        self.assertEqual(env["FALA_ARTIFACT_STORE"], "file:/tmp/artifact-store")
+        self.assertEqual(env["FALA_ARTIFACT_CACHE_ROOT"], "/tmp/cache")
+
+    def test_run_step_writes_manifest_and_replays_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload_path = root / "payload.json"
+            payload_path.write_text(json.dumps([{"id": 1}]), encoding="utf-8")
+            artifact_dir = root / "artifacts"
+            context = {
+                "pipeline_id": "demo_pipeline",
+                "run_id": "run_1",
+                "document_id": "doc.pdf",
+                "process_id": "enrich",
+                "attempt": 2,
+                "input": {
+                    "values": {
+                        "initial": {},
+                        "needs": {
+                            "ingest": {
+                                "artifacts": [artifact("payload", payload_path)]
+                            }
+                        },
+                    },
+                    "artifacts": [],
+                },
+            }
+            contract = StepContract(
+                process_id="enrich",
+                needs={"payload": JsonNeed("ingest", "payload")},
+                outputs={"result": JsonArtifact("result", "result.json")},
+            )
+
+            def handler(step_context):
+                rows = step_context.needs.json("payload", default=[])
+                rows.append({"id": 2})
+                return step_context.complete(
+                    values={"status": "ok", "rows": len(rows)},
+                    artifacts={"result": rows},
+                )
+
+            old_artifact_dir = os.environ.get("PROCESS_RUNTIME_ARTIFACT_DIR")
+            os.environ["PROCESS_RUNTIME_ARTIFACT_DIR"] = str(artifact_dir)
+            stdin = io.StringIO(json.dumps(context))
+            stdout = io.StringIO()
+            try:
+                with patch.object(sys, "stdin", stdin), patch.object(sys, "stdout", stdout):
+                    rc = run_step(contract, handler)
+            finally:
+                if old_artifact_dir is None:
+                    os.environ.pop("PROCESS_RUNTIME_ARTIFACT_DIR", None)
+                else:
+                    os.environ["PROCESS_RUNTIME_ARTIFACT_DIR"] = old_artifact_dir
+
+            output_payload = json.loads(stdout.getvalue())
+            manifest_path = artifact_dir / "step_run_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            replay = replay_step_manifest(
+                manifest_path,
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import json,sys; "
+                        "ctx=json.loads(sys.stdin.read()); "
+                        "print(json.dumps({'values': {'process_id': ctx['process_id']}, "
+                        "'artifacts': [], 'metadata': {}}))"
+                    ),
+                ],
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(output_payload["values"], {"status": "ok", "rows": 2})
+        self.assertEqual(output_payload["artifacts"][0]["kind"], "result")
+        self.assertIn("step_run_manifest", output_payload["metadata"])
+        self.assertEqual(manifest["schema"], "fala.step_run_manifest.v1")
+        self.assertEqual(manifest["run_id"], "run_1")
+        self.assertEqual(manifest["needs"]["payload"]["artifact"]["kind"], "payload")
+        self.assertEqual(manifest["outputs"][0]["kind"], "result")
+        self.assertTrue(replay["ok"], replay)
+        self.assertEqual(replay["output"]["values"], {"process_id": "enrich"})
+
     def test_path_from_uri_resolves_fala_artifact_store_refs(self) -> None:
         from fala.artifacts import FileArtifactStore
 
@@ -221,6 +398,85 @@ class ProcessRuntimeSDKTests(unittest.TestCase):
             fake.calls,
             [("fala-bucket", f"prefix/blobs/sha256/{digest[:2]}/{digest}")],
         )
+
+    def test_embedded_runtime_config_resolves_absolute_defaults_and_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            override = root / "override"
+            env = {
+                "APP_FALA_DB_PATH": str(override / "runtime.sqlite"),
+                "APP_FALA_ARTIFACT_STORE_ROOT": str(override / "store"),
+                "APP_FALA_PROCESS_ARTIFACT_ROOT": str(override / "process"),
+            }
+
+            defaults = resolve_embedded_runtime_config(
+                prefix="APP_FALA",
+                default_root=root / "default",
+                env={},
+            )
+            overridden = resolve_embedded_runtime_config(
+                prefix="APP_FALA",
+                default_root=root / "default",
+                env=env,
+            )
+
+        self.assertTrue(defaults.db_path.is_absolute())
+        self.assertEqual(defaults.db_path.name, "fala.sqlite")
+        self.assertEqual(overridden.db_path, (override / "runtime.sqlite").resolve())
+        self.assertEqual(overridden.artifact_store_root, (override / "store").resolve())
+        self.assertEqual(overridden.process_artifact_root, (override / "process").resolve())
+
+    def test_embedded_runtime_config_rejects_blank_and_relative_env_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(EmbeddedRuntimeConfigError):
+                resolve_embedded_runtime_config(
+                    prefix="APP_FALA",
+                    default_root=root,
+                    env={"APP_FALA_DB_PATH": "  "},
+                )
+            with self.assertRaises(EmbeddedRuntimeConfigError):
+                resolve_embedded_runtime_config(
+                    prefix="APP_FALA",
+                    default_root=root,
+                    env={"APP_FALA_DB_PATH": "relative.sqlite"},
+                )
+
+    def test_sync_runtime_driver_supports_sequential_reuse_and_blocks_concurrent_reuse(self) -> None:
+        driver = SyncRuntimeDriver({"value": 2})
+        self.assertEqual(driver.run(lambda runtime: runtime["value"] + 1), 3)
+
+        started = threading.Event()
+        release = threading.Event()
+        results: list[str] = []
+
+        def blocking_operation(_runtime):
+            async def run():
+                started.set()
+                await __import__("asyncio").to_thread(release.wait)
+                return "done"
+
+            return run()
+
+        thread = threading.Thread(
+            target=lambda: results.append(driver.run(blocking_operation)),
+        )
+        thread.start()
+        self.assertTrue(started.wait(timeout=2.0))
+        with self.assertRaises(RuntimeServiceConcurrencyError):
+            driver.run(lambda _runtime: "second")
+        release.set()
+        thread.join(timeout=2.0)
+
+        self.assertEqual(results, ["done"])
+
+    def test_package_declares_license_metadata(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+        self.assertTrue((repo_root / "LICENSE").exists())
+        self.assertEqual(pyproject["project"]["license"], "MIT")
+        self.assertIn("LICENSE", pyproject["project"]["license-files"])
 
 
 if __name__ == "__main__":
