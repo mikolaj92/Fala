@@ -34,6 +34,12 @@ from fala.blueprints import (
     scaffold_blueprint_summary,
 )
 from fala.client import ProcessRuntimeClient
+from fala.contract_lint import (
+    ContractLintError,
+    lint_step_contracts,
+    load_step_contract_refs,
+    step_contract_summary,
+)
 from fala.deployment import (
     DeploymentFormat,
     render_control_plane_deployment_manifest,
@@ -262,6 +268,7 @@ __all__ = [
     "CombinedProjection",
     "ClaimedProcess",
     "CombineSpec",
+    "ContractLintError",
     "coerce_document_routes",
     "DocumentRelationSpec",
     "DocumentTypeSpec",
@@ -441,6 +448,8 @@ __all__ = [
     "export_claims_to_queue",
     "get_scaffold_blueprint",
     "list_scaffold_blueprints",
+    "lint_step_contracts",
+    "load_step_contract_refs",
     "load_pipeline_yaml",
     "load_workflow_package_yaml",
     "mount_runtime_web",
@@ -455,6 +464,7 @@ __all__ = [
     "runtime_db_diagnostics",
     "runtime_schema_migration_rows",
     "state_store_diagnostics_target",
+    "step_contract_summary",
     "run_queue_work",
     "scaffold_blueprint_from_mapping",
     "scaffold_blueprint_summary",

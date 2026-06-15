@@ -33,6 +33,7 @@ from fala.blueprints import (
     scaffold_blueprint_summary,
 )
 from fala.client import ProcessRuntimeClient
+from fala.contract_lint import lint_step_contracts, load_step_contract_refs
 from fala.deployment import render_control_plane_deployment_manifest
 from fala.deployment import render_worker_deployment_manifest
 from fala.deployment import render_worker_autoscaling_manifest
@@ -301,6 +302,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "stuck-work",
             "queue-metrics",
             "capability-demands",
+            "contract-lint",
             "stream-append",
             "stream-checkpoint",
             "stream-checkpoint-get",
@@ -431,6 +433,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit typed preflight contract for one pipeline.",
     )
     contract.add_argument("pipeline_id")
+
+    contract_lint = subparsers.add_parser(
+        "contract-lint",
+        help="Compare Python StepContract objects with one pipeline contract.",
+    )
+    contract_lint.add_argument("--pipeline", required=True)
+    contract_lint.add_argument(
+        "--contract",
+        action="append",
+        default=[],
+        help=(
+            "Python contract reference, as module[:attribute]. Attribute defaults "
+            "to CONTRACT and may be a StepContract or iterable of StepContract."
+        ),
+    )
+    contract_lint.add_argument(
+        "--python-path",
+        action="append",
+        default=[],
+        help="Path to prepend to sys.path before importing --contract refs.",
+    )
+    contract_lint.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="Do not fail when pipeline steps have no supplied StepContract.",
+    )
 
     package_index = subparsers.add_parser(
         "package-index",
@@ -2813,6 +2841,19 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             "ok": True,
             "contract": registry.pipeline_contract(args.pipeline_id),
         }
+
+    if args.command == "contract-lint":
+        if not args.contract:
+            raise ValueError("contract-lint requires at least one --contract")
+        return lint_step_contracts(
+            registry,
+            pipeline_id=args.pipeline,
+            contracts=load_step_contract_refs(
+                args.contract,
+                python_paths=args.python_path,
+            ),
+            require_all_steps=not args.allow_missing,
+        )
 
     if args.command == "worker-commands":
         packages = (

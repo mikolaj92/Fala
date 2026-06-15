@@ -483,6 +483,112 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertIn("--package-worker", commands["workers"][0]["argv"])
             self.assertIn("first_worker", commands["workers"][0]["shell"])
 
+    def test_runtime_cli_lints_python_step_contracts_against_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_dir = root / "demo_package"
+            package_dir.mkdir()
+            (package_dir / "process-runtime-package.yaml").write_text(
+                textwrap.dedent(
+                    """
+                    package: demo_package
+                    artifact_kinds:
+                      - id: text
+                      - id: enriched
+                    capabilities:
+                      - id: ingest_text
+                        emits_artifact_kinds: [text]
+                      - id: enrich_text
+                        accepts_artifact_kinds: [text]
+                        emits_artifact_kinds: [enriched]
+                    pipelines:
+                      - demo.yaml
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+            (package_dir / "demo.yaml").write_text(
+                textwrap.dedent(
+                    """
+                    pipeline: demo
+                    steps:
+                      - id: ingest
+                        capability: ingest_text
+                        adapter:
+                          kind: subprocess
+                          command: ["python", "ingest.py"]
+                      - id: enrich
+                        capability: enrich_text
+                        needs: [ingest]
+                        adapter:
+                          kind: subprocess
+                          command: ["python", "enrich.py"]
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+            (root / "demo_contracts.py").write_text(
+                textwrap.dedent(
+                    """
+                    from fala.sdk import JsonArtifact, JsonNeed, StepContract
+
+                    STEP_CONTRACTS = [
+                        StepContract(
+                            process_id="ingest",
+                            outputs={"text": JsonArtifact("text", "text.txt")},
+                        ),
+                        StepContract(
+                            process_id="enrich",
+                            needs={"text": JsonNeed("ingest", "text")},
+                            outputs={"enriched": JsonArtifact("enriched", "enriched.json")},
+                        ),
+                    ]
+
+                    BROKEN_CONTRACTS = [
+                        StepContract(
+                            process_id="enrich",
+                            needs={"text": JsonNeed("ingest", "missing_text")},
+                            outputs={"enriched": JsonArtifact("wrong", "enriched.json")},
+                        ),
+                    ]
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+
+            ok = _run_cli(
+                "--pipeline-dir",
+                str(root),
+                "contract-lint",
+                "--pipeline",
+                "demo",
+                "--python-path",
+                str(root),
+                "--contract",
+                "demo_contracts:STEP_CONTRACTS",
+            )
+            code, broken = _run_cli_raw(
+                "--pipeline-dir",
+                str(root),
+                "contract-lint",
+                "--pipeline",
+                "demo",
+                "--python-path",
+                str(root),
+                "--contract",
+                "demo_contracts:BROKEN_CONTRACTS",
+                "--allow-missing",
+            )
+
+        self.assertTrue(ok["ok"])
+        self.assertEqual(ok["contract_count"], 2)
+        self.assertEqual(ok["issue_count"], 0)
+        self.assertEqual(code, 1)
+        self.assertFalse(broken["ok"])
+        issue_codes = {issue["code"] for issue in broken["issues"]}
+        self.assertIn("need_artifact_not_emitted", issue_codes)
+        self.assertIn("output_artifact_not_emitted", issue_codes)
+
     def test_pipeline_registry_rejects_invalid_package_worker_references(self) -> None:
         cases = [
             (

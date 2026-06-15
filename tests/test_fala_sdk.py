@@ -419,9 +419,16 @@ class ProcessRuntimeSDKTests(unittest.TestCase):
                 default_root=root / "default",
                 env=env,
             )
+            named_default = resolve_embedded_runtime_config(
+                prefix="APP_FALA",
+                default_root=root / "default",
+                default_db_filename="control_plane.db",
+                env={},
+            )
 
         self.assertTrue(defaults.db_path.is_absolute())
         self.assertEqual(defaults.db_path.name, "fala.sqlite")
+        self.assertEqual(named_default.db_path.name, "control_plane.db")
         self.assertEqual(overridden.db_path, (override / "runtime.sqlite").resolve())
         self.assertEqual(overridden.artifact_store_root, (override / "store").resolve())
         self.assertEqual(overridden.process_artifact_root, (override / "process").resolve())

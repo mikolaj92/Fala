@@ -32,6 +32,7 @@ def resolve_embedded_runtime_config(
     *,
     prefix: str,
     default_root: str | Path,
+    default_db_filename: str = "fala.sqlite",
     env: Mapping[str, str] | None = None,
 ) -> EmbeddedRuntimeConfig:
     normalized_prefix = prefix.strip().strip("_").upper()
@@ -52,7 +53,7 @@ def resolve_embedded_runtime_config(
         work_root=work_root,
         db_path=_resolve_config_path(
             key=db_path_key,
-            default=work_root / "fala.sqlite",
+            default=work_root / default_db_filename,
             env=values,
         ),
         artifact_store_root=_resolve_config_path(
