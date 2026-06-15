@@ -3,6 +3,8 @@ name = "fala"
 version = "0.1.0"
 description = "Workflow orchestration and observability for document processes"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
   "fastapi>=0.115.0",
   "httpx>=0.27.0",
