@@ -36,6 +36,7 @@ from fala.blueprints import (
 from fala.client import ProcessRuntimeClient
 from fala.contract_lint import (
     ContractLintError,
+    discover_step_contracts,
     lint_step_contracts,
     load_step_contract_refs,
     step_contract_summary,
@@ -231,6 +232,11 @@ from fala.store_factory import (
     runtime_db_diagnostics,
     state_store_diagnostics_target,
 )
+from fala.step_bundle import (
+    STEP_BUNDLE_SCHEMA,
+    verify_step_replay_bundle,
+    write_step_replay_bundle,
+)
 from fala.supervisor import (
     ProcessSupervisor,
     SupervisedWorkerSpec,
@@ -398,6 +404,7 @@ __all__ = [
     "S3ArtifactStore",
     "SCAFFOLD_BLUEPRINTS",
     "ScaffoldBlueprint",
+    "STEP_BUNDLE_SCHEMA",
     "render_prometheus_metrics",
     "render_worker_autoscaling_manifest",
     "render_control_plane_deployment_manifest",
@@ -445,6 +452,7 @@ __all__ = [
     "create_runtime_web_app",
     "create_runtime_web_router",
     "document_source_value_schema",
+    "discover_step_contracts",
     "export_claims_to_queue",
     "get_scaffold_blueprint",
     "list_scaffold_blueprints",
@@ -465,8 +473,10 @@ __all__ = [
     "runtime_schema_migration_rows",
     "state_store_diagnostics_target",
     "step_contract_summary",
+    "verify_step_replay_bundle",
     "run_queue_work",
     "scaffold_blueprint_from_mapping",
     "scaffold_blueprint_summary",
     "write_jsonl",
+    "write_step_replay_bundle",
 ]

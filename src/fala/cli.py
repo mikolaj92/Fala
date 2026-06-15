@@ -33,7 +33,11 @@ from fala.blueprints import (
     scaffold_blueprint_summary,
 )
 from fala.client import ProcessRuntimeClient
-from fala.contract_lint import lint_step_contracts, load_step_contract_refs
+from fala.contract_lint import (
+    discover_step_contracts,
+    lint_step_contracts,
+    load_step_contract_refs,
+)
 from fala.deployment import render_control_plane_deployment_manifest
 from fala.deployment import render_worker_deployment_manifest
 from fala.deployment import render_worker_autoscaling_manifest
@@ -162,6 +166,7 @@ from fala.scheduler import PipelineScheduler, ScheduleResult
 from fala.sdk import replay_step_manifest
 from fala.service import RuntimeService
 from fala.state import build_runtime_document_state, build_runtime_state
+from fala.step_bundle import verify_step_replay_bundle, write_step_replay_bundle
 from fala.store import InMemoryStateStore, StateStore
 from fala.store_factory import create_state_store, runtime_db_diagnostics
 from fala.supervisor import ProcessSupervisor, build_package_worker_specs
@@ -303,6 +308,8 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "queue-metrics",
             "capability-demands",
             "contract-lint",
+            "step-bundle",
+            "step-bundle-verify",
             "stream-append",
             "stream-checkpoint",
             "stream-checkpoint-get",
@@ -418,6 +425,35 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Step command. Prefix with -- when needed.",
     )
 
+    step_bundle = subparsers.add_parser(
+        "step-bundle",
+        help="Write a portable replay bundle from a step_run_manifest.json context.",
+    )
+    step_bundle.add_argument("--manifest", required=True)
+    step_bundle.add_argument(
+        "--output",
+        default="step-replay-bundle.tar.gz",
+        help="Archive path to write.",
+    )
+    step_bundle.add_argument("--cwd", default=None)
+    step_bundle.add_argument("--env", action="append", default=[])
+    step_bundle.add_argument(
+        "--bundle-name",
+        default=None,
+        help="Top-level directory name inside the archive.",
+    )
+    step_bundle.add_argument(
+        "exec_command",
+        nargs=argparse.REMAINDER,
+        help="Step command. Prefix with -- when needed.",
+    )
+
+    step_bundle_verify = subparsers.add_parser(
+        "step-bundle-verify",
+        help="Verify a step replay bundle archive without extracting it.",
+    )
+    step_bundle_verify.add_argument("bundle", help="Bundle tar.gz path.")
+
     inspect_run_input = subparsers.add_parser(
         "inspect-run-input",
         help="Inspect a RuntimeRunInput JSON/YAML manifest without creating a run.",
@@ -453,6 +489,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Path to prepend to sys.path before importing --contract refs.",
+    )
+    contract_lint.add_argument(
+        "--no-discover-contracts",
+        action="store_true",
+        help="Disable convention-based discovery of contracts.py and *_contracts.py.",
     )
     contract_lint.add_argument(
         "--allow-missing",
@@ -496,6 +537,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output",
         default=None,
         help="Write JSON readiness report to this path instead of stdout envelope.",
+    )
+    package_doctor.add_argument(
+        "--contract",
+        action="append",
+        default=[],
+        help=(
+            "Optional Python StepContract reference for package doctor, as "
+            "module[:attribute]. Convention-based discovery runs when no "
+            "--contract is supplied."
+        ),
+    )
+    package_doctor.add_argument(
+        "--python-path",
+        action="append",
+        default=[],
+        help="Path to prepend to sys.path before importing or discovering contracts.",
+    )
+    package_doctor.add_argument(
+        "--no-discover-contracts",
+        action="store_true",
+        help="Disable convention-based StepContract discovery in package doctor.",
     )
 
     scaffold_blueprints = subparsers.add_parser(
@@ -2403,6 +2465,22 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             timeout_seconds=args.timeout_seconds,
         )
 
+    if args.command == "step-bundle":
+        command = _parse_command(args.exec_command)
+        if not command:
+            raise ValueError("step-bundle requires a command")
+        return write_step_replay_bundle(
+            args.manifest,
+            output=args.output,
+            command=command,
+            cwd=args.cwd,
+            env=_parse_env(args.env),
+            bundle_name=args.bundle_name,
+        )
+
+    if args.command == "step-bundle-verify":
+        return verify_step_replay_bundle(args.bundle)
+
     if args.command == "scaffold-blueprints":
         if args.blueprint and args.blueprint_file:
             raise ValueError("--blueprint and --blueprint-file are mutually exclusive")
@@ -2774,6 +2852,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         report = build_workflow_readiness_report(
             registry,
             package_id=args.package_id,
+            contract_refs=args.contract,
+            python_paths=args.python_path,
+            discover_contracts=not args.no_discover_contracts,
         )
         if args.output:
             path = Path(args.output)
@@ -2843,17 +2924,37 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         }
 
     if args.command == "contract-lint":
-        if not args.contract:
-            raise ValueError("contract-lint requires at least one --contract")
-        return lint_step_contracts(
+        contracts = load_step_contract_refs(
+            args.contract,
+            python_paths=args.python_path,
+        )
+        discovery: dict[str, Any] | None = None
+        if not args.no_discover_contracts and not args.contract:
+            discovery = discover_step_contracts(
+                registry,
+                pipeline_id=args.pipeline,
+                python_paths=args.python_path,
+                roots=[_pipeline_dir(args)],
+            )
+            contracts.extend(discovery["contracts"])
+        if not contracts:
+            raise ValueError(
+                "contract-lint requires --contract or discoverable contracts.py/*_contracts.py"
+            )
+        report = lint_step_contracts(
             registry,
             pipeline_id=args.pipeline,
-            contracts=load_step_contract_refs(
-                args.contract,
-                python_paths=args.python_path,
-            ),
+            contracts=contracts,
             require_all_steps=not args.allow_missing,
         )
+        if discovery is not None:
+            report["discovery"] = {
+                "refs": discovery["refs"],
+                "errors": discovery["errors"],
+                "python_paths": discovery["python_paths"],
+                "roots": discovery["roots"],
+            }
+        return report
 
     if args.command == "worker-commands":
         packages = (

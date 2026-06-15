@@ -7,7 +7,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 from urllib.parse import unquote, urlparse
 
 import yaml
@@ -108,6 +108,9 @@ class WorkflowPackageReadiness(BaseModel):
     missing_worker_process_ids: list[str] = Field(default_factory=list)
     invalid_worker_command_count: int = Field(default=0, ge=0)
     invalid_worker_ids: list[RuntimeId] = Field(default_factory=list)
+    step_contract_count: int = Field(default=0, ge=0)
+    step_contract_issue_count: int = Field(default=0, ge=0)
+    step_contract_lints: list[dict[str, Any]] = Field(default_factory=list)
     sample_files: dict[str, bool] = Field(default_factory=dict)
     error_count: int = Field(default=0, ge=0)
     warning_count: int = Field(default=0, ge=0)
@@ -152,6 +155,9 @@ def build_workflow_readiness_report(
     registry: PipelineRegistry,
     *,
     package_id: str | None = None,
+    contract_refs: Iterable[str] = (),
+    python_paths: Iterable[str | Path] = (),
+    discover_contracts: bool = False,
 ) -> WorkflowReadinessReport:
     packages = (
         [registry.package(package_id)]
@@ -159,7 +165,13 @@ def build_workflow_readiness_report(
         else sorted(registry.packages(), key=lambda item: item.id)
     )
     readiness = [
-        _package_readiness(registry, package.id)
+        _package_readiness(
+            registry,
+            package.id,
+            contract_refs=contract_refs,
+            python_paths=python_paths,
+            discover_contracts=discover_contracts,
+        )
         for package in packages
     ]
     error_count = sum(item.error_count for item in readiness)
@@ -224,13 +236,27 @@ def _package_release(
 def package_readiness(
     registry: PipelineRegistry,
     package_id: str,
+    *,
+    contract_refs: Iterable[str] = (),
+    python_paths: Iterable[str | Path] = (),
+    discover_contracts: bool = False,
 ) -> WorkflowPackageReadiness:
-    return _package_readiness(registry, package_id)
+    return _package_readiness(
+        registry,
+        package_id,
+        contract_refs=contract_refs,
+        python_paths=python_paths,
+        discover_contracts=discover_contracts,
+    )
 
 
 def _package_readiness(
     registry: PipelineRegistry,
     package_id: str,
+    *,
+    contract_refs: Iterable[str] = (),
+    python_paths: Iterable[str | Path] = (),
+    discover_contracts: bool = False,
 ) -> WorkflowPackageReadiness:
     package = registry.package(package_id)
     package_source = registry.package_source(package.id)
@@ -622,8 +648,44 @@ def _package_readiness(
                         ),
                         package_id=package.id,
                         data={"error": source_list_error},
-                    )
                 )
+            )
+
+    step_contract_lints = _package_step_contract_lints(
+        registry,
+        package_id=package.id,
+        pipeline_ids=pipeline_ids,
+        contract_refs=contract_refs,
+        python_paths=python_paths,
+        discover_contracts=discover_contracts,
+    )
+    for lint in step_contract_lints:
+        for discovery_error in lint.get("discovery_errors") or []:
+            issues.append(
+                _readiness_issue(
+                    "warning",
+                    "step_contract_discovery_failed",
+                    (
+                        "StepContract discovery found a candidate module but "
+                        f"could not load it: {discovery_error.get('error')}"
+                    ),
+                    package_id=package.id,
+                    pipeline_id=lint.get("pipeline_id"),
+                    data=discovery_error,
+                )
+            )
+        for issue in lint.get("issues") or []:
+            issues.append(
+                _readiness_issue(
+                    "error",
+                    f"step_contract_{issue.get('code')}",
+                    str(issue.get("message") or "StepContract lint failed."),
+                    package_id=package.id,
+                    pipeline_id=lint.get("pipeline_id"),
+                    process_id=issue.get("process_id"),
+                    data=issue,
+                )
+            )
 
     error_count = sum(1 for issue in issues if issue.severity == "error")
     warning_count = sum(1 for issue in issues if issue.severity == "warning")
@@ -653,12 +715,92 @@ def _package_readiness(
         missing_worker_process_ids=sorted(missing_worker_processes),
         invalid_worker_command_count=len(invalid_worker_ids),
         invalid_worker_ids=sorted(invalid_worker_ids),
+        step_contract_count=sum(
+            int(item.get("contract_count") or 0) for item in step_contract_lints
+        ),
+        step_contract_issue_count=sum(
+            int(item.get("issue_count") or 0)
+            + len(item.get("discovery_errors") or [])
+            for item in step_contract_lints
+        ),
+        step_contract_lints=step_contract_lints,
         sample_files=sample_files,
         error_count=error_count,
         warning_count=warning_count,
         info_count=info_count,
         issues=issues,
     )
+
+
+def _package_step_contract_lints(
+    registry: PipelineRegistry,
+    *,
+    package_id: str,
+    pipeline_ids: list[str],
+    contract_refs: Iterable[str],
+    python_paths: Iterable[str | Path],
+    discover_contracts: bool,
+) -> list[dict[str, Any]]:
+    refs = list(contract_refs)
+    paths = list(python_paths)
+    if not refs and not discover_contracts:
+        return []
+
+    from fala.contract_lint import (
+        discover_step_contracts,
+        lint_step_contracts,
+        load_step_contract_refs,
+    )
+
+    discovery: dict[str, Any] = {
+        "contracts": [],
+        "refs": [],
+        "errors": [],
+        "python_paths": [str(Path(item).expanduser()) for item in paths],
+        "roots": [],
+    }
+    if discover_contracts and not refs:
+        discovery = discover_step_contracts(
+            registry,
+            package_id=package_id,
+            python_paths=paths,
+        )
+
+    contracts = load_step_contract_refs(
+        refs,
+        python_paths=discovery.get("python_paths") or paths,
+    )
+    contracts.extend(discovery["contracts"])
+    if not contracts and not discovery.get("errors"):
+        return []
+
+    lints: list[dict[str, Any]] = []
+    for pipeline_id in pipeline_ids:
+        if contracts:
+            lint = lint_step_contracts(
+                registry,
+                pipeline_id=pipeline_id,
+                contracts=contracts,
+                require_all_steps=True,
+            )
+        else:
+            lint = {
+                "ok": False,
+                "pipeline_id": pipeline_id,
+                "package_id": package_id,
+                "require_all_steps": True,
+                "step_count": len(registry.get(pipeline_id).steps),
+                "contract_count": 0,
+                "issue_count": 0,
+                "issues": [],
+                "contracts": [],
+            }
+        lint["discovery_refs"] = list(discovery.get("refs") or [])
+        lint["discovery_errors"] = list(discovery.get("errors") or [])
+        lint["discovery_python_paths"] = list(discovery.get("python_paths") or [])
+        lint["discovery_roots"] = list(discovery.get("roots") or [])
+        lints.append(lint)
+    return lints
 
 
 def _pipeline_release(

@@ -579,15 +579,116 @@ class ProcessRuntimeTests(unittest.TestCase):
                 "demo_contracts:BROKEN_CONTRACTS",
                 "--allow-missing",
             )
+            auto = _run_cli(
+                "--pipeline-dir",
+                str(root),
+                "contract-lint",
+                "--pipeline",
+                "demo",
+                "--python-path",
+                str(root),
+            )
+            doctor_code, doctor = _run_cli_raw(
+                "--pipeline-dir",
+                str(root),
+                "package-doctor",
+                "--python-path",
+                str(root),
+            )
 
         self.assertTrue(ok["ok"])
         self.assertEqual(ok["contract_count"], 2)
         self.assertEqual(ok["issue_count"], 0)
+        self.assertTrue(auto["ok"])
+        self.assertIn("demo_contracts:STEP_CONTRACTS", auto["discovery"]["refs"])
+        self.assertEqual(doctor_code, 1)
+        package = doctor["readiness"]["packages"][0]
+        self.assertEqual(package["step_contract_count"], 2)
+        self.assertEqual(package["step_contract_issue_count"], 0)
+        self.assertEqual(package["step_contract_lints"][0]["issue_count"], 0)
         self.assertEqual(code, 1)
         self.assertFalse(broken["ok"])
         issue_codes = {issue["code"] for issue in broken["issues"]}
         self.assertIn("need_artifact_not_emitted", issue_codes)
         self.assertIn("output_artifact_not_emitted", issue_codes)
+
+    def test_runtime_cli_writes_and_verifies_step_replay_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact_path = root / "input.json"
+            artifact_path.write_text('{"name": "acetone"}\n', encoding="utf-8")
+            manifest_path = root / "step_run_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "fala.step_run_manifest.v1",
+                        "pipeline_id": "demo",
+                        "run_id": "run_bundle",
+                        "document_id": "doc_1",
+                        "process_id": "enrich",
+                        "context": {
+                            "run_id": "run_bundle",
+                            "document_id": "doc_1",
+                            "process_id": "enrich",
+                            "input": {
+                                "artifacts": [
+                                    {
+                                        "kind": "substances",
+                                        "uri": artifact_path.resolve().as_uri(),
+                                    }
+                                ],
+                                "values": {
+                                    "needs": {
+                                        "extract": {
+                                            "artifacts": [
+                                                {
+                                                    "kind": "substances",
+                                                    "uri": artifact_path.resolve().as_uri(),
+                                                }
+                                            ]
+                                        }
+                                    }
+                                },
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bundle_path = root / "step-bundle.tar.gz"
+            bundled = _run_cli(
+                "step-bundle",
+                "--manifest",
+                str(manifest_path),
+                "--output",
+                str(bundle_path),
+                "--cwd",
+                str(root),
+                "--",
+                "python",
+                "-c",
+                "import json, sys; print(json.dumps({'values': {'ok': True}}))",
+            )
+
+            self.assertTrue(bundled["ok"])
+            self.assertEqual(str(bundle_path.resolve()), bundled["output"])
+            self.assertEqual(bundled["artifact_count"], 1)
+            with tarfile.open(bundle_path, "r:gz") as archive:
+                names = set(archive.getnames())
+                prefix = bundled["bundle_name"]
+                self.assertIn(f"{prefix}/bundle-manifest.json", names)
+                self.assertIn(f"{prefix}/step_run_manifest.bundle.json", names)
+                self.assertIn(f"{prefix}/replay.py", names)
+                replay_manifest = json.loads(
+                    archive.extractfile(
+                        f"{prefix}/step_run_manifest.bundle.json"
+                    ).read().decode("utf-8")
+                )
+                replay_uri = replay_manifest["context"]["input"]["artifacts"][0]["uri"]
+                self.assertTrue(replay_uri.startswith("artifacts/"))
+            verified = _run_cli("step-bundle-verify", str(bundle_path))
+            self.assertTrue(verified["ok"])
+            self.assertEqual(verified["artifact_count"], 1)
 
     def test_pipeline_registry_rejects_invalid_package_worker_references(self) -> None:
         cases = [
