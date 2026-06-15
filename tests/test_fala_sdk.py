@@ -433,6 +433,34 @@ class ProcessRuntimeSDKTests(unittest.TestCase):
         self.assertEqual(overridden.artifact_store_root, (override / "store").resolve())
         self.assertEqual(overridden.process_artifact_root, (override / "process").resolve())
 
+    def test_embedded_runtime_config_supports_explicit_env_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            public = root / "public"
+            env = {
+                "PUBLIC_FALA_WORK": str(public / "work"),
+                "PUBLIC_FALA_DB": str(public / "runtime.sqlite"),
+                "PUBLIC_FALA_STORE": str(public / "store"),
+                "PUBLIC_FALA_PROCESS": str(public / "process"),
+            }
+
+            config = resolve_embedded_runtime_config(
+                prefix="APP_FALA",
+                default_root=root / "default",
+                env=env,
+                aliases={
+                    "work_root": "PUBLIC_FALA_WORK",
+                    "db_path": ["PUBLIC_FALA_DB"],
+                    "artifact_store_root": "PUBLIC_FALA_STORE",
+                    "process_artifact_root": "PUBLIC_FALA_PROCESS",
+                },
+            )
+
+        self.assertEqual(config.work_root, (public / "work").resolve())
+        self.assertEqual(config.db_path, (public / "runtime.sqlite").resolve())
+        self.assertEqual(config.artifact_store_root, (public / "store").resolve())
+        self.assertEqual(config.process_artifact_root, (public / "process").resolve())
+
     def test_embedded_runtime_config_rejects_blank_and_relative_env_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -447,6 +475,30 @@ class ProcessRuntimeSDKTests(unittest.TestCase):
                     prefix="APP_FALA",
                     default_root=root,
                     env={"APP_FALA_DB_PATH": "relative.sqlite"},
+                )
+            with self.assertRaises(EmbeddedRuntimeConfigError):
+                resolve_embedded_runtime_config(
+                    prefix="APP_FALA",
+                    default_root=root,
+                    env={"PUBLIC_FALA_DB": "  "},
+                    aliases={"db_path": "PUBLIC_FALA_DB"},
+                )
+            with self.assertRaises(EmbeddedRuntimeConfigError):
+                resolve_embedded_runtime_config(
+                    prefix="APP_FALA",
+                    default_root=root,
+                    env={"PUBLIC_FALA_DB": "relative.sqlite"},
+                    aliases={"db_path": "PUBLIC_FALA_DB"},
+                )
+            with self.assertRaisesRegex(EmbeddedRuntimeConfigError, "conflicts"):
+                resolve_embedded_runtime_config(
+                    prefix="APP_FALA",
+                    default_root=root,
+                    env={
+                        "APP_FALA_DB_PATH": str(root / "runtime.sqlite"),
+                        "PUBLIC_FALA_DB": str(root / "other.sqlite"),
+                    },
+                    aliases={"db_path": "PUBLIC_FALA_DB"},
                 )
 
     def test_sync_runtime_driver_supports_sequential_reuse_and_blocks_concurrent_reuse(self) -> None:

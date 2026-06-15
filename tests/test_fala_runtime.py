@@ -66,6 +66,7 @@ from fala import (  # noqa: E402
     ProcessSpec,
     ProcessStatus,
     ProcessSupervisor,
+    ProcessWorkerOutcome,
     ProcessWorkerResult,
     QueueResultEnvelope,
     QueueWorkEnvelope,
@@ -111,6 +112,7 @@ from fala import (  # noqa: E402
     read_result_jsonl,
     read_work_jsonl,
     route_runtime_documents_with_report,
+    run_embedded_adapter_until_idle,
     run_queue_work,
     scaffold_blueprint_from_mapping,
     write_jsonl,
@@ -132,8 +134,14 @@ from fala.worker_cli import (
 
 
 class _FakeRuntimeClient:
-    def __init__(self, claim: ClaimedProcess | None) -> None:
+    def __init__(
+        self,
+        claim: ClaimedProcess | None,
+        *,
+        status_response: dict[str, Any] | None = None,
+    ) -> None:
         self.claim = claim
+        self.status_response = status_response
         self.outputs: list[dict] = []
         self.statuses: list[dict] = []
         self.renews: list[dict] = []
@@ -152,6 +160,8 @@ class _FakeRuntimeClient:
 
     async def write_status(self, **kwargs) -> dict:
         self.statuses.append(kwargs)
+        if self.status_response is not None:
+            return self.status_response
         status = kwargs.get("status")
         return {"ok": True, "status": status.value if hasattr(status, "value") else status}
 
@@ -13134,6 +13144,167 @@ class ProcessRuntimeTests(unittest.TestCase):
             client.worker_heartbeats[-1]["metadata"]["error_kind"],
             "validation_error",
         )
+
+    def test_adapter_process_runtime_worker_exposes_typed_failure_outcomes(self) -> None:
+        class FailingAdapter:
+            async def run(self, *_args, **_kwargs) -> ProcessOutput:
+                raise RuntimeError("bad document")
+
+        def claim(run_id: str) -> ClaimedProcess:
+            return ClaimedProcess(
+                pipeline_id="pipeline",
+                run_id=run_id,
+                document_id="doc_worker_error",
+                process=ScheduledProcess(
+                    id="extract",
+                    needs=[],
+                    adapter={"kind": "queue", "queue": "demo.extract"},
+                ),
+                worker_id="queue-command-worker",
+                attempt=1,
+                claim_expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+                context=ProcessExecutionContext(
+                    pipeline_id="pipeline",
+                    run_id=run_id,
+                    document_id="doc_worker_error",
+                    process_id="extract",
+                    attempt=1,
+                    input=ProcessInput(),
+                ),
+            )
+
+        retry_client = _FakeRuntimeClient(
+            claim("run_worker_retry"),
+            status_response={
+                "ok": True,
+                "status": "queued",
+                "action": {"action": "retry"},
+            },
+        )
+        retry_result = asyncio.run(
+            AdapterProcessRuntimeWorker(
+                client=retry_client,  # type: ignore[arg-type]
+                pipeline_id="pipeline",
+                worker_id="queue-command-worker",
+                adapter_kind="queue",
+                adapters=AdapterRegistry({"queue": FailingAdapter()}),  # type: ignore[arg-type]
+            ).run_once(run_id="run_worker_retry")
+        )
+
+        terminal_client = _FakeRuntimeClient(
+            claim("run_worker_terminal"),
+            status_response={
+                "ok": True,
+                "status": "failed",
+                "action": {"action": "fail"},
+            },
+        )
+        terminal_result = asyncio.run(
+            AdapterProcessRuntimeWorker(
+                client=terminal_client,  # type: ignore[arg-type]
+                pipeline_id="pipeline",
+                worker_id="queue-command-worker",
+                adapter_kind="queue",
+                adapters=AdapterRegistry({"queue": FailingAdapter()}),  # type: ignore[arg-type]
+            ).run_once(run_id="run_worker_terminal")
+        )
+
+        self.assertEqual(retry_result.outcome, ProcessWorkerOutcome.retry_scheduled)
+        self.assertFalse(retry_result.completed)
+        self.assertEqual(terminal_result.outcome, ProcessWorkerOutcome.terminal_failed)
+        self.assertFalse(terminal_result.completed)
+
+    def test_embedded_adapter_harness_runs_service_until_idle_and_syncs_lifecycle(self) -> None:
+        class SuccessAdapter:
+            async def run(self, *_args, **_kwargs) -> ProcessOutput:
+                return ProcessOutput(values={"ok": True})
+
+        async def exercise() -> None:
+            registry = PipelineRegistry()
+            registry.add(
+                PipelineSpec(
+                    id="embedded_flow",
+                    steps=[
+                        ProcessSpec(
+                            id="extract",
+                            adapter=AdapterSpec(kind="queue", queue="embedded.extract"),
+                        )
+                    ],
+                )
+            )
+            service = RuntimeService(registry=registry, store=InMemoryStateStore())
+            await service.create_run_with_documents(
+                RuntimeRunInput(
+                    run_id="run_embedded_ok",
+                    pipeline_id="embedded_flow",
+                    documents=[RuntimeDocumentInput(document_id="doc.txt")],
+                )
+            )
+
+            result = await run_embedded_adapter_until_idle(
+                service,
+                run_id="run_embedded_ok",
+                pipeline_id="embedded_flow",
+                worker_id="embedded-worker",
+                adapter_kind="queue",
+                adapters=AdapterRegistry({"queue": SuccessAdapter()}),  # type: ignore[arg-type]
+            )
+
+            self.assertEqual(result.completed_count, 1)
+            self.assertEqual(result.error_count, 0)
+            self.assertEqual(result.results[0].outcome, ProcessWorkerOutcome.completed)
+            self.assertIsNotNone(result.run)
+            self.assertEqual(result.run.status, RunStatus.completed)
+
+        asyncio.run(exercise())
+
+    def test_embedded_adapter_harness_reports_retryable_failure_outcome(self) -> None:
+        class FailingAdapter:
+            async def run(self, *_args, **_kwargs) -> ProcessOutput:
+                raise RuntimeError("temporary")
+
+        async def exercise() -> None:
+            registry = PipelineRegistry()
+            registry.add(
+                PipelineSpec(
+                    id="embedded_retry_flow",
+                    steps=[
+                        ProcessSpec(
+                            id="extract",
+                            adapter=AdapterSpec(kind="queue", queue="embedded.extract"),
+                            retry=RetryPolicy(
+                                max_attempts=2,
+                                retry_error_kinds=["worker_error"],
+                            ),
+                        )
+                    ],
+                )
+            )
+            service = RuntimeService(registry=registry, store=InMemoryStateStore())
+            await service.create_run_with_documents(
+                RuntimeRunInput(
+                    run_id="run_embedded_retry",
+                    pipeline_id="embedded_retry_flow",
+                    documents=[RuntimeDocumentInput(document_id="doc.txt")],
+                )
+            )
+
+            result = await run_embedded_adapter_until_idle(
+                service,
+                run_id="run_embedded_retry",
+                pipeline_id="embedded_retry_flow",
+                worker_id="embedded-worker",
+                adapter_kind="queue",
+                adapters=AdapterRegistry({"queue": FailingAdapter()}),  # type: ignore[arg-type]
+            )
+
+            self.assertEqual(len(result.results), 1)
+            self.assertEqual(result.results[0].outcome, ProcessWorkerOutcome.retry_scheduled)
+            state = await service.load_state("run_embedded_retry")
+            status = state["documents"][0]["statuses"]["extract"]
+            self.assertIn(status, {"queued", "waiting"})
+
+        asyncio.run(exercise())
 
     def test_process_runtime_worker_cli_requires_command_for_queue_claims(self) -> None:
         buffer = StringIO()

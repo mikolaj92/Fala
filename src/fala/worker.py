@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -10,6 +11,7 @@ from fala.client import ProcessRuntimeClient
 from fala.models import (
     AdapterKind,
     AdapterSpec,
+    ProcessAction,
     ProcessEvent,
     ProcessOutput,
     ProcessSpec,
@@ -20,10 +22,18 @@ from fala.models import (
 from fala.scheduler import ClaimedProcess
 
 
+class ProcessWorkerOutcome(str, Enum):
+    idle = "idle"
+    completed = "completed"
+    retry_scheduled = "retry_scheduled"
+    terminal_failed = "terminal_failed"
+
+
 class ProcessWorkerResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     claimed: ClaimedProcess | None
+    outcome: ProcessWorkerOutcome = ProcessWorkerOutcome.idle
     completed: bool = False
     error: str | None = None
     error_kind: str | None = None
@@ -83,7 +93,7 @@ class AdapterProcessRuntimeWorker:
             lease_seconds=self.lease_seconds,
         )
         if claim is None:
-            return ProcessWorkerResult(claimed=None)
+            return ProcessWorkerResult(claimed=None, outcome=ProcessWorkerOutcome.idle)
 
         await self._heartbeat(
             run_id=run_id,
@@ -127,7 +137,7 @@ class AdapterProcessRuntimeWorker:
                 current_process_id=claim.process.id,
                 metadata={"error": str(exc), "error_kind": error_kind},
             )
-            await self.client.write_status(
+            status_response = await self.client.write_status(
                 run_id=claim.run_id,
                 document_id=claim.document_id,
                 process_id=claim.process.id,
@@ -142,6 +152,7 @@ class AdapterProcessRuntimeWorker:
             )
             return ProcessWorkerResult(
                 claimed=claim,
+                outcome=_failure_outcome_from_response(status_response),
                 error=str(exc),
                 error_kind=error_kind,
             )
@@ -160,7 +171,11 @@ class AdapterProcessRuntimeWorker:
             process_id=process_id,
             status=RuntimeWorkerStatus.idle,
         )
-        return ProcessWorkerResult(claimed=claim, completed=True)
+        return ProcessWorkerResult(
+            claimed=claim,
+            outcome=ProcessWorkerOutcome.completed,
+            completed=True,
+        )
 
     async def run_until_idle(
         self,
@@ -268,3 +283,18 @@ def _normalize_output(value: ProcessOutput | dict[str, Any]) -> ProcessOutput:
     if isinstance(value, dict):
         return ProcessOutput.model_validate(value)
     raise TypeError(f"Unsupported process output type: {type(value).__name__}")
+
+
+def _failure_outcome_from_response(response: dict[str, Any]) -> ProcessWorkerOutcome:
+    action = response.get("action") if isinstance(response, dict) else None
+    if isinstance(action, dict):
+        action_value = action.get("action")
+        if action_value == ProcessAction.retry.value:
+            return ProcessWorkerOutcome.retry_scheduled
+        if action_value == ProcessAction.fail.value:
+            return ProcessWorkerOutcome.terminal_failed
+    status = response.get("status") if isinstance(response, dict) else None
+    status_value = status.value if hasattr(status, "value") else status
+    if status_value == ProcessStatus.failed.value:
+        return ProcessWorkerOutcome.terminal_failed
+    return ProcessWorkerOutcome.terminal_failed

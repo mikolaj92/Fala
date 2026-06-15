@@ -50,9 +50,11 @@ from fala.deployment import (
 from fala.embedded import (
     EmbeddedRuntimeConfig,
     EmbeddedRuntimeConfigError,
+    EmbeddedWorkerRunResult,
     RuntimeServiceConcurrencyError,
     SyncRuntimeDriver,
     resolve_embedded_runtime_config,
+    run_embedded_adapter_until_idle,
 )
 from fala.intake import (
     apply_auto_document_routes,
@@ -246,6 +248,7 @@ from fala.supervisor import (
 )
 from fala.worker import (
     AdapterProcessRuntimeWorker,
+    ProcessWorkerOutcome,
     ProcessWorkerResult,
 )
 from fala.yaml_loader import (
@@ -282,6 +285,7 @@ __all__ = [
     "DeploymentFormat",
     "EmbeddedRuntimeConfig",
     "EmbeddedRuntimeConfigError",
+    "EmbeddedWorkerRunResult",
     "ExistingDocumentPolicy",
     "ExistingRunPolicy",
     "ExternalCommandAdapter",
@@ -323,6 +327,7 @@ __all__ = [
     "ProcessSpec",
     "ProcessStatus",
     "ProcessWorkerResult",
+    "ProcessWorkerOutcome",
     "ProcessSupervisor",
     "QueueBridgeTransport",
     "QueueBrokerTransport",
@@ -469,6 +474,7 @@ __all__ = [
     "read_work_jsonl",
     "resolve_project_yaml",
     "resolve_embedded_runtime_config",
+    "run_embedded_adapter_until_idle",
     "runtime_db_diagnostics",
     "runtime_schema_migration_rows",
     "state_store_diagnostics_target",

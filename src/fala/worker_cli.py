@@ -175,6 +175,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 "process_id": claimed.process.id,
                 "capability": claimed.process.capability,
                 "attempt": claimed.attempt,
+                "outcome": result.outcome.value,
                 "completed": result.completed,
                 "error": result.error,
                 "error_kind": result.error_kind,
