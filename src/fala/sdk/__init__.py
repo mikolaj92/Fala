@@ -5,8 +5,10 @@ import os
 import re
 import sys
 import hashlib
+import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import unquote, urlparse
@@ -14,6 +16,120 @@ from urllib.parse import unquote, urlparse
 PROCESS_RUNTIME_EVENT_PREFIX = "PROCESS_RUNTIME_EVENT "
 FALA_ARTIFACT_SCHEME = "fala-artifact"
 StepHandler = Callable[[dict[str, Any]], dict[str, Any]]
+StepContextHandler = Callable[["StepContext"], dict[str, Any]]
+
+
+class ArtifactNotFoundError(FileNotFoundError):
+    """Raised when a required process-runtime artifact is absent."""
+
+
+class ArtifactReadError(RuntimeError):
+    """Raised when an artifact exists but cannot be read as requested."""
+
+
+@dataclass(frozen=True)
+class JsonNeed:
+    process_id: str
+    artifact_kind: str
+    required: bool = True
+
+
+@dataclass(frozen=True)
+class JsonArtifact:
+    artifact_kind: str
+    filename: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StepContract:
+    process_id: str
+    needs: dict[str, JsonNeed] = field(default_factory=dict)
+    outputs: dict[str, JsonArtifact] = field(default_factory=dict)
+    manifest_filename: str = "step_run_manifest.json"
+
+
+class _NeedReader:
+    def __init__(self, step_context: "StepContext") -> None:
+        self._ctx = step_context
+
+    def json(self, name: str, *, default: Any | None = None) -> Any:
+        need = self._ctx.contract.needs[name]
+        if not need.required and default is None:
+            default = None
+        return read_needed_json(
+            needs(self._ctx.raw_context),
+            need.process_id,
+            need.artifact_kind,
+            default=default,
+        )
+
+    def text(self, name: str) -> str:
+        need = self._ctx.contract.needs[name]
+        return read_needed_text(
+            needs(self._ctx.raw_context),
+            need.process_id,
+            need.artifact_kind,
+        )
+
+    def path(self, name: str) -> Path | None:
+        need = self._ctx.contract.needs[name]
+        path = path_from_output(
+            needs(self._ctx.raw_context).get(need.process_id, {}),
+            need.artifact_kind,
+        )
+        if path is None and need.required:
+            raise ArtifactNotFoundError(
+                f"Missing required artifact {need.artifact_kind!r} from process "
+                f"{need.process_id!r}"
+            )
+        return path
+
+
+class StepContext:
+    def __init__(self, contract: StepContract, context: dict[str, Any]) -> None:
+        self.contract = contract
+        self.raw_context = context
+        self.needs = _NeedReader(self)
+
+    @property
+    def root(self) -> Path:
+        return artifact_root(self.raw_context, self.contract.process_id)
+
+    @property
+    def initial(self) -> dict[str, Any]:
+        return initial(self.raw_context)
+
+    def write_json_artifact(
+        self,
+        output_name: str,
+        payload: Any,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        spec = self.contract.outputs[output_name]
+        path = write_json(self.root / spec.filename, payload)
+        return artifact(
+            spec.artifact_kind,
+            path,
+            {**spec.metadata, **(metadata or {})},
+        )
+
+    def complete(
+        self,
+        *,
+        values: dict[str, Any] | None = None,
+        artifacts: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        refs = [
+            self.write_json_artifact(name, payload)
+            for name, payload in (artifacts or {}).items()
+        ]
+        return output(values=values or {}, artifacts=refs, metadata=metadata)
+
+    def skip(self, reason: str) -> dict[str, Any]:
+        return skipped(self.raw_context, self.contract.process_id, reason)
 
 
 def run_stdio(handler: StepHandler) -> int:
@@ -27,6 +143,22 @@ def run_stdio(handler: StepHandler) -> int:
 
     print(json.dumps(output_value, ensure_ascii=False))
     return 0
+
+
+def run_step(contract: StepContract, handler: StepContextHandler) -> int:
+    """Run a contracted step over stdin/stdout JSON and write a replay manifest."""
+
+    def wrapped(context: dict[str, Any]) -> dict[str, Any]:
+        step_context = StepContext(contract, context)
+        try:
+            output_value = _coerce_process_output_dict(handler(step_context))
+        except Exception as exc:
+            _write_step_manifest(step_context, error=str(exc))
+            raise
+        _write_step_manifest(step_context, output_value=output_value)
+        return output_value
+
+    return run_stdio(wrapped)
 
 
 def emit_event(
@@ -64,6 +196,76 @@ def input_artifacts(context: dict[str, Any]) -> list[dict[str, Any]]:
     return list((context.get("input") or {}).get("artifacts") or [])
 
 
+def latest_input_artifact(
+    context: dict[str, Any],
+    kind: str,
+    *,
+    required: bool = True,
+) -> dict[str, Any] | None:
+    for artifact_value in reversed(input_artifacts(context)):
+        artifact_dict = _artifact_to_dict(artifact_value)
+        if artifact_dict.get("kind") == kind:
+            return artifact_dict
+    if required:
+        raise ArtifactNotFoundError(f"Missing required input artifact kind {kind!r}")
+    return None
+
+
+def require_artifact_path(context: dict[str, Any], kind: str) -> Path:
+    artifact_value = latest_input_artifact(context, kind, required=True)
+    path = path_from_artifact(artifact_value)
+    if path is None:
+        raise ArtifactNotFoundError(f"Input artifact kind {kind!r} has no readable URI")
+    if not path.exists():
+        raise ArtifactNotFoundError(f"Input artifact kind {kind!r} path does not exist: {path}")
+    if not path.is_file():
+        raise ArtifactNotFoundError(f"Input artifact kind {kind!r} path is not a file: {path}")
+    return path
+
+
+def read_json_artifact(context: dict[str, Any], kind: str) -> Any:
+    path = require_artifact_path(context, kind)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise
+    except Exception as exc:
+        raise ArtifactReadError(f"Cannot read JSON artifact {kind!r} from {path}") from exc
+
+
+def write_json_artifact(
+    context: dict[str, Any],
+    process_id: str,
+    kind: str,
+    payload: Any,
+    *,
+    filename: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    path = write_json(artifact_root(context, process_id) / filename, payload)
+    return artifact(kind, path, metadata)
+
+
+def build_step_env(
+    *,
+    process_artifact_root: str | Path | None = None,
+    artifact_store_root: str | Path | None = None,
+    artifact_store: str | None = None,
+    artifact_cache_root: str | Path | None = None,
+    base_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    env = dict(base_env or {})
+    if process_artifact_root is not None:
+        env["PROCESS_RUNTIME_ARTIFACT_ROOT"] = str(Path(process_artifact_root).expanduser())
+    if artifact_store_root is not None:
+        env["FALA_ARTIFACT_STORE_ROOT"] = str(Path(artifact_store_root).expanduser())
+    if artifact_store is not None:
+        env["FALA_ARTIFACT_STORE"] = artifact_store
+    if artifact_cache_root is not None:
+        env["FALA_ARTIFACT_CACHE_ROOT"] = str(Path(artifact_cache_root).expanduser())
+    return env
+
+
 def artifact_root(context: dict[str, Any], process_id: str) -> Path:
     runtime_dir = os.environ.get("PROCESS_RUNTIME_ARTIFACT_DIR")
     if runtime_dir:
@@ -99,6 +301,53 @@ def artifact(kind: str, path: Path, metadata: dict[str, Any] | None = None) -> d
         "kind": kind,
         "uri": resolved.as_uri(),
         "metadata": merged_metadata,
+    }
+
+
+def replay_step_manifest(
+    manifest_path: str | Path,
+    command: Sequence[str],
+    *,
+    cwd: str | Path | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
+    manifest_file = Path(manifest_path).expanduser()
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    context = manifest.get("context")
+    if not isinstance(context, dict):
+        raise ValueError(f"Step manifest {manifest_file} does not contain a context object")
+    if not command:
+        raise ValueError("replay_step_manifest requires a command")
+    completed = subprocess.run(
+        list(command),
+        input=json.dumps(context),
+        text=True,
+        capture_output=True,
+        cwd=str(cwd) if cwd is not None else None,
+        env={**os.environ, **dict(env or {})},
+        timeout=timeout_seconds,
+        check=False,
+    )
+    parsed_output: Any | None = None
+    if completed.stdout.strip():
+        try:
+            parsed_output = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            parsed_output = None
+    return {
+        "ok": completed.returncode == 0,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "output": parsed_output,
+        "manifest": {
+            "path": str(manifest_file),
+            "run_id": manifest.get("run_id"),
+            "document_id": manifest.get("document_id"),
+            "process_id": manifest.get("process_id"),
+            "attempt": manifest.get("attempt"),
+        },
     }
 
 
@@ -341,15 +590,139 @@ def slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "item"
 
 
+def _coerce_process_output_dict(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    if not isinstance(value, dict):
+        raise TypeError(f"Step handler returned unsupported output type: {type(value).__name__}")
+    value.setdefault("values", {})
+    value.setdefault("artifacts", [])
+    value.setdefault("metadata", {})
+    value.setdefault("output_documents", [])
+    value.setdefault("stream_chunks", [])
+    return value
+
+
+def _write_step_manifest(
+    step_context: StepContext,
+    *,
+    output_value: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> Path:
+    manifest = _step_manifest(step_context, output_value=output_value, error=error)
+    path = write_json(step_context.root / step_context.contract.manifest_filename, manifest)
+    if output_value is not None:
+        metadata = output_value.setdefault("metadata", {})
+        metadata["step_run_manifest"] = artifact("step_run_manifest", path)
+    return path
+
+
+def _step_manifest(
+    step_context: StepContext,
+    *,
+    output_value: dict[str, Any] | None,
+    error: str | None,
+) -> dict[str, Any]:
+    context = step_context.raw_context
+    return {
+        "schema": "fala.step_run_manifest.v1",
+        "pipeline_id": context.get("pipeline_id"),
+        "run_id": context.get("run_id"),
+        "document_id": context.get("document_id"),
+        "process_id": context.get("process_id") or step_context.contract.process_id,
+        "contract_process_id": step_context.contract.process_id,
+        "attempt": context.get("attempt"),
+        "capability": context.get("capability"),
+        "context": context,
+        "inputs": [
+            _artifact_summary(artifact_value)
+            for artifact_value in input_artifacts(context)
+        ],
+        "needs": {
+            name: {
+                "process_id": spec.process_id,
+                "artifact_kind": spec.artifact_kind,
+                "artifact": _artifact_summary(
+                    _artifact_from_needed_output(context, spec.process_id, spec.artifact_kind)
+                ),
+            }
+            for name, spec in step_context.contract.needs.items()
+        },
+        "outputs": [
+            _artifact_summary(artifact_value)
+            for artifact_value in ((output_value or {}).get("artifacts") or [])
+        ],
+        "output_values": (output_value or {}).get("values") or {},
+        "error": error,
+    }
+
+
+def _artifact_from_needed_output(
+    context: dict[str, Any],
+    process_id: str,
+    kind: str,
+) -> dict[str, Any] | None:
+    output_value = needs(context).get(process_id, {})
+    for artifact_value in output_value.get("artifacts") or []:
+        artifact_dict = _artifact_to_dict(artifact_value)
+        if artifact_dict.get("kind") == kind:
+            return artifact_dict
+    return None
+
+
+def _artifact_summary(artifact_value: Any) -> dict[str, Any] | None:
+    artifact_dict = _artifact_to_dict(artifact_value)
+    if not artifact_dict:
+        return None
+    path = path_from_artifact(artifact_dict)
+    metadata = artifact_dict.get("metadata") if isinstance(artifact_dict.get("metadata"), dict) else {}
+    sha256 = metadata.get("sha256")
+    size_bytes = metadata.get("size_bytes")
+    if path is not None and path.exists() and path.is_file() and (not sha256 or size_bytes is None):
+        digest = hashlib.sha256()
+        size = 0
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                size += len(chunk)
+                digest.update(chunk)
+        sha256 = sha256 or digest.hexdigest()
+        size_bytes = size if size_bytes is None else size_bytes
+    return {
+        "id": artifact_dict.get("id"),
+        "kind": artifact_dict.get("kind"),
+        "uri": artifact_dict.get("uri"),
+        "path": str(path) if path is not None else None,
+        "sha256": sha256,
+        "size_bytes": size_bytes,
+        "metadata": metadata,
+    }
+
+
+def _artifact_to_dict(artifact_value: Any) -> dict[str, Any]:
+    if artifact_value is None:
+        return {}
+    if hasattr(artifact_value, "model_dump"):
+        artifact_value = artifact_value.model_dump(mode="json")
+    return dict(artifact_value) if isinstance(artifact_value, dict) else {}
+
+
 __all__ = [
     "PROCESS_RUNTIME_EVENT_PREFIX",
+    "ArtifactNotFoundError",
+    "ArtifactReadError",
+    "JsonArtifact",
+    "JsonNeed",
+    "StepContract",
+    "StepContext",
     "StepHandler",
     "artifact",
     "artifact_root",
+    "build_step_env",
     "emit_event",
     "initial",
     "input_artifacts",
     "input_values",
+    "latest_input_artifact",
     "needs",
     "optional_path",
     "output",
@@ -357,10 +730,15 @@ __all__ = [
     "path_from_uri",
     "read_needed_json",
     "read_needed_text",
+    "read_json_artifact",
+    "replay_step_manifest",
+    "require_artifact_path",
     "run_stdio",
+    "run_step",
     "skipped",
     "slug",
     "stream_chunk",
+    "write_json_artifact",
     "write_json",
     "write_text",
 ]

@@ -158,6 +158,7 @@ from fala.queue_bridge import (
 )
 from fala.registry import PipelineRegistry
 from fala.scheduler import PipelineScheduler, ScheduleResult
+from fala.sdk import replay_step_manifest
 from fala.service import RuntimeService
 from fala.state import build_runtime_document_state, build_runtime_state
 from fala.store import InMemoryStateStore, StateStore
@@ -305,6 +306,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "stream-checkpoint-get",
             "stream-lag",
             "stream-list",
+            "step-replay",
             "trace",
         }
     )
@@ -399,6 +401,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Validate ProcessExecutionContext JSON from a file or stdin.",
     )
     validate_context.add_argument("--file", default="-", help="JSON file path, or '-' for stdin.")
+
+    step_replay = subparsers.add_parser(
+        "step-replay",
+        help="Replay a local step command from a step_run_manifest.json context.",
+    )
+    step_replay.add_argument("--manifest", required=True)
+    step_replay.add_argument("--cwd", default=None)
+    step_replay.add_argument("--env", action="append", default=[])
+    step_replay.add_argument("--timeout-seconds", type=float, default=None)
+    step_replay.add_argument(
+        "exec_command",
+        nargs=argparse.REMAINDER,
+        help="Step command. Prefix with -- when needed.",
+    )
 
     inspect_run_input = subparsers.add_parser(
         "inspect-run-input",
@@ -2346,6 +2362,18 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
 
     if args.command == "inspect-run-input":
         return _inspect_runtime_run_input(args.run_input)
+
+    if args.command == "step-replay":
+        command = _parse_command(args.exec_command)
+        if not command:
+            raise ValueError("step-replay requires a command")
+        return replay_step_manifest(
+            args.manifest,
+            command,
+            cwd=args.cwd,
+            env=_parse_env(args.env),
+            timeout_seconds=args.timeout_seconds,
+        )
 
     if args.command == "scaffold-blueprints":
         if args.blueprint and args.blueprint_file:
