@@ -40,6 +40,13 @@ from fala.deployment import (
     render_worker_autoscaling_manifest,
     render_worker_deployment_manifest,
 )
+from fala.embedded import (
+    EmbeddedRuntimeConfig,
+    EmbeddedRuntimeConfigError,
+    RuntimeServiceConcurrencyError,
+    SyncRuntimeDriver,
+    resolve_embedded_runtime_config,
+)
 from fala.intake import (
     apply_auto_document_routes,
     apply_document_routes,
@@ -260,6 +267,8 @@ __all__ = [
     "DocumentTypeSpec",
     "DocumentRunResult",
     "DeploymentFormat",
+    "EmbeddedRuntimeConfig",
+    "EmbeddedRuntimeConfigError",
     "ExistingDocumentPolicy",
     "ExistingRunPolicy",
     "ExternalCommandAdapter",
@@ -359,6 +368,7 @@ __all__ = [
     "RuntimeStuckWorkItem",
     "RuntimeStuckWorkPage",
     "RuntimeService",
+    "RuntimeServiceConcurrencyError",
     "RuntimeState",
     "RuntimeStateSummary",
     "RuntimeStepReport",
@@ -398,6 +408,7 @@ __all__ = [
     "SupervisedWorkerSpec",
     "SupervisedWorkerState",
     "SupervisorResult",
+    "SyncRuntimeDriver",
     "WorkItemPolicy",
     "WorkflowPackageSpec",
     "WorkflowPackageReadiness",
@@ -440,6 +451,7 @@ __all__ = [
     "read_result_jsonl",
     "read_work_jsonl",
     "resolve_project_yaml",
+    "resolve_embedded_runtime_config",
     "runtime_db_diagnostics",
     "runtime_schema_migration_rows",
     "state_store_diagnostics_target",
