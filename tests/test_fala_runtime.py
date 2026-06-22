@@ -13,7 +13,7 @@ import tempfile
 import textwrap
 import unittest
 import uuid
-from contextlib import closing, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -118,6 +118,7 @@ from fala import (  # noqa: E402
     write_jsonl,
 )
 from fala.cli import main as runtime_cli_main  # noqa: E402
+from fala.cli import _warn_public_serve_without_auth  # noqa: E402
 from fala.postgres_store import (  # noqa: E402
     POSTGRES_SCHEMA_SQL,
     POSTGRES_TRY_CLAIM_STATUS_SQL,
@@ -13590,8 +13591,14 @@ class ProcessRuntimeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            buffer = StringIO()
-            with patch("uvicorn.run", fake_run), redirect_stdout(buffer):
+            stdout = StringIO()
+            stderr = StringIO()
+            with (
+                patch("uvicorn.run", fake_run),
+                patch.dict(os.environ, {}, clear=True),
+                redirect_stdout(stdout),
+                redirect_stderr(stderr),
+            ):
                 code = runtime_cli_main(
                     [
                         "--pipeline-dir",
@@ -13617,7 +13624,8 @@ class ProcessRuntimeTests(unittest.TestCase):
                 )
 
             self.assertEqual(code, 0)
-            self.assertEqual(buffer.getvalue(), "")
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("warning: fala serve is binding", stderr.getvalue())
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0]["app"].title, "Fala Ops")
             self.assertEqual(calls[0]["host"], "0.0.0.0")
@@ -13636,6 +13644,18 @@ class ProcessRuntimeTests(unittest.TestCase):
                     self.assertNotIn("not configured", response.text)
 
             asyncio.run(fetch_queue())
+
+    def test_serve_auth_warning_skips_loopback_and_enabled_auth(self) -> None:
+        buffer = StringIO()
+
+        _warn_public_serve_without_auth("127.0.0.1", environ={}, stream=buffer)
+        _warn_public_serve_without_auth(
+            "0.0.0.0",
+            environ={"FALA_AUTH_REQUIRED": "1"},
+            stream=buffer,
+        )
+
+        self.assertEqual(buffer.getvalue(), "")
 
     def test_deployment_renders_compose_control_plane_postgres_and_workers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
