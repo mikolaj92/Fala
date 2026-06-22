@@ -15,6 +15,7 @@ import shutil
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import unquote, urlparse
@@ -22,6 +23,7 @@ from urllib.parse import unquote, urlparse
 import yaml
 from pydantic import BaseModel
 
+from fala.auth import RuntimeAccessPolicy
 from fala.adapters import AdapterRegistry, ExternalCommandAdapter, ProcessAdapterError
 from fala.blueprints import (
     SCAFFOLD_BLUEPRINTS,
@@ -2410,6 +2412,7 @@ def _serve_runtime_web(args: argparse.Namespace) -> int:
     except ImportError as exc:  # pragma: no cover - dependency guard
         raise RuntimeError("uvicorn is required to run `fala serve`") from exc
 
+    _warn_public_serve_without_auth(args.host)
     app = create_runtime_web_app(
         pipeline_dir=args.pipeline_dir,
         db=args.db,
@@ -2429,6 +2432,33 @@ def _serve_runtime_web(args: argparse.Namespace) -> int:
         log_level=args.log_level,
     )
     return 0
+
+
+def _warn_public_serve_without_auth(
+    host: str,
+    *,
+    environ: dict[str, str] | None = None,
+    stream: Any | None = None,
+) -> None:
+    policy = RuntimeAccessPolicy.from_env(environ)
+    if policy.auth_required or _is_loopback_bind_host(host):
+        return
+    output = stream or sys.stderr
+    print(
+        "warning: fala serve is binding to a non-loopback host without auth; "
+        "set FALA_API_KEYS or FALA_AUTH_REQUIRED=1 before exposing it.",
+        file=output,
+    )
+
+
+def _is_loopback_bind_host(host: str) -> bool:
+    normalized = host.strip().lower().removeprefix("[").removesuffix("]")
+    if normalized in {"localhost"}:
+        return True
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
