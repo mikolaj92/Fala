@@ -240,6 +240,17 @@ the step. Workers can report `error_kind`; `terminal_error_kinds` fail without a
 retry, while a non-empty `retry_error_kinds` allowlist retries only matching
 classified failures.
 
+Runtime document input can also include an optional UTC `scheduled_at` timestamp.
+When absent, documents are eligible immediately as before. When it is in the
+future, otherwise-ready steps stay in `waiting` and are not claimable until
+`now >= scheduled_at`. The scheduler uses the same not-before readiness path as
+retry backoff, so the effective readiness time is the later of `scheduled_at` and
+any pending `retry.delay_seconds` backoff. Fala persists the timestamp on the
+document input and records the not-before time in process events for audit.
+Brokered or polling workers passively see no claimable work until the timestamp
+is due; embedded callers such as `run_until_idle` do not sleep until a future
+timer, so an outer driver must invoke them again later.
+
 `sla` is operator policy for stuck-work detection. `stuck-work` uses per-step
 thresholds first, then falls back to CLI/API query defaults. This keeps slow
 rendering steps and fast metadata steps in one generic run without hard-coded
