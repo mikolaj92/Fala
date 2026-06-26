@@ -14950,6 +14950,223 @@ class ProcessRuntimeTests(unittest.TestCase):
         self.assertEqual(claim.context.input.values["needs"]["first"], {"ok": True})
         self.assertEqual(claim.context.input.artifacts[0].uri, "file:///tmp/sample.pdf")
 
+    def test_scheduler_defers_future_scheduled_document_until_due(self) -> None:
+        store = InMemoryStateStore()
+        pipeline = PipelineSpec(
+            id="scheduled_delay_test",
+            steps=[
+                ProcessSpec(
+                    id="extract",
+                    adapter=AdapterSpec(kind="queue", queue="test.extract"),
+                )
+            ],
+        )
+        scheduler = PipelineScheduler(pipeline, store)
+        scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=0.05)
+
+        initialized = asyncio.run(
+            scheduler.initialize_document(
+                run_id="run_scheduled_delay",
+                document_id="doc_scheduled_delay",
+                values={"source": "sample.pdf"},
+                scheduled_at=scheduled_at,
+            )
+        )
+
+        self.assertEqual(initialized.queued, [])
+        self.assertEqual(initialized.waiting, ["extract"])
+        statuses = asyncio.run(
+            store.list_statuses(
+                run_id="run_scheduled_delay",
+                document_id="doc_scheduled_delay",
+            )
+        )
+        self.assertEqual(statuses["extract"], ProcessStatus.waiting)
+        stored_input = asyncio.run(
+            store.get_document_input(
+                run_id="run_scheduled_delay",
+                document_id="doc_scheduled_delay",
+            )
+        )
+        self.assertIsNotNone(stored_input)
+        assert stored_input is not None
+        self.assertEqual(stored_input.scheduled_at, scheduled_at)
+        events = asyncio.run(
+            store.list_events(
+                run_id="run_scheduled_delay",
+                document_id="doc_scheduled_delay",
+            )
+        )
+        initialized_event = next(event for event in events if event.type == "document.initialized")
+        self.assertEqual(initialized_event.data["scheduled_at"], scheduled_at.isoformat())
+        waiting_event = next(
+            event
+            for event in events
+            if event.type == "process.waiting" and event.process_id == "extract"
+        )
+        self.assertEqual(waiting_event.data["reason"], "not_before")
+        self.assertEqual(waiting_event.data["scheduled_at"], scheduled_at.isoformat())
+        self.assertEqual(waiting_event.data["not_before"], scheduled_at.isoformat())
+
+        immediate_claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_scheduled_delay",
+                document_ids=["doc_scheduled_delay"],
+                worker_id="worker-scheduled",
+                adapter_kind="queue",
+            )
+        )
+        self.assertIsNone(immediate_claim)
+
+        asyncio.run(asyncio.sleep(0.06))
+        claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_scheduled_delay",
+                document_ids=["doc_scheduled_delay"],
+                worker_id="worker-scheduled",
+                adapter_kind="queue",
+            )
+        )
+
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.assertEqual(claim.process.id, "extract")
+        self.assertEqual(claim.context.input.scheduled_at, scheduled_at)
+
+    def test_scheduler_claims_past_scheduled_document_immediately(self) -> None:
+        store = InMemoryStateStore()
+        pipeline = PipelineSpec(
+            id="scheduled_past_test",
+            steps=[
+                ProcessSpec(
+                    id="extract",
+                    adapter=AdapterSpec(kind="queue", queue="test.extract"),
+                )
+            ],
+        )
+        scheduler = PipelineScheduler(pipeline, store)
+        scheduled_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+        initialized = asyncio.run(
+            scheduler.initialize_document(
+                run_id="run_scheduled_past",
+                document_id="doc_scheduled_past",
+                scheduled_at=scheduled_at,
+            )
+        )
+
+        self.assertEqual([process.id for process in initialized.queued], ["extract"])
+        self.assertEqual(initialized.waiting, [])
+        claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_scheduled_past",
+                document_ids=["doc_scheduled_past"],
+                worker_id="worker-scheduled",
+                adapter_kind="queue",
+            )
+        )
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.assertEqual(claim.process.id, "extract")
+
+    def test_scheduler_uses_later_scheduled_at_over_retry_after(self) -> None:
+        store = InMemoryStateStore()
+        pipeline = PipelineSpec(
+            id="scheduled_retry_test",
+            steps=[
+                ProcessSpec(
+                    id="extract",
+                    adapter=AdapterSpec(kind="queue", queue="test.extract"),
+                    retry=RetryPolicy(max_attempts=2, delay_seconds=0.01),
+                )
+            ],
+        )
+        scheduler = PipelineScheduler(pipeline, store)
+        now = datetime.now(timezone.utc)
+        retry_after = now + timedelta(seconds=0.01)
+        scheduled_at = now + timedelta(seconds=0.05)
+        asyncio.run(
+            store.put_document_input(
+                run_id="run_scheduled_retry",
+                document_id="doc_scheduled_retry",
+                input=ProcessInput(values={}, scheduled_at=scheduled_at),
+                pipeline_id="scheduled_retry_test",
+            )
+        )
+        asyncio.run(
+            store.set_status(
+                run_id="run_scheduled_retry",
+                document_id="doc_scheduled_retry",
+                process_id="extract",
+                status=ProcessStatus.waiting,
+                pipeline_id="scheduled_retry_test",
+                adapter_kind="queue",
+            )
+        )
+        asyncio.run(
+            store.append_event(
+                ProcessEvent(
+                    run_id="run_scheduled_retry",
+                    document_id="doc_scheduled_retry",
+                    process_id="extract",
+                    type="process.retry_scheduled",
+                    status=ProcessStatus.waiting,
+                    data={
+                        "retry_after": retry_after.isoformat(),
+                        "next_status": "waiting",
+                    },
+                )
+            )
+        )
+
+        scheduled = asyncio.run(
+            scheduler.schedule_ready(
+                run_id="run_scheduled_retry",
+                document_id="doc_scheduled_retry",
+            )
+        )
+
+        self.assertEqual(scheduled.queued, [])
+        self.assertEqual(scheduled.waiting, ["extract"])
+        immediate_claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_scheduled_retry",
+                document_ids=["doc_scheduled_retry"],
+                worker_id="worker-scheduled",
+                adapter_kind="queue",
+            )
+        )
+        self.assertIsNone(immediate_claim)
+        events = asyncio.run(
+            store.list_events(
+                run_id="run_scheduled_retry",
+                document_id="doc_scheduled_retry",
+                process_id="extract",
+            )
+        )
+        wait_events = [
+            event
+            for event in events
+            if event.type == "process.waiting" and event.data.get("reason") == "not_before"
+        ]
+        self.assertTrue(wait_events)
+        self.assertEqual(wait_events[-1].data["retry_after"], retry_after.isoformat())
+        self.assertEqual(wait_events[-1].data["scheduled_at"], scheduled_at.isoformat())
+        self.assertEqual(wait_events[-1].data["not_before"], scheduled_at.isoformat())
+
+        asyncio.run(asyncio.sleep(0.06))
+        claim = asyncio.run(
+            scheduler.claim_next(
+                run_id="run_scheduled_retry",
+                document_ids=["doc_scheduled_retry"],
+                worker_id="worker-scheduled",
+                adapter_kind="queue",
+            )
+        )
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.assertEqual(claim.process.id, "extract")
+
     def test_scheduler_claims_next_queued_process(self) -> None:
         store = InMemoryStateStore()
         pipeline = PipelineSpec(

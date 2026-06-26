@@ -117,8 +117,13 @@ class PipelineScheduler:
         document_id: str,
         values: dict | None = None,
         artifacts: list[ArtifactRef] | None = None,
+        scheduled_at: datetime | None = None,
     ) -> ScheduleResult:
-        input_payload = ProcessInput(values=values or {}, artifacts=artifacts or [])
+        input_payload = ProcessInput(
+            values=values or {},
+            artifacts=artifacts or [],
+            scheduled_at=_normalize_datetime(scheduled_at),
+        )
         existing_input = await self.store.get_document_input(
             run_id=run_id,
             document_id=document_id,
@@ -150,17 +155,22 @@ class PipelineScheduler:
         statuses = await self.store.list_statuses(run_id=run_id, document_id=document_id)
         outputs = await self.store.list_outputs(run_id=run_id, document_id=document_id)
         if not statuses and not outputs:
+            initialized_data = {
+                "pipeline_id": self.pipeline.id,
+                "value_keys": sorted(active_input.values),
+                "artifact_count": len(active_input.artifacts),
+            }
+            if active_input.scheduled_at is not None:
+                initialized_data["scheduled_at"] = _format_datetime(
+                    active_input.scheduled_at
+                )
             await self.store.append_event(
                 ProcessEvent(
                     run_id=run_id,
                     document_id=document_id,
                     process_id=None,
                     type="document.initialized",
-                    data={
-                        "pipeline_id": self.pipeline.id,
-                        "value_keys": sorted(active_input.values),
-                        "artifact_count": len(active_input.artifacts),
-                    },
+                    data=initialized_data,
                 )
             )
 
@@ -294,14 +304,27 @@ class PipelineScheduler:
                     )
                     continue
 
-                retry_after = await self._pending_retry_after(
+                not_before = await self._pending_not_before(
                     run_id=run_id,
                     document_id=document_id,
                     step=step,
                     current_status=current_status,
+                    input=base_input,
                 )
-                if retry_after is not None:
+                if not_before is not None:
+                    effective_not_before, scheduled_at, retry_after = not_before
                     waiting.append(step.id)
+                    if scheduled_at is not None:
+                        await self._set_waiting_for_not_before(
+                            run_id=run_id,
+                            document_id=document_id,
+                            step=step,
+                            current_status=current_status,
+                            not_before=effective_not_before,
+                            scheduled_at=scheduled_at,
+                            retry_after=retry_after,
+                        )
+                        statuses[step.id] = ProcessStatus.waiting
                     continue
 
                 if step.adapter.kind == "manual":
@@ -1075,6 +1098,7 @@ class PipelineScheduler:
             attempt=attempt,
             input=ProcessInput(
                 artifacts=artifacts,
+                scheduled_at=base_input.scheduled_at,
                 values={
                     "initial": base_input.values,
                     "needs": needs,
@@ -1214,6 +1238,35 @@ class PipelineScheduler:
             return None
         return retry_after
 
+    async def _pending_not_before(
+        self,
+        *,
+        run_id: str,
+        document_id: str,
+        step: ProcessSpec,
+        current_status: ProcessStatus | None,
+        input: ProcessInput | None,
+    ) -> tuple[datetime, datetime | None, datetime | None] | None:
+        now = self._now()
+        scheduled_at = _normalize_datetime(input.scheduled_at) if input else None
+        pending_scheduled_at = (
+            scheduled_at if scheduled_at is not None and scheduled_at > now else None
+        )
+        retry_after = await self._pending_retry_after(
+            run_id=run_id,
+            document_id=document_id,
+            step=step,
+            current_status=current_status,
+        )
+        candidates = [
+            candidate
+            for candidate in (pending_scheduled_at, retry_after)
+            if candidate is not None
+        ]
+        if not candidates:
+            return None
+        return max(candidates), pending_scheduled_at, retry_after
+
     async def _set_status(
         self,
         *,
@@ -1282,6 +1335,61 @@ class PipelineScheduler:
             )
         )
 
+    async def _set_waiting_for_not_before(
+        self,
+        *,
+        run_id: str,
+        document_id: str,
+        step: ProcessSpec,
+        current_status: ProcessStatus | None,
+        not_before: datetime,
+        scheduled_at: datetime,
+        retry_after: datetime | None,
+    ) -> None:
+        data = {
+            "reason": "not_before",
+            "needs": step.needs,
+            "priority": step.priority,
+            "resource_pool": step.resource_pool,
+            "resources": step.resources.model_dump(mode="json"),
+            "scheduled_at": _format_datetime(scheduled_at),
+            "not_before": _format_datetime(not_before),
+            "next_status": ProcessStatus.waiting.value,
+        }
+        if retry_after is not None:
+            data["retry_after"] = _format_datetime(retry_after)
+
+        if current_status != ProcessStatus.waiting:
+            await self._set_status(
+                run_id=run_id,
+                document_id=document_id,
+                step=step,
+                status=ProcessStatus.waiting,
+                event_type="process.waiting",
+                data=data,
+            )
+            return
+
+        events = await self.store.list_events(
+            run_id=run_id,
+            document_id=document_id,
+            process_id=step.id,
+            descending=True,
+            limit=1,
+        )
+        if events and _same_not_before_wait(events[0], data):
+            return
+        await self.store.append_event(
+            ProcessEvent(
+                run_id=run_id,
+                document_id=document_id,
+                process_id=step.id,
+                type="process.waiting",
+                status=ProcessStatus.waiting,
+                data=data,
+            )
+        )
+
 
 def _latest_retry_after(events: list[ProcessEvent]) -> datetime | None:
     for event in reversed(events):
@@ -1300,9 +1408,33 @@ def _parse_retry_after(value: object) -> datetime | None:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+    return _ensure_aware_utc(parsed)
+
+
+def _normalize_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return _ensure_aware_utc(value)
+
+
+def _ensure_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _format_datetime(value: datetime) -> str:
+    return _ensure_aware_utc(value).isoformat()
+
+
+def _same_not_before_wait(event: ProcessEvent, data: dict) -> bool:
+    if event.type != "process.waiting" or event.data.get("reason") != "not_before":
+        return False
+    return (
+        event.data.get("scheduled_at") == data.get("scheduled_at")
+        and event.data.get("retry_after") == data.get("retry_after")
+        and event.data.get("not_before") == data.get("not_before")
+    )
 
 
 def _process_metadata_args(pipeline_id: str, step: ProcessSpec) -> dict[str, str | None]:
