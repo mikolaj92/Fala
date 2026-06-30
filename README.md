@@ -19,6 +19,18 @@ operator gate.
 - YAML packages define document types, artifact kinds, capabilities, pipelines,
   and worker commands
 
+## Fala 2.0 direction
+
+Fala 2.0 is planned as an embedded, plugin-oriented runtime for observable
+information flows. The core runtime should depend on a backend plugin boundary,
+while the default distribution ships and supports only the SQLite backend plugin.
+Other storage backends may be possible as external plugins, but they are not the
+default or recommended Fala 2.0 path.
+
+See [`docs/FALA_2_0_PLAN.md`](docs/FALA_2_0_PLAN.md) for the corrected phase
+plan, including the document-to-carrier migration, the SQLite backend plugin,
+and the plugin boundary expectations.
+
 ## Quick check
 
 ```bash
