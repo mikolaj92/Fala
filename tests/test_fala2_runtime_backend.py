@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+import asyncio
+import tempfile
+import unittest
+from pathlib import Path
+
+from fala.runtime_backend import (
+    Carrier,
+    Gate,
+    GateStatus,
+    Observation,
+    Projection,
+    RuntimeCommand,
+    RuntimeEvent,
+    SQLiteRuntimeBackend,
+)
+
+
+class Fala2RuntimeBackendTests(unittest.TestCase):
+    def test_sqlite_backend_records_carrier_command_and_ordered_event(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala2.sqlite")
+                carrier = Carrier(
+                    run_id="run_alpha",
+                    carrier_type="invoice",
+                    payload={"amount": 120},
+                    metadata={"tenant": "acme"},
+                )
+
+                await backend.put_carrier(carrier)
+                stored = await backend.get_carrier(
+                    run_id="run_alpha", carrier_id=carrier.id
+                )
+
+                self.assertEqual(stored, carrier)
+
+                command = RuntimeCommand(
+                    run_id="run_alpha",
+                    command_type="carrier.accept",
+                    idempotency_key="run_alpha:carrier.accept:invoice",
+                    actor="operator:mika",
+                    correlation_id="corr_1",
+                    payload={"carrier_id": carrier.id},
+                )
+                event = RuntimeEvent(
+                    run_id="run_alpha",
+                    carrier_id=carrier.id,
+                    event_type="carrier.accepted",
+                    actor="operator:mika",
+                    correlation_id="corr_1",
+                    payload={"accepted": True},
+                )
+
+                first = await backend.submit_command(command, events=[event])
+                replay = await backend.submit_command(
+                    command.model_copy(update={"id": "command_duplicate"}),
+                    events=[
+                        event.model_copy(update={"id": "event_duplicate"}),
+                    ],
+                )
+
+                self.assertFalse(first.replayed)
+                self.assertTrue(replay.replayed)
+                self.assertEqual(replay.command.id, first.command.id)
+                self.assertEqual(replay.events, [])
+
+                events = await backend.list_events(run_id="run_alpha")
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0].sequence, 1)
+                self.assertEqual(events[0].command_id, first.command.id)
+                self.assertEqual(events[0].carrier_id, carrier.id)
+                self.assertEqual(events[0].actor, "operator:mika")
+                self.assertEqual(events[0].correlation_id, "corr_1")
+
+        asyncio.run(scenario())
+
+    def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala2.sqlite")
+                carrier = Carrier(
+                    run_id="run_beta",
+                    carrier_type="message",
+                    payload={"text": "hello"},
+                )
+                await backend.put_carrier(carrier)
+
+                observation = Observation(
+                    run_id="run_beta",
+                    carrier_id=carrier.id,
+                    kind="classifier.score",
+                    values={"score": 0.98},
+                    metadata={"model": "local"},
+                )
+                await backend.put_observation(observation)
+
+                gate = Gate(
+                    run_id="run_beta",
+                    carrier_id=carrier.id,
+                    kind="human.approval",
+                    status=GateStatus.open,
+                    values={"reason": "needs review"},
+                )
+                await backend.put_gate(gate)
+                await backend.put_gate(
+                    gate.model_copy(update={"status": GateStatus.completed})
+                )
+
+                projection = Projection(
+                    run_id="run_beta",
+                    name="carrier_summary",
+                    version=1,
+                    data={"carrier_count": 1, "last_kind": observation.kind},
+                    source_event_sequence=0,
+                )
+                await backend.put_projection(projection)
+
+                observations = await backend.list_observations(run_id="run_beta")
+                stored_gate = await backend.get_gate(run_id="run_beta", gate_id=gate.id)
+                stored_projection = await backend.get_projection(
+                    run_id="run_beta", name="carrier_summary"
+                )
+
+                self.assertEqual(observations, [observation])
+                self.assertEqual(stored_gate.status, GateStatus.completed)
+                self.assertEqual(stored_projection, projection)
+
+        asyncio.run(scenario())
+
+
+if __name__ == "__main__":
+    unittest.main()
