@@ -416,6 +416,7 @@ class RuntimeService:
                     pipeline_id=resolved_pipeline_id,
                     values=_document_initial_values(document),
                     artifacts=_document_artifacts(document),
+                    scheduled_at=document.scheduled_at,
                 )
             )
         return schedules
@@ -502,6 +503,7 @@ class RuntimeService:
             document_input = ProcessInput(
                 values=document.values,
                 artifacts=document.artifacts,
+                scheduled_at=document.scheduled_at,
             )
             for step in pipeline.steps:
                 if not process_condition_matches(
@@ -978,9 +980,13 @@ class RuntimeService:
         pipeline_id: str,
         values: dict | None = None,
         artifacts: list[ArtifactRef] | None = None,
+        scheduled_at: datetime | None = None,
     ) -> ScheduleResult:
         await self.ensure_run(run_id)
         pipeline = self.registry.get(pipeline_id)
+        normalized_scheduled_at = (
+            _ensure_aware_utc(scheduled_at) if scheduled_at is not None else None
+        )
         existing_document = await self.store.get_document(
             run_id=run_id,
             document_id=document_id,
@@ -991,22 +997,29 @@ class RuntimeService:
                     run_id=run_id,
                     document_id=document_id,
                     pipeline_id=pipeline_id,
+                    scheduled_at=normalized_scheduled_at,
                 )
             )
-        elif existing_document.pipeline_id != pipeline_id:
-            await self.store.put_document(
-                existing_document.model_copy(
-                    update={
-                        "pipeline_id": pipeline_id,
-                        "updated_at": datetime.now(timezone.utc),
-                    }
+        else:
+            document_updates: dict[str, Any] = {}
+            if existing_document.pipeline_id != pipeline_id:
+                document_updates["pipeline_id"] = pipeline_id
+            if (
+                normalized_scheduled_at is not None
+                and existing_document.scheduled_at != normalized_scheduled_at
+            ):
+                document_updates["scheduled_at"] = normalized_scheduled_at
+            if document_updates:
+                document_updates["updated_at"] = datetime.now(timezone.utc)
+                await self.store.put_document(
+                    existing_document.model_copy(update=document_updates)
                 )
-            )
         result = await PipelineScheduler(pipeline, self.store).initialize_document(
             run_id=run_id,
             document_id=document_id,
             values=values or {},
             artifacts=artifacts or [],
+            scheduled_at=normalized_scheduled_at,
         )
         await self.sync_run_lifecycle(run_id)
         return result
@@ -5064,6 +5077,7 @@ def _runtime_document_from_input(
         relation=document.relation,
         media_type=document.media_type,
         source_uri=document.source_uri,
+        scheduled_at=document.scheduled_at,
         metadata=dict(document.metadata),
         parent_document_id=document.parent_document_id,
         parent_process_id=document.parent_process_id,
@@ -5086,6 +5100,7 @@ def _runtime_document_input_from_spawn(
         relation=spawn.relation,
         media_type=spawn.media_type,
         source_uri=spawn.source_uri,
+        scheduled_at=spawn.scheduled_at,
         values=dict(spawn.values),
         metadata={
             **spawn.metadata,

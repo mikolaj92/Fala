@@ -93,6 +93,7 @@ class ProcessInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     artifacts: list[ArtifactRef] = Field(default_factory=list)
+    scheduled_at: datetime | None = None
     values: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -106,6 +107,7 @@ class SpawnDocumentInput(BaseModel):
     relation: RuntimeId | None = None
     media_type: str | None = None
     source_uri: str | None = None
+    scheduled_at: datetime | None = None
     values: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
@@ -238,6 +240,7 @@ class RuntimeDocument(BaseModel):
     relation: RuntimeId | None = None
     media_type: str | None = None
     source_uri: str | None = None
+    scheduled_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     parent_document_id: str | None = None
     parent_process_id: RuntimeId | None = None
