@@ -453,6 +453,92 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_fala_runtime_rebuilds_run_summary_projection(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                await runtime.create_run(
+                    Run(id="run_summary", title="Summary run"),
+                    idempotency_key="run_summary:create",
+                )
+                carrier = Carrier(
+                    id="carrier_summary",
+                    run_id="run_summary",
+                    carrier_type="case",
+                    payload={"case_id": "SUM-1"},
+                )
+                await runtime.accept_carrier(
+                    carrier,
+                    idempotency_key="run_summary:carrier.accept",
+                )
+                await runtime.record_observation(
+                    Observation(
+                        run_id=carrier.run_id,
+                        carrier_id=carrier.id,
+                        kind="score",
+                        values={"score": 1},
+                    ),
+                    idempotency_key="run_summary:observation.score",
+                )
+                await runtime.record_artifact(
+                    Artifact(
+                        id="artifact_summary",
+                        run_id=carrier.run_id,
+                        carrier_id=carrier.id,
+                        kind="report",
+                        uri="fala-artifact://sha256/summary",
+                    ),
+                    idempotency_key="run_summary:artifact.report",
+                )
+                await runtime.save_gate(
+                    Gate(
+                        run_id=carrier.run_id,
+                        carrier_id=carrier.id,
+                        kind="review",
+                        status=GateStatus.open,
+                    ),
+                    idempotency_key="run_summary:gate.review",
+                )
+                await runtime.schedule_process(
+                    Process(
+                        id="process_summary",
+                        run_id=carrier.run_id,
+                        carrier_id=carrier.id,
+                        process_type="score",
+                        status=CarrierProcessStatus.ready,
+                    ),
+                    idempotency_key="run_summary:process.score",
+                )
+
+                rebuilt, submission = await runtime.rebuild_projections(
+                    run_id=carrier.run_id,
+                    idempotency_key="run_summary:projection.rebuild",
+                )
+                self.assertFalse(submission.replayed)
+                self.assertEqual(len(rebuilt), 1)
+                summary = rebuilt[0]
+                self.assertEqual(summary.name, "run_summary")
+                self.assertEqual(summary.source_event_sequence, 7)
+                self.assertEqual(summary.data["event_count"], 7)
+                self.assertEqual(summary.data["carrier_count"], 1)
+                self.assertEqual(summary.data["observation_count"], 1)
+                self.assertEqual(summary.data["artifact_count"], 1)
+                self.assertEqual(summary.data["gate_status_counts"], {"open": 1})
+                self.assertEqual(summary.data["process_status_counts"], {"ready": 1})
+                self.assertEqual(
+                    summary.data["event_type_counts"]["projection.rebuilt"],
+                    1,
+                )
+
+                replayed, replay = await runtime.rebuild_projections(
+                    run_id=carrier.run_id,
+                    idempotency_key="run_summary:projection.rebuild",
+                )
+                self.assertTrue(replay.replayed)
+                self.assertEqual(replayed, rebuilt)
+
+        asyncio.run(scenario())
+
     def test_cli_inspects_carrier_runtime_state_without_web_stack(self) -> None:
         async def scenario(db_path: Path) -> None:
             runtime = FalaRuntime.sqlite(db_path)
@@ -781,6 +867,25 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 "run_cli",
             )
             self.assertEqual(projections["projections"][0]["name"], "case_summary")
+
+            rebuilt = _run_cli_json(
+                "projections",
+                "rebuild",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+            )
+            self.assertEqual(rebuilt["count"], 1)
+            summary = rebuilt["projections"][0]
+            self.assertEqual(summary["name"], "run_summary")
+            self.assertEqual(summary["source_event_sequence"], 11)
+            self.assertEqual(summary["data"]["carrier_count"], 2)
+            self.assertEqual(summary["data"]["artifact_count"], 1)
+            self.assertEqual(
+                summary["data"]["event_type_counts"]["projection.rebuilt"],
+                1,
+            )
 
     def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
         async def scenario() -> None:

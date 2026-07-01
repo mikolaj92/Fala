@@ -468,6 +468,13 @@ class RuntimeBackend(Protocol):
 
     async def list_projections(self, *, run_id: str) -> list[Projection]: ...
 
+    async def rebuild_projections(
+        self,
+        *,
+        run_id: str,
+        names: Sequence[str] | None = None,
+    ) -> list[Projection]: ...
+
     async def put_outbox_delivery(self, delivery: BridgeDelivery) -> None: ...
 
     async def get_outbox_delivery(
@@ -496,6 +503,7 @@ class RuntimeBackend(Protocol):
 
 
 _BRIDGE_TABLES = {"bridge_outbox", "bridge_inbox"}
+_BUILT_IN_PROJECTIONS = ("run_summary",)
 _TERMINAL_RUN_STATUSES = {
     CarrierRunStatus.completed,
     CarrierRunStatus.failed,
@@ -1684,6 +1692,51 @@ class SQLiteRuntimeBackend:
             ).fetchall()
         return [_projection_from_row(row) for row in rows]
 
+    async def rebuild_projections(
+        self,
+        *,
+        run_id: str,
+        names: Sequence[str] | None = None,
+    ) -> list[Projection]:
+        requested = (
+            list(dict.fromkeys(names)) if names is not None else list(_BUILT_IN_PROJECTIONS)
+        )
+        unsupported = sorted(set(requested) - set(_BUILT_IN_PROJECTIONS))
+        if unsupported:
+            raise ValueError(f"Unknown projection rebuild name: {unsupported[0]}")
+
+        rebuilt: list[Projection] = []
+        async with self._lock:
+            with self._connect() as connection:
+                for name in requested:
+                    projection = _build_run_summary_projection(connection, run_id)
+                    connection.execute(
+                        """
+                        INSERT INTO projections (
+                            run_id, name, id, version, data,
+                            source_event_sequence, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(run_id, name) DO UPDATE SET
+                            id = excluded.id,
+                            version = excluded.version,
+                            data = excluded.data,
+                            source_event_sequence = excluded.source_event_sequence,
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            projection.run_id,
+                            projection.name,
+                            projection.id,
+                            projection.version,
+                            _dumps(projection.data),
+                            projection.source_event_sequence,
+                            projection.updated_at.isoformat(),
+                        ),
+                    )
+                    rebuilt.append(projection)
+                connection.commit()
+        return rebuilt
+
     async def put_outbox_delivery(self, delivery: BridgeDelivery) -> None:
         await self._put_bridge_delivery("bridge_outbox", delivery)
 
@@ -2406,6 +2459,54 @@ class RuntimeBackendService:
         await self.backend.put_projection(projection)
         return projection, submission
 
+    async def rebuild_projections(
+        self,
+        *,
+        run_id: str,
+        names: Sequence[str] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[list[Projection], CommandSubmission]:
+        requested = (
+            list(dict.fromkeys(names)) if names is not None else list(_BUILT_IN_PROJECTIONS)
+        )
+        unsupported = sorted(set(requested) - set(_BUILT_IN_PROJECTIONS))
+        if unsupported:
+            raise ValueError(f"Unknown projection rebuild name: {unsupported[0]}")
+        command = RuntimeCommand(
+            run_id=run_id,
+            command_type="projection.rebuild",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"projection_names": requested},
+        )
+        event = RuntimeEvent(
+            run_id=run_id,
+            event_type="projection.rebuilt",
+            payload={"projection_names": requested},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            projections: list[Projection] = []
+            for name in requested:
+                existing = await self.backend.get_projection(run_id=run_id, name=name)
+                if existing is None:
+                    raise ValueError(
+                        "Replayed projection rebuild has no stored projection: "
+                        f"{name!r}"
+                    )
+                projections.append(existing)
+            return projections, submission
+
+        return (
+            await self.backend.rebuild_projections(run_id=run_id, names=requested),
+            submission,
+        )
+
     async def enqueue_bridge_delivery(
         self,
         delivery: BridgeDelivery,
@@ -2768,6 +2869,90 @@ def _validate_run_status_transition(
         raise ValueError(
             f"Invalid run status transition: {current.value!r} -> {target.value!r}"
         )
+
+
+def _count_rows(connection: sqlite3.Connection, table: str, run_id: str) -> int:
+    return int(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()[0]
+    )
+
+
+def _group_counts(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    column: str,
+    run_id: str,
+) -> dict[str, int]:
+    rows = connection.execute(
+        f"""
+        SELECT {column}, COUNT(*) AS count
+        FROM {table}
+        WHERE run_id = ?
+        GROUP BY {column}
+        ORDER BY {column} ASC
+        """,
+        (run_id,),
+    ).fetchall()
+    return {str(row[0]): int(row["count"]) for row in rows}
+
+
+def _build_run_summary_projection(
+    connection: sqlite3.Connection,
+    run_id: str,
+) -> Projection:
+    event_type_counts = _group_counts(
+        connection,
+        table="runtime_events",
+        column="event_type",
+        run_id=run_id,
+    )
+    source_event_sequence = int(
+        connection.execute(
+            "SELECT COALESCE(MAX(sequence), 0) FROM runtime_events WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()[0]
+    )
+    data = {
+        "artifact_count": _count_rows(connection, "artifacts", run_id),
+        "carrier_count": _count_rows(connection, "carriers", run_id),
+        "carrier_type_counts": _group_counts(
+            connection,
+            table="carriers",
+            column="carrier_type",
+            run_id=run_id,
+        ),
+        "event_count": sum(event_type_counts.values()),
+        "event_type_counts": event_type_counts,
+        "gate_count": _count_rows(connection, "gates", run_id),
+        "gate_status_counts": _group_counts(
+            connection,
+            table="gates",
+            column="status",
+            run_id=run_id,
+        ),
+        "observation_count": _count_rows(connection, "observations", run_id),
+        "process_count": _count_rows(connection, "processes", run_id),
+        "process_status_counts": _group_counts(
+            connection,
+            table="processes",
+            column="status",
+            run_id=run_id,
+        ),
+        "run_id": run_id,
+        "source_event_sequence": source_event_sequence,
+    }
+    return Projection(
+        id="projection_run_summary",
+        run_id=run_id,
+        name="run_summary",
+        version=1,
+        data=data,
+        source_event_sequence=source_event_sequence,
+    )
 
 
 def _run_args(run: Run) -> tuple[Any, ...]:

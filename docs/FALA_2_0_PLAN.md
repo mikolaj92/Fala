@@ -305,7 +305,7 @@ not complete enough to close the requirement.
 | 25 | Security and trust boundaries | PARTIAL | Audit subprocess/YAML/web/operator/secrets boundaries and prevent direct adapter DB mutation. |
 | 26 | Secrets and redaction | PARTIAL | Resolve env secrets safely and redact them from events, reports, traces, metadata, and exports. |
 | 27 | Retention and garbage collection | PARTIAL | Finish run archive, SQLite compact/vacuum, dry-run GC, artifact GC, and shared artifact safeguards. |
-| 28 | Projections | PARTIAL | Make projections explicitly versioned, rebuildable, stale-detectable read models. |
+| 28 | Projections | PARTIAL | Built-in `run_summary` can be rebuilt; add stale detection and broader projection schemas. |
 | 29 | Doctor / validation | PARTIAL | Expand `fala doctor`-style checks for carrier schema, adapters, graph, SQLite status, artifact store, and bridge config. |
 | 30 | Trace / debug / export | PARTIAL | Add/finish trace.json, timeline.json, graph.dot, report.html, and portable bundle export. |
 | 31 | Step SDK | PARTIAL | Standardize subprocess input/output manifests and transactional runtime commit. |

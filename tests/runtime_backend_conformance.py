@@ -263,6 +263,22 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         name=projection.name,
     ) == projection
     assert await backend.list_projections(run_id=carrier.run_id) == [projection]
+    rebuilt = await backend.rebuild_projections(run_id=carrier.run_id)
+    assert len(rebuilt) == 1
+    summary = rebuilt[0]
+    assert summary.id == "projection_run_summary"
+    assert summary.name == "run_summary"
+    assert summary.source_event_sequence == 1
+    assert summary.data["event_type_counts"] == {"carrier.accepted": 1}
+    assert summary.data["carrier_count"] == 2
+    assert summary.data["process_status_counts"] == {
+        "running": 1,
+        "succeeded": 1,
+    }
+    assert await backend.get_projection(
+        run_id=carrier.run_id,
+        name="run_summary",
+    ) == summary
 
     delivery = BridgeDelivery(
         id="bridge_conformance",

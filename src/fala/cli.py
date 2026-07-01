@@ -1824,6 +1824,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_carrier_runtime_db_run_args(projections_list)
     projections_list.add_argument("--jsonl", action="store_true")
+    projections_rebuild = projection_subparsers.add_parser(
+        "rebuild",
+        help="Rebuild Carrier-first projections.",
+    )
+    _add_carrier_runtime_db_run_args(projections_rebuild)
+    projections_rebuild.add_argument(
+        "--name",
+        action="append",
+        default=[],
+        help="Projection name to rebuild. Repeatable. Defaults to all built-ins.",
+    )
+    projections_rebuild.add_argument("--idempotency-key", default=None)
+    projections_rebuild.add_argument("--jsonl", action="store_true")
 
     init = subparsers.add_parser("init-document", help="Initialize document graph in runtime store.")
     init.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
@@ -4262,6 +4275,31 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         )
         return _carrier_runtime_list_result("gates", gates, jsonl=args.jsonl)
     if args.command == "projections":
+        if args.projection_command == "rebuild":
+            service = RuntimeBackendService(backend)
+            names = args.name or None
+            rebuilt, submission = await service.rebuild_projections(
+                run_id=args.run_id,
+                names=names,
+                idempotency_key=args.idempotency_key
+                or f"{args.run_id}:projection.rebuild:{','.join(args.name) if args.name else 'all'}",
+                actor="cli:user",
+            )
+            if args.jsonl:
+                return _carrier_runtime_list_result(
+                    "projections",
+                    rebuilt,
+                    jsonl=True,
+                )
+            return {
+                "ok": True,
+                "count": len(rebuilt),
+                "projections": [
+                    projection.model_dump(mode="json") for projection in rebuilt
+                ],
+                "command": submission.command.model_dump(mode="json"),
+                "replayed": submission.replayed,
+            }
         projections = await backend.list_projections(run_id=args.run_id)
         return _carrier_runtime_list_result(
             "projections",

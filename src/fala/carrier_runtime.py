@@ -291,6 +291,25 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
+    async def rebuild_projections(
+        self,
+        *,
+        run_id: str,
+        names: list[str] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[list[Projection], CommandSubmission]:
+        return await self.service.rebuild_projections(
+            run_id=run_id,
+            names=names,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def list_events(
         self,
         *,
