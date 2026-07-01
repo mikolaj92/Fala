@@ -567,6 +567,19 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(completed.status, CarrierProcessStatus.succeeded)
                 self.assertEqual(completed.output, {"score": 1})
                 self.assertFalse(complete_submission.replayed)
+                with self.assertRaisesRegex(ValueError, "not running"):
+                    await runtime.complete_process(
+                        run_id="run_processes",
+                        process_id=process.id,
+                        output={"score": 2},
+                        idempotency_key="run_processes:process:score:complete-again",
+                    )
+                with self.assertRaisesRegex(ValueError, "cannot be retried"):
+                    await runtime.retry_process(
+                        run_id="run_processes",
+                        process_id=process.id,
+                        idempotency_key="run_processes:process:score:retry-after-success",
+                    )
                 self.assertEqual(
                     await runtime.list_processes(
                         run_id="run_processes",
@@ -1773,6 +1786,13 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(completed.values, {"decision": "approved"})
                 self.assertTrue(replay.replayed)
                 self.assertEqual(replayed, completed)
+                with self.assertRaisesRegex(ValueError, "not open"):
+                    await service.complete_gate(
+                        run_id=gate.run_id,
+                        gate_id=gate.id,
+                        values={"decision": "approved-again"},
+                        idempotency_key="run_service:gate.complete:gate_review:again",
+                    )
                 events = await service.backend.list_events(run_id=gate.run_id)
                 self.assertEqual(
                     [event.event_type for event in events],

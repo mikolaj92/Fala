@@ -451,6 +451,10 @@ class RuntimeBackend(Protocol):
         self, command: RuntimeCommand, *, events: Sequence[RuntimeEvent] = ()
     ) -> CommandSubmission: ...
 
+    async def get_command_by_idempotency(
+        self, *, run_id: str, idempotency_key: str
+    ) -> RuntimeCommand | None: ...
+
     async def list_events(
         self,
         *,
@@ -1370,6 +1374,19 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
+    async def get_command_by_idempotency(
+        self, *, run_id: str, idempotency_key: str
+    ) -> RuntimeCommand | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM runtime_commands
+                WHERE run_id = ? AND idempotency_key = ?
+                """,
+                (run_id, idempotency_key),
+            ).fetchone()
+        return _command_from_row(row) if row is not None else None
+
     async def list_events(
         self,
         *,
@@ -1703,6 +1720,14 @@ class SQLiteRuntimeBackend:
                 if row is None:
                     raise ValueError(f"Unknown process: {process_id!r}")
                 process = _process_from_row(row)
+                if process.status not in {
+                    CarrierProcessStatus.running,
+                    CarrierProcessStatus.failed,
+                }:
+                    raise ValueError(
+                        f"Process {process_id!r} cannot be retried from status: "
+                        f"{process.status.value}"
+                    )
                 if process.attempt >= process.max_attempts:
                     raise ValueError(f"Process {process_id!r} exhausted retry attempts")
                 now = _now()
@@ -2143,6 +2168,20 @@ class RuntimeBackendService:
     def sqlite(cls, path: str | Path) -> "RuntimeBackendService":
         return cls(SQLiteRuntimeBackend(path))
 
+    async def _replayed_submission(
+        self,
+        *,
+        run_id: str,
+        idempotency_key: str,
+    ) -> CommandSubmission | None:
+        command = await self.backend.get_command_by_idempotency(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if command is None:
+            return None
+        return CommandSubmission(command=command, events=[], replayed=True)
+
     async def create_run(
         self,
         run: Run,
@@ -2194,6 +2233,12 @@ class RuntimeBackendService:
         existing = await self.backend.get_run(run_id=run_id)
         if existing is None:
             raise ValueError(f"Unknown run: {run_id!r}")
+        replay = await self._replayed_submission(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            return existing, replay
         if existing.status != status:
             _validate_run_status_transition(existing.status, status)
         command = RuntimeCommand(
@@ -2548,6 +2593,16 @@ class RuntimeBackendService:
         existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
         if existing is None:
             raise ValueError(f"Unknown process: {process_id!r}")
+        replay = await self._replayed_submission(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            return existing, replay
+        if existing.status != CarrierProcessStatus.running:
+            raise ValueError(
+                f"Process {process_id!r} is not running: {existing.status.value}"
+            )
         command = RuntimeCommand(
             run_id=run_id,
             command_type="process.complete",
@@ -2593,6 +2648,16 @@ class RuntimeBackendService:
         existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
         if existing is None:
             raise ValueError(f"Unknown process: {process_id!r}")
+        replay = await self._replayed_submission(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            return existing, replay
+        if existing.status != CarrierProcessStatus.running:
+            raise ValueError(
+                f"Process {process_id!r} is not running: {existing.status.value}"
+            )
         command = RuntimeCommand(
             run_id=run_id,
             command_type="process.fail",
@@ -2639,6 +2704,20 @@ class RuntimeBackendService:
         existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
         if existing is None:
             raise ValueError(f"Unknown process: {process_id!r}")
+        replay = await self._replayed_submission(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            return existing, replay
+        if existing.status not in {
+            CarrierProcessStatus.running,
+            CarrierProcessStatus.failed,
+        }:
+            raise ValueError(
+                f"Process {process_id!r} cannot be retried from status: "
+                f"{existing.status.value}"
+            )
         command = RuntimeCommand(
             run_id=run_id,
             command_type="process.retry",
@@ -2817,6 +2896,14 @@ class RuntimeBackendService:
         existing = await self.backend.get_gate(run_id=run_id, gate_id=gate_id)
         if existing is None:
             raise ValueError(f"Unknown gate: {gate_id!r}")
+        replay = await self._replayed_submission(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            return existing, replay
+        if existing.status != GateStatus.open:
+            raise ValueError(f"Gate {gate_id!r} is not open: {existing.status.value}")
         command = RuntimeCommand(
             run_id=run_id,
             command_type="gate.complete",
