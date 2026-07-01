@@ -164,6 +164,8 @@ Carrier-first SQLite state can be inspected without FastAPI or a web server:
 uv run fala runs create --db /tmp/fala-carrier.sqlite --run-id run_case --title "Case run"
 uv run fala runs inspect --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala runs cancel --db /tmp/fala-carrier.sqlite --run-id run_case --reason "operator requested"
+uv run fala commands list --db /tmp/fala-carrier.sqlite --run-id run_case
+uv run fala commands inspect --db /tmp/fala-carrier.sqlite --run-id run_case --command-id command_123
 uv run fala carriers list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala carriers inspect --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
 uv run fala carrier-types list --db /tmp/fala-carrier.sqlite --run-id run_case

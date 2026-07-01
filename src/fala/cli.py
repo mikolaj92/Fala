@@ -229,6 +229,24 @@ def _build_parser() -> argparse.ArgumentParser:
     runs_cancel.add_argument("--reason", default=None)
     runs_cancel.add_argument("--idempotency-key", default=None)
 
+    commands = subparsers.add_parser("commands", help="Inspect runtime commands.")
+    command_subparsers = commands.add_subparsers(
+        dest="command_command",
+        required=True,
+    )
+    commands_list = command_subparsers.add_parser("list", help="List runtime commands.")
+    _add_carrier_runtime_db_run_args(commands_list)
+    commands_list.add_argument("--command-type", default=None)
+    commands_list.add_argument("--actor", default=None)
+    commands_list.add_argument("--limit", type=int, default=None)
+    commands_list.add_argument("--jsonl", action="store_true")
+    commands_inspect = command_subparsers.add_parser(
+        "inspect",
+        help="Inspect one runtime command.",
+    )
+    _add_carrier_runtime_db_run_args(commands_inspect)
+    commands_inspect.add_argument("--command-id", required=True)
+
     runtimes = subparsers.add_parser("runtimes", help="Inspect Carrier runtime pools.")
     runtime_subparsers = runtimes.add_subparsers(dest="runtime_command", required=True)
     runtimes_list = runtime_subparsers.add_parser("list", help="List runtime pools.")
@@ -523,6 +541,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "carrier-relations",
         "carrier-types",
         "carriers",
+        "commands",
         "diagnose-waits",
         "events",
         "export-bundle",
@@ -648,6 +667,29 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             "ok": run is not None,
             "run": run.model_dump(mode="json") if run is not None else None,
         }
+    if args.command == "commands":
+        if args.command_command == "inspect":
+            command = await backend.get_command(
+                run_id=args.run_id,
+                command_id=args.command_id,
+            )
+            return {
+                "ok": command is not None,
+                "command": command.model_dump(mode="json")
+                if command is not None
+                else None,
+            }
+        commands = await backend.list_commands(
+            run_id=args.run_id,
+            command_type=args.command_type,
+            actor=args.actor,
+            limit=args.limit,
+        )
+        return _carrier_runtime_list_result(
+            "commands",
+            commands,
+            jsonl=args.jsonl,
+        )
     if args.command == "runtimes":
         service = RuntimeBackendService(backend)
         if args.runtime_command == "list":

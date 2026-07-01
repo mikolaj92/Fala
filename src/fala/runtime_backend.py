@@ -455,6 +455,19 @@ class RuntimeBackend(Protocol):
         self, *, run_id: str, idempotency_key: str
     ) -> RuntimeCommand | None: ...
 
+    async def get_command(
+        self, *, run_id: str, command_id: str
+    ) -> RuntimeCommand | None: ...
+
+    async def list_commands(
+        self,
+        *,
+        run_id: str,
+        command_type: str | None = None,
+        actor: str | None = None,
+        limit: int | None = None,
+    ) -> list[RuntimeCommand]: ...
+
     async def list_events(
         self,
         *,
@@ -1417,6 +1430,47 @@ class SQLiteRuntimeBackend:
                 (run_id, idempotency_key),
             ).fetchone()
         return _command_from_row(row) if row is not None else None
+
+    async def get_command(
+        self, *, run_id: str, command_id: str
+    ) -> RuntimeCommand | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM runtime_commands
+                WHERE run_id = ? AND id = ?
+                """,
+                (run_id, command_id),
+            ).fetchone()
+        return _command_from_row(row) if row is not None else None
+
+    async def list_commands(
+        self,
+        *,
+        run_id: str,
+        command_type: str | None = None,
+        actor: str | None = None,
+        limit: int | None = None,
+    ) -> list[RuntimeCommand]:
+        clauses = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if command_type is not None:
+            clauses.append("command_type = ?")
+            params.append(command_type)
+        if actor is not None:
+            clauses.append("actor = ?")
+            params.append(actor)
+        sql = f"""
+            SELECT * FROM runtime_commands
+            WHERE {' AND '.join(clauses)}
+            ORDER BY created_at ASC, id ASC
+        """
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [_command_from_row(row) for row in rows]
 
     async def list_events(
         self,

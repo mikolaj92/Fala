@@ -1183,6 +1183,51 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertTrue(inspected_run["ok"])
             self.assertEqual(inspected_run["run"]["title"], "CLI Run")
 
+            cli_commands = _run_cli_json(
+                "commands",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--actor",
+                "cli:user",
+            )
+            self.assertEqual(cli_commands["count"], 1)
+            self.assertEqual(cli_commands["commands"][0]["command_type"], "run.create")
+
+            run_commands = _run_cli_json(
+                "commands",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--command-type",
+                "run.create",
+            )
+            self.assertEqual(run_commands["count"], 1)
+            self.assertEqual(
+                run_commands["commands"][0]["id"],
+                cli_commands["commands"][0]["id"],
+            )
+
+            inspected_command = _run_cli_json(
+                "commands",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--command-id",
+                cli_commands["commands"][0]["id"],
+            )
+            self.assertTrue(inspected_command["ok"])
+            self.assertEqual(
+                inspected_command["command"]["idempotency_key"],
+                "run_cli:run.create",
+            )
+
             carriers = _run_cli_json(
                 "carriers",
                 "list",

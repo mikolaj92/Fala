@@ -145,6 +145,19 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert [event.sequence for event in events] == [1]
     assert events[0].command_id == command.id
     assert events[0].correlation_id == "corr-conformance"
+    assert await backend.get_command(
+        run_id=carrier.run_id,
+        command_id=command.id,
+    ) == command
+    assert await backend.list_commands(run_id=carrier.run_id) == [command]
+    assert await backend.list_commands(
+        run_id=carrier.run_id,
+        command_type="carrier.accept",
+    ) == [command]
+    assert await backend.list_commands(
+        run_id=carrier.run_id,
+        actor="tester",
+    ) == [command]
 
     observation = Observation(
         id="observation_score",
