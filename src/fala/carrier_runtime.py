@@ -83,6 +83,25 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
+    async def cancel_run(
+        self,
+        *,
+        run_id: str,
+        idempotency_key: str,
+        reason: str | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Run, CommandSubmission]:
+        return await self.service.cancel_run(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+            reason=reason,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def accept_carrier(
         self,
         carrier: Carrier,

@@ -2330,6 +2330,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             )
             self.assertTrue(cancelled["ok"])
             self.assertEqual(cancelled["run"]["status"], "cancel_requested")
+            self.assertEqual(cancelled["command"]["command_type"], "run.cancel")
             self.assertEqual(
                 cancelled["command"]["payload"]["reason"],
                 "operator requested",
@@ -2348,6 +2349,18 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(
                 replay["command"]["payload"]["reason"],
                 "operator requested",
+            )
+            events = _run_cli_json(
+                "events",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cancel",
+            )
+            self.assertEqual(
+                [event["event_type"] for event in events["events"]],
+                ["run.created", "run.cancel_requested"],
             )
 
     def test_document_domain_pack_maps_documents_to_carriers(self) -> None:

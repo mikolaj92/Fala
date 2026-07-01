@@ -659,9 +659,8 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             return _carrier_runtime_list_result("runs", runs, jsonl=args.jsonl)
         if args.run_command == "cancel":
             service = RuntimeBackendService(backend)
-            run, submission = await service.set_run_status(
+            run, submission = await service.cancel_run(
                 run_id=args.run_id,
-                status=CarrierRunStatus.cancel_requested,
                 idempotency_key=args.idempotency_key or f"{args.run_id}:run.cancel",
                 reason=args.reason,
                 actor="cli:user",

@@ -2477,6 +2477,53 @@ class RuntimeBackendService:
         correlation_id: str | None = None,
         causation_id: str | None = None,
     ) -> tuple[Run, CommandSubmission]:
+        return await self._set_run_status(
+            run_id=run_id,
+            status=status,
+            command_type="run.status.set",
+            event_type="run.status.changed",
+            idempotency_key=idempotency_key,
+            reason=reason,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def cancel_run(
+        self,
+        *,
+        run_id: str,
+        idempotency_key: str,
+        reason: str | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Run, CommandSubmission]:
+        return await self._set_run_status(
+            run_id=run_id,
+            status=CarrierRunStatus.cancel_requested,
+            command_type="run.cancel",
+            event_type="run.cancel_requested",
+            idempotency_key=idempotency_key,
+            reason=reason,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def _set_run_status(
+        self,
+        *,
+        run_id: str,
+        status: CarrierRunStatus,
+        command_type: str,
+        event_type: str,
+        idempotency_key: str,
+        reason: str | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Run, CommandSubmission]:
         existing = await self.backend.get_run(run_id=run_id)
         if existing is None:
             raise ValueError(f"Unknown run: {run_id!r}")
@@ -2490,7 +2537,7 @@ class RuntimeBackendService:
             _validate_run_status_transition(existing.status, status)
         command = RuntimeCommand(
             run_id=run_id,
-            command_type="run.status.set",
+            command_type=command_type,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
@@ -2503,7 +2550,7 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
-            event_type="run.status.changed",
+            event_type=event_type,
             payload={
                 "from": existing.status.value,
                 "to": status.value,

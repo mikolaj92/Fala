@@ -4,6 +4,9 @@ Runtime mutations go through `RuntimeBackendService` command paths where
 available. Commands carry idempotency keys and append runtime events for durable
 audit.
 
+Run cancellation is a first-class `run.cancel` command and emits
+`run.cancel_requested`.
+
 Process execution:
 
 - `ready` processes can be atomically claimed.
