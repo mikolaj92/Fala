@@ -149,6 +149,10 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         run_id=carrier.run_id,
         command_id=command.id,
     ) == command
+    assert await backend.get_command_by_idempotency(
+        run_id=carrier.run_id,
+        idempotency_key=command.idempotency_key,
+    ) == command
     assert await backend.list_commands(run_id=carrier.run_id) == [command]
     assert await backend.list_commands(
         run_id=carrier.run_id,
@@ -158,6 +162,15 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         run_id=carrier.run_id,
         actor="tester",
     ) == [command]
+    assert await backend.list_events(
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+    ) == events
+    assert await backend.list_events(
+        run_id=carrier.run_id,
+        after_sequence=0,
+        limit=1,
+    ) == events
 
     observation = Observation(
         id="observation_score",
