@@ -27,6 +27,16 @@ The Fala architecture is built around these modules:
 - `fala.models.CarrierWorkflowPackageSpec`: Carrier-first package schema.
 - `fala.yaml_loader.load_carrier_workflow_package_yaml`: Carrier package loader.
 
+## Install
+
+The PyPI distribution is `fala-runtime`. The import package and CLI command are
+both `fala`.
+
+```bash
+uv add fala-runtime
+uv run fala --help
+```
+
 ## Quick Check
 
 Create a local runtime database:

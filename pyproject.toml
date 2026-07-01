@@ -1,7 +1,8 @@
 [project]
-name = "fala"
+name = "fala-runtime"
 version = "0.1.0"
 description = "SQLite-first runtime for observable information flows"
+readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -13,6 +14,11 @@ dependencies = [
 
 [project.scripts]
 fala = "fala.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mikolaj92/Fala"
+Repository = "https://github.com/mikolaj92/Fala"
+Issues = "https://github.com/mikolaj92/Fala/issues"
 
 [build-system]
 requires = ["hatchling"]
