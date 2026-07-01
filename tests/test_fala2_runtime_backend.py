@@ -1496,6 +1496,25 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 ),
                 idempotency_key="run_source:carrier.accept:carrier_delegate",
             )
+            await source.save_runtime_pool(
+                RuntimePool(
+                    id="target_pool",
+                    runtimes=[RuntimeRef(id="target", uri=f"sqlite://{target_path}")],
+                    carrier_types=["case"],
+                )
+            )
+            await source.save_delegation_policy(
+                DelegationPolicy(
+                    id="delegate_cases",
+                    pool_id="target_pool",
+                    carrier_types=["case"],
+                    budget=RuntimeBudget(
+                        runtime_hops=1,
+                        carrier_count=1,
+                        attempts=1,
+                    ),
+                )
+            )
             await source.schedule_process(
                 Process(
                     id="process_delegate",
@@ -1506,16 +1525,10 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     input={
                         "adapter": {
                             "kind": "fala_runtime",
-                            "runtime_ref": f"sqlite://{target_path}",
+                            "runtime_ref": "target_pool",
                         },
                         "config": {
-                            "target_runtime_id": "target",
                             "target_run_id": "run_target",
-                            "budget": {
-                                "runtime_hops": 1,
-                                "carrier_count": 1,
-                                "attempts": 1,
-                            },
                         },
                     },
                 ),
@@ -1554,6 +1567,15 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(
                 outbox["bridge_outbox"][0]["carrier"]["id"],
                 "carrier_delegate",
+            )
+            self.assertEqual(outbox["bridge_outbox"][0]["pool_id"], "target_pool")
+            self.assertEqual(
+                outbox["bridge_outbox"][0]["target"]["runtime"]["id"],
+                "target",
+            )
+            self.assertEqual(
+                outbox["bridge_outbox"][0]["budget"]["runtime_hops"],
+                1,
             )
 
             delivered = _run_cli_json(

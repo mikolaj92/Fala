@@ -1131,12 +1131,12 @@ async def _carrier_runtime_enqueue_fala_runtime_process(
         id=str(request.config.get("source_runtime_id") or "local"),
         uri=f"sqlite://{Path(db_path).expanduser().resolve()}",
     )
-    target_runtime = RuntimeRef(
-        id=str(request.config.get("target_runtime_id") or _runtime_ref_id(request.adapter.runtime_ref)),
-        uri=request.adapter.runtime_ref,
+    target_runtime, pool_id, budget = await _resolve_fala_runtime_target(
+        backend=backend,
+        carrier=carrier,
+        request=request,
     )
     target_run_id = str(request.config.get("target_run_id") or process.run_id)
-    budget = RuntimeBudget.model_validate(request.config.get("budget") or {})
     delivery_id = str(
         request.config.get("delivery_id")
         or f"bridge:{process.run_id}:{process.id}"
@@ -1154,7 +1154,7 @@ async def _carrier_runtime_enqueue_fala_runtime_process(
             event_id=events[-1].id if events else None,
             sequence=events[-1].sequence if events else None,
         ),
-        pool_id=request.config.get("pool_id"),
+        pool_id=pool_id,
         budget=budget,
         metadata={
             "process_id": process.id,
@@ -1176,6 +1176,51 @@ async def _carrier_runtime_enqueue_fala_runtime_process(
             "replayed": submission.replayed,
         },
     )
+
+
+async def _resolve_fala_runtime_target(
+    *,
+    backend: SQLiteRuntimeBackend,
+    carrier: Carrier,
+    request: StepRunRequest,
+) -> tuple[RuntimeRef, str | None, RuntimeBudget]:
+    assert request.adapter.runtime_ref is not None
+    configured_budget = request.config.get("budget")
+    pool = await backend.get_runtime_pool(pool_id=request.adapter.runtime_ref)
+    if pool is None:
+        return (
+            RuntimeRef(
+                id=str(
+                    request.config.get("target_runtime_id")
+                    or _runtime_ref_id(request.adapter.runtime_ref)
+                ),
+                uri=request.adapter.runtime_ref,
+            ),
+            request.config.get("pool_id"),
+            RuntimeBudget.model_validate(configured_budget or {}),
+        )
+
+    if pool.carrier_types and carrier.carrier_type not in pool.carrier_types:
+        raise ValueError(
+            f"Runtime pool {pool.id!r} does not accept carrier type {carrier.carrier_type!r}"
+        )
+    if not pool.runtimes:
+        raise ValueError(f"Runtime pool {pool.id!r} has no runtimes")
+
+    policies = await backend.list_delegation_policies(pool_id=pool.id)
+    policy = next(
+        (
+            item
+            for item in policies
+            if not item.carrier_types or carrier.carrier_type in item.carrier_types
+        ),
+        None,
+    )
+    budget = RuntimeBudget.model_validate(
+        configured_budget
+        or (policy.budget.model_dump(mode="json") if policy is not None else {})
+    )
+    return pool.runtimes[0], pool.id, budget
 
 
 def _runtime_ref_id(value: str) -> str:

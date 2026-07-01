@@ -67,12 +67,12 @@ workflow API.
 | External infrastructure removal | DONE | Core dependencies no longer include web, queue, Redis, Postgres, S3, or HTTP client stacks. |
 | Runtime backend boundary | PARTIAL | `RuntimeBackend` covers the current runtime operations; backend conformance should continue expanding with every new mutation. |
 | Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. GC, run archive export, and SQLite vacuum exist; richer retention policy still needs coverage. |
-| Step adapters | PARTIAL | `python_function`, `subprocess`, `manual_gate`, and `fala_runtime` adapters exist. Subprocess uses manifests and argument-list commands. Fala-runtime processes enqueue bridge outbox deliveries. |
+| Step adapters | PARTIAL | `python_function`, `subprocess`, `manual_gate`, and `fala_runtime` adapters exist. Subprocess uses manifests and argument-list commands. Fala-runtime processes enqueue bridge outbox deliveries and can resolve local runtime pools. |
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
 | Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
 | State machines | PARTIAL | Run/process/gate statuses exist with transition checks for key paths. More illegal-transition tests are needed. |
-| Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, and local two-SQLite delivery exist. Pool policy selection remains future work. |
-| CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, and bridge delivery exist. Runtime-pool policy commands remain incomplete. |
+| Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, and local two-SQLite delivery exist. Advanced pool policies remain future work. |
+| CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, and bridge delivery exist. Pool management mutation commands remain incomplete. |
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings. More examples and package manifests are needed. |
 | Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, and run archive export exist. Deterministic execution replay is not yet complete. |
@@ -80,8 +80,8 @@ workflow API.
 
 ## Next Work
 
-1. Add runtime-pool policy selection for `fala_runtime` delegation.
-2. Add richer retention policy controls for shared artifacts and archived runs.
-3. Split the remaining conceptual/security/replay/composition docs.
-4. Define package/event/artifact/domain/report migration policy.
-5. Add deterministic execution replay boundaries for recorded steps.
+1. Add richer retention policy controls for shared artifacts and archived runs.
+2. Split the remaining conceptual/security/replay/composition docs.
+3. Define package/event/artifact/domain/report migration policy.
+4. Add deterministic execution replay boundaries for recorded steps.
+5. Add advanced runtime-pool policies such as least-busy and round-robin.
