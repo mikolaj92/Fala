@@ -212,6 +212,8 @@ Start with `docs/CONCEPTUAL_MODEL.md`, then `docs/RUNTIME_SEMANTICS.md`,
 `docs/MULTI_FALA_COMPOSITION.md`. Version policy lives in
 `docs/MIGRATIONS.md`.
 
+Carrier-first domain-pack examples live under `examples/domain-packs`.
+
 ## Development Check
 
 Focused Fala 2.0 checks:

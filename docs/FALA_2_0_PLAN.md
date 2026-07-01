@@ -74,11 +74,11 @@ workflow API.
 | Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, and `manual`/`least_busy`/`round_robin` pool policies exist. Cross-host delivery remains future work. |
 | CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, and bridge delivery exist. Cross-host bridge commands remain incomplete. |
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
-| Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings. More examples and package manifests are needed. |
+| Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings; Signals exists as a Carrier-first domain-pack example. More first-party domain packs can still be added. |
 | Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, run archive export, and guarded deterministic `replay-execution` exist. Broader deterministic adapter coverage can still expand. |
-| Docs/examples | PARTIAL | Dedicated Fala 2 conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain pack, security, migration, and version policy docs exist. More runnable examples can still be added. |
+| Docs/examples | PARTIAL | Dedicated Fala 2 conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain pack, security, migration, and version policy docs exist. Carrier runtime, pipeline, Splot, Signals, and multi-Fala examples exist. |
 
 ## Next Work
 
 1. Add cross-host bridge transport adapters beyond local SQLite delivery.
-2. Add richer domain-pack examples beyond documents and Splot.
+2. Promote more example domain packs into reusable first-party modules when they prove stable.

@@ -2078,6 +2078,17 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
         self.assertEqual(package.carrier_types[0].id, SPLOT_ARBITRATION_CASE)
         self.assertEqual(package.flows[0].steps[0].adapter.kind, "manual_gate")
 
+    def test_signals_domain_pack_package_manifest_is_carrier_first(self) -> None:
+        package = load_carrier_workflow_package_yaml(
+            Path("examples/domain-packs/signals/carrier-package.yaml")
+        )
+
+        self.assertEqual(package.id, "signals_basic")
+        self.assertEqual(package.carrier_types[0].id, "metric_sample")
+        self.assertEqual(package.observation_kinds[0].id, "threshold_reading")
+        self.assertEqual(package.artifact_kinds[0].id, "signal_report")
+        self.assertEqual(package.flows[0].steps[0].adapter.kind, "subprocess")
+
     def test_splot_domain_pack_does_not_use_document_runtime_internals(self) -> None:
         source = inspect.getsource(splot)
         self.assertNotIn("RuntimeDocument", source)

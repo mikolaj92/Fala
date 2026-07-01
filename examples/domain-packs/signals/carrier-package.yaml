@@ -1,0 +1,66 @@
+version: "2"
+id: signals_basic
+title: Signal monitoring domain pack
+description: Carrier-first example for thresholded metric signals.
+tags: ["domain-pack", "signals"]
+
+carrier_types:
+  - id: metric_sample
+    title: Metric sample
+    media_types: ["application/json"]
+    value_schema:
+      type: object
+      required: ["name", "value"]
+      properties:
+        name:
+          type: string
+        value:
+          type: number
+        unit:
+          type: string
+      additionalProperties: true
+
+observation_kinds:
+  - id: threshold_reading
+    title: Threshold reading
+    value_schema:
+      type: object
+      required: ["state"]
+      properties:
+        state:
+          type: string
+          enum: ["normal", "warning", "critical"]
+        threshold:
+          type: number
+      additionalProperties: false
+
+artifact_kinds:
+  - id: signal_report
+    title: Signal report
+    media_types: ["application/json", "text/plain"]
+
+capabilities:
+  - id: classify_signal
+    title: Classify signal
+    accepts_carrier_types: [metric_sample]
+    emits_observation_kinds: [threshold_reading]
+    emits_artifact_kinds: [signal_report]
+
+flows:
+  - id: classify_metric_sample
+    title: Classify metric sample
+    steps:
+      - id: classify
+        capability: classify_signal
+        adapter:
+          kind: subprocess
+          command: ["python", "steps/classify.py"]
+          cwd: "."
+
+runtime:
+  backend:
+    kind: sqlite
+    path: .fala/state.sqlite
+  artifact_store:
+    kind: filesystem
+    root: .fala/artifacts

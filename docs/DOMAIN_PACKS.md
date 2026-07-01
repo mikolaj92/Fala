@@ -8,6 +8,10 @@ Current packs:
 - `fala.domain_packs.documents`
 - `fala.domain_packs.splot`
 
+Carrier-first example packs:
+
+- `examples/domain-packs/signals`
+
 Domain packs may provide:
 
 - carrier builders and parsers
