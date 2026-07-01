@@ -539,6 +539,22 @@ class RuntimeBackend(Protocol):
         values: dict[str, Any] | None = None,
     ) -> Gate: ...
 
+    async def cancel_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict[str, Any] | None = None,
+    ) -> Gate: ...
+
+    async def expire_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict[str, Any] | None = None,
+    ) -> Gate: ...
+
     async def list_gates(
         self,
         *,
@@ -1885,6 +1901,49 @@ class SQLiteRuntimeBackend:
         gate_id: str,
         values: dict[str, Any] | None = None,
     ) -> Gate:
+        return await self._finish_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            status=GateStatus.completed,
+            values=values,
+        )
+
+    async def cancel_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict[str, Any] | None = None,
+    ) -> Gate:
+        return await self._finish_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            status=GateStatus.cancelled,
+            values=values,
+        )
+
+    async def expire_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict[str, Any] | None = None,
+    ) -> Gate:
+        return await self._finish_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            status=GateStatus.expired,
+            values=values,
+        )
+
+    async def _finish_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        status: GateStatus,
+        values: dict[str, Any] | None,
+    ) -> Gate:
         async with self._lock:
             connection = self._connect()
             try:
@@ -1910,7 +1969,7 @@ class SQLiteRuntimeBackend:
                     WHERE run_id = ? AND id = ?
                     """,
                     (
-                        GateStatus.completed.value,
+                        status.value,
                         _dumps(values if values is not None else gate.values),
                         now.isoformat(),
                         run_id,
@@ -2953,6 +3012,81 @@ class RuntimeBackendService:
         correlation_id: str | None = None,
         causation_id: str | None = None,
     ) -> tuple[Gate, CommandSubmission]:
+        return await self._finish_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            values=values,
+            status=GateStatus.completed,
+            command_type="gate.complete",
+            event_type="gate.completed",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def cancel_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Gate, CommandSubmission]:
+        return await self._finish_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            values=values,
+            status=GateStatus.cancelled,
+            command_type="gate.cancel",
+            event_type="gate.cancelled",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def expire_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Gate, CommandSubmission]:
+        return await self._finish_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            values=values,
+            status=GateStatus.expired,
+            command_type="gate.expire",
+            event_type="gate.expired",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def _finish_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict[str, Any] | None,
+        status: GateStatus,
+        command_type: str,
+        event_type: str,
+        idempotency_key: str,
+        actor: str | None,
+        correlation_id: str | None,
+        causation_id: str | None,
+    ) -> tuple[Gate, CommandSubmission]:
         existing = await self.backend.get_gate(run_id=run_id, gate_id=gate_id)
         if existing is None:
             raise ValueError(f"Unknown gate: {gate_id!r}")
@@ -2966,24 +3100,24 @@ class RuntimeBackendService:
             raise ValueError(f"Gate {gate_id!r} is not open: {existing.status.value}")
         command = RuntimeCommand(
             run_id=run_id,
-            command_type="gate.complete",
+            command_type=command_type,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
             payload={
                 "gate_id": gate_id,
-                "status": GateStatus.completed.value,
+                "status": status.value,
                 "value_keys": sorted((values or {}).keys()),
             },
         )
         event = RuntimeEvent(
             run_id=run_id,
             carrier_id=existing.carrier_id,
-            event_type="gate.completed",
+            event_type=event_type,
             payload={
                 "gate_id": gate_id,
-                "status": GateStatus.completed.value,
+                "status": status.value,
                 "value_keys": sorted((values or {}).keys()),
             },
         )
@@ -2996,12 +3130,28 @@ class RuntimeBackendService:
                 )
             return replayed_gate, submission
 
-        return (
-            await self.backend.complete_gate(
+        if status == GateStatus.completed:
+            finished = await self.backend.complete_gate(
                 run_id=run_id,
                 gate_id=gate_id,
                 values=values,
-            ),
+            )
+        elif status == GateStatus.cancelled:
+            finished = await self.backend.cancel_gate(
+                run_id=run_id,
+                gate_id=gate_id,
+                values=values,
+            )
+        elif status == GateStatus.expired:
+            finished = await self.backend.expire_gate(
+                run_id=run_id,
+                gate_id=gate_id,
+                values=values,
+            )
+        else:
+            raise ValueError(f"Unsupported gate terminal status: {status.value}")
+        return (
+            finished,
             submission,
         )
 

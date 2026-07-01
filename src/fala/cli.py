@@ -383,6 +383,16 @@ def _build_parser() -> argparse.ArgumentParser:
     gate_complete.add_argument("--gate-id", required=True)
     gate_complete.add_argument("--value", action="append", default=[], help="Gate output value as key=value. Repeatable.")
     gate_complete.add_argument("--idempotency-key", default=None)
+    gate_cancel = single_gate_subparsers.add_parser("cancel", help="Cancel an open gate.")
+    _add_carrier_runtime_db_run_args(gate_cancel)
+    gate_cancel.add_argument("--gate-id", required=True)
+    gate_cancel.add_argument("--value", action="append", default=[], help="Gate output value as key=value. Repeatable.")
+    gate_cancel.add_argument("--idempotency-key", default=None)
+    gate_expire = single_gate_subparsers.add_parser("expire", help="Expire an open gate.")
+    _add_carrier_runtime_db_run_args(gate_expire)
+    gate_expire.add_argument("--gate-id", required=True)
+    gate_expire.add_argument("--value", action="append", default=[], help="Gate output value as key=value. Repeatable.")
+    gate_expire.add_argument("--idempotency-key", default=None)
 
     projections = subparsers.add_parser("projections", help="Inspect Carrier projections.")
     projection_subparsers = projections.add_subparsers(dest="projection_command", required=True)
@@ -1035,14 +1045,19 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 "command": submission.command.model_dump(mode="json"),
                 "replayed": submission.replayed,
             }
-        if args.gate_command == "complete":
+        if args.gate_command in {"complete", "cancel", "expire"}:
             service = RuntimeBackendService(backend)
-            gate, submission = await service.complete_gate(
+            method = {
+                "complete": service.complete_gate,
+                "cancel": service.cancel_gate,
+                "expire": service.expire_gate,
+            }[args.gate_command]
+            gate, submission = await method(
                 run_id=args.run_id,
                 gate_id=args.gate_id,
                 values=_parse_values(args.value),
                 idempotency_key=args.idempotency_key
-                or f"{args.run_id}:gate.complete:{args.gate_id}",
+                or f"{args.run_id}:gate.{args.gate_command}:{args.gate_id}",
                 actor="cli:user",
             )
             return {

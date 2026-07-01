@@ -1622,6 +1622,25 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(gate["gate"]["status"], "open")
             self.assertEqual(gate["command"]["command_type"], "gate.open")
 
+            cancelled_gate = _run_cli_json(
+                "gate",
+                "cancel",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+                "--gate-id",
+                "gate_mutate",
+                "--value",
+                "reason=operator",
+            )
+            self.assertTrue(cancelled_gate["ok"])
+            self.assertEqual(cancelled_gate["gate"]["status"], "cancelled")
+            self.assertEqual(
+                cancelled_gate["command"]["command_type"],
+                "gate.cancel",
+            )
+
             events = _run_cli_json(
                 "events",
                 "list",
@@ -1639,6 +1658,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     "observation.recorded",
                     "process.scheduled",
                     "gate.opened",
+                    "gate.cancelled",
                 ],
             )
 
@@ -2556,6 +2576,82 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 )
                 self.assertEqual(events[1].actor, "human:jan")
                 self.assertEqual(events[1].payload["value_keys"], ["decision"])
+
+        asyncio.run(scenario())
+
+    def test_runtime_backend_service_cancels_and_expires_gates(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                cancel_gate = Gate(
+                    id="gate_cancel",
+                    run_id="run_gate_terminal",
+                    kind="human.review",
+                    status=GateStatus.open,
+                )
+                expire_gate = Gate(
+                    id="gate_expire",
+                    run_id="run_gate_terminal",
+                    kind="human.review",
+                    status=GateStatus.open,
+                )
+                await service.open_gate(
+                    cancel_gate,
+                    idempotency_key="run_gate_terminal:gate.open:cancel",
+                )
+                await service.open_gate(
+                    expire_gate,
+                    idempotency_key="run_gate_terminal:gate.open:expire",
+                )
+
+                cancelled, cancel_submission = await service.cancel_gate(
+                    run_id="run_gate_terminal",
+                    gate_id=cancel_gate.id,
+                    values={"reason": "operator"},
+                    idempotency_key="run_gate_terminal:gate.cancel:cancel",
+                    actor="cli:user",
+                )
+                replayed, replay = await service.cancel_gate(
+                    run_id="run_gate_terminal",
+                    gate_id=cancel_gate.id,
+                    values={"reason": "changed"},
+                    idempotency_key="run_gate_terminal:gate.cancel:cancel",
+                    actor="cli:user",
+                )
+                expired, expire_submission = await service.expire_gate(
+                    run_id="run_gate_terminal",
+                    gate_id=expire_gate.id,
+                    values={"reason": "timeout"},
+                    idempotency_key="run_gate_terminal:gate.expire:expire",
+                    actor="system",
+                )
+
+                self.assertEqual(cancelled.status, GateStatus.cancelled)
+                self.assertEqual(cancelled.values, {"reason": "operator"})
+                self.assertFalse(cancel_submission.replayed)
+                self.assertEqual(replayed, cancelled)
+                self.assertTrue(replay.replayed)
+                self.assertEqual(expired.status, GateStatus.expired)
+                self.assertEqual(expired.values, {"reason": "timeout"})
+                self.assertFalse(expire_submission.replayed)
+                with self.assertRaisesRegex(ValueError, "not open"):
+                    await service.expire_gate(
+                        run_id="run_gate_terminal",
+                        gate_id=cancel_gate.id,
+                        idempotency_key="run_gate_terminal:gate.expire:cancel",
+                    )
+                events = await service.backend.list_events(run_id="run_gate_terminal")
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    [
+                        "gate.opened",
+                        "gate.opened",
+                        "gate.cancelled",
+                        "gate.expired",
+                    ],
+                )
+                self.assertEqual(events[2].actor, "cli:user")
+                self.assertEqual(events[3].actor, "system")
 
         asyncio.run(scenario())
 

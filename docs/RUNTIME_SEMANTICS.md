@@ -15,3 +15,6 @@ Process execution:
 Run, process, and gate status transitions are validated in the runtime backend.
 Illegal terminal-state rewrites are rejected unless the same idempotent command
 is replayed.
+
+Gates move from `open` to one terminal status: `completed`, `cancelled`, or
+`expired`.

@@ -273,6 +273,36 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         run_id=carrier.run_id,
         status=GateStatus.completed,
     ) == [completed_gate]
+    cancel_gate = Gate(
+        id="gate_cancel",
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+        kind="review",
+        status=GateStatus.open,
+    )
+    await backend.put_gate(cancel_gate)
+    cancelled_gate = await backend.cancel_gate(
+        run_id=carrier.run_id,
+        gate_id=cancel_gate.id,
+        values={"reason": "operator"},
+    )
+    assert cancelled_gate.status == GateStatus.cancelled
+    assert cancelled_gate.values == {"reason": "operator"}
+    expire_gate = Gate(
+        id="gate_expire",
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+        kind="review",
+        status=GateStatus.open,
+    )
+    await backend.put_gate(expire_gate)
+    expired_gate = await backend.expire_gate(
+        run_id=carrier.run_id,
+        gate_id=expire_gate.id,
+        values={"reason": "timeout"},
+    )
+    assert expired_gate.status == GateStatus.expired
+    assert expired_gate.values == {"reason": "timeout"}
 
     projection = Projection(
         id="projection_case",

@@ -368,6 +368,48 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
+    async def cancel_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Gate, CommandSubmission]:
+        return await self.service.cancel_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            values=values,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def expire_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        values: dict | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Gate, CommandSubmission]:
+        return await self.service.expire_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            values=values,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def save_projection(
         self,
         projection: Projection,
