@@ -203,6 +203,12 @@ runtime, even when `--run-id` is supplied.
 Fala can reference other runtimes through `RuntimeRef`, `RunRef`, and `EventRef`.
 Bridge records are delivered explicitly, without global transactions.
 
+## Fala 2 Docs
+
+Start with `docs/CONCEPTUAL_MODEL.md`, then `docs/RUNTIME_SEMANTICS.md`,
+`docs/SQLITE_BACKEND.md`, `docs/ADAPTER_CONTRACTS.md`, and
+`docs/MULTI_FALA_COMPOSITION.md`.
+
 ## Development Check
 
 Focused Fala 2.0 checks:

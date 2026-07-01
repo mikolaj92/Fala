@@ -76,12 +76,11 @@ workflow API.
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings. More examples and package manifests are needed. |
 | Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, and run archive export exist. Deterministic execution replay is not yet complete. |
-| Docs/examples | PARTIAL | Core docs and examples exist, but dedicated conceptual/security/replay/composition docs should still be split out. |
+| Docs/examples | PARTIAL | Dedicated Fala 2 conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain pack, security, and migration docs exist. More runnable examples can still be added. |
 
 ## Next Work
 
 1. Add archived-run retention policy controls.
-2. Split the remaining conceptual/security/replay/composition docs.
-3. Define package/event/artifact/domain/report migration policy.
-4. Add deterministic execution replay boundaries for recorded steps.
-5. Add advanced runtime-pool policies such as least-busy and round-robin.
+2. Define package/event/artifact/domain/report migration policy.
+3. Add deterministic execution replay boundaries for recorded steps.
+4. Add advanced runtime-pool policies such as least-busy and round-robin.
