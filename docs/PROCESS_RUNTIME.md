@@ -63,7 +63,8 @@ Supported v2 adapter kinds are:
 - `subprocess`: local command as an argument list.
 - `manual_gate`: explicit operator gate.
 - `fala_runtime`: delegation to another Fala runtime through bridge outbox.
-  `runtime_ref` may be a runtime URI or a local runtime pool id.
+  `runtime_ref` may be a runtime URI or a local runtime pool id. Runtime pools
+  support `manual`, `least_busy`, and `round_robin` policies.
 
 Subprocess commands are lists, not shell strings. The runtime prepares input
 manifests, captures stdout/stderr, validates output manifests, and commits

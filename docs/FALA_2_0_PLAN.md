@@ -71,8 +71,8 @@ workflow API.
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
 | Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
 | State machines | PARTIAL | Run/process/gate statuses exist with transition checks for key paths. More illegal-transition tests are needed. |
-| Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, and local two-SQLite delivery exist. Advanced pool policies remain future work. |
-| CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, and bridge delivery exist. Advanced pool policy commands remain incomplete. |
+| Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, and `manual`/`least_busy`/`round_robin` pool policies exist. Cross-host delivery remains future work. |
+| CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, and bridge delivery exist. Cross-host bridge commands remain incomplete. |
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings. More examples and package manifests are needed. |
 | Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, run archive export, and guarded deterministic `replay-execution` exist. Broader deterministic adapter coverage can still expand. |
@@ -80,5 +80,5 @@ workflow API.
 
 ## Next Work
 
-1. Add advanced runtime-pool policies such as least-busy and round-robin.
-2. Add archive expiry enforcement for retained archive bundles.
+1. Add archive expiry enforcement for retained archive bundles.
+2. Add cross-host bridge transport adapters beyond local SQLite delivery.

@@ -1648,8 +1648,20 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             await source.save_runtime_pool(
                 RuntimePool(
                     id="target_pool",
-                    runtimes=[RuntimeRef(id="target", uri=f"sqlite://{target_path}")],
+                    runtimes=[
+                        RuntimeRef(
+                            id="hot_target",
+                            uri="sqlite:///tmp/hot-target.sqlite",
+                            metadata={"load": 9},
+                        ),
+                        RuntimeRef(
+                            id="target",
+                            uri=f"sqlite://{target_path}",
+                            metadata={"load": 1},
+                        ),
+                    ],
                     carrier_types=["case"],
+                    metadata={"policy": "least_busy"},
                 )
             )
             await source.save_delegation_policy(
@@ -1758,6 +1770,102 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(
                 inbox["bridge_inbox"][0]["carrier"]["payload"]["claim"],
                 "DELEGATE-1",
+            )
+
+    def test_cli_run_until_idle_round_robins_fala_runtime_pool_targets(self) -> None:
+        async def setup(db_path: Path) -> None:
+            source = RuntimeBackendService.sqlite(db_path)
+            await source.create_run(
+                Run(id="run_round_robin"),
+                idempotency_key="run_round_robin:create",
+            )
+            await source.save_runtime_pool(
+                RuntimePool(
+                    id="rr_pool",
+                    runtimes=[
+                        RuntimeRef(id="target_a", uri="sqlite:///tmp/target-a.sqlite"),
+                        RuntimeRef(id="target_b", uri="sqlite:///tmp/target-b.sqlite"),
+                    ],
+                    carrier_types=["case"],
+                    metadata={"policy": "round_robin"},
+                )
+            )
+            await source.save_delegation_policy(
+                DelegationPolicy(
+                    id="rr_cases",
+                    pool_id="rr_pool",
+                    carrier_types=["case"],
+                    budget=RuntimeBudget(runtime_hops=1, carrier_count=1),
+                )
+            )
+            for index in range(2):
+                carrier_id = f"carrier_rr_{index}"
+                await source.accept_carrier(
+                    Carrier(
+                        id=carrier_id,
+                        run_id="run_round_robin",
+                        carrier_type="case",
+                    ),
+                    idempotency_key=f"run_round_robin:carrier.accept:{carrier_id}",
+                )
+                await source.schedule_process(
+                    Process(
+                        id=f"process_rr_{index}",
+                        run_id="run_round_robin",
+                        carrier_id=carrier_id,
+                        process_type="fala_runtime",
+                        status=CarrierProcessStatus.ready,
+                        input={
+                            "adapter": {
+                                "kind": "fala_runtime",
+                                "runtime_ref": "rr_pool",
+                            }
+                        },
+                    ),
+                    idempotency_key=f"run_round_robin:process.schedule:{index}",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "source.sqlite"
+            asyncio.run(setup(db_path))
+
+            result = _run_cli_json(
+                "run-until-idle",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_round_robin",
+            )
+            self.assertEqual(result["stopped_reason"], "idle")
+            self.assertEqual(len(result["waiting"]), 2)
+
+            outbox = _run_cli_json(
+                "bridge",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_round_robin",
+            )
+            self.assertEqual(
+                [
+                    delivery["target"]["runtime"]["id"]
+                    for delivery in outbox["bridge_outbox"]
+                ],
+                ["target_a", "target_b"],
+            )
+
+            inspected = _run_cli_json(
+                "runtimes",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--pool-id",
+                "rr_pool",
+            )
+            self.assertEqual(
+                inspected["runtime_pool"]["metadata"]["round_robin_index"],
+                0,
             )
 
     def test_cli_cancels_carrier_runtime_run(self) -> None:
@@ -2191,12 +2299,15 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 '{"id":"target","uri":"sqlite:///tmp/target.sqlite"}',
                 "--carrier-type",
                 "case",
+                "--policy",
+                "round_robin",
                 "--metadata-json",
                 '{"tenant":"local"}',
             )
             self.assertTrue(pool["ok"])
             self.assertEqual(pool["runtime_pool"]["id"], "cli_pool")
             self.assertEqual(pool["runtime_pool"]["runtimes"][0]["id"], "target")
+            self.assertEqual(pool["runtime_pool"]["metadata"]["policy"], "round_robin")
 
             policy = _run_cli_json(
                 "runtimes",

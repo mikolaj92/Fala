@@ -12,6 +12,12 @@ Core pieces:
 - bridge outbox/inbox: durable local delivery records.
 
 `fala_runtime` steps enqueue bridge outbox deliveries. A `runtime_ref` may be a
-runtime URI or a local runtime pool id. Pool-backed delegation currently chooses
-the first matching runtime; advanced policies such as least-busy and round-robin
-are future work.
+runtime URI or a local runtime pool id.
+
+Runtime pool policies:
+
+- `manual` / `first`: choose the first runtime in the pool.
+- `least_busy`: choose the runtime with the lowest declared `metadata.load` or
+  `metadata.pending_processes`.
+- `round_robin`: rotate through runtimes and persist the cursor in pool
+  metadata.

@@ -232,6 +232,7 @@ def _build_parser() -> argparse.ArgumentParser:
     runtimes_create.add_argument("--pool-id", required=True)
     runtimes_create.add_argument("--runtime-json", action="append", required=True, help="RuntimeRef JSON object. Repeatable.")
     runtimes_create.add_argument("--carrier-type", action="append", default=[])
+    runtimes_create.add_argument("--policy", choices=["manual", "first", "least_busy", "round_robin"], default=None)
     runtimes_create.add_argument("--metadata-json", default="{}")
     runtimes_policy = runtime_subparsers.add_parser("add-policy", help="Create or replace a delegation policy.")
     _add_carrier_runtime_db_arg(runtimes_policy)
@@ -623,6 +624,9 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 jsonl=args.jsonl,
             )
         if args.runtime_command == "create-pool":
+            metadata = _parse_json_object(args.metadata_json, "--metadata-json")
+            if args.policy is not None:
+                metadata["policy"] = args.policy
             pool = RuntimePool(
                 id=args.pool_id,
                 runtimes=[
@@ -632,7 +636,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                     for value in args.runtime_json
                 ],
                 carrier_types=args.carrier_type,
-                metadata=_parse_json_object(args.metadata_json, "--metadata-json"),
+                metadata=metadata,
             )
             stored = await service.save_runtime_pool(pool)
             return {
@@ -1356,7 +1360,7 @@ async def _resolve_fala_runtime_target(
         raise ValueError(f"Runtime pool {pool.id!r} has no runtimes")
 
     policies = await backend.list_delegation_policies(pool_id=pool.id)
-    policy = next(
+    delegation_policy = next(
         (
             item
             for item in policies
@@ -1366,9 +1370,51 @@ async def _resolve_fala_runtime_target(
     )
     budget = RuntimeBudget.model_validate(
         configured_budget
-        or (policy.budget.model_dump(mode="json") if policy is not None else {})
+        or (
+            delegation_policy.budget.model_dump(mode="json")
+            if delegation_policy is not None
+            else {}
+        )
     )
-    return pool.runtimes[0], pool.id, budget
+    pool_policy = str(request.config.get("pool_policy") or pool.metadata.get("policy") or "manual")
+    return await _select_runtime_from_pool(backend, pool=pool, policy=pool_policy), pool.id, budget
+
+
+async def _select_runtime_from_pool(
+    backend: SQLiteRuntimeBackend,
+    *,
+    pool: RuntimePool,
+    policy: str,
+) -> RuntimeRef:
+    if policy in {"manual", "first"}:
+        return pool.runtimes[0]
+    if policy == "least_busy":
+        return min(pool.runtimes, key=_runtime_declared_load)
+    if policy == "round_robin":
+        index = _int_metadata(pool.metadata.get("round_robin_index"))
+        selected = pool.runtimes[index % len(pool.runtimes)]
+        metadata = {
+            **pool.metadata,
+            "round_robin_index": (index + 1) % len(pool.runtimes),
+        }
+        await backend.put_runtime_pool(pool.model_copy(update={"metadata": metadata}))
+        return selected
+    raise ValueError(f"Unknown runtime pool policy: {policy!r}")
+
+
+def _runtime_declared_load(runtime: RuntimeRef) -> float:
+    value = runtime.metadata.get("load", runtime.metadata.get("pending_processes", 0))
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Runtime {runtime.id!r} has invalid load metadata") from exc
+
+
+def _int_metadata(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("runtime pool round_robin_index metadata must be an integer") from exc
 
 
 def _runtime_ref_id(value: str) -> str:

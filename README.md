@@ -142,7 +142,7 @@ uv run fala db vacuum --db .fala/state.sqlite
 
 uv run fala create-run --db .fala/state.sqlite --run-id run_local
 uv run fala runs list --db .fala/state.sqlite
-uv run fala runtimes create-pool --db .fala/state.sqlite --pool-id local_pool --runtime-json '{"id":"target","uri":"sqlite:///tmp/target.sqlite"}'
+uv run fala runtimes create-pool --db .fala/state.sqlite --pool-id local_pool --policy round_robin --runtime-json '{"id":"target","uri":"sqlite:///tmp/target.sqlite"}'
 uv run fala runtimes add-policy --db .fala/state.sqlite --pool-id local_pool --carrier-type source_payload --budget-json '{"runtime_hops":1,"carrier_count":1}'
 uv run fala carriers list --db .fala/state.sqlite --run-id run_local
 uv run fala observations list --db .fala/state.sqlite --run-id run_local
