@@ -57,7 +57,7 @@ flows:
           ref: examples.steps.normalize_text
 ```
 
-Supported v2 adapter kinds are:
+Supported adapter kinds are:
 
 - `python`: importable Python function.
 - `subprocess`: local command as an argument list.

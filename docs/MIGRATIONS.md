@@ -1,6 +1,6 @@
 # Migrations
 
-Fala 2 uses explicit version boundaries. Runtime data should never rely on
+Fala uses explicit version boundaries. Runtime data should never rely on
 implicit legacy aliases or fallback parsing.
 
 Migration kinds:

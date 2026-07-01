@@ -22,7 +22,7 @@ The current Carrier-first path lives in `fala.runtime_backend`:
   in an `ArtifactStore`, usually the filesystem store.
 - `Process` records schedulable Carrier-first work with transactional SQLite
   claim/lease, retry, completion, and failure operations.
-- `CarrierWorkerContext` in `fala.sdk` is the worker payload/env helper for v2 adapters.
+- `CarrierWorkerContext` in `fala.sdk` is the worker payload/env helper for adapters.
 - `RuntimeRef`, `RunRef`, and `EventRef` identify other Fala runtimes, runs,
   and events without adding a non-SQLite first-party backend.
 - `BridgeDelivery` records local SQLite inbox/outbox exchange. Bridge enqueue,
@@ -91,7 +91,7 @@ Use `fala db init --db .fala/state.sqlite`, `fala db migrate --db ...`, and
 
 ## Carrier Package Schema
 
-Carrier package v2 has a canonical model in `CarrierWorkflowPackageSpec` and a
+Carrier package schema has a canonical model in `CarrierWorkflowPackageSpec` and a
 loader in `fala.yaml_loader.load_carrier_workflow_package_yaml`. Carrier fields
 are parsed only by the Carrier package loader.
 

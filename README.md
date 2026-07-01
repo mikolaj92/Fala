@@ -76,7 +76,7 @@ uv run fala export-html \
 
 ## Carrier Package Schema
 
-Carrier packages use the v2 schema directly:
+Carrier packages use the current schema directly:
 
 ```yaml
 version: 2
@@ -207,7 +207,7 @@ runtime, even when `--run-id` is supplied.
 Fala can reference other runtimes through `RuntimeRef`, `RunRef`, and `EventRef`.
 Bridge records are delivered explicitly, without global transactions.
 
-## Fala 2 Docs
+## Fala Docs
 
 Start with `docs/CONCEPTUAL_MODEL.md`, then `docs/RUNTIME_SEMANTICS.md`,
 `docs/SQLITE_BACKEND.md`, `docs/ADAPTER_CONTRACTS.md`, and

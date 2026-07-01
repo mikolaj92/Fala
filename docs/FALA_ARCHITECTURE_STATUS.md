@@ -73,10 +73,10 @@ workflow API.
 | State machines | PARTIAL | Run/process/gate statuses exist with transition checks for current command paths, including run/process transition matrix coverage, process scheduling initial-status guards, terminal process retry/complete, wait-from-running, and gate complete/cancel/expire terminal transitions. Process cancel/timed-out command paths remain future work. |
 | Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, file handoff, and `manual`/`least_busy`/`round_robin` pool policies exist. Network transports remain optional future work. |
 | CLI | PARTIAL | Local SQLite inspection, command/event inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor with adapter reference checks, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, local bridge delivery, and bridge file export/import exist. Optional network transport commands remain incomplete. |
-| Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
+| Package schema | DONE | Current YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document, Splot, and Signals packs exist as Carrier mappings. More first-party domain packs can still be added. |
 | Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, run archive export, and guarded deterministic `replay-execution` exist. Broader deterministic adapter coverage can still expand. |
-| Docs/examples | PARTIAL | Dedicated Fala 2 conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain pack, security, migration, and version policy docs exist. Carrier runtime, pipeline, Splot, Signals, and multi-Fala examples exist. |
+| Docs/examples | PARTIAL | Dedicated Fala conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain pack, security, migration, and version policy docs exist. Carrier runtime, pipeline, Splot, Signals, and multi-Fala examples exist. |
 
 ## Next Work
 
