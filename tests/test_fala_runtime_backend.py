@@ -1944,6 +1944,83 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertFalse(refused["ok"])
             self.assertIn("not marked deterministic", refused["error"])
 
+    def test_cli_replay_execution_reruns_deterministic_subprocess(self) -> None:
+        async def setup(db_path: Path, script: Path) -> None:
+            service = RuntimeBackendService.sqlite(db_path)
+            await service.create_run(
+                Run(id="run_subprocess_replay"),
+                idempotency_key="run_subprocess_replay:create",
+            )
+            await service.schedule_process(
+                Process(
+                    id="process_subprocess_replay",
+                    run_id="run_subprocess_replay",
+                    process_type="subprocess",
+                    status=CarrierProcessStatus.ready,
+                    input={
+                        "adapter": {
+                            "kind": "subprocess",
+                            "command": [sys.executable, str(script)],
+                        },
+                        "value": 8,
+                    },
+                    metadata={"deterministic": True},
+                ),
+                idempotency_key=(
+                    "run_subprocess_replay:process.schedule:subprocess"
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            db_path = root / "state.sqlite"
+            script = root / "step.py"
+            script.write_text(
+                textwrap.dedent(
+                    """
+                    from __future__ import annotations
+
+                    import json
+                    import os
+                    from pathlib import Path
+
+                    manifest = json.loads(Path(os.environ["FALA_STEP_MANIFEST"]).read_text())
+                    output = Path(os.environ["FALA_STEP_OUTPUT_DIR"])
+                    output.mkdir(parents=True, exist_ok=True)
+                    value = int(manifest["input"]["value"])
+                    (output / "result.json").write_text(
+                        json.dumps({"value": value + 2}),
+                        encoding="utf-8",
+                    )
+                    """
+                ),
+                encoding="utf-8",
+            )
+            asyncio.run(setup(db_path, script))
+            _run_cli_json(
+                "run-until-idle",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_subprocess_replay",
+            )
+
+            rerun = _run_cli_json(
+                "replay-execution",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_subprocess_replay",
+                "--process-id",
+                "process_subprocess_replay",
+                "--rerun",
+            )
+
+        self.assertTrue(rerun["ok"])
+        self.assertEqual(rerun["mode"], "rerun")
+        self.assertTrue(rerun["rerun"]["matches_recorded_output"])
+        self.assertEqual(rerun["rerun"]["output"]["value"], 10)
+
     def test_cli_run_until_idle_delegates_fala_runtime_process_to_bridge_outbox(self) -> None:
         async def setup(source_path: Path, target_path: Path) -> None:
             source = RuntimeBackendService.sqlite(source_path)
