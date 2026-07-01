@@ -589,6 +589,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     carrier_type.model_copy(update={"title": "Changed"}),
                     idempotency_key="run_types:carrier_type:arbitration_case",
                 )
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await runtime.register_carrier_type(
+                        carrier_type,
+                        idempotency_key="run_types:carrier_type:arbitration_case:again",
+                    )
                 await runtime.accept_carrier(
                     source,
                     idempotency_key="run_types:carrier.accept:source",
@@ -609,6 +614,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                         idempotency_key="run_types:relation:derived",
                     )
                 )
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await runtime.record_carrier_relation(
+                        relation,
+                        idempotency_key="run_types:relation:derived:again",
+                    )
 
                 self.assertEqual(stored_type, carrier_type)
                 self.assertEqual(replay_type, carrier_type)

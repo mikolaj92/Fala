@@ -100,6 +100,95 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     accept_events = await backend.list_events(run_id=accept_run.id)
     assert [event.event_type for event in accept_events] == ["carrier.accepted"]
 
+    type_run = Run(
+        id="run_type_conformance",
+        status=CarrierRunStatus.active,
+    )
+    registered_type = CarrierType(
+        id="registered_case",
+        run_id=type_run.id,
+        media_types=["application/json"],
+    )
+    type_command = RuntimeCommand(
+        run_id=type_run.id,
+        command_type="carrier_type.register",
+        idempotency_key="run_type_conformance:carrier_type.register",
+    )
+    await backend.put_run(type_run)
+    type_submission = await backend.register_carrier_type(
+        registered_type,
+        type_command,
+        events=[
+            RuntimeEvent(
+                run_id=type_run.id,
+                event_type="carrier_type.registered",
+            )
+        ],
+    )
+    type_replay = await backend.register_carrier_type(
+        registered_type.model_copy(update={"title": "changed"}),
+        type_command.model_copy(update={"id": "command_type_replay"}),
+        events=[],
+    )
+    assert await backend.get_carrier_type(
+        run_id=type_run.id,
+        carrier_type_id=registered_type.id,
+    ) == registered_type
+    assert not type_submission.replayed
+    assert type_replay.replayed
+
+    relation_run = Run(
+        id="run_relation_conformance",
+        status=CarrierRunStatus.active,
+    )
+    relation_source = Carrier(
+        id="carrier_relation_source",
+        run_id=relation_run.id,
+        carrier_type="case",
+    )
+    relation_target = Carrier(
+        id="carrier_relation_target",
+        run_id=relation_run.id,
+        carrier_type="case",
+    )
+    recorded_relation = CarrierRelation(
+        id="relation_recorded",
+        run_id=relation_run.id,
+        relation_type="derived_from",
+        source_carrier_id=relation_source.id,
+        target_carrier_id=relation_target.id,
+    )
+    relation_command = RuntimeCommand(
+        run_id=relation_run.id,
+        command_type="carrier_relation.record",
+        idempotency_key="run_relation_conformance:relation.recorded",
+    )
+    await backend.put_run(relation_run)
+    await backend.put_carrier(relation_source)
+    await backend.put_carrier(relation_target)
+    relation_submission = await backend.record_carrier_relation(
+        recorded_relation,
+        relation_command,
+        events=[
+            RuntimeEvent(
+                run_id=relation_run.id,
+                carrier_id=relation_source.id,
+                event_type="carrier_relation.recorded",
+            )
+        ],
+    )
+    relation_replay = await backend.record_carrier_relation(
+        recorded_relation.model_copy(update={"metadata": {"changed": True}}),
+        relation_command.model_copy(update={"id": "command_relation_replay"}),
+        events=[],
+    )
+    assert await backend.get_carrier_relation(
+        run_id=relation_run.id,
+        relation_id=recorded_relation.id,
+    ) == recorded_relation
+    assert not relation_submission.replayed
+    assert relation_replay.replayed
+
     run = Run(
         id="run_conformance",
         status=CarrierRunStatus.created,

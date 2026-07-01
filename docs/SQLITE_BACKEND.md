@@ -17,6 +17,8 @@ Run creation stores the run row, `run.create` command, and `run.created` event i
 one SQLite transaction.
 Carrier acceptance stores the carrier row, `carrier.accept` command, and
 `carrier.accepted` event in one SQLite transaction.
+Carrier type registration and carrier relation recording also commit their
+runtime command, event, and state change together.
 
 Runtime commands and events are guarded by SQLite triggers that reject direct
 updates and deletes. New runtime facts must be appended through command

@@ -17,6 +17,8 @@ Run-scoped backend writes also require an existing run.
 
 Carrier acceptance is committed by the backend as one transaction that stores
 the carrier, `carrier.accept` command, and `carrier.accepted` event together.
+Carrier type registration and carrier relation recording follow the same
+command/event/state transaction pattern.
 
 Process execution:
 

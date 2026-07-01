@@ -423,6 +423,14 @@ class RuntimeBackend(Protocol):
 
     async def put_carrier_type(self, carrier_type: CarrierType) -> None: ...
 
+    async def register_carrier_type(
+        self,
+        carrier_type: CarrierType,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
     async def get_carrier_type(
         self, *, run_id: str, carrier_type_id: str
     ) -> CarrierType | None: ...
@@ -450,6 +458,14 @@ class RuntimeBackend(Protocol):
     ) -> list[Carrier]: ...
 
     async def put_carrier_relation(self, relation: CarrierRelation) -> None: ...
+
+    async def record_carrier_relation(
+        self,
+        relation: CarrierRelation,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
 
     async def get_carrier_relation(
         self, *, run_id: str, relation_id: str
@@ -1263,6 +1279,64 @@ class SQLiteRuntimeBackend:
                 )
                 connection.commit()
 
+    async def register_carrier_type(
+        self,
+        carrier_type: CarrierType,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != carrier_type.run_id:
+            raise ValueError(
+                "carrier_type.register command run_id must match carrier type run_id"
+            )
+        if command.command_type != "carrier_type.register":
+            raise ValueError(
+                "register_carrier_type requires command_type 'carrier_type.register'"
+            )
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                _require_run_row(connection, carrier_type.run_id)
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM carrier_types WHERE run_id = ? AND id = ?",
+                        (carrier_type.run_id, carrier_type.id),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"Carrier type already exists: {carrier_type.id!r}")
+
+                _insert_runtime_command_row(connection, command)
+                _insert_carrier_type_row(connection, carrier_type)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
     async def get_carrier_type(
         self,
         *,
@@ -1431,6 +1505,67 @@ class SQLiteRuntimeBackend:
                     ),
                 )
                 connection.commit()
+
+    async def record_carrier_relation(
+        self,
+        relation: CarrierRelation,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != relation.run_id:
+            raise ValueError(
+                "carrier_relation.record command run_id must match relation run_id"
+            )
+        if command.command_type != "carrier_relation.record":
+            raise ValueError(
+                "record_carrier_relation requires command_type "
+                "'carrier_relation.record'"
+            )
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                _require_run_row(connection, relation.run_id)
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM carrier_relations WHERE run_id = ? AND id = ?",
+                        (relation.run_id, relation.id),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(
+                        f"Carrier relation already exists: {relation.id!r}"
+                    )
+
+                _insert_runtime_command_row(connection, command)
+                _insert_carrier_relation_row(connection, relation)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def get_carrier_relation(
         self,
@@ -2669,7 +2804,11 @@ class RuntimeBackendService:
             event_type="carrier_type.registered",
             payload={"carrier_type_id": carrier_type.id},
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.register_carrier_type(
+            carrier_type,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             existing_type_id = submission.command.payload.get(
                 "carrier_type_id",
@@ -2683,10 +2822,9 @@ class RuntimeBackendService:
                 raise ValueError(
                     "Replayed carrier type command has no stored carrier type: "
                     f"{existing_type_id!r}"
-                )
+            )
             return existing, submission
 
-        await self.backend.put_carrier_type(carrier_type)
         return carrier_type, submission
 
     async def accept_carrier(
@@ -2766,7 +2904,11 @@ class RuntimeBackendService:
                 "target_carrier_id": relation.target_carrier_id,
             },
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.record_carrier_relation(
+            relation,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             existing_relation_id = submission.command.payload.get(
                 "relation_id",
@@ -2780,10 +2922,9 @@ class RuntimeBackendService:
                 raise ValueError(
                     "Replayed carrier relation command has no stored relation: "
                     f"{existing_relation_id!r}"
-                )
+            )
             return existing, submission
 
-        await self.backend.put_carrier_relation(relation)
         return relation, submission
 
     async def record_observation(
@@ -4155,6 +4296,31 @@ def _insert_runtime_command_row(
     )
 
 
+def _insert_carrier_type_row(
+    connection: sqlite3.Connection,
+    carrier_type: CarrierType,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO carrier_types (
+            run_id, id, title, description, media_types,
+            value_schema_json, metadata, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            carrier_type.run_id,
+            carrier_type.id,
+            carrier_type.title,
+            carrier_type.description,
+            json.dumps(carrier_type.media_types),
+            _dumps(carrier_type.value_schema),
+            _dumps(carrier_type.metadata),
+            carrier_type.created_at.isoformat(),
+            carrier_type.updated_at.isoformat(),
+        ),
+    )
+
+
 def _insert_carrier_row(connection: sqlite3.Connection, carrier: Carrier) -> None:
     connection.execute(
         """
@@ -4171,6 +4337,29 @@ def _insert_carrier_row(connection: sqlite3.Connection, carrier: Carrier) -> Non
             _dumps(carrier.metadata),
             carrier.created_at.isoformat(),
             carrier.updated_at.isoformat(),
+        ),
+    )
+
+
+def _insert_carrier_relation_row(
+    connection: sqlite3.Connection,
+    relation: CarrierRelation,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO carrier_relations (
+            run_id, id, relation_type, source_carrier_id,
+            target_carrier_id, metadata, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            relation.run_id,
+            relation.id,
+            relation.relation_type,
+            relation.source_carrier_id,
+            relation.target_carrier_id,
+            _dumps(relation.metadata),
+            relation.created_at.isoformat(),
         ),
     )
 
