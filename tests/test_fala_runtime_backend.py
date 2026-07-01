@@ -1903,6 +1903,20 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(process.status, CarrierProcessStatus.succeeded)
             self.assertEqual(process.output["value"], 3)
 
+    def test_cli_run_until_idle_rejects_invalid_lease_seconds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "state.sqlite"
+            code, payload = _run_cli_raw(
+                "run-until-idle",
+                "--db",
+                str(db_path),
+                "--lease-seconds",
+                "0",
+            )
+            self.assertEqual(code, 1)
+            self.assertFalse(payload["ok"])
+            self.assertIn("--lease-seconds", payload["error"])
+
     def test_cli_replay_execution_returns_recorded_output_and_reruns_deterministic_process(self) -> None:
         async def setup(db_path: Path) -> None:
             service = RuntimeBackendService.sqlite(db_path)

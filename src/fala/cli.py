@@ -1243,6 +1243,8 @@ def _carrier_runtime_event_schema_report(
 async def _carrier_runtime_run_until_idle(args: argparse.Namespace) -> dict[str, Any]:
     if args.max_ticks < 1:
         raise ValueError("--max-ticks must be greater than zero")
+    if args.lease_seconds <= 0:
+        raise ValueError("--lease-seconds must be greater than zero")
     backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
     service = RuntimeBackendService(backend)
     completed: list[dict[str, Any]] = []

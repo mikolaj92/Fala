@@ -104,5 +104,6 @@ The SQLite backend is the reference backend for process state. It must support:
 - projection rebuilds
 - restart recovery
 - command deduplication
+- positive lease durations and run-until-idle tick limits
 
 External queues and web servers are not required for local execution.
