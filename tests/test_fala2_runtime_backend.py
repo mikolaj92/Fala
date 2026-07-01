@@ -1340,6 +1340,24 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         self.assertEqual(row, ("runtime_backend", 2, "runtime_backend"))
 
+    def test_cli_db_init_status_and_migrate_manage_carrier_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "fala2.sqlite"
+
+            initialized = _run_cli_json("db", "init", "--db", str(db_path))
+            self.assertTrue(initialized["ok"])
+            self.assertEqual(initialized["schema_version"], 2)
+            self.assertTrue(db_path.is_file())
+
+            status = _run_cli_json("db", "status", "--db", str(db_path))
+            self.assertTrue(status["ok"])
+            self.assertEqual(status["schema"]["current_version"], 2)
+            self.assertEqual(status["schema"]["missing_tables"], [])
+
+            migrated = _run_cli_json("db", "migrate", "--db", str(db_path))
+            self.assertTrue(migrated["ok"])
+            self.assertEqual(migrated["schema_version"], 2)
+
     def test_cli_lists_and_inspects_runtime_pools(self) -> None:
         async def scenario(db_path: Path) -> None:
             backend = SQLiteRuntimeBackend(db_path)

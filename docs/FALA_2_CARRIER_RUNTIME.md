@@ -91,6 +91,8 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
 Fala core ships the SQLite runtime backend. Non-SQLite storage or transport
 backends are external plugin work. The default Carrier-first path must run with
 only Python and SQLite.
+Use `fala db init --db .fala/state.sqlite`, `fala db migrate --db ...`, and
+`fala db status --db ...` for local schema setup and inspection.
 
 ## Conformance
 

@@ -294,13 +294,13 @@ not complete enough to close the requirement.
 | 14 | Budgets and safety limits | PARTIAL | Bridge delegation enforces hop/carrier/attempt budgets; add retry, gate, artifact byte, pending process, and spawned-run limits. |
 | 15 | Cycles and deadlock detection | PARTIAL | Carrier wait diagnostics detect explicit process wait cycles; add richer wait refs, valid feedback-cycle semantics, and operator guidance. |
 | 16 | Web/UI | PARTIAL | Keep web optional, read-only by default, localhost-bound, and mutation-through-command only; add static export. |
-| 17 | CLI | PARTIAL | Carrier inspect/mutate, runtimes inspect/list, diagnose-waits, doctor, trace, export, and bridge deliver exist; finish compatibility aliases. |
+| 17 | CLI | PARTIAL | Carrier db init/migrate/status, inspect/mutate, runtimes inspect/list, diagnose-waits, doctor, trace, export, and bridge deliver exist; finish compatibility aliases. |
 | 18 | Package schema | PARTIAL | Finish carrier-first YAML, runtime config, flows, validation, and backward compatibility. |
 | 19 | Domain packs | PARTIAL | Move document-specific runtime logic into `fala.domains.documents` or equivalent compatibility package. |
 | 20 | Splot integration | PARTIAL | Keep Splot as a domain pack/adapter and add an end-to-end carrier/artifact/gate example. |
 | 21 | Replay | PARTIAL | Define history replay, projection rebuild, deterministic execution replay, and trace export boundaries. |
 | 22 | Versioning and digests | PARTIAL | Store runtime/backend/package/flow/adapter/schema versions and digests per run. |
-| 23 | Migrations | PARTIAL | SQLite records a runtime schema version; add real migration steps for package, events, artifacts, domain packs, and reports. |
+| 23 | Migrations | PARTIAL | SQLite records a runtime schema version and CLI db init/migrate/status exists; add real migration steps for package, events, artifacts, domain packs, and reports. |
 | 24 | Error taxonomy | PARTIAL | Wire canonical Fala errors into retry/fail/gate behavior and CLI rendering. |
 | 25 | Security and trust boundaries | PARTIAL | Audit subprocess/YAML/web/operator/secrets boundaries and prevent direct adapter DB mutation. |
 | 26 | Secrets and redaction | PARTIAL | Resolve env secrets safely and redact them from events, reports, traces, metadata, and exports. |

@@ -295,6 +295,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "validate-output",
             "validate-context",
             "discover-documents",
+            "db",
             "db-doctor",
             "inspect-run-input",
             "plan-run",
@@ -558,6 +559,25 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Write JSON index to this path instead of stdout envelope.",
     )
+
+    db = subparsers.add_parser(
+        "db",
+        help="Initialize, migrate, and inspect Carrier runtime SQLite databases.",
+    )
+    db_subparsers = db.add_subparsers(dest="db_command", required=True)
+    db_init = db_subparsers.add_parser("init", help="Create the Carrier SQLite schema.")
+    _add_carrier_runtime_db_arg(db_init)
+    db_migrate = db_subparsers.add_parser(
+        "migrate",
+        help="Apply pending Carrier SQLite schema migrations.",
+    )
+    _add_carrier_runtime_db_arg(db_migrate)
+    db_status = db_subparsers.add_parser(
+        "status",
+        help="Report Carrier SQLite schema status.",
+    )
+    _add_carrier_runtime_db_arg(db_status)
+    db_status.add_argument("--ensure-schema", action="store_true")
 
     db_doctor = subparsers.add_parser(
         "db-doctor",
@@ -3228,6 +3248,23 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             "results": applied,
             "stats": await transport.stats() if transport is not None else None,
         }
+
+    if args.command == "db":
+        if args.db_command in {"init", "migrate"}:
+            db_path = Path(_carrier_runtime_db_path(args.db))
+            SQLiteRuntimeBackend(db_path)
+            return {
+                "ok": True,
+                "db": str(db_path),
+                "schema_version": SQLITE_RUNTIME_SCHEMA_VERSION,
+            }
+        return _carrier_runtime_doctor(
+            argparse.Namespace(
+                db=args.db,
+                ensure_schema=args.ensure_schema,
+                output=None,
+            )
+        )
 
     if args.command == "db-doctor":
         report = runtime_db_diagnostics(
