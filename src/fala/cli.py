@@ -14,6 +14,7 @@ import pprint
 import shlex
 import shutil
 import sys
+import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
@@ -303,6 +304,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "list-processes",
             "dead-letter",
             "events",
+            "export-bundle",
             "export-html",
             "gate",
             "gates",
@@ -2485,6 +2487,13 @@ def _build_parser() -> argparse.ArgumentParser:
     export_html.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     export_html.add_argument("--run-id", required=True)
     export_html.add_argument("--out", required=True, help="Output HTML path.")
+    export_bundle = subparsers.add_parser(
+        "export-bundle",
+        help="Export a portable Carrier runtime debug bundle.",
+    )
+    export_bundle.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    export_bundle.add_argument("--run-id", required=True)
+    export_bundle.add_argument("--out", required=True, help="Output .zip path.")
 
     lineage = subparsers.add_parser(
         "document-lineage",
@@ -4120,6 +4129,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
     if args.command == "export-html":
         return await _carrier_runtime_export_html(args)
 
+    if args.command == "export-bundle":
+        return await _carrier_runtime_export_bundle(args)
+
     raise ValueError(f"Unknown command: {args.command}")
 
 
@@ -4439,6 +4451,28 @@ async def _carrier_runtime_export_html(args: argparse.Namespace) -> dict[str, An
     return {"ok": True, "run_id": args.run_id, "out": str(out)}
 
 
+async def _carrier_runtime_export_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    result = await _carrier_runtime_trace(args)
+    trace = result["trace"]
+    out = Path(args.out).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    files = {
+        "trace.json": json.dumps(trace, indent=2, sort_keys=True),
+        "timeline.json": json.dumps(trace["timeline"], indent=2, sort_keys=True),
+        "graph.dot": _render_carrier_runtime_dot(trace),
+        "report.html": _render_carrier_runtime_html(trace),
+    }
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for name, content in files.items():
+            bundle.writestr(name, content)
+    return {
+        "ok": True,
+        "run_id": args.run_id,
+        "out": str(out),
+        "files": sorted(files),
+    }
+
+
 def _render_carrier_runtime_html(trace: dict[str, Any]) -> str:
     counts = trace["counts"]
     count_items = "\n".join(
@@ -4513,6 +4547,26 @@ def _html(value: Any) -> str:
 
 def _json_html(value: Any) -> str:
     return html_escape(json.dumps(value, indent=2, sort_keys=True), quote=True)
+
+
+def _render_carrier_runtime_dot(trace: dict[str, Any]) -> str:
+    lines = ["digraph fala_runtime {", "  rankdir=LR;"]
+    for carrier in trace["carriers"]:
+        label = f"{carrier['id']}\\n{carrier['carrier_type']}"
+        lines.append(f"  {_dot_quote(carrier['id'])} [label={_dot_quote(label)}];")
+    for relation in trace["carrier_relations"]:
+        lines.append(
+            "  "
+            f"{_dot_quote(relation['source_carrier_id'])} -> "
+            f"{_dot_quote(relation['target_carrier_id'])} "
+            f"[label={_dot_quote(relation['relation_type'])}];"
+        )
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _dot_quote(value: Any) -> str:
+    return json.dumps(str(value))
 
 
 def _carrier_runtime_db_path(target: str) -> str:

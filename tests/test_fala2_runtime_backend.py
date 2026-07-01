@@ -10,6 +10,7 @@ import textwrap
 import tomllib
 import unittest
 import inspect
+import zipfile
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -948,6 +949,26 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertIn("Fala Carrier Runtime Report", report)
             self.assertIn("projection.rebuilt", report)
             self.assertIn("decision", report)
+
+            bundle_path = Path(tmp_dir) / "run_cli.fala.zip"
+            bundle = _run_cli_json(
+                "export-bundle",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--out",
+                str(bundle_path),
+            )
+            self.assertTrue(bundle["ok"])
+            with zipfile.ZipFile(bundle_path) as archive:
+                self.assertEqual(
+                    sorted(archive.namelist()),
+                    ["graph.dot", "report.html", "timeline.json", "trace.json"],
+                )
+                graph = archive.read("graph.dot").decode("utf-8")
+            self.assertIn('"carrier_cli" -> "carrier_cli_child"', graph)
+            self.assertIn("derived_from", graph)
 
     def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
         async def scenario() -> None:
