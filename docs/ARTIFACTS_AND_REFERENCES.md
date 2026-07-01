@@ -2,6 +2,7 @@
 
 The default artifact store is filesystem-backed and content-addressed by SHA-256.
 SQLite stores artifact metadata, URI, media type, size, and content hash.
+Existing filesystem blobs are verified against their digest before reuse.
 
 Artifact URIs use:
 

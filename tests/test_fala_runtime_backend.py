@@ -934,6 +934,23 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_file_artifact_store_rejects_corrupt_existing_blob(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            source = root / "report.txt"
+            content = b"artifact payload"
+            source.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            store = FileArtifactStore(root / "artifacts")
+            blob = root / "artifacts" / "blobs" / "sha256" / digest[:2] / digest
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            blob.write_bytes(b"corrupt")
+
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                store.put_file(kind="report", path=source)
+
+            self.assertEqual(blob.read_bytes(), b"corrupt")
+
     def test_cli_gc_removes_unreferenced_filesystem_artifact_blobs(self) -> None:
         async def setup(root: Path) -> tuple[Artifact, ArtifactRef]:
             runtime = FalaRuntime.sqlite(root / "state.sqlite")

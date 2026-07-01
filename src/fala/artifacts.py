@@ -89,7 +89,9 @@ class FileArtifactStore:
         digest, size_bytes = _sha256_file(source)
         target = self._blob_path(digest)
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
+        if target.exists():
+            _ensure_blob_digest(target, digest)
+        else:
             temp = target.with_suffix(".tmp")
             shutil.copyfile(source, temp)
             os.replace(temp, target)
@@ -139,6 +141,7 @@ class FileArtifactStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             temp.unlink(missing_ok=True)
+            _ensure_blob_digest(target, hex_digest)
         else:
             os.replace(temp, target)
         merged_metadata = dict(metadata or {})
@@ -402,6 +405,12 @@ def _sha256_file(path: Path) -> tuple[str, int]:
             size += len(chunk)
             digest.update(chunk)
     return digest.hexdigest(), size
+
+
+def _ensure_blob_digest(path: Path, expected_digest: str) -> None:
+    digest, _size = _sha256_file(path)
+    if digest != expected_digest:
+        raise ValueError("Stored artifact blob digest mismatch")
 
 
 def _resolve_root(value: str | Path) -> Path:
