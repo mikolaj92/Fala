@@ -12,6 +12,9 @@ fala-artifact://sha256/<digest>
 `fala gc` removes only blobs not referenced by any run in the SQLite runtime.
 This protects shared blobs even when `--run-id` is supplied.
 
+`fala archive-run --retention-days N` records archive retention metadata in the
+portable archive manifest.
+
 Cross-runtime references use:
 
 - `RuntimeRef`

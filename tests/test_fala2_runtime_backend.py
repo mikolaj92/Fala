@@ -1317,8 +1317,11 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 str(db_path),
                 "--out",
                 str(archive_path),
+                "--retention-days",
+                "30",
             )
             self.assertTrue(archived["ok"])
+            self.assertEqual(archived["retention"]["retention_days"], 30)
             with zipfile.ZipFile(archive_path) as archive:
                 self.assertEqual(
                     sorted(archive.namelist()),
@@ -1333,6 +1336,8 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 archive_json = json.loads(archive.read("archive.json"))
             self.assertEqual(archive_json["format"], "fala-run-archive-v1")
             self.assertEqual(archive_json["run_id"], "run_cli")
+            self.assertEqual(archive_json["retention"]["retention_days"], 30)
+            self.assertIn("retain_until", archive_json["retention"])
 
     def test_cli_mutates_carriers_observations_and_processes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

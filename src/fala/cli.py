@@ -184,6 +184,7 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_run.add_argument("run_id")
     archive_run.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     archive_run.add_argument("--out", required=True, help="Output .zip path.")
+    archive_run.add_argument("--retention-days", type=int, default=None, help="Record archive retention period in archive metadata.")
 
     doctor = subparsers.add_parser("doctor", help="Check Carrier runtime readiness.")
     doctor.add_argument("--db", default=".fala/state.sqlite", help="Carrier runtime SQLite DB path or sqlite:// URL.")
@@ -1701,15 +1702,26 @@ async def _carrier_runtime_archive_run(args: argparse.Namespace) -> dict[str, An
     trace = result["trace"]
     if trace["run"] is None:
         return {"ok": False, "run_id": args.run_id, "error": "run not found"}
+    if args.retention_days is not None and args.retention_days < 0:
+        raise ValueError("--retention-days must be non-negative")
 
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
+    archived_at = time.time()
     archive = {
         "run_id": args.run_id,
         "schema_version": SQLITE_RUNTIME_SCHEMA_VERSION,
-        "archived_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "archived_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(archived_at)),
         "format": "fala-run-archive-v1",
     }
+    retention = None
+    if args.retention_days is not None:
+        retain_until = archived_at + args.retention_days * 86400
+        retention = {
+            "retention_days": args.retention_days,
+            "retain_until": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(retain_until)),
+        }
+        archive["retention"] = retention
     files = {
         "archive.json": json.dumps(archive, indent=2, sort_keys=True),
         "trace.json": json.dumps(trace, indent=2, sort_keys=True),
@@ -1725,6 +1737,7 @@ async def _carrier_runtime_archive_run(args: argparse.Namespace) -> dict[str, An
         "run_id": args.run_id,
         "out": str(out),
         "files": sorted(files),
+        "retention": retention,
     }
 
 

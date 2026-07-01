@@ -66,7 +66,7 @@ workflow API.
 | SQLite backend | PARTIAL | Reference backend exists with commands, events, carriers, processes, gates, projections, artifacts, bridge inbox/outbox, and schema tracking. Further hardening is still needed around migrations and replay guarantees. |
 | External infrastructure removal | DONE | Core dependencies no longer include web, queue, Redis, Postgres, S3, or HTTP client stacks. |
 | Runtime backend boundary | PARTIAL | `RuntimeBackend` covers the current runtime operations; backend conformance should continue expanding with every new mutation. |
-| Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. GC protects blobs referenced by any run, run archive export and SQLite vacuum exist. Archived-run retention policy still needs coverage. |
+| Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. GC protects blobs referenced by any run, archive export records retention metadata, and SQLite vacuum exists. Archive expiry enforcement can still expand. |
 | Step adapters | PARTIAL | `python_function`, `subprocess`, `manual_gate`, and `fala_runtime` adapters exist. Subprocess uses manifests and argument-list commands. Fala-runtime processes enqueue bridge outbox deliveries and can resolve local runtime pools. |
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
 | Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
@@ -80,5 +80,5 @@ workflow API.
 
 ## Next Work
 
-1. Add archived-run retention policy controls.
-2. Add advanced runtime-pool policies such as least-busy and round-robin.
+1. Add advanced runtime-pool policies such as least-busy and round-robin.
+2. Add archive expiry enforcement for retained archive bundles.
