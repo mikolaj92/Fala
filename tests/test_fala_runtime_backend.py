@@ -381,6 +381,37 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                         ("run_events",),
                     )
 
+    def test_sqlite_runtime_commands_are_append_only(self) -> None:
+        async def scenario(db_path: Path) -> None:
+            backend = SQLiteRuntimeBackend(db_path)
+            await backend.submit_command(
+                RuntimeCommand(
+                    run_id="run_commands",
+                    command_type="carrier.accept",
+                    idempotency_key="run_commands:carrier.accept",
+                    payload={"carrier_id": "carrier_1"},
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "fala.sqlite"
+            asyncio.run(scenario(db_path))
+            with sqlite3.connect(db_path) as connection:
+                with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                    connection.execute(
+                        """
+                        UPDATE runtime_commands
+                        SET payload = ?
+                        WHERE run_id = ?
+                        """,
+                        ('{"carrier_id":"carrier_2"}', "run_commands"),
+                    )
+                with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                    connection.execute(
+                        "DELETE FROM runtime_commands WHERE run_id = ?",
+                        ("run_commands",),
+                    )
+
     def test_cli_events_validate_schema_reports_unsupported_versions(self) -> None:
         async def setup(db_path: Path) -> None:
             backend = SQLiteRuntimeBackend(db_path)

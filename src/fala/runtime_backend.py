@@ -985,6 +985,18 @@ class SQLiteRuntimeBackend:
                 BEGIN
                     SELECT RAISE(ABORT, 'runtime_events is append-only');
                 END;
+
+                CREATE TRIGGER IF NOT EXISTS runtime_commands_no_update
+                BEFORE UPDATE ON runtime_commands
+                BEGIN
+                    SELECT RAISE(ABORT, 'runtime_commands is append-only');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS runtime_commands_no_delete
+                BEFORE DELETE ON runtime_commands
+                BEGIN
+                    SELECT RAISE(ABORT, 'runtime_commands is append-only');
+                END;
                 """
             )
             connection.execute(
