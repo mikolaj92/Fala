@@ -285,10 +285,10 @@ not complete enough to close the requirement.
 | 5 | External infrastructure | PARTIAL | Keep FastAPI/web optional and remove or isolate any remaining first-party external infra assumptions. |
 | 6 | Runtime backend adapter boundary | PARTIAL | Expand `RuntimeBackend` until service/scheduler/adapters no longer rely on legacy `StateStore` for core mutations. |
 | 7 | Artifact store | PARTIAL | Verify immutable filesystem artifacts, metadata-only SQLite records, GC, and large-file behavior. |
-| 8 | Step adapters | PARTIAL | Harden subprocess/manual/fala-runtime contracts, manifests, audit events, and validation. |
+| 8 | Step adapters | PARTIAL | Manual gates can complete through commands; harden subprocess/fala-runtime contracts, manifests, audit events, and validation. |
 | 9 | Commands and idempotency | PARTIAL | Route all runtime mutations through command APIs with actor, causation, correlation, and deduplication. |
 | 10 | Event log | PARTIAL | Make append-only events the consistent source for projections/replay with schema/version metadata. |
-| 11 | State machines | PARTIAL | Add explicit target run/process/gate statuses, transition validation, and tests. |
+| 11 | State machines | PARTIAL | Run/process statuses and gate completion exist; finish full transition validation and tests. |
 | 12 | Multi-Fala composition | PARTIAL | Implement delegation through runtime refs, outbox/inbox, wait graph, budgets, and no global transactions. |
 | 13 | Runtime pools | PARTIAL | Add routing policies and persistence for multi-runtime pools. |
 | 14 | Budgets and safety limits | PARTIAL | Enforce runtime budgets for retries, gates, artifact bytes, pending processes, spawned runs, and delegation. |

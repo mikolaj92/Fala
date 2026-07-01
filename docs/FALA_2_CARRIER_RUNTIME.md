@@ -98,6 +98,7 @@ The conformance checks cover:
 - idempotent command submission;
 - ordered command-linked events;
 - observations, artifacts, gates, and projections;
+- manual gate completion through command/audit events;
 - rebuilding the built-in `run_summary` projection from SQLite state and events;
 - process scheduling, atomic claim/lease, retry, fail, and completion;
 - bridge inbox/outbox persistence.
@@ -118,6 +119,7 @@ uv run fala processes list --db /tmp/fala-carrier.sqlite --run-id run_case --sta
 uv run fala events list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala observations list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala gates list --db /tmp/fala-carrier.sqlite --run-id run_case
+uv run fala gate complete --db /tmp/fala-carrier.sqlite --run-id run_case --gate-id gate_review --value decision=approved
 uv run fala projections list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala projections rebuild --db /tmp/fala-carrier.sqlite --run-id run_case
 ```

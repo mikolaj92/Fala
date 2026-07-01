@@ -858,6 +858,37 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             )
             self.assertEqual(gates["gates"][0]["kind"], "review")
 
+            completed_gate = _run_cli_json(
+                "gate",
+                "complete",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--gate-id",
+                gates["gates"][0]["id"],
+                "--value",
+                "decision=approved",
+            )
+            self.assertTrue(completed_gate["ok"])
+            self.assertEqual(completed_gate["gate"]["status"], "completed")
+            self.assertEqual(
+                completed_gate["gate"]["values"],
+                {"decision": "approved"},
+            )
+
+            completed_gates = _run_cli_json(
+                "gates",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--status",
+                "completed",
+            )
+            self.assertEqual(completed_gates["count"], 1)
+
             projections = _run_cli_json(
                 "projections",
                 "list",
@@ -879,7 +910,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(rebuilt["count"], 1)
             summary = rebuilt["projections"][0]
             self.assertEqual(summary["name"], "run_summary")
-            self.assertEqual(summary["source_event_sequence"], 11)
+            self.assertEqual(summary["source_event_sequence"], 12)
             self.assertEqual(summary["data"]["carrier_count"], 2)
             self.assertEqual(summary["data"]["artifact_count"], 1)
             self.assertEqual(
@@ -1089,6 +1120,52 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_runtime_backend_service_completes_gate_idempotently(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                gate = Gate(
+                    id="gate_review",
+                    run_id="run_service",
+                    carrier_id="carrier_review",
+                    kind="human.review",
+                    status=GateStatus.open,
+                )
+                await service.save_gate(
+                    gate,
+                    idempotency_key="run_service:gate.save:gate_review",
+                )
+
+                completed, completion = await service.complete_gate(
+                    run_id=gate.run_id,
+                    gate_id=gate.id,
+                    values={"decision": "approved"},
+                    idempotency_key="run_service:gate.complete:gate_review",
+                    actor="human:jan",
+                )
+                replayed, replay = await service.complete_gate(
+                    run_id=gate.run_id,
+                    gate_id=gate.id,
+                    values={"decision": "rejected"},
+                    idempotency_key="run_service:gate.complete:gate_review",
+                    actor="human:jan",
+                )
+
+                self.assertFalse(completion.replayed)
+                self.assertEqual(completed.status, GateStatus.completed)
+                self.assertEqual(completed.values, {"decision": "approved"})
+                self.assertTrue(replay.replayed)
+                self.assertEqual(replayed, completed)
+                events = await service.backend.list_events(run_id=gate.run_id)
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    ["gate.saved", "gate.completed"],
+                )
+                self.assertEqual(events[1].actor, "human:jan")
+                self.assertEqual(events[1].payload["value_keys"], ["decision"])
+
+        asyncio.run(scenario())
+
     def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1117,8 +1194,10 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     values={"reason": "needs review"},
                 )
                 await backend.put_gate(gate)
-                await backend.put_gate(
-                    gate.model_copy(update={"status": GateStatus.completed})
+                completed_gate = await backend.complete_gate(
+                    run_id="run_beta",
+                    gate_id=gate.id,
+                    values={"approved": "yes"},
                 )
 
                 projection = Projection(
@@ -1142,9 +1221,9 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 projections = await backend.list_projections(run_id="run_beta")
 
                 self.assertEqual(observations, [observation])
-                self.assertEqual(stored_gate.status, GateStatus.completed)
+                self.assertEqual(stored_gate, completed_gate)
                 self.assertEqual(stored_projection, projection)
-                self.assertEqual(gates, [gate.model_copy(update={"status": GateStatus.completed})])
+                self.assertEqual(gates, [completed_gate])
                 self.assertEqual(projections, [projection])
 
         asyncio.run(scenario())

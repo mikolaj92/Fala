@@ -302,6 +302,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "list-processes",
             "dead-letter",
             "events",
+            "gate",
             "gates",
             "observations",
             "package-doctor",
@@ -1797,6 +1798,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     gates = subparsers.add_parser(
         "gates",
+        aliases=["gate"],
         help="Inspect Carrier-first runtime gates.",
     )
     gate_subparsers = gates.add_subparsers(dest="gate_command", required=True)
@@ -1809,6 +1811,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     gates_list.add_argument("--jsonl", action="store_true")
+    gates_complete = gate_subparsers.add_parser(
+        "complete",
+        help="Complete an open gate.",
+    )
+    _add_carrier_runtime_db_run_args(gates_complete)
+    gates_complete.add_argument("--gate-id", required=True)
+    gates_complete.add_argument(
+        "--value",
+        action="append",
+        default=[],
+        help="Gate output value as key=value. Repeatable.",
+    )
+    gates_complete.add_argument("--idempotency-key", default=None)
 
     projections = subparsers.add_parser(
         "projections",
@@ -2835,6 +2850,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "carrier-types",
         "carriers",
         "events",
+        "gate",
         "gates",
         "observations",
         "processes",
@@ -4267,7 +4283,23 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             limit=args.limit,
         )
         return _carrier_runtime_list_result("events", events, jsonl=args.jsonl)
-    if args.command == "gates":
+    if args.command in {"gate", "gates"}:
+        if args.gate_command == "complete":
+            service = RuntimeBackendService(backend)
+            gate, submission = await service.complete_gate(
+                run_id=args.run_id,
+                gate_id=args.gate_id,
+                values=_parse_values(args.value),
+                idempotency_key=args.idempotency_key
+                or f"{args.run_id}:gate.complete:{args.gate_id}",
+                actor="cli:user",
+            )
+            return {
+                "ok": True,
+                "gate": gate.model_dump(mode="json"),
+                "command": submission.command.model_dump(mode="json"),
+                "replayed": submission.replayed,
+            }
         gates = await backend.list_gates(
             run_id=args.run_id,
             carrier_id=args.carrier_id,

@@ -241,14 +241,18 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         status=GateStatus.open,
     )
     await backend.put_gate(gate)
-    await backend.put_gate(gate.model_copy(update={"status": GateStatus.completed}))
-    assert await backend.get_gate(run_id=carrier.run_id, gate_id=gate.id) == gate.model_copy(
-        update={"status": GateStatus.completed}
+    completed_gate = await backend.complete_gate(
+        run_id=carrier.run_id,
+        gate_id=gate.id,
+        values={"decision": "approved"},
     )
+    assert completed_gate.status == GateStatus.completed
+    assert completed_gate.values == {"decision": "approved"}
+    assert await backend.get_gate(run_id=carrier.run_id, gate_id=gate.id) == completed_gate
     assert await backend.list_gates(
         run_id=carrier.run_id,
         status=GateStatus.completed,
-    ) == [gate.model_copy(update={"status": GateStatus.completed})]
+    ) == [completed_gate]
 
     projection = Projection(
         id="projection_case",
