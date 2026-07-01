@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sqlite3
@@ -552,6 +553,46 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 )
                 self.assertTrue(replay.replayed)
                 self.assertEqual(replayed, rebuilt)
+
+        asyncio.run(scenario())
+
+    def test_fala_runtime_records_file_artifact_in_filesystem_store(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                source = root / "report.txt"
+                content = b"carrier artifact\n"
+                source.write_bytes(content)
+                runtime = FalaRuntime.sqlite(root / ".fala" / "state.sqlite")
+                await runtime.create_run(
+                    Run(id="run_artifact_file"),
+                    idempotency_key="run_artifact_file:create",
+                )
+
+                artifact, submission = await runtime.record_file_artifact(
+                    run_id="run_artifact_file",
+                    kind="report",
+                    path=source,
+                    media_type="text/plain",
+                    artifact_store=root / ".fala" / "artifacts",
+                    idempotency_key="run_artifact_file:artifact.report",
+                )
+
+                digest = hashlib.sha256(content).hexdigest()
+                blob = root / ".fala" / "artifacts" / "blobs" / "sha256" / digest[:2] / digest
+                stored = await runtime.service.backend.get_artifact(
+                    run_id="run_artifact_file",
+                    artifact_id=artifact.id,
+                )
+
+                self.assertFalse(submission.replayed)
+                self.assertTrue(blob.is_file())
+                self.assertEqual(blob.read_bytes(), content)
+                self.assertEqual(artifact.uri, f"fala-artifact://sha256/{digest}")
+                self.assertEqual(artifact.content_hash, f"sha256:{digest}")
+                self.assertEqual(artifact.size_bytes, len(content))
+                self.assertEqual(artifact.media_type, "text/plain")
+                self.assertEqual(stored, artifact)
 
         asyncio.run(scenario())
 

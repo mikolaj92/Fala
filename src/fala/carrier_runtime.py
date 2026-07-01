@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from fala.artifacts import ArtifactStore, create_artifact_store
 from fala.runtime_backend import (
     Artifact,
     CarrierWaitGraphDiagnostic,
@@ -162,6 +163,56 @@ class FalaRuntime:
         return await self.service.record_artifact(
             artifact,
             idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def record_file_artifact(
+        self,
+        *,
+        run_id: str,
+        kind: str,
+        path: str | Path,
+        carrier_id: str | None = None,
+        media_type: str | None = None,
+        artifact_id: str | None = None,
+        artifact_store: ArtifactStore | str | Path | None = None,
+        metadata: dict | None = None,
+        idempotency_key: str | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Artifact, CommandSubmission]:
+        store = (
+            artifact_store
+            if hasattr(artifact_store, "put_file")
+            else create_artifact_store(
+                artifact_store or _default_carrier_artifact_root(self.backend)
+            )
+        )
+        ref = store.put_file(
+            kind=kind,
+            path=path,
+            artifact_id=artifact_id,
+            metadata=metadata,
+        )
+        ref_metadata = dict(ref.metadata)
+        digest = ref_metadata.get("sha256")
+        artifact = Artifact(
+            id=ref.id,
+            run_id=run_id,
+            kind=kind,
+            uri=ref.uri,
+            carrier_id=carrier_id,
+            media_type=media_type,
+            size_bytes=ref_metadata.get("size_bytes"),
+            content_hash=f"sha256:{digest}" if isinstance(digest, str) else None,
+            metadata={**ref_metadata, "artifact_store": store.location},
+        )
+        return await self.record_artifact(
+            artifact,
+            idempotency_key=idempotency_key or f"{run_id}:artifact.record:{ref.id}",
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
@@ -453,6 +504,12 @@ class FalaRuntime:
             run_id=run_id,
             carrier_id=carrier_id,
         )
+
+
+def _default_carrier_artifact_root(backend: RuntimeBackend) -> Path:
+    if isinstance(backend, SQLiteRuntimeBackend):
+        return backend.path.parent / "artifacts"
+    return Path(".fala") / "artifacts"
 
 
 __all__ = ["FalaRuntime"]

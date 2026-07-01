@@ -67,6 +67,9 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
 - Observation: a typed measurement or fact reported about a carrier.
 - Artifact: metadata for materialized output such as reports, extracts, or
   evidence snapshots. SQLite stores metadata; content lives in an artifact store.
+  `FalaRuntime.record_file_artifact(...)` writes a local file through the
+  filesystem artifact store and records only the resulting URI, hash, size, and
+  metadata in SQLite.
 - Process: a scheduled execution unit. Current statuses are `pending`, `ready`,
   `running`, `waiting`, `retry_wait`, `succeeded`, `failed`,
   `cancel_requested`, `cancelled`, and `timed_out`.

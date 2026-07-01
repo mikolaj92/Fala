@@ -284,7 +284,7 @@ not complete enough to close the requirement.
 | 4 | SQLite backend | PARTIAL | Promote SQLite backend to the complete reference backend for runs, processes, gates, commands, inbox/outbox, artifacts metadata, and projections. |
 | 5 | External infrastructure | PARTIAL | Keep FastAPI/web optional and remove or isolate any remaining first-party external infra assumptions. |
 | 6 | Runtime backend adapter boundary | PARTIAL | Expand `RuntimeBackend` until service/scheduler/adapters no longer rely on legacy `StateStore` for core mutations. |
-| 7 | Artifact store | PARTIAL | Verify immutable filesystem artifacts, metadata-only SQLite records, GC, and large-file behavior. |
+| 7 | Artifact store | PARTIAL | Filesystem artifacts can be recorded from `FalaRuntime` with metadata-only SQLite records; finish Carrier GC and large-file behavior checks. |
 | 8 | Step adapters | PARTIAL | Manual gates can complete through commands; harden subprocess/fala-runtime contracts, manifests, audit events, and validation. |
 | 9 | Commands and idempotency | PARTIAL | Route all runtime mutations through command APIs with actor, causation, correlation, and deduplication. |
 | 10 | Event log | PARTIAL | Make append-only events the consistent source for projections/replay with schema/version metadata. |
