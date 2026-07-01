@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from datetime import datetime, timezone
 from html import escape as html_escape
+from importlib import import_module
 import json
 import sqlite3
 import sys
@@ -1649,17 +1650,65 @@ def _carrier_runtime_package_reports(paths: list[str]) -> list[dict[str, Any]]:
                 }
             )
         else:
+            adapter_errors = _carrier_package_adapter_errors(package)
             reports.append(
                 {
-                    "ok": True,
+                    "ok": not adapter_errors,
                     "path": str(path),
                     "id": package.id,
                     "version": package.version,
                     "carrier_type_count": len(package.carrier_types),
                     "flow_count": len(package.flows),
+                    "adapter_errors": adapter_errors,
                 }
             )
     return reports
+
+
+def _carrier_package_adapter_errors(
+    package: CarrierWorkflowPackageSpec,
+) -> list[dict[str, str]]:
+    errors: list[dict[str, str]] = []
+    for flow in package.flows:
+        for step in flow.steps:
+            adapter = step.adapter
+            label = f"{flow.id}.{step.id}"
+            try:
+                if adapter.kind == "python_function" and adapter.ref:
+                    _resolve_python_ref(adapter.ref)
+                if adapter.kind == "subprocess":
+                    _validate_subprocess_adapter_reference(adapter)
+            except Exception as exc:
+                errors.append(
+                    {
+                        "step": label,
+                        "adapter_kind": adapter.kind,
+                        "error": str(exc),
+                    }
+                )
+    return errors
+
+
+def _resolve_python_ref(ref: str) -> Any:
+    module_name, separator, attr_name = ref.partition(":")
+    if not separator:
+        module_name, separator, attr_name = ref.rpartition(".")
+    if not module_name or not attr_name:
+        raise ValueError(f"invalid python ref: {ref!r}")
+    return getattr(import_module(module_name), attr_name)
+
+
+def _validate_subprocess_adapter_reference(adapter: CarrierAdapterSpec) -> None:
+    cwd = Path(adapter.cwd).expanduser() if adapter.cwd else Path.cwd()
+    if not cwd.exists() or not cwd.is_dir():
+        raise ValueError(f"subprocess cwd does not exist: {cwd}")
+    command = adapter.command or []
+    if len(command) >= 2 and Path(command[1]).suffix == ".py":
+        script = Path(command[1])
+        if not script.is_absolute():
+            script = cwd / script
+        if not script.exists() or not script.is_file():
+            raise ValueError(f"subprocess script does not exist: {script}")
 
 
 def _write_carrier_runtime_doctor_report(

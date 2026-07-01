@@ -2657,6 +2657,42 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertFalse(invalid_package["packages"][0]["ok"])
             self.assertIn("document_types", invalid_package["packages"][0]["error"])
 
+            missing_script_package = Path(tmp_dir) / "missing-script-package.yaml"
+            missing_script_package.write_text(
+                textwrap.dedent(
+                    """
+                    version: "2"
+                    id: missing_script
+                    capabilities:
+                      - id: missing_capability
+                    flows:
+                      - id: basic
+                        steps:
+                          - id: missing
+                            capability: missing_capability
+                            adapter:
+                              kind: subprocess
+                              command: ["python", "missing.py"]
+                              cwd: "."
+                    """
+                ),
+                encoding="utf-8",
+            )
+            code, adapter_invalid = _run_cli_raw(
+                "doctor",
+                "--db",
+                str(db_path),
+                "--package",
+                str(missing_script_package),
+            )
+            self.assertEqual(code, 1)
+            self.assertFalse(adapter_invalid["ok"])
+            self.assertFalse(adapter_invalid["packages"][0]["ok"])
+            self.assertIn(
+                "missing.py",
+                adapter_invalid["packages"][0]["adapter_errors"][0]["error"],
+            )
+
             output = Path(tmp_dir) / "doctor.json"
             written = _run_cli_json(
                 "doctor",
