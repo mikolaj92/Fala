@@ -1164,6 +1164,7 @@ class SQLiteRuntimeBackend:
     async def put_carrier_type(self, carrier_type: CarrierType) -> None:
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, carrier_type.run_id)
                 connection.execute(
                     """
                     INSERT INTO carrier_types (
@@ -1221,6 +1222,7 @@ class SQLiteRuntimeBackend:
     async def put_carrier(self, carrier: Carrier) -> None:
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, carrier.run_id)
                 connection.execute(
                     """
                     INSERT INTO carriers (
@@ -1281,6 +1283,7 @@ class SQLiteRuntimeBackend:
     async def put_carrier_relation(self, relation: CarrierRelation) -> None:
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, relation.run_id)
                 connection.execute(
                     """
                     INSERT INTO carrier_relations (
@@ -1539,6 +1542,7 @@ class SQLiteRuntimeBackend:
     async def put_observation(self, observation: Observation) -> None:
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, observation.run_id)
                 connection.execute(
                     """
                     INSERT INTO observations (
@@ -1586,6 +1590,7 @@ class SQLiteRuntimeBackend:
     async def put_artifact(self, artifact: Artifact) -> None:
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, artifact.run_id)
                 connection.execute(
                     """
                     INSERT INTO artifacts (
@@ -1646,6 +1651,7 @@ class SQLiteRuntimeBackend:
     async def put_process(self, process: Process) -> None:
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, process.run_id)
                 connection.execute(
                     """
                     INSERT INTO processes (
@@ -2032,6 +2038,7 @@ class SQLiteRuntimeBackend:
     async def put_gate(self, gate: Gate) -> None:
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, gate.run_id)
                 connection.execute(
                     """
                     INSERT INTO gates (
@@ -2192,6 +2199,7 @@ class SQLiteRuntimeBackend:
     async def put_projection(self, projection: Projection) -> None:
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, projection.run_id)
                 connection.execute(
                     """
                     INSERT INTO projections (
@@ -2253,6 +2261,7 @@ class SQLiteRuntimeBackend:
         rebuilt: list[Projection] = []
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, run_id)
                 for name in requested:
                     projection = _build_run_summary_projection(connection, run_id)
                     connection.execute(
@@ -2344,6 +2353,7 @@ class SQLiteRuntimeBackend:
         _require_bridge_table(table)
         async with self._lock:
             with self._connect() as connection:
+                _require_run_row(connection, delivery.run_id)
                 connection.execute(
                     f"""
                     INSERT INTO {table} (

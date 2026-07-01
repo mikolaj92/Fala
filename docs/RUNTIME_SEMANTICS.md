@@ -10,6 +10,8 @@ Run cancellation is a first-class `run.cancel` command and emits
 Except for `run.create`, command submission requires the target run to already
 exist.
 
+Run-scoped backend writes also require an existing run.
+
 Process execution:
 
 - `ready` processes can be atomically claimed.

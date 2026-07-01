@@ -374,6 +374,20 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_sqlite_backend_rejects_run_scoped_put_for_unknown_run(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                with self.assertRaisesRegex(ValueError, "Unknown run"):
+                    await backend.put_carrier(
+                        Carrier(
+                            run_id="run_missing",
+                            carrier_type="case",
+                        )
+                    )
+
+        asyncio.run(scenario())
+
     def test_sqlite_runtime_events_are_append_only(self) -> None:
         async def scenario(db_path: Path) -> None:
             backend = SQLiteRuntimeBackend(db_path)
@@ -3495,6 +3509,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                await backend.put_run(Run(id="run_beta"))
                 carrier = Carrier(
                     run_id="run_beta",
                     carrier_type="message",

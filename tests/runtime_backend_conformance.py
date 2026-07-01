@@ -407,6 +407,7 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         budget=RuntimeBudget(runtime_hops=1, carrier_count=1),
     )
     await backend.put_outbox_delivery(delivery)
+    await backend.put_run(Run(id="run_target"))
     await backend.put_inbox_delivery(
         delivery.model_copy(
             update={

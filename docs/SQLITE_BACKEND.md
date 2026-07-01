@@ -17,5 +17,7 @@ Runtime commands and events are guarded by SQLite triggers that reject direct
 updates and deletes. New runtime facts must be appended through command
 submission.
 
+Run-scoped writes reject unknown run ids before storing runtime state.
+
 The backend is local-first and requires no Redis, Postgres, queue broker, web
 server, Docker, or external service.
