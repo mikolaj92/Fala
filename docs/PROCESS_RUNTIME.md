@@ -1054,7 +1054,7 @@ references one sample document from each package and
 `document-routes.example.yaml` as editable intake policy. `make project-doctor`
 checks root samples, package readiness, and mixed routing from `fala-project.yaml`.
 `make db-doctor` checks the runtime database target and creates/repairs the local
-schema when `DB` points at an empty SQLite file or Postgres DSN; the report
+schema when `DB` points at an empty SQLite file or `sqlite://` URL; the report
 includes runtime schema version and applied migrations. `make project-check`
 writes one aggregate bootstrap report over project readiness,
 spec generation, secret inventory, DB readiness, and optional bundle verification.
@@ -1844,15 +1844,14 @@ uv run fala \
   --package-id basic_examples \
   --image registry.example.com/fala:latest \
   --worker-image registry.example.com/fala-worker:latest \
-  --with-postgres \
   --env FALA_API_KEYS=operator-secret:operator,worker-secret:worker \
   --worker-env FALA_API_KEY=worker-secret \
   | jq -r .manifest
 ```
 
-The generated manifest includes the bundled API/web panel, shared artifact
-volume, package workers pointed at the internal control-plane URL, and optional
-Postgres. Docker Compose also gets a read-only pipeline bind mount when
+The generated manifest includes the bundled API/web panel, SQLite-backed shared
+data volume, shared artifact volume, and package workers pointed at the internal
+control-plane URL. Docker Compose also gets a read-only pipeline bind mount when
 `--container-pipeline-dir` is used. Use `--no-mount-pipeline-dir` when the image
 already contains the package tree. `--format kubernetes` emits Deployment,
 Service, and PVC YAML for the control plane and generated workers.
@@ -1871,7 +1870,7 @@ uv run fala \
   --replicas 2 \
   --namespace fala \
   --container-pipeline-dir /app/pipelines \
-  --env FALA_DATABASE_URL=postgresql://postgres/fala \
+  --env FALA_DB=/data/fala.db \
   | jq -r .manifest
 ```
 
@@ -2283,45 +2282,42 @@ export FALA_API_KEYS='{
 Workers can pass `--api-key` or `FALA_API_KEY`; `ProcessRuntimeClient` accepts
 `api_key=...`.
 
-For a shared control plane with multiple workers, use PostgreSQL instead:
+For a shared control plane with multiple workers, keep the first-party runtime on
+SQLite. Fala ships SQLite as its only built-in backend plugin; non-SQLite
+backends belong in external `RuntimeBackend` plugins maintained outside the core
+distribution.
 
 ```python
-import os
-
 from fastapi import FastAPI
-from fala import PipelineRegistry, PostgresStateStore, RuntimeService, create_runtime_router
+from fala import PipelineRegistry, RuntimeService, SQLiteStateStore, create_runtime_router
 
 registry = PipelineRegistry.from_directory("examples/pipelines")
-store = PostgresStateStore(os.environ["FALA_DATABASE_URL"])
+store = SQLiteStateStore("runtime.db")
 service = RuntimeService(registry=registry, store=store)
 
 app = FastAPI()
 app.include_router(create_runtime_router(service), prefix="/api")
 ```
 
-Install the optional database client with `fala[postgres]`. The Postgres store
-uses the same `StateStore` contract as SQLite, including run history, worker
-heartbeats, queue claims, process outputs, stream chunks, checkpoints, lineage
-inputs, and operator audit.
-
-CLI commands that accept `--db` also accept a Postgres DSN:
+CLI commands that accept `--db` accept SQLite filesystem paths or `sqlite://`
+URLs:
 
 ```bash
 uv run fala --pipeline-dir examples/pipelines \
   create-run \
-  --db "$FALA_DATABASE_URL" \
+  --db runtime.db \
   --run-input run-input.yaml
 
-uv run fala db-doctor --db "$FALA_DATABASE_URL" --ensure-schema
+uv run fala db-doctor --db runtime.db --ensure-schema
 ```
 
-`db-doctor` reports store kind, schema table coverage, current/latest schema
-version, applied migrations, missing migrations, and runtime row counts. Without
+`db-doctor` reports SQLite schema table coverage, current/latest schema version,
+applied migrations, missing migrations, and runtime row counts. Without
 `--ensure-schema` it checks the target as-is; with `--ensure-schema` it creates
 or repairs the runtime schema before reporting.
 
-The bundled web app uses `FALA_DATABASE_URL`, then `FALA_DB`, then `fala.db` when
-no explicit store is supplied.
+The bundled web app uses `FALA_DB`, then `fala.db` when no explicit store is
+supplied. `FALA_DATABASE_URL` is accepted only for SQLite URLs.
 
 Run the bundled API and web panel directly:
 
@@ -2333,26 +2329,17 @@ uv run fala --pipeline-dir examples/pipelines \
   --port 8000
 ```
 
-Generate a runnable stack with the web/API control plane, shared volumes,
-optional Postgres, and package workers:
+Generate a runnable stack with the web/API control plane, SQLite-backed shared
+data volume, shared artifact volume, and package workers:
 
 ```bash
 uv run fala --pipeline-dir examples/pipelines \
   deployment \
   --format docker-compose \
   --run-id example-run \
-  --with-postgres \
   | jq -r .manifest > docker-compose.yaml
 ```
 
 ASGI deployments can use `fala.web.asgi:app`; configure `FALA_PIPELINE_DIR`,
-`FALA_DATABASE_URL` or `FALA_DB`, `FALA_QUEUE_BROKER` or `FALA_QUEUE_DB`, and
-artifact roots through the environment.
-
-Postgres integration tests are opt-in so the default suite stays local-only:
-
-```bash
-FALA_POSTGRES_TEST_DSN="postgresql://fala:secret@localhost/fala_test" \
-  uv run --extra postgres python -m unittest \
-  tests.test_fala_runtime.ProcessRuntimeTests.test_postgres_state_store_live_runtime_contract_when_configured
-```
+`FALA_DB`, `FALA_QUEUE_BROKER` or `FALA_QUEUE_DB`, and artifact roots through the
+environment.

@@ -14,8 +14,8 @@ operator gate.
 - `fala.sdk`: dependency-light helpers for step programs
 - `RuntimeService`: host-side service facade over a registry and store
 - `create_runtime_router`: optional FastAPI router for API integration
-- `SQLiteStateStore` for local/single-host use, `PostgresStateStore` for a
-  shared control plane
+- `SQLiteStateStore` as the shipped first-party state store; non-SQLite
+  backends belong in external `RuntimeBackend` plugins
 - YAML packages define document types, artifact kinds, capabilities, pipelines,
   and worker commands
 
@@ -39,14 +39,12 @@ uv run fala --pipeline-dir examples/pipelines package-doctor
 uv run python -m unittest discover -s tests
 ```
 
-Commands that accept `--db` use SQLite for filesystem paths and Postgres for
-`postgresql://...` DSNs. The web app uses `FALA_DATABASE_URL`, then `FALA_DB`,
-then `fala.db`.
-Use `db-doctor` before starting a shared control plane:
+Commands that accept `--db` use SQLite filesystem paths or `sqlite://` URLs.
+The web app uses `FALA_DB`, then `fala.db`; `FALA_DATABASE_URL` is accepted only
+for SQLite URLs. Use `db-doctor` before starting a control plane:
 
 ```bash
 uv run fala db-doctor --db runtime.db --ensure-schema
-uv run fala db-doctor --db "$FALA_DATABASE_URL" --ensure-schema
 uv run fala project-check --project-dir . --db runtime.db --ensure-schema --output project-check.json
 uv run fala project-smoke --project-dir . --db runtime.db --run-id run_smoke --output project-smoke.json
 ```
@@ -66,24 +64,20 @@ uv run fala --pipeline-dir examples/pipelines \
   --port 8000
 ```
 
-Generate a runnable local stack with the web/API control plane, shared volumes,
-optional Postgres, and package workers:
+Generate a runnable local stack with the web/API control plane, SQLite-backed
+shared data volume, artifact volume, and package workers:
 
 ```bash
 uv run fala --pipeline-dir examples/pipelines \
   deployment \
   --format docker-compose \
   --run-id example-run \
-  --with-postgres \
   | jq -r .manifest > docker-compose.yaml
 ```
 
 ASGI deployments can use `fala.web.asgi:app`; configure `FALA_PIPELINE_DIR`,
-`FALA_DATABASE_URL` or `FALA_DB`, `FALA_QUEUE_BROKER` or `FALA_QUEUE_DB`, and
-`FALA_ARTIFACT_STORE` or `FALA_ARTIFACT_STORE_ROOT` through the environment.
-
-Set `FALA_POSTGRES_TEST_DSN` and run with `--extra postgres` to exercise the
-live Postgres store contract.
+`FALA_DB`, `FALA_QUEUE_BROKER` or `FALA_QUEUE_DB`, and `FALA_ARTIFACT_STORE` or
+`FALA_ARTIFACT_STORE_ROOT` through the environment.
 
 ## Run example
 
@@ -974,7 +968,8 @@ references one sample document from each package and
 `make project-doctor` checks root samples, package readiness, and mixed routing
 from `fala-project.yaml`. `make db-doctor` checks the runtime database target
 and creates/repairs the local schema when `DB` points at an empty SQLite file or
-Postgres DSN; the report includes runtime schema version and applied migrations.
+`sqlite://` URL; the report includes runtime schema version and applied
+migrations.
 `make project-check` writes one aggregate bootstrap report over project
 readiness, spec generation, secret inventory, DB readiness, and optional
 bundle verification. `make project-smoke` creates the mixed sample run and
@@ -1621,14 +1616,13 @@ uv run fala --pipeline-dir examples/pipelines \
   --package-id basic_examples \
   --image registry.example.com/fala:latest \
   --worker-image registry.example.com/fala-worker:latest \
-  --with-postgres \
   | jq -r .manifest
 ```
 
-This manifest contains the bundled API/web panel, optional Postgres, a shared
-artifact volume, a pipeline bind mount for local Compose, and generated package
-workers pointed at the internal control-plane URL. Use `--format kubernetes` for
-Deployment/Service/PVC YAML.
+This manifest contains the bundled API/web panel, a SQLite-backed shared data
+volume, a shared artifact volume, a pipeline bind mount for local Compose, and
+generated package workers pointed at the internal control-plane URL. Use
+`--format kubernetes` for Deployment/Service/PVC YAML.
 
 If the control plane already exists, render only worker manifests:
 
