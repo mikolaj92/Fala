@@ -30,3 +30,56 @@ surfaces and are loaded lazily from `fala`.
 
 Document workflows live in `fala.domain_packs.documents`; see
 `docs/DOCUMENT_DOMAIN_PACK.md` for the Document to Carrier migration mapping.
+
+## Core Concepts
+
+- Carrier: the typed unit of information moved by the runtime. It can represent
+  a case, reading, event, document-domain object, or any other domain value.
+- RuntimeBackend: the persistence boundary for carriers, commands, events,
+  observations, gates, projections, and bridge inbox/outbox records.
+- RuntimeCommand: the only write path for state-changing runtime actions.
+  Commands carry an idempotency key, actor, correlation id, causation id, and
+  payload.
+- RuntimeEvent: ordered facts linked to commands. Events are the audit trail for
+  mutations and the source for projections.
+- Observation: a typed measurement or fact reported about a carrier.
+- Gate: a first-class decision point such as human review, approval, expiry, or
+  cancellation.
+- Projection: a rebuildable read model keyed by run and projection name.
+- Lineage: represented through carrier ids, event refs, bridge refs, and domain
+  pack metadata rather than document-specific core fields.
+- Audit: represented by command actor/correlation/causation metadata plus the
+  ordered event log.
+- Artifacts: represented as carrier payload or observation values in core; a
+  domain pack can impose stronger artifact schemas.
+
+## SQLite-Only Core
+
+Fala core ships the SQLite runtime backend. Non-SQLite storage or transport
+backends are external plugin work. The default Carrier-first path must run with
+only Python and SQLite.
+
+## Conformance
+
+Reusable backend conformance checks live in
+`tests/runtime_backend_conformance.py`. The shipped SQLite backend runs those
+checks in `tests/test_runtime_backend_conformance.py`.
+
+The conformance checks cover:
+
+- carrier persistence;
+- idempotent command submission;
+- ordered command-linked events;
+- observations, gates, and projections;
+- bridge inbox/outbox persistence.
+
+## Local Examples
+
+Run the local-first Carrier runtime example:
+
+```bash
+uv run python examples/carrier-runtime/local_first.py /tmp/fala-carrier.sqlite
+```
+
+The example uses one local SQLite file and exercises a non-document carrier,
+observation, gate, projection, and the document domain pack.

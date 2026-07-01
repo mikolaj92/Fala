@@ -27,6 +27,10 @@ while the default distribution ships and supports only the SQLite backend plugin
 Other storage backends may be possible as external plugins, but they are not the
 default or recommended Fala 2.0 path.
 
+The Carrier-first embedded path is `fala.carrier_runtime.FalaRuntime` plus
+`fala.runtime_backend.SQLiteRuntimeBackend`. A local example lives at
+`examples/carrier-runtime/local_first.py` and runs with only Python and SQLite.
+
 See [`docs/FALA_2_0_PLAN.md`](docs/FALA_2_0_PLAN.md) for the corrected phase
 plan, including the document-to-carrier migration, the SQLite backend plugin,
 and the plugin boundary expectations.
