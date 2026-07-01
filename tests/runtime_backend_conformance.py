@@ -5,6 +5,7 @@ from fala.runtime_backend import (
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
+    CarrierRunStatus,
     CarrierRelation,
     CarrierType,
     EventRef,
@@ -17,15 +18,27 @@ from fala.runtime_backend import (
     RuntimeCommand,
     RuntimeEvent,
     RuntimeRef,
+    Run,
     RunRef,
 )
 
 
 async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     runtime = RuntimeRef(id="local", uri="sqlite://local")
+    run = Run(
+        id="run_conformance",
+        status=CarrierRunStatus.created,
+        title="Conformance run",
+        package_id="conformance",
+        flow_id="basic",
+    )
+    await backend.put_run(run)
+    assert await backend.get_run(run_id=run.id) == run
+    assert await backend.list_runs(status=CarrierRunStatus.created) == [run]
+
     carrier_type = CarrierType(
         id="case",
-        run_id="run_conformance",
+        run_id=run.id,
         title="Case",
         media_types=["application/json"],
         value_schema={"type": "object"},

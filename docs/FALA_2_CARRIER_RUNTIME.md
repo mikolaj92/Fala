@@ -7,6 +7,8 @@ The current Carrier-first path lives in `fala.runtime_backend`:
 - `FalaRuntime` in `fala.carrier_runtime` is the embedded core facade. It uses
   `RuntimeBackendService` and does not import web, API, CLI, or HTTP-client
   modules.
+- `Run` records Carrier-first run metadata, lifecycle status, package/flow
+  identity, digests, and timestamps.
 - `Carrier` is the typed information unit moved by a run.
 - `RuntimeCommand` is the idempotent write path.
 - `RuntimeEvent` records ordered, command-linked runtime facts.
@@ -43,12 +45,15 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
 
 - Carrier: the typed unit of information moved by the runtime. It can represent
   a case, reading, event, document-domain object, or any other domain value.
+- Run: the lifecycle record for a local Carrier-first execution. Current
+  statuses are `created`, `active`, `waiting`, `completed`, `failed`,
+  `cancel_requested`, `cancelled`, and `timed_out`.
 - CarrierType: the registered type metadata for a carrier in a run, including
   media types and value schema metadata.
 - CarrierRelation: a durable relationship between two carriers, used for
   lineage, derivation, dependency, and future wait-graph work.
-- RuntimeBackend: the persistence boundary for carriers, commands, events,
-  carrier types, carrier relations, commands, events, observations, gates,
+- RuntimeBackend: the persistence boundary for runs, carriers, carrier types,
+  carrier relations, commands, events, observations, artifacts, gates,
   projections, and bridge inbox/outbox records.
 - RuntimeCommand: the only write path for state-changing runtime actions.
   Commands carry an idempotency key, actor, correlation id, causation id, and
@@ -83,6 +88,7 @@ checks in `tests/test_runtime_backend_conformance.py`.
 The conformance checks cover:
 
 - carrier persistence;
+- run persistence and status transitions;
 - carrier type and relation persistence;
 - idempotent command submission;
 - ordered command-linked events;
@@ -94,6 +100,8 @@ The conformance checks cover:
 Carrier-first SQLite state can be inspected without FastAPI or a web server:
 
 ```bash
+uv run fala runs create --db /tmp/fala-carrier.sqlite --run-id run_case --title "Case run"
+uv run fala runs inspect --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala carriers list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala carriers inspect --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
 uv run fala carrier-types list --db /tmp/fala-carrier.sqlite --run-id run_case

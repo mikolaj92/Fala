@@ -164,7 +164,10 @@ from fala.queue_bridge import (
     write_jsonl,
 )
 from fala.registry import PipelineRegistry
+from fala.runtime_backend import CarrierRunStatus
 from fala.runtime_backend import GateStatus as CarrierGateStatus
+from fala.runtime_backend import Run as CarrierRun
+from fala.runtime_backend import RuntimeBackendService
 from fala.runtime_backend import SQLiteRuntimeBackend
 from fala.scheduler import PipelineScheduler, ScheduleResult
 from fala.sdk import replay_step_manifest
@@ -1630,6 +1633,37 @@ def _build_parser() -> argparse.ArgumentParser:
     describe = subparsers.add_parser("describe", help="Describe one pipeline.")
     describe.add_argument("pipeline_id")
 
+    runs = subparsers.add_parser(
+        "runs",
+        help="Inspect Carrier-first runtime runs.",
+    )
+    run_subparsers = runs.add_subparsers(dest="run_command", required=True)
+    runs_create = run_subparsers.add_parser("create", help="Create a Carrier run.")
+    _add_carrier_runtime_db_arg(runs_create)
+    runs_create.add_argument("--run-id", default=None)
+    runs_create.add_argument("--title", default=None)
+    runs_create.add_argument("--package-id", default=None)
+    runs_create.add_argument("--package-version", default=None)
+    runs_create.add_argument("--package-digest", default=None)
+    runs_create.add_argument("--flow-id", default=None)
+    runs_create.add_argument("--flow-digest", default=None)
+    runs_create.add_argument("--runtime-version", default=None)
+    runs_create.add_argument("--backend-version", default=None)
+    runs_create.add_argument("--metadata", action="append", default=[])
+    runs_create.add_argument("--idempotency-key", default=None)
+    runs_list = run_subparsers.add_parser("list", help="List Carrier runs.")
+    _add_carrier_runtime_db_arg(runs_list)
+    runs_list.add_argument(
+        "--status",
+        choices=[status.value for status in CarrierRunStatus],
+        default=None,
+    )
+    runs_list.add_argument("--limit", type=int, default=None)
+    runs_list.add_argument("--jsonl", action="store_true")
+    runs_inspect = run_subparsers.add_parser("inspect", help="Inspect one Carrier run.")
+    _add_carrier_runtime_db_arg(runs_inspect)
+    runs_inspect.add_argument("--run-id", required=True)
+
     carriers = subparsers.add_parser(
         "carriers",
         help="Inspect Carrier-first runtime carriers.",
@@ -2766,6 +2800,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "gates",
         "observations",
         "projections",
+        "runs",
     }:
         return await _carrier_runtime_command(args)
 
@@ -4025,13 +4060,56 @@ def _require_process_runtime_client() -> Any:
     return ProcessRuntimeClient
 
 
-def _add_carrier_runtime_db_run_args(parser: argparse.ArgumentParser) -> None:
+def _add_carrier_runtime_db_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--db", required=True, help="Carrier runtime SQLite DB path or sqlite:// URL.")
+
+
+def _add_carrier_runtime_db_run_args(parser: argparse.ArgumentParser) -> None:
+    _add_carrier_runtime_db_arg(parser)
     parser.add_argument("--run-id", required=True)
 
 
 async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
     backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    if args.command == "runs":
+        if args.run_command == "create":
+            run_data = {
+                "title": args.title,
+                "package_id": args.package_id,
+                "package_version": args.package_version,
+                "package_digest": args.package_digest,
+                "flow_id": args.flow_id,
+                "flow_digest": args.flow_digest,
+                "runtime_version": args.runtime_version,
+                "backend_version": args.backend_version,
+                "metadata": _parse_values(args.metadata),
+            }
+            if args.run_id is not None:
+                run_data["id"] = args.run_id
+            run = CarrierRun.model_validate(run_data)
+            service = RuntimeBackendService(backend)
+            stored, submission = await service.create_run(
+                run,
+                idempotency_key=args.idempotency_key or f"{run.id}:run.create",
+                actor="cli:user",
+            )
+            return {
+                "ok": True,
+                "run": stored.model_dump(mode="json"),
+                "command": submission.command.model_dump(mode="json"),
+                "replayed": submission.replayed,
+            }
+        if args.run_command == "list":
+            runs = await backend.list_runs(
+                status=CarrierRunStatus(args.status) if args.status else None,
+                limit=args.limit,
+            )
+            return _carrier_runtime_list_result("runs", runs, jsonl=args.jsonl)
+        run = await backend.get_run(run_id=args.run_id)
+        return {
+            "ok": run is not None,
+            "run": run.model_dump(mode="json") if run is not None else None,
+        }
     if args.command == "carriers":
         if args.carrier_command == "list":
             carriers = await backend.list_carriers(

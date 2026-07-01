@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fala.runtime_backend import (
     Artifact,
+    CarrierRunStatus,
     Carrier,
     CarrierRelation,
     CarrierType,
@@ -12,6 +13,7 @@ from fala.runtime_backend import (
     GateStatus,
     Observation,
     Projection,
+    Run,
     RuntimeBackend,
     RuntimeBackendService,
     RuntimeEvent,
@@ -35,6 +37,42 @@ class FalaRuntime:
         runtime.service = service
         runtime.backend = service.backend
         return runtime
+
+    async def create_run(
+        self,
+        run: Run,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Run, CommandSubmission]:
+        return await self.service.create_run(
+            run,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def set_run_status(
+        self,
+        *,
+        run_id: str,
+        status: CarrierRunStatus,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Run, CommandSubmission]:
+        return await self.service.set_run_status(
+            run_id=run_id,
+            status=status,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
 
     async def accept_carrier(
         self,
@@ -169,6 +207,14 @@ class FalaRuntime:
             after_sequence=after_sequence,
             limit=limit,
         )
+
+    async def list_runs(
+        self,
+        *,
+        status: CarrierRunStatus | None = None,
+        limit: int | None = None,
+    ) -> list[Run]:
+        return await self.service.list_runs(status=status, limit=limit)
 
     async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]:
         return await self.service.list_carrier_types(run_id=run_id)

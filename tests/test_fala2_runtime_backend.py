@@ -38,6 +38,7 @@ from fala.runtime_backend import (
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
+    CarrierRunStatus,
     CarrierRelation,
     CarrierType,
     DelegationPolicy,
@@ -52,6 +53,7 @@ from fala.runtime_backend import (
     RuntimeEvent,
     RuntimePool,
     RuntimeRef,
+    Run,
     RunRef,
     SQLiteRuntimeBackend,
 )
@@ -312,6 +314,67 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_fala_runtime_creates_and_transitions_runs(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                run = Run(
+                    id="run_lifecycle",
+                    title="Lifecycle",
+                    package_id="pkg",
+                    package_version="2",
+                    flow_id="basic",
+                )
+
+                stored, create_submission = await runtime.create_run(
+                    run,
+                    idempotency_key="run_lifecycle:create",
+                    actor="cli:user",
+                )
+                replayed, replay_submission = await runtime.create_run(
+                    run.model_copy(update={"title": "Changed"}),
+                    idempotency_key="run_lifecycle:create",
+                    actor="cli:user",
+                )
+                active, active_submission = await runtime.set_run_status(
+                    run_id=run.id,
+                    status=CarrierRunStatus.active,
+                    idempotency_key="run_lifecycle:active",
+                )
+                completed, completed_submission = await runtime.set_run_status(
+                    run_id=run.id,
+                    status=CarrierRunStatus.completed,
+                    idempotency_key="run_lifecycle:completed",
+                )
+
+                self.assertEqual(stored, run)
+                self.assertEqual(replayed, run)
+                self.assertFalse(create_submission.replayed)
+                self.assertTrue(replay_submission.replayed)
+                self.assertEqual(active.status, CarrierRunStatus.active)
+                self.assertIsNotNone(active.started_at)
+                self.assertEqual(completed.status, CarrierRunStatus.completed)
+                self.assertIsNotNone(completed.finished_at)
+                self.assertFalse(active_submission.replayed)
+                self.assertFalse(completed_submission.replayed)
+                self.assertEqual(
+                    await runtime.list_runs(status=CarrierRunStatus.completed),
+                    [completed],
+                )
+                with self.assertRaisesRegex(ValueError, "terminal"):
+                    await runtime.set_run_status(
+                        run_id=run.id,
+                        status=CarrierRunStatus.active,
+                        idempotency_key="run_lifecycle:reopen",
+                    )
+                events = await runtime.list_events(run_id=run.id)
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    ["run.created", "run.status.changed", "run.status.changed"],
+                )
+
+        asyncio.run(scenario())
+
     def test_cli_inspects_carrier_runtime_state_without_web_stack(self) -> None:
         async def scenario(db_path: Path) -> None:
             runtime = FalaRuntime.sqlite(db_path)
@@ -398,7 +461,45 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "carrier.sqlite"
+            created_run = _run_cli_json(
+                "runs",
+                "create",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--title",
+                "CLI Run",
+                "--metadata",
+                "tenant=demo",
+            )
+            self.assertTrue(created_run["ok"])
+            self.assertEqual(created_run["run"]["id"], "run_cli")
+            self.assertEqual(created_run["run"]["metadata"], {"tenant": "demo"})
+
             asyncio.run(scenario(db_path))
+
+            runs = _run_cli_json(
+                "runs",
+                "list",
+                "--db",
+                str(db_path),
+                "--status",
+                "created",
+            )
+            self.assertEqual(runs["count"], 1)
+            self.assertEqual(runs["runs"][0]["id"], "run_cli")
+
+            inspected_run = _run_cli_json(
+                "runs",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+            )
+            self.assertTrue(inspected_run["ok"])
+            self.assertEqual(inspected_run["run"]["title"], "CLI Run")
 
             carriers = _run_cli_json(
                 "carriers",

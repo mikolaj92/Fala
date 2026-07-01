@@ -43,6 +43,38 @@ def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+class CarrierRunStatus(StrEnum):
+    created = "created"
+    active = "active"
+    waiting = "waiting"
+    completed = "completed"
+    failed = "failed"
+    cancel_requested = "cancel_requested"
+    cancelled = "cancelled"
+    timed_out = "timed_out"
+
+
+class Run(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: _new_id("run"))
+    status: CarrierRunStatus = CarrierRunStatus.created
+    title: str | None = None
+    package_id: str | None = None
+    package_version: str | None = None
+    package_digest: str | None = None
+    flow_id: str | None = None
+    flow_digest: str | None = None
+    runtime_version: str | None = None
+    backend_version: str | None = None
+    schema_version: int = Field(default=1, ge=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
 class Carrier(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -260,6 +292,17 @@ class BridgeDelivery(BaseModel):
 
 
 class RuntimeBackend(Protocol):
+    async def put_run(self, run: Run) -> None: ...
+
+    async def get_run(self, *, run_id: str) -> Run | None: ...
+
+    async def list_runs(
+        self,
+        *,
+        status: CarrierRunStatus | None = None,
+        limit: int | None = None,
+    ) -> list[Run]: ...
+
     async def put_carrier_type(self, carrier_type: CarrierType) -> None: ...
 
     async def get_carrier_type(
@@ -371,6 +414,44 @@ class RuntimeBackend(Protocol):
 
 
 _BRIDGE_TABLES = {"bridge_outbox", "bridge_inbox"}
+_TERMINAL_RUN_STATUSES = {
+    CarrierRunStatus.completed,
+    CarrierRunStatus.failed,
+    CarrierRunStatus.cancelled,
+    CarrierRunStatus.timed_out,
+}
+_RUN_STATUS_TRANSITIONS = {
+    CarrierRunStatus.created: {
+        CarrierRunStatus.active,
+        CarrierRunStatus.waiting,
+        CarrierRunStatus.completed,
+        CarrierRunStatus.failed,
+        CarrierRunStatus.cancel_requested,
+        CarrierRunStatus.cancelled,
+        CarrierRunStatus.timed_out,
+    },
+    CarrierRunStatus.active: {
+        CarrierRunStatus.waiting,
+        CarrierRunStatus.completed,
+        CarrierRunStatus.failed,
+        CarrierRunStatus.cancel_requested,
+        CarrierRunStatus.cancelled,
+        CarrierRunStatus.timed_out,
+    },
+    CarrierRunStatus.waiting: {
+        CarrierRunStatus.active,
+        CarrierRunStatus.completed,
+        CarrierRunStatus.failed,
+        CarrierRunStatus.cancel_requested,
+        CarrierRunStatus.cancelled,
+        CarrierRunStatus.timed_out,
+    },
+    CarrierRunStatus.cancel_requested: {
+        CarrierRunStatus.cancelled,
+        CarrierRunStatus.failed,
+        CarrierRunStatus.timed_out,
+    },
+}
 
 
 class SQLiteRuntimeBackend:
@@ -396,6 +477,25 @@ class SQLiteRuntimeBackend:
         with self._connect() as connection:
             connection.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS runs (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    title TEXT,
+                    package_id TEXT,
+                    package_version TEXT,
+                    package_digest TEXT,
+                    flow_id TEXT,
+                    flow_digest TEXT,
+                    runtime_version TEXT,
+                    backend_version TEXT,
+                    schema_version INTEGER NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS carriers (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -558,6 +658,8 @@ class SQLiteRuntimeBackend:
 
                 CREATE INDEX IF NOT EXISTS idx_runtime_events_carrier
                     ON runtime_events (run_id, carrier_id, sequence);
+                CREATE INDEX IF NOT EXISTS idx_runs_status
+                    ON runs (status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_carrier_relations_source
                     ON carrier_relations (run_id, source_carrier_id, relation_type);
                 CREATE INDEX IF NOT EXISTS idx_carrier_relations_target
@@ -575,6 +677,68 @@ class SQLiteRuntimeBackend:
                 """
             )
             connection.commit()
+
+    async def put_run(self, run: Run) -> None:
+        async with self._lock:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO runs (
+                        id, status, title, package_id, package_version,
+                        package_digest, flow_id, flow_digest, runtime_version,
+                        backend_version, schema_version, metadata, created_at,
+                        updated_at, started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        status = excluded.status,
+                        title = excluded.title,
+                        package_id = excluded.package_id,
+                        package_version = excluded.package_version,
+                        package_digest = excluded.package_digest,
+                        flow_id = excluded.flow_id,
+                        flow_digest = excluded.flow_digest,
+                        runtime_version = excluded.runtime_version,
+                        backend_version = excluded.backend_version,
+                        schema_version = excluded.schema_version,
+                        metadata = excluded.metadata,
+                        created_at = excluded.created_at,
+                        updated_at = excluded.updated_at,
+                        started_at = excluded.started_at,
+                        finished_at = excluded.finished_at
+                    """,
+                    _run_args(run),
+                )
+                connection.commit()
+
+    async def get_run(self, *, run_id: str) -> Run | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        return _run_from_row(row) if row is not None else None
+
+    async def list_runs(
+        self,
+        *,
+        status: CarrierRunStatus | None = None,
+        limit: int | None = None,
+    ) -> list[Run]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status.value)
+        sql = "SELECT * FROM runs"
+        if clauses:
+            sql += f" WHERE {' AND '.join(clauses)}"
+        sql += " ORDER BY created_at ASC, id ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [_run_from_row(row) for row in rows]
 
     async def put_carrier_type(self, carrier_type: CarrierType) -> None:
         async with self._lock:
@@ -1249,6 +1413,94 @@ class RuntimeBackendService:
     def sqlite(cls, path: str | Path) -> "RuntimeBackendService":
         return cls(SQLiteRuntimeBackend(path))
 
+    async def create_run(
+        self,
+        run: Run,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Run, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=run.id,
+            command_type="run.create",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"run_id": run.id, "status": run.status.value},
+        )
+        event = RuntimeEvent(
+            run_id=run.id,
+            event_type="run.created",
+            payload={"run_id": run.id, "status": run.status.value},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_run_id = submission.command.payload.get("run_id", run.id)
+            existing = await self.backend.get_run(run_id=str(existing_run_id))
+            if existing is None:
+                raise ValueError(
+                    "Replayed run create command has no stored run: "
+                    f"{existing_run_id!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_run(run)
+        return run, submission
+
+    async def set_run_status(
+        self,
+        *,
+        run_id: str,
+        status: CarrierRunStatus,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Run, CommandSubmission]:
+        existing = await self.backend.get_run(run_id=run_id)
+        if existing is None:
+            raise ValueError(f"Unknown run: {run_id!r}")
+        if existing.status != status:
+            _validate_run_status_transition(existing.status, status)
+        command = RuntimeCommand(
+            run_id=run_id,
+            command_type="run.status.set",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"run_id": run_id, "status": status.value},
+        )
+        event = RuntimeEvent(
+            run_id=run_id,
+            event_type="run.status.changed",
+            payload={"from": existing.status.value, "to": status.value},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            replayed_run = await self.backend.get_run(run_id=run_id)
+            if replayed_run is None:
+                raise ValueError(f"Replayed run status command has no stored run: {run_id!r}")
+            return replayed_run, submission
+
+        now = _now()
+        updated = existing.model_copy(
+            update={
+                "status": status,
+                "updated_at": now,
+                "started_at": existing.started_at
+                or (now if status == CarrierRunStatus.active else None),
+                "finished_at": now
+                if status in _TERMINAL_RUN_STATUSES
+                else existing.finished_at,
+            }
+        )
+        await self.backend.put_run(updated)
+        return updated, submission
+
     async def register_carrier_type(
         self,
         carrier_type: CarrierType,
@@ -1777,6 +2029,14 @@ class RuntimeBackendService:
             kind=kind,
         )
 
+    async def list_runs(
+        self,
+        *,
+        status: CarrierRunStatus | None = None,
+        limit: int | None = None,
+    ) -> list[Run]:
+        return await self.backend.list_runs(status=status, limit=limit)
+
     async def list_carriers(
         self,
         *,
@@ -1891,6 +2151,61 @@ def _bridge_event_payload(delivery: BridgeDelivery) -> dict[str, Any]:
         "status": delivery.status.value,
         "attempts": delivery.attempts,
     }
+
+
+def _validate_run_status_transition(
+    current: CarrierRunStatus,
+    target: CarrierRunStatus,
+) -> None:
+    if current in _TERMINAL_RUN_STATUSES:
+        raise ValueError(f"Run status {current.value!r} is terminal")
+    allowed = _RUN_STATUS_TRANSITIONS.get(current, set())
+    if target not in allowed:
+        raise ValueError(
+            f"Invalid run status transition: {current.value!r} -> {target.value!r}"
+        )
+
+
+def _run_args(run: Run) -> tuple[Any, ...]:
+    return (
+        run.id,
+        run.status.value,
+        run.title,
+        run.package_id,
+        run.package_version,
+        run.package_digest,
+        run.flow_id,
+        run.flow_digest,
+        run.runtime_version,
+        run.backend_version,
+        run.schema_version,
+        _dumps(run.metadata),
+        run.created_at.isoformat(),
+        run.updated_at.isoformat(),
+        run.started_at.isoformat() if run.started_at is not None else None,
+        run.finished_at.isoformat() if run.finished_at is not None else None,
+    )
+
+
+def _run_from_row(row: sqlite3.Row) -> Run:
+    return Run(
+        id=row["id"],
+        status=CarrierRunStatus(row["status"]),
+        title=row["title"],
+        package_id=row["package_id"],
+        package_version=row["package_version"],
+        package_digest=row["package_digest"],
+        flow_id=row["flow_id"],
+        flow_digest=row["flow_digest"],
+        runtime_version=row["runtime_version"],
+        backend_version=row["backend_version"],
+        schema_version=row["schema_version"],
+        metadata=_loads(row["metadata"]),
+        created_at=_dt(row["created_at"]),
+        updated_at=_dt(row["updated_at"]),
+        started_at=_dt(row["started_at"]) if row["started_at"] is not None else None,
+        finished_at=_dt(row["finished_at"]) if row["finished_at"] is not None else None,
+    )
 
 
 def _carrier_from_row(row: sqlite3.Row) -> Carrier:
@@ -2040,6 +2355,7 @@ __all__ = [
     "BridgeDelivery",
     "BridgeDeliveryStatus",
     "Carrier",
+    "CarrierRunStatus",
     "CarrierRelation",
     "CarrierType",
     "CommandSubmission",
@@ -2056,6 +2372,7 @@ __all__ = [
     "RuntimeEvent",
     "RuntimePool",
     "RuntimeRef",
+    "Run",
     "RunRef",
     "SQLiteRuntimeBackend",
 ]
