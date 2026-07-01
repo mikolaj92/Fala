@@ -72,7 +72,7 @@ workflow API.
 | Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
 | State machines | PARTIAL | Run/process/gate statuses exist with transition checks for key paths. More illegal-transition tests are needed. |
 | Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, and a local two-SQLite example exist. Routing execution remains future work. |
-| CLI | PARTIAL | Local SQLite inspection, run creation, gate completion, wait diagnostics, trace, exports, GC, doctor, and bridge delivery exist. More create/schedule commands can be added directly against command APIs. |
+| CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, package-aware doctor, wait diagnostics, trace, exports, GC, and bridge delivery exist. Runtime-pool routing commands remain incomplete. |
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings. More examples and package manifests are needed. |
 | Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, and run archive export exist. Deterministic execution replay is not yet complete. |
@@ -80,11 +80,8 @@ workflow API.
 
 ## Next Work
 
-1. Add direct CLI command APIs for creating carriers, appending observations, and
-   scheduling processes.
-2. Add event payload schema/version fields and tests.
-3. Expand backend conformance for command deduplication, restart recovery,
-   gate completion, artifact metadata, projection rebuilds, and leases.
-4. Add richer retention policy controls for shared artifacts and archived runs.
-5. Add Splot arbitration package example using Carrier, Observation, Artifact,
-   Event, and Gate mappings.
+1. Add runtime-pool routing execution for `fala_runtime` delegation.
+2. Add richer retention policy controls for shared artifacts and archived runs.
+3. Split the remaining conceptual/security/replay/composition docs.
+4. Define package/event/artifact/domain/report migration policy.
+5. Add deterministic execution replay boundaries for recorded steps.

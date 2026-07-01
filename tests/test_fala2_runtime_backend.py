@@ -1992,16 +1992,55 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(doctor["counts"]["carriers"], 1)
             self.assertEqual(doctor["counts"]["runtime_events"], 2)
 
+            package_path = (
+                Path(__file__).resolve().parents[1]
+                / "examples/pipelines/basic/carrier-package.yaml"
+            )
+            doctor_with_package = _run_cli_json(
+                "doctor",
+                "--db",
+                str(db_path),
+                "--package",
+                str(package_path),
+            )
+            self.assertTrue(doctor_with_package["ok"])
+            self.assertEqual(doctor_with_package["packages"][0]["id"], "basic_examples")
+            self.assertEqual(
+                doctor_with_package["packages"][0]["flow_count"],
+                1,
+            )
+
+            bad_package = Path(tmp_dir) / "bad-package.yaml"
+            bad_package.write_text(
+                "version: '2'\nid: bad\ndocument_types: []\nflows: []\n",
+                encoding="utf-8",
+            )
+            code, invalid_package = _run_cli_raw(
+                "doctor",
+                "--db",
+                str(db_path),
+                "--package",
+                str(bad_package),
+            )
+            self.assertEqual(code, 1)
+            self.assertFalse(invalid_package["ok"])
+            self.assertFalse(invalid_package["packages"][0]["ok"])
+            self.assertIn("document_types", invalid_package["packages"][0]["error"])
+
             output = Path(tmp_dir) / "doctor.json"
             written = _run_cli_json(
                 "doctor",
                 "--db",
                 str(db_path),
+                "--package",
+                str(package_path),
                 "--output",
                 str(output),
             )
             self.assertTrue(written["ok"])
             self.assertEqual(written["current_version"], SQLITE_RUNTIME_SCHEMA_VERSION)
+            self.assertEqual(written["package_count"], 1)
+            self.assertEqual(written["package_error_count"], 0)
             self.assertTrue(output.is_file())
 
     def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:

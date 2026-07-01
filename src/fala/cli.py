@@ -55,6 +55,7 @@ from fala.runtime_backend import RuntimePool
 from fala.runtime_backend import RuntimeRef
 from fala.runtime_backend import SQLITE_RUNTIME_SCHEMA_VERSION
 from fala.runtime_backend import SQLiteRuntimeBackend
+from fala.yaml_loader import load_carrier_workflow_package_yaml
 
 CONTRACT_MODELS: dict[str, type[BaseModel]] = {
     "adapter": CarrierAdapterSpec,
@@ -184,6 +185,7 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser("doctor", help="Check Carrier runtime readiness.")
     doctor.add_argument("--db", default=".fala/state.sqlite", help="Carrier runtime SQLite DB path or sqlite:// URL.")
     doctor.add_argument("--ensure-schema", action="store_true", help="Create/repair Carrier runtime schema before checking.")
+    doctor.add_argument("--package", dest="packages", action="append", default=[], help="Carrier package YAML path to validate. Repeatable.")
     doctor.add_argument("--output", default=None, help="Write JSON doctor report to this path instead of stdout envelope.")
 
     create_run = subparsers.add_parser("create-run", help="Create a Carrier run.")
@@ -448,6 +450,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             argparse.Namespace(
                 db=args.db,
                 ensure_schema=args.ensure_schema,
+                packages=[],
                 output=None,
             )
         )
@@ -1163,6 +1166,8 @@ def _parse_duration_seconds(value: str) -> float:
 
 def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
     db_path = Path(_carrier_runtime_db_path(args.db))
+    packages = _carrier_runtime_package_reports(getattr(args, "packages", []))
+    packages_ok = all(package["ok"] for package in packages)
     if args.ensure_schema:
         SQLiteRuntimeBackend(db_path)
     if not db_path.exists():
@@ -1171,6 +1176,7 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
             "store_kind": "sqlite",
             "path": str(db_path),
             "error": f"SQLite database does not exist: {db_path}",
+            "packages": packages,
         }
         return _write_carrier_runtime_doctor_report(args, report)
 
@@ -1210,8 +1216,9 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
 
     latest_version = SQLITE_RUNTIME_SCHEMA_VERSION
     current_version = int(migration[0]) if migration is not None else None
+    schema_ok = not missing_tables and current_version == latest_version
     report = {
-        "ok": not missing_tables and current_version == latest_version,
+        "ok": schema_ok and packages_ok,
         "store_kind": "sqlite",
         "path": str(db_path),
         "schema": {
@@ -1228,8 +1235,37 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
             },
         },
         "counts": counts,
+        "packages": packages,
     }
     return _write_carrier_runtime_doctor_report(args, report)
+
+
+def _carrier_runtime_package_reports(paths: list[str]) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    for raw_path in paths:
+        path = Path(raw_path).expanduser()
+        try:
+            package = load_carrier_workflow_package_yaml(path)
+        except Exception as exc:
+            reports.append(
+                {
+                    "ok": False,
+                    "path": str(path),
+                    "error": str(exc),
+                }
+            )
+        else:
+            reports.append(
+                {
+                    "ok": True,
+                    "path": str(path),
+                    "id": package.id,
+                    "version": package.version,
+                    "carrier_type_count": len(package.carrier_types),
+                    "flow_count": len(package.flows),
+                }
+            )
+    return reports
 
 
 def _write_carrier_runtime_doctor_report(
@@ -1248,6 +1284,10 @@ def _write_carrier_runtime_doctor_report(
         "missing_table_count": len(report.get("schema", {}).get("missing_tables", [])),
         "current_version": report.get("schema", {}).get("current_version"),
         "latest_version": report.get("schema", {}).get("latest_version"),
+        "package_count": len(report.get("packages", [])),
+        "package_error_count": sum(
+            1 for package in report.get("packages", []) if not package.get("ok")
+        ),
     }
 
 

@@ -155,7 +155,7 @@ uv run fala projections rebuild --db .fala/state.sqlite --run-id run_local
 uv run fala run-until-idle --db .fala/state.sqlite --run-id run_local
 uv run fala gc --db .fala/state.sqlite --artifact-root .fala/artifacts --dry-run
 
-uv run fala doctor --db .fala/state.sqlite
+uv run fala doctor --db .fala/state.sqlite --package examples/pipelines/basic/carrier-package.yaml
 uv run fala diagnose-waits --db .fala/state.sqlite --run-id run_local
 uv run fala trace --db .fala/state.sqlite --run-id run_local
 uv run fala archive-run run_local --db .fala/state.sqlite --out run_local.archive.zip
