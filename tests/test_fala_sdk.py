@@ -20,13 +20,16 @@ from fala.embedded import (
 )
 from fala.sdk import (
     ArtifactNotFoundError,
+    CarrierWorkerContext,
     JsonArtifact,
     JsonNeed,
     PROCESS_RUNTIME_EVENT_PREFIX,
     StepContract,
     artifact,
     artifact_root,
+    build_carrier_env,
     build_step_env,
+    carrier_output,
     emit_event,
     initial,
     latest_input_artifact,
@@ -127,6 +130,34 @@ class ProcessRuntimeSDKTests(unittest.TestCase):
             "redacted_document",
         )
         self.assertEqual(payload["output_documents"][0]["relation"], "redacted")
+
+    def test_carrier_worker_context_uses_carrier_terms_only(self) -> None:
+        context = CarrierWorkerContext.from_payload(
+            {
+                "run_id": "run_1",
+                "carrier_id": "carrier_1",
+                "carrier_type": "arbitration_case",
+                "payload": {"claim_id": "CLM-1"},
+                "metadata": {"tenant": "acme"},
+                "process_id": "classify",
+                "attempt": 2,
+            }
+        )
+        env = build_carrier_env(context, base_env={"KEEP": "1"})
+        result = carrier_output(
+            payload={"accepted": True},
+            observations=[{"kind": "classifier.score", "values": {"score": 0.98}}],
+        )
+        serialized = json.dumps(
+            {"context": context.to_payload(), "env": env, "result": result}
+        )
+
+        self.assertEqual(env["FALA_CARRIER_ID"], "carrier_1")
+        self.assertEqual(env["FALA_PROCESS_ID"], "classify")
+        self.assertEqual(result["payload"], {"accepted": True})
+        self.assertEqual(result["observations"][0]["kind"], "classifier.score")
+        self.assertNotIn("document_id", serialized)
+        self.assertNotIn("document_type", serialized)
 
     def test_artifact_helpers_use_runtime_artifact_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

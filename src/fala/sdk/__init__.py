@@ -132,6 +132,78 @@ class StepContext:
         return skipped(self.raw_context, self.contract.process_id, reason)
 
 
+@dataclass(frozen=True)
+class CarrierWorkerContext:
+    run_id: str
+    carrier_id: str
+    carrier_type: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    process_id: str | None = None
+    attempt: int = 1
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "CarrierWorkerContext":
+        return cls(
+            run_id=str(payload["run_id"]),
+            carrier_id=str(payload["carrier_id"]),
+            carrier_type=str(payload["carrier_type"]),
+            payload=dict(payload.get("payload") or {}),
+            metadata=dict(payload.get("metadata") or {}),
+            process_id=(
+                str(payload["process_id"]) if payload.get("process_id") is not None else None
+            ),
+            attempt=int(payload.get("attempt") or 1),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "run_id": self.run_id,
+            "carrier_id": self.carrier_id,
+            "carrier_type": self.carrier_type,
+            "payload": dict(self.payload),
+            "metadata": dict(self.metadata),
+            "attempt": self.attempt,
+        }
+        if self.process_id is not None:
+            result["process_id"] = self.process_id
+        return result
+
+
+def build_carrier_env(
+    context: CarrierWorkerContext,
+    *,
+    base_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    env = dict(base_env or {})
+    env.update(
+        {
+            "FALA_RUN_ID": context.run_id,
+            "FALA_CARRIER_ID": context.carrier_id,
+            "FALA_CARRIER_TYPE": context.carrier_type,
+            "FALA_ATTEMPT": str(context.attempt),
+        }
+    )
+    if context.process_id is not None:
+        env["FALA_PROCESS_ID"] = context.process_id
+    return env
+
+
+def carrier_output(
+    *,
+    payload: dict[str, Any] | None = None,
+    observations: list[dict[str, Any]] | None = None,
+    artifacts: list[dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "payload": payload or {},
+        "observations": observations or [],
+        "artifacts": artifacts or [],
+        "metadata": metadata or {},
+    }
+
+
 def run_stdio(handler: StepHandler) -> int:
     """Run one process-runtime step over stdin/stdout JSON."""
     try:
