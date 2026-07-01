@@ -2539,6 +2539,29 @@ class RuntimeBackendService:
         correlation_id: str | None = None,
         causation_id: str | None = None,
     ) -> tuple[Process, CommandSubmission]:
+        replay = await self._replayed_submission(
+            run_id=process.run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            existing_process_id = replay.command.payload.get("process_id", process.id)
+            existing = await self.backend.get_process(
+                run_id=process.run_id,
+                process_id=str(existing_process_id),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed process schedule command has no stored process: "
+                    f"{existing_process_id!r}"
+                )
+            return existing, replay
+        if process.status not in {
+            CarrierProcessStatus.pending,
+            CarrierProcessStatus.ready,
+        }:
+            raise ValueError(
+                "schedule_process requires process status 'pending' or 'ready'"
+            )
         command = RuntimeCommand(
             run_id=process.run_id,
             command_type="process.schedule",

@@ -2423,6 +2423,45 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_runtime_backend_service_schedule_process_requires_initial_status(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                process = Process(
+                    id="process_initial",
+                    run_id="run_process_initial",
+                    process_type="score",
+                    status=CarrierProcessStatus.ready,
+                )
+
+                scheduled, submission = await service.schedule_process(
+                    process,
+                    idempotency_key="run_process_initial:process.schedule:initial",
+                )
+                replayed, replay = await service.schedule_process(
+                    process.model_copy(
+                        update={"status": CarrierProcessStatus.succeeded}
+                    ),
+                    idempotency_key="run_process_initial:process.schedule:initial",
+                )
+                with self.assertRaisesRegex(ValueError, "pending' or 'ready"):
+                    await service.schedule_process(
+                        Process(
+                            id="process_invalid",
+                            run_id="run_process_initial",
+                            process_type="score",
+                            status=CarrierProcessStatus.succeeded,
+                        ),
+                        idempotency_key="run_process_initial:process.schedule:invalid",
+                    )
+
+                self.assertFalse(submission.replayed)
+                self.assertEqual(scheduled.status, CarrierProcessStatus.ready)
+                self.assertTrue(replay.replayed)
+                self.assertEqual(replayed, scheduled)
+
+        asyncio.run(scenario())
+
     def test_runtime_backend_service_open_gate_is_create_only(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
