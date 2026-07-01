@@ -9,6 +9,14 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from fala.carrier_runtime import FalaRuntime
+from fala.domain_packs.documents import (
+    DocumentCarrierInput,
+    carrier_from_document,
+    document_from_carrier,
+    document_observation,
+    document_projection,
+)
 from fala.runtime_backend import (
     BridgeDelivery,
     BridgeDeliveryStatus,
@@ -137,6 +145,77 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(events[0].carrier_id, carrier.id)
                 self.assertEqual(events[0].actor, "operator:mika")
                 self.assertEqual(events[0].correlation_id, "corr_1")
+
+        asyncio.run(scenario())
+
+    def test_fala_runtime_accepts_non_document_carrier_flow(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                carrier = Carrier(
+                    id="carrier_case_2",
+                    run_id="run_case",
+                    carrier_type="arbitration_case",
+                    payload={"claim_id": "CLM-2"},
+                )
+
+                stored, submission = await runtime.accept_carrier(
+                    carrier,
+                    idempotency_key="run_case:carrier.accept:carrier_case_2",
+                )
+                events = await runtime.list_events(run_id="run_case")
+
+                self.assertEqual(stored, carrier)
+                self.assertFalse(submission.replayed)
+                self.assertEqual(carrier.carrier_type, "arbitration_case")
+                self.assertNotIn("document_type", carrier.payload)
+                self.assertEqual([event.event_type for event in events], ["carrier.accepted"])
+
+        asyncio.run(scenario())
+
+    def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                document = DocumentCarrierInput(
+                    id="doc_invoice_1",
+                    document_type="invoice_document",
+                    title="Invoice 1",
+                    media_type="application/pdf",
+                    source_uri="file:///tmp/invoice.pdf",
+                    values={"vendor": "Acme"},
+                    metadata={"tenant": "demo"},
+                    artifacts=[
+                        {
+                            "id": "artifact_pdf",
+                            "kind": "pdf",
+                            "uri": "file:///tmp/invoice.pdf",
+                        }
+                    ],
+                )
+                carrier = carrier_from_document(document, run_id="run_docs")
+
+                stored, _submission = await runtime.accept_carrier(
+                    carrier,
+                    idempotency_key="run_docs:carrier.accept:doc_invoice_1",
+                )
+                observation, _ = await runtime.record_observation(
+                    document_observation(stored),
+                    idempotency_key="run_docs:observation.document:doc_invoice_1",
+                )
+                projection, _ = await runtime.save_projection(
+                    document_projection(stored),
+                    idempotency_key="run_docs:projection.document:doc_invoice_1",
+                )
+
+                round_trip = document_from_carrier(stored)
+                self.assertEqual(round_trip, document)
+                self.assertEqual(stored.carrier_type, "document.invoice_document")
+                self.assertEqual(stored.metadata["domain_pack"], "documents")
+                self.assertEqual(observation.kind, "document.accepted")
+                self.assertEqual(observation.values["artifact_count"], 1)
+                self.assertEqual(projection.name, "document:doc_invoice_1")
+                self.assertEqual(projection.data["document_type"], "invoice_document")
 
         asyncio.run(scenario())
 

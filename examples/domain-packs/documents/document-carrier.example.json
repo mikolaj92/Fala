@@ -1,0 +1,20 @@
+{
+  "id": "doc_invoice_1",
+  "document_type": "invoice_document",
+  "title": "Invoice 1",
+  "media_type": "application/pdf",
+  "source_uri": "file:///tmp/invoice.pdf",
+  "values": {
+    "vendor": "Acme"
+  },
+  "metadata": {
+    "tenant": "demo"
+  },
+  "artifacts": [
+    {
+      "id": "artifact_pdf",
+      "kind": "pdf",
+      "uri": "file:///tmp/invoice.pdf"
+    }
+  ]
+}

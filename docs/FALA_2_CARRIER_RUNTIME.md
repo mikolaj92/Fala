@@ -27,3 +27,6 @@ the migration lands. New Fala 2.0 runtime work should use `fala.runtime_backend`
 or `fala.carrier_runtime` and should not add `RuntimeDocument`, `document_id`, or
 `document_type` to the new Carrier APIs. Web/API/client exports are outer
 surfaces and are loaded lazily from `fala`.
+
+Document workflows live in `fala.domain_packs.documents`; see
+`docs/DOCUMENT_DOMAIN_PACK.md` for the Document to Carrier migration mapping.
