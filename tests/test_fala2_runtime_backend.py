@@ -2083,6 +2083,56 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 1,
             )
 
+    def test_cli_creates_runtime_pool_and_delegation_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "fala2.sqlite"
+            pool = _run_cli_json(
+                "runtimes",
+                "create-pool",
+                "--db",
+                str(db_path),
+                "--pool-id",
+                "cli_pool",
+                "--runtime-json",
+                '{"id":"target","uri":"sqlite:///tmp/target.sqlite"}',
+                "--carrier-type",
+                "case",
+                "--metadata-json",
+                '{"tenant":"local"}',
+            )
+            self.assertTrue(pool["ok"])
+            self.assertEqual(pool["runtime_pool"]["id"], "cli_pool")
+            self.assertEqual(pool["runtime_pool"]["runtimes"][0]["id"], "target")
+
+            policy = _run_cli_json(
+                "runtimes",
+                "add-policy",
+                "--db",
+                str(db_path),
+                "--policy-id",
+                "cli_policy",
+                "--pool-id",
+                "cli_pool",
+                "--carrier-type",
+                "case",
+                "--budget-json",
+                '{"runtime_hops":1,"carrier_count":1,"attempts":2}',
+            )
+            self.assertTrue(policy["ok"])
+            self.assertEqual(policy["delegation_policy"]["pool_id"], "cli_pool")
+            self.assertEqual(policy["delegation_policy"]["budget"]["attempts"], 2)
+
+            inspected = _run_cli_json(
+                "runtimes",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--pool-id",
+                "cli_pool",
+            )
+            self.assertEqual(inspected["runtime_pool"]["metadata"]["tenant"], "local")
+            self.assertEqual(inspected["delegation_policies"][0]["id"], "cli_policy")
+
     def test_cli_diagnoses_carrier_runtime_waits_and_deadlocks(self) -> None:
         async def scenario(db_path: Path) -> None:
             runtime = FalaRuntime.sqlite(db_path)

@@ -40,6 +40,7 @@ from fala.runtime_backend import CarrierRelation
 from fala.runtime_backend import CarrierRunStatus
 from fala.runtime_backend import CarrierType
 from fala.runtime_backend import CommandSubmission
+from fala.runtime_backend import DelegationPolicy
 from fala.runtime_backend import EventRef
 from fala.runtime_backend import Gate as CarrierGate
 from fala.runtime_backend import GateStatus as CarrierGateStatus
@@ -224,6 +225,19 @@ def _build_parser() -> argparse.ArgumentParser:
     runtimes_list = runtime_subparsers.add_parser("list", help="List runtime pools.")
     _add_carrier_runtime_db_arg(runtimes_list)
     runtimes_list.add_argument("--jsonl", action="store_true")
+    runtimes_create = runtime_subparsers.add_parser("create-pool", help="Create or replace a runtime pool.")
+    _add_carrier_runtime_db_arg(runtimes_create)
+    runtimes_create.add_argument("--pool-id", required=True)
+    runtimes_create.add_argument("--runtime-json", action="append", required=True, help="RuntimeRef JSON object. Repeatable.")
+    runtimes_create.add_argument("--carrier-type", action="append", default=[])
+    runtimes_create.add_argument("--metadata-json", default="{}")
+    runtimes_policy = runtime_subparsers.add_parser("add-policy", help="Create or replace a delegation policy.")
+    _add_carrier_runtime_db_arg(runtimes_policy)
+    runtimes_policy.add_argument("--policy-id", default=None)
+    runtimes_policy.add_argument("--pool-id", required=True)
+    runtimes_policy.add_argument("--carrier-type", action="append", default=[])
+    runtimes_policy.add_argument("--budget-json", default="{}")
+    runtimes_policy.add_argument("--metadata-json", default="{}")
     runtimes_inspect = runtime_subparsers.add_parser("inspect", help="Inspect one runtime pool.")
     _add_carrier_runtime_db_arg(runtimes_inspect)
     runtimes_inspect.add_argument("--pool-id", required=True)
@@ -588,6 +602,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             "run": run.model_dump(mode="json") if run is not None else None,
         }
     if args.command == "runtimes":
+        service = RuntimeBackendService(backend)
         if args.runtime_command == "list":
             pools = await backend.list_runtime_pools()
             return _carrier_runtime_list_result(
@@ -595,6 +610,39 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 pools,
                 jsonl=args.jsonl,
             )
+        if args.runtime_command == "create-pool":
+            pool = RuntimePool(
+                id=args.pool_id,
+                runtimes=[
+                    RuntimeRef.model_validate(
+                        _parse_json_object(value, "--runtime-json")
+                    )
+                    for value in args.runtime_json
+                ],
+                carrier_types=args.carrier_type,
+                metadata=_parse_json_object(args.metadata_json, "--metadata-json"),
+            )
+            stored = await service.save_runtime_pool(pool)
+            return {
+                "ok": True,
+                "runtime_pool": stored.model_dump(mode="json"),
+            }
+        if args.runtime_command == "add-policy":
+            policy_data = {
+                "pool_id": args.pool_id,
+                "carrier_types": args.carrier_type,
+                "budget": _parse_json_object(args.budget_json, "--budget-json"),
+                "metadata": _parse_json_object(args.metadata_json, "--metadata-json"),
+            }
+            if args.policy_id is not None:
+                policy_data["id"] = args.policy_id
+            stored = await service.save_delegation_policy(
+                DelegationPolicy.model_validate(policy_data)
+            )
+            return {
+                "ok": True,
+                "delegation_policy": stored.model_dump(mode="json"),
+            }
         pool = await backend.get_runtime_pool(pool_id=args.pool_id)
         policies = await backend.list_delegation_policies(pool_id=args.pool_id)
         return {
