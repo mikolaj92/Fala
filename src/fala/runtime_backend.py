@@ -431,6 +431,14 @@ class RuntimeBackend(Protocol):
 
     async def put_carrier(self, carrier: Carrier) -> None: ...
 
+    async def accept_carrier(
+        self,
+        carrier: Carrier,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
     async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None: ...
 
     async def list_carriers(
@@ -1308,6 +1316,60 @@ class SQLiteRuntimeBackend:
                     ),
                 )
                 connection.commit()
+
+    async def accept_carrier(
+        self,
+        carrier: Carrier,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != carrier.run_id:
+            raise ValueError("carrier.accept command run_id must match carrier run_id")
+        if command.command_type != "carrier.accept":
+            raise ValueError("accept_carrier requires command_type 'carrier.accept'")
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                _require_run_row(connection, carrier.run_id)
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM carriers WHERE run_id = ? AND id = ?",
+                        (carrier.run_id, carrier.id),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"Carrier already exists: {carrier.id!r}")
+
+                _insert_runtime_command_row(connection, command)
+                _insert_carrier_row(connection, carrier)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None:
         with self._connect() as connection:
@@ -2651,7 +2713,11 @@ class RuntimeBackendService:
             event_type="carrier.accepted",
             payload={"carrier_type": carrier.carrier_type},
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.accept_carrier(
+            carrier,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             existing_carrier_id = submission.command.payload.get("carrier_id", carrier.id)
             existing = await self.backend.get_carrier(
@@ -2665,7 +2731,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_carrier(carrier)
         return carrier, submission
 
     async def record_carrier_relation(
@@ -4086,6 +4151,26 @@ def _insert_runtime_command_row(
             command.causation_id,
             _dumps(command.payload),
             command.created_at.isoformat(),
+        ),
+    )
+
+
+def _insert_carrier_row(connection: sqlite3.Connection, carrier: Carrier) -> None:
+    connection.execute(
+        """
+        INSERT INTO carriers (
+            run_id, id, carrier_type, payload, metadata,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            carrier.run_id,
+            carrier.id,
+            carrier.carrier_type,
+            _dumps(carrier.payload),
+            _dumps(carrier.metadata),
+            carrier.created_at.isoformat(),
+            carrier.updated_at.isoformat(),
         ),
     )
 

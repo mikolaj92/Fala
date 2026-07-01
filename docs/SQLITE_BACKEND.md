@@ -15,6 +15,8 @@ and metadata.
 
 Run creation stores the run row, `run.create` command, and `run.created` event in
 one SQLite transaction.
+Carrier acceptance stores the carrier row, `carrier.accept` command, and
+`carrier.accepted` event in one SQLite transaction.
 
 Runtime commands and events are guarded by SQLite triggers that reject direct
 updates and deletes. New runtime facts must be appended through command

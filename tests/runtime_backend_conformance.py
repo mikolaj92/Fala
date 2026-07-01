@@ -60,6 +60,46 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     create_events = await backend.list_events(run_id=create_run.id)
     assert [event.event_type for event in create_events] == ["run.created"]
 
+    accept_run = Run(
+        id="run_accept_conformance",
+        status=CarrierRunStatus.active,
+    )
+    accept_carrier = Carrier(
+        id="carrier_accept_conformance",
+        run_id=accept_run.id,
+        carrier_type="case",
+    )
+    accept_command = RuntimeCommand(
+        run_id=accept_run.id,
+        command_type="carrier.accept",
+        idempotency_key="run_accept_conformance:carrier.accept",
+    )
+    await backend.put_run(accept_run)
+    accept_submission = await backend.accept_carrier(
+        accept_carrier,
+        accept_command,
+        events=[
+            RuntimeEvent(
+                run_id=accept_run.id,
+                carrier_id=accept_carrier.id,
+                event_type="carrier.accepted",
+            )
+        ],
+    )
+    accept_replay = await backend.accept_carrier(
+        accept_carrier.model_copy(update={"payload": {"changed": True}}),
+        accept_command.model_copy(update={"id": "command_accept_replay"}),
+        events=[],
+    )
+    assert await backend.get_carrier(
+        run_id=accept_run.id,
+        carrier_id=accept_carrier.id,
+    ) == accept_carrier
+    assert not accept_submission.replayed
+    assert accept_replay.replayed
+    accept_events = await backend.list_events(run_id=accept_run.id)
+    assert [event.event_type for event in accept_events] == ["carrier.accepted"]
+
     run = Run(
         id="run_conformance",
         status=CarrierRunStatus.created,

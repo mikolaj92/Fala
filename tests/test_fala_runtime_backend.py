@@ -2659,6 +2659,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     idempotency_key="run_service:carrier.accept:carrier_case_1",
                     actor="operator:mika",
                 )
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await service.accept_carrier(
+                        carrier,
+                        idempotency_key="run_service:carrier.accept:again",
+                    )
 
                 self.assertEqual(first_carrier, carrier)
                 self.assertFalse(first_submission.replayed)

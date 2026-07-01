@@ -142,7 +142,7 @@ checks in `tests/test_runtime_backend_conformance.py`.
 
 The conformance checks cover:
 
-- carrier persistence;
+- transactional carrier acceptance and carrier persistence;
 - transactional run creation, run persistence, and status transitions;
 - carrier type and relation persistence;
 - idempotent command submission;
