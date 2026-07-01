@@ -218,10 +218,77 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 stored_projection = await backend.get_projection(
                     run_id="run_beta", name="carrier_summary"
                 )
+                gates = await backend.list_gates(
+                    run_id="run_beta",
+                    status=GateStatus.completed,
+                )
+                projections = await backend.list_projections(run_id="run_beta")
 
                 self.assertEqual(observations, [observation])
                 self.assertEqual(stored_gate.status, GateStatus.completed)
                 self.assertEqual(stored_projection, projection)
+                self.assertEqual(gates, [gate.model_copy(update={"status": GateStatus.completed})])
+                self.assertEqual(projections, [projection])
+
+        asyncio.run(scenario())
+
+    def test_runtime_backend_service_lists_runtime_systems(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                carrier = Carrier(
+                    run_id="run_query",
+                    carrier_type="message",
+                    payload={"text": "hello"},
+                )
+                await service.accept_carrier(
+                    carrier,
+                    idempotency_key="run_query:carrier.accept:message",
+                )
+                observation, _ = await service.record_observation(
+                    Observation(
+                        run_id="run_query",
+                        carrier_id=carrier.id,
+                        kind="classifier.score",
+                        values={"score": 0.98},
+                    ),
+                    idempotency_key="run_query:observation.record:score",
+                )
+                gate, _ = await service.save_gate(
+                    Gate(
+                        run_id="run_query",
+                        carrier_id=carrier.id,
+                        kind="human.approval",
+                        status=GateStatus.open,
+                    ),
+                    idempotency_key="run_query:gate.save:approval",
+                )
+                projection, _ = await service.save_projection(
+                    Projection(
+                        run_id="run_query",
+                        name="carrier_summary",
+                        data={"carrier_count": 1},
+                        source_event_sequence=2,
+                    ),
+                    idempotency_key="run_query:projection.save:carrier_summary",
+                )
+
+                self.assertEqual(
+                    await service.list_observations(run_id="run_query"),
+                    [observation],
+                )
+                self.assertEqual(
+                    await service.list_gates(
+                        run_id="run_query",
+                        carrier_id=carrier.id,
+                        status=GateStatus.open,
+                    ),
+                    [gate],
+                )
+                self.assertEqual(
+                    await service.list_projections(run_id="run_query"),
+                    [projection],
+                )
 
         asyncio.run(scenario())
 

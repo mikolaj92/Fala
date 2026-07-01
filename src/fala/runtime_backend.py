@@ -159,9 +159,19 @@ class RuntimeBackend(Protocol):
 
     async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None: ...
 
+    async def list_gates(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        status: GateStatus | None = None,
+    ) -> list[Gate]: ...
+
     async def put_projection(self, projection: Projection) -> None: ...
 
     async def get_projection(self, *, run_id: str, name: str) -> Projection | None: ...
+
+    async def list_projections(self, *, run_id: str) -> list[Projection]: ...
 
 
 class SQLiteRuntimeBackend:
@@ -531,6 +541,32 @@ class SQLiteRuntimeBackend:
             ).fetchone()
         return _gate_from_row(row) if row is not None else None
 
+    async def list_gates(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        status: GateStatus | None = None,
+    ) -> list[Gate]:
+        clauses = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if carrier_id is not None:
+            clauses.append("carrier_id = ?")
+            params.append(carrier_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status.value)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM gates
+                WHERE {' AND '.join(clauses)}
+                ORDER BY updated_at ASC, id ASC
+                """,
+                params,
+            ).fetchall()
+        return [_gate_from_row(row) for row in rows]
+
     async def put_projection(self, projection: Projection) -> None:
         async with self._lock:
             with self._connect() as connection:
@@ -566,6 +602,18 @@ class SQLiteRuntimeBackend:
                 (run_id, name),
             ).fetchone()
         return _projection_from_row(row) if row is not None else None
+
+    async def list_projections(self, *, run_id: str) -> list[Projection]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM projections
+                WHERE run_id = ?
+                ORDER BY name ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [_projection_from_row(row) for row in rows]
 
 
 class RuntimeBackendService:
@@ -741,6 +789,33 @@ class RuntimeBackendService:
 
         await self.backend.put_projection(projection)
         return projection, submission
+
+    async def list_observations(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+    ) -> list[Observation]:
+        return await self.backend.list_observations(
+            run_id=run_id,
+            carrier_id=carrier_id,
+        )
+
+    async def list_gates(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        status: GateStatus | None = None,
+    ) -> list[Gate]:
+        return await self.backend.list_gates(
+            run_id=run_id,
+            carrier_id=carrier_id,
+            status=status,
+        )
+
+    async def list_projections(self, *, run_id: str) -> list[Projection]:
+        return await self.backend.list_projections(run_id=run_id)
 
 
 def _carrier_from_row(row: sqlite3.Row) -> Carrier:
