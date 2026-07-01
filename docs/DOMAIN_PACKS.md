@@ -6,9 +6,10 @@ packs that map their concepts onto Carrier runtime records.
 Current packs:
 
 - `fala.domain_packs.documents`
+- `fala.domain_packs.signals`
 - `fala.domain_packs.splot`
 
-Carrier-first example packs:
+Carrier-first examples:
 
 - `examples/domain-packs/signals`
 

@@ -26,7 +26,7 @@ from fala.domain_packs.documents import (
     document_observation,
     document_projection,
 )
-from fala.domain_packs import splot
+from fala.domain_packs import signals, splot
 from fala.domain_packs.splot import (
     SPLOT_ARBITRATION_CASE,
     SplotArbitrationCase,
@@ -35,6 +35,15 @@ from fala.domain_packs.splot import (
     case_projection,
     jurisdiction_observation,
     review_gate,
+)
+from fala.domain_packs.signals import (
+    SIGNAL_METRIC_SAMPLE,
+    SIGNAL_THRESHOLD_READING,
+    SignalMetricSample,
+    carrier_from_metric_sample,
+    metric_sample_from_carrier,
+    signal_projection,
+    threshold_observation,
 )
 from fala.artifacts import FileArtifactStore
 from fala.errors import FalaBudgetExceeded
@@ -2121,13 +2130,67 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
         )
 
         self.assertEqual(package.id, "signals_basic")
-        self.assertEqual(package.carrier_types[0].id, "metric_sample")
-        self.assertEqual(package.observation_kinds[0].id, "threshold_reading")
+        self.assertEqual(package.carrier_types[0].id, SIGNAL_METRIC_SAMPLE)
+        self.assertEqual(package.observation_kinds[0].id, SIGNAL_THRESHOLD_READING)
         self.assertEqual(package.artifact_kinds[0].id, "signal_report")
         self.assertEqual(package.flows[0].steps[0].adapter.kind, "subprocess")
 
+    def test_signals_domain_pack_uses_public_carrier_runtime_api(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                sample = SignalMetricSample(
+                    id="metric_cpu_1",
+                    name="cpu.utilization",
+                    value=92,
+                    unit="percent",
+                    values={"host": "worker-1"},
+                    metadata={"tenant": "ops"},
+                )
+                carrier = carrier_from_metric_sample(sample, run_id="run_signals")
+
+                stored, submission = await runtime.accept_carrier(
+                    carrier,
+                    idempotency_key="run_signals:carrier.accept:metric_cpu_1",
+                )
+                observation, _ = await runtime.record_observation(
+                    threshold_observation(stored),
+                    idempotency_key="run_signals:observation.threshold:metric_cpu_1",
+                )
+                projection, _ = await runtime.save_projection(
+                    signal_projection(stored, observation),
+                    idempotency_key="run_signals:projection.signal:metric_cpu_1",
+                )
+                events = await runtime.list_events(run_id=stored.run_id)
+
+                self.assertFalse(submission.replayed)
+                self.assertEqual(stored.carrier_type, SIGNAL_METRIC_SAMPLE)
+                self.assertEqual(metric_sample_from_carrier(stored), sample)
+                self.assertEqual(stored.metadata["domain_pack"], "signals")
+                self.assertEqual(observation.kind, SIGNAL_THRESHOLD_READING)
+                self.assertEqual(observation.values["state"], "critical")
+                self.assertEqual(observation.values["threshold"], 90)
+                self.assertEqual(projection.name, "signal:metric_cpu_1")
+                self.assertEqual(projection.data["state"], "critical")
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    [
+                        "carrier.accepted",
+                        "observation.recorded",
+                        "projection.saved",
+                    ],
+                )
+
+        asyncio.run(scenario())
+
     def test_splot_domain_pack_does_not_use_document_runtime_internals(self) -> None:
         source = inspect.getsource(splot)
+        self.assertNotIn("RuntimeDocument", source)
+        self.assertNotIn("document_id", source)
+        self.assertNotIn("document_type", source)
+
+    def test_signals_domain_pack_does_not_use_document_runtime_internals(self) -> None:
+        source = inspect.getsource(signals)
         self.assertNotIn("RuntimeDocument", source)
         self.assertNotIn("document_id", source)
         self.assertNotIn("document_type", source)
