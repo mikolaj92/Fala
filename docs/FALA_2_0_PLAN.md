@@ -63,13 +63,13 @@ workflow API.
 | --- | --- | --- |
 | Product definition | DONE | README and package metadata describe Fala as embedded, SQLite-first, CLI-first, serverless by default. |
 | Carrier ontology | DONE | Public exports and YAML schema are Carrier-first; old document core symbols are not exported. |
-| SQLite backend | PARTIAL | Reference backend exists with commands, events, carriers, processes, gates, projections, artifacts, bridge inbox/outbox, and schema tracking. Further hardening is still needed around migrations and replay guarantees. |
+| SQLite backend | PARTIAL | Reference backend exists with commands, append-only events, carriers, processes, gates, projections, artifacts, bridge inbox/outbox, and schema tracking. Further hardening can continue around broader replay guarantees. |
 | External infrastructure removal | DONE | Core dependencies no longer include web, queue, Redis, Postgres, S3, or HTTP client stacks. |
 | Runtime backend boundary | PARTIAL | `RuntimeBackend` covers the current runtime operations; backend conformance should continue expanding with every new mutation. |
 | Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. GC protects blobs referenced by any run, archive export records retention metadata, archive-gc deletes expired archive bundles, and SQLite vacuum exists. |
 | Step adapters | PARTIAL | `python_function`, `subprocess`, `manual_gate`, and `fala_runtime` adapters exist. Subprocess uses manifests and argument-list commands. Fala-runtime processes enqueue bridge outbox deliveries and can resolve local runtime pools. |
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
-| Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
+| Event log | PARTIAL | Events are ordered, command-linked, schema-versioned, and SQLite-guarded against direct update/delete. Event payload migration tooling can still expand. |
 | State machines | PARTIAL | Run/process/gate statuses exist with transition checks for key paths, including terminal process retry/complete and wait-from-running guards. More exhaustive transition matrix tests can still be added. |
 | Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, file handoff, and `manual`/`least_busy`/`round_robin` pool policies exist. Network transports remain optional future work. |
 | CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, local bridge delivery, and bridge file export/import exist. Optional network transport commands remain incomplete. |

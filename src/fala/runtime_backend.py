@@ -589,7 +589,7 @@ class RuntimeBackend(Protocol):
 
 _BRIDGE_TABLES = {"bridge_outbox", "bridge_inbox"}
 _BUILT_IN_PROJECTIONS = ("run_summary",)
-_SQLITE_SCHEMA_VERSION = 4
+_SQLITE_SCHEMA_VERSION = 5
 SQLITE_RUNTIME_SCHEMA_VERSION = _SQLITE_SCHEMA_VERSION
 _TERMINAL_RUN_STATUSES = {
     CarrierRunStatus.completed,
@@ -919,6 +919,21 @@ class SQLiteRuntimeBackend:
                 """
                 CREATE INDEX IF NOT EXISTS idx_runtime_events_process
                     ON runtime_events (run_id, process_id, sequence)
+                """
+            )
+            connection.executescript(
+                """
+                CREATE TRIGGER IF NOT EXISTS runtime_events_no_update
+                BEFORE UPDATE ON runtime_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'runtime_events is append-only');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS runtime_events_no_delete
+                BEFORE DELETE ON runtime_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'runtime_events is append-only');
+                END;
                 """
             )
             connection.execute(

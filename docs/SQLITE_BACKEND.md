@@ -13,5 +13,8 @@ The backend initializes SQLite with WAL journal mode, foreign keys, and a busy
 timeout. Artifact bytes are not stored in SQLite by default; SQLite stores refs
 and metadata.
 
+Runtime events are guarded by SQLite triggers that reject direct updates and
+deletes. New runtime facts must be appended through command submission.
+
 The backend is local-first and requires no Redis, Postgres, queue broker, web
 server, Docker, or external service.

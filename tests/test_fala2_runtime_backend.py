@@ -335,6 +335,43 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_sqlite_runtime_events_are_append_only(self) -> None:
+        async def scenario(db_path: Path) -> None:
+            backend = SQLiteRuntimeBackend(db_path)
+            await backend.submit_command(
+                RuntimeCommand(
+                    run_id="run_events",
+                    command_type="event.append",
+                    idempotency_key="run_events:event.append",
+                ),
+                events=[
+                    RuntimeEvent(
+                        run_id="run_events",
+                        event_type="runtime.fact",
+                        payload={"value": 1},
+                    )
+                ],
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "fala2.sqlite"
+            asyncio.run(scenario(db_path))
+            with sqlite3.connect(db_path) as connection:
+                with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                    connection.execute(
+                        """
+                        UPDATE runtime_events
+                        SET payload = ?
+                        WHERE run_id = ?
+                        """,
+                        ('{"value":2}', "run_events"),
+                    )
+                with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
+                    connection.execute(
+                        "DELETE FROM runtime_events WHERE run_id = ?",
+                        ("run_events",),
+                    )
+
     def test_fala_runtime_accepts_non_document_carrier_flow(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
