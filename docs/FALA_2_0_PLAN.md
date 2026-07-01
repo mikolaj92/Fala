@@ -288,7 +288,7 @@ not complete enough to close the requirement.
 | 8 | Step adapters | PARTIAL | Manual gates can complete through commands; harden subprocess/fala-runtime contracts, manifests, audit events, and validation. |
 | 9 | Commands and idempotency | PARTIAL | Route all runtime mutations through command APIs with actor, causation, correlation, and deduplication. |
 | 10 | Event log | PARTIAL | Make append-only events the consistent source for projections/replay with schema/version metadata. |
-| 11 | State machines | PARTIAL | Run/process statuses and gate completion exist; finish full transition validation and tests. |
+| 11 | State machines | PARTIAL | Run/process statuses, cancel request, and gate completion exist; finish full transition validation and cancellation propagation. |
 | 12 | Multi-Fala composition | PARTIAL | Local SQLite bridge deliver exists; add runtime pools, wait graph, budgets, and no-global-transaction guidance. |
 | 13 | Runtime pools | PARTIAL | Add routing policies and persistence for multi-runtime pools. |
 | 14 | Budgets and safety limits | PARTIAL | Bridge delegation enforces hop/carrier/attempt budgets; add retry, gate, artifact byte, pending process, and spawned-run limits. |

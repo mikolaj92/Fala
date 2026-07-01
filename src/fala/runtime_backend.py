@@ -1999,6 +1999,7 @@ class RuntimeBackendService:
         run_id: str,
         status: CarrierRunStatus,
         idempotency_key: str,
+        reason: str | None = None,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
@@ -2015,12 +2016,20 @@ class RuntimeBackendService:
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
-            payload={"run_id": run_id, "status": status.value},
+            payload={
+                "run_id": run_id,
+                "status": status.value,
+                **({"reason": reason} if reason is not None else {}),
+            },
         )
         event = RuntimeEvent(
             run_id=run_id,
             event_type="run.status.changed",
-            payload={"from": existing.status.value, "to": status.value},
+            payload={
+                "from": existing.status.value,
+                "to": status.value,
+                **({"reason": reason} if reason is not None else {}),
+            },
         )
         submission = await self.backend.submit_command(command, events=[event])
         if submission.replayed:

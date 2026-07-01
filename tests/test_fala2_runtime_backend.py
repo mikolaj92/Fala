@@ -993,6 +993,49 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertIn('"carrier_cli" -> "carrier_cli_child"', graph)
             self.assertIn("derived_from", graph)
 
+    def test_cli_cancels_carrier_runtime_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "carrier.sqlite"
+            _run_cli_json(
+                "runs",
+                "create",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cancel",
+            )
+            cancelled = _run_cli_json(
+                "runs",
+                "cancel",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cancel",
+                "--reason",
+                "operator requested",
+            )
+            self.assertTrue(cancelled["ok"])
+            self.assertEqual(cancelled["run"]["status"], "cancel_requested")
+            self.assertEqual(
+                cancelled["command"]["payload"]["reason"],
+                "operator requested",
+            )
+            replay = _run_cli_json(
+                "runs",
+                "cancel",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cancel",
+                "--reason",
+                "changed",
+            )
+            self.assertTrue(replay["replayed"])
+            self.assertEqual(
+                replay["command"]["payload"]["reason"],
+                "operator requested",
+            )
+
     def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:

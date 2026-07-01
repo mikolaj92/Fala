@@ -1697,6 +1697,14 @@ def _build_parser() -> argparse.ArgumentParser:
     runs_inspect = run_subparsers.add_parser("inspect", help="Inspect one Carrier run.")
     _add_carrier_runtime_db_arg(runs_inspect)
     runs_inspect.add_argument("--run-id", required=True)
+    runs_cancel = run_subparsers.add_parser(
+        "cancel",
+        help="Request cancellation for one Carrier run.",
+    )
+    _add_carrier_runtime_db_arg(runs_cancel)
+    runs_cancel.add_argument("--run-id", required=True)
+    runs_cancel.add_argument("--reason", default=None)
+    runs_cancel.add_argument("--idempotency-key", default=None)
 
     carriers = subparsers.add_parser(
         "carriers",
@@ -4269,6 +4277,21 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 limit=args.limit,
             )
             return _carrier_runtime_list_result("runs", runs, jsonl=args.jsonl)
+        if args.run_command == "cancel":
+            service = RuntimeBackendService(backend)
+            run, submission = await service.set_run_status(
+                run_id=args.run_id,
+                status=CarrierRunStatus.cancel_requested,
+                idempotency_key=args.idempotency_key or f"{args.run_id}:run.cancel",
+                reason=args.reason,
+                actor="cli:user",
+            )
+            return {
+                "ok": True,
+                "run": run.model_dump(mode="json"),
+                "command": submission.command.model_dump(mode="json"),
+                "replayed": submission.replayed,
+            }
         run = await backend.get_run(run_id=args.run_id)
         return {
             "ok": run is not None,
