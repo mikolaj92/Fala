@@ -138,6 +138,7 @@ The local runtime is operated with `fala`:
 uv run fala db init --db .fala/state.sqlite
 uv run fala db migrate --db .fala/state.sqlite
 uv run fala db status --db .fala/state.sqlite
+uv run fala db vacuum --db .fala/state.sqlite
 
 uv run fala create-run --db .fala/state.sqlite --run-id run_local
 uv run fala runs list --db .fala/state.sqlite
@@ -157,6 +158,7 @@ uv run fala gc --db .fala/state.sqlite --artifact-root .fala/artifacts --dry-run
 uv run fala doctor --db .fala/state.sqlite
 uv run fala diagnose-waits --db .fala/state.sqlite --run-id run_local
 uv run fala trace --db .fala/state.sqlite --run-id run_local
+uv run fala archive-run run_local --db .fala/state.sqlite --out run_local.archive.zip
 uv run fala export-bundle --db .fala/state.sqlite --run-id run_local --out run_local.fala.zip
 ```
 

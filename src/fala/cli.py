@@ -116,6 +116,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
         or getattr(args, "command", None)
         in {
             "schema",
+            "archive-run",
             "db",
             "create-run",
             "carrier-relations",
@@ -165,6 +166,8 @@ def _build_parser() -> argparse.ArgumentParser:
     db_status = db_subparsers.add_parser("status", help="Report Carrier SQLite schema status.")
     _add_carrier_runtime_db_arg(db_status)
     db_status.add_argument("--ensure-schema", action="store_true")
+    db_vacuum = db_subparsers.add_parser("vacuum", help="Compact the Carrier SQLite database.")
+    _add_carrier_runtime_db_arg(db_vacuum)
 
     gc = subparsers.add_parser("gc", help="Garbage-collect unreferenced filesystem artifact blobs.")
     gc.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
@@ -172,6 +175,11 @@ def _build_parser() -> argparse.ArgumentParser:
     gc.add_argument("--run-id", default=None)
     gc.add_argument("--older-than", default=None, help="Only collect blobs older than duration like 30d, 12h, 20m.")
     gc.add_argument("--dry-run", action="store_true")
+
+    archive_run = subparsers.add_parser("archive-run", help="Write a portable run archive bundle.")
+    archive_run.add_argument("run_id")
+    archive_run.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    archive_run.add_argument("--out", required=True, help="Output .zip path.")
 
     doctor = subparsers.add_parser("doctor", help="Check Carrier runtime readiness.")
     doctor.add_argument("--db", default=".fala/state.sqlite", help="Carrier runtime SQLite DB path or sqlite:// URL.")
@@ -426,13 +434,16 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         }
 
     if args.command == "db":
-        backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+        db_path = _carrier_runtime_db_path(args.db)
+        backend = SQLiteRuntimeBackend(db_path)
         if args.db_command in {"init", "migrate"}:
             return {
                 "ok": True,
-                "path": str(_carrier_runtime_db_path(args.db)),
+                "path": str(db_path),
                 "schema_version": SQLITE_RUNTIME_SCHEMA_VERSION,
             }
+        if args.db_command == "vacuum":
+            return _carrier_runtime_vacuum(db_path)
         return _carrier_runtime_doctor(
             argparse.Namespace(
                 db=args.db,
@@ -445,6 +456,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         return _carrier_runtime_doctor(args)
 
     if args.command in {
+        "archive-run",
         "artifacts",
         "bridge",
         "create-run",
@@ -505,6 +517,8 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         }
     if args.command == "trace":
         return await _carrier_runtime_trace(args)
+    if args.command == "archive-run":
+        return await _carrier_runtime_archive_run(args)
     if args.command == "export-html":
         return await _carrier_runtime_export_html(args)
     if args.command == "export-bundle":
@@ -1250,6 +1264,25 @@ def _sqlite_count(connection: sqlite3.Connection, table: str) -> int:
     return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
+def _carrier_runtime_vacuum(db_path: str) -> dict[str, Any]:
+    with sqlite3.connect(db_path) as connection:
+        before = {
+            "page_count": int(connection.execute("PRAGMA page_count").fetchone()[0]),
+            "freelist_count": int(connection.execute("PRAGMA freelist_count").fetchone()[0]),
+        }
+        connection.execute("VACUUM")
+        after = {
+            "page_count": int(connection.execute("PRAGMA page_count").fetchone()[0]),
+            "freelist_count": int(connection.execute("PRAGMA freelist_count").fetchone()[0]),
+        }
+    return {
+        "ok": True,
+        "path": str(db_path),
+        "before": before,
+        "after": after,
+    }
+
+
 async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
     backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
     run = await backend.get_run(run_id=args.run_id)
@@ -1318,6 +1351,39 @@ async def _carrier_runtime_export_bundle(args: argparse.Namespace) -> dict[str, 
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
     files = {
+        "trace.json": json.dumps(trace, indent=2, sort_keys=True),
+        "timeline.json": json.dumps(trace["timeline"], indent=2, sort_keys=True),
+        "graph.dot": _render_carrier_runtime_dot(trace),
+        "report.html": _render_carrier_runtime_html(trace),
+    }
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for name, content in files.items():
+            bundle.writestr(name, content)
+    return {
+        "ok": True,
+        "run_id": args.run_id,
+        "out": str(out),
+        "files": sorted(files),
+    }
+
+
+async def _carrier_runtime_archive_run(args: argparse.Namespace) -> dict[str, Any]:
+    trace_args = argparse.Namespace(db=args.db, run_id=args.run_id)
+    result = await _carrier_runtime_trace(trace_args)
+    trace = result["trace"]
+    if trace["run"] is None:
+        return {"ok": False, "run_id": args.run_id, "error": "run not found"}
+
+    out = Path(args.out).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    archive = {
+        "run_id": args.run_id,
+        "schema_version": SQLITE_RUNTIME_SCHEMA_VERSION,
+        "archived_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "format": "fala-run-archive-v1",
+    }
+    files = {
+        "archive.json": json.dumps(archive, indent=2, sort_keys=True),
         "trace.json": json.dumps(trace, indent=2, sort_keys=True),
         "timeline.json": json.dumps(trace["timeline"], indent=2, sort_keys=True),
         "graph.dot": _render_carrier_runtime_dot(trace),

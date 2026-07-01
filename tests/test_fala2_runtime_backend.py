@@ -1240,6 +1240,31 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertIn('"carrier_cli" -> "carrier_cli_child"', graph)
             self.assertIn("derived_from", graph)
 
+            archive_path = Path(tmp_dir) / "run_cli.archive.zip"
+            archived = _run_cli_json(
+                "archive-run",
+                "run_cli",
+                "--db",
+                str(db_path),
+                "--out",
+                str(archive_path),
+            )
+            self.assertTrue(archived["ok"])
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertEqual(
+                    sorted(archive.namelist()),
+                    [
+                        "archive.json",
+                        "graph.dot",
+                        "report.html",
+                        "timeline.json",
+                        "trace.json",
+                    ],
+                )
+                archive_json = json.loads(archive.read("archive.json"))
+            self.assertEqual(archive_json["format"], "fala-run-archive-v1")
+            self.assertEqual(archive_json["run_id"], "run_cli")
+
     def test_cli_mutates_carriers_observations_and_processes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "carrier.sqlite"
@@ -1769,6 +1794,12 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             migrated = _run_cli_json("db", "migrate", "--db", str(db_path))
             self.assertTrue(migrated["ok"])
             self.assertEqual(migrated["schema_version"], SQLITE_RUNTIME_SCHEMA_VERSION)
+
+            vacuumed = _run_cli_json("db", "vacuum", "--db", str(db_path))
+            self.assertTrue(vacuumed["ok"])
+            self.assertEqual(vacuumed["path"], str(db_path))
+            self.assertIn("page_count", vacuumed["before"])
+            self.assertIn("freelist_count", vacuumed["after"])
 
     def test_cli_lists_and_inspects_runtime_pools(self) -> None:
         async def scenario(db_path: Path) -> None:

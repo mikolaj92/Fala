@@ -66,7 +66,7 @@ workflow API.
 | SQLite backend | PARTIAL | Reference backend exists with commands, events, carriers, processes, gates, projections, artifacts, bridge inbox/outbox, and schema tracking. Further hardening is still needed around migrations and replay guarantees. |
 | External infrastructure removal | DONE | Core dependencies no longer include web, queue, Redis, Postgres, S3, or HTTP client stacks. |
 | Runtime backend boundary | PARTIAL | `RuntimeBackend` covers the current runtime operations; backend conformance should continue expanding with every new mutation. |
-| Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. Retention/archive policy still needs more coverage. |
+| Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. GC, run archive export, and SQLite vacuum exist; richer retention policy still needs coverage. |
 | Step adapters | PARTIAL | `python_function`, `subprocess`, `manual_gate`, and `fala_runtime` adapters exist. Subprocess uses manifests and argument-list commands. Fala-runtime delegation still needs fuller execution semantics. |
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
 | Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
@@ -75,7 +75,7 @@ workflow API.
 | CLI | PARTIAL | Local SQLite inspection, run creation, gate completion, wait diagnostics, trace, exports, GC, doctor, and bridge delivery exist. More create/schedule commands can be added directly against command APIs. |
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings. More examples and package manifests are needed. |
-| Replay/export | PARTIAL | Trace, timeline, DOT, HTML, and bundle export exist. Deterministic execution replay is not yet complete. |
+| Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, and run archive export exist. Deterministic execution replay is not yet complete. |
 | Docs/examples | PARTIAL | Core docs and examples exist, but dedicated conceptual/security/replay/composition docs should still be split out. |
 
 ## Next Work
@@ -85,5 +85,6 @@ workflow API.
 2. Add event payload schema/version fields and tests.
 3. Expand backend conformance for command deduplication, restart recovery,
    gate completion, artifact metadata, projection rebuilds, and leases.
-4. Add Splot arbitration package example using Carrier, Observation, Artifact,
+4. Add richer retention policy controls for shared artifacts and archived runs.
+5. Add Splot arbitration package example using Carrier, Observation, Artifact,
    Event, and Gate mappings.
