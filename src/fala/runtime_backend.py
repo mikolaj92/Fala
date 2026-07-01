@@ -512,6 +512,7 @@ class RuntimeBackend(Protocol):
 
 _BRIDGE_TABLES = {"bridge_outbox", "bridge_inbox"}
 _BUILT_IN_PROJECTIONS = ("run_summary",)
+_SQLITE_SCHEMA_VERSION = 1
 _TERMINAL_RUN_STATUSES = {
     CarrierRunStatus.completed,
     CarrierRunStatus.failed,
@@ -592,6 +593,13 @@ class SQLiteRuntimeBackend:
                     updated_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    id TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    applied_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS carriers (
@@ -804,6 +812,21 @@ class SQLiteRuntimeBackend:
                 CREATE INDEX IF NOT EXISTS idx_bridge_inbox_status
                     ON bridge_inbox (run_id, status, updated_at);
                 """
+            )
+            connection.execute(
+                """
+                INSERT INTO schema_migrations (id, version, name, applied_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    version = excluded.version,
+                    name = excluded.name
+                """,
+                (
+                    "runtime_backend",
+                    _SQLITE_SCHEMA_VERSION,
+                    "runtime_backend",
+                    _now().isoformat(),
+                ),
             )
             connection.commit()
 

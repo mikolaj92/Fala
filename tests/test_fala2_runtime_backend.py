@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1217,6 +1218,21 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(events[1].payload["value_keys"], ["decision"])
 
         asyncio.run(scenario())
+
+    def test_sqlite_backend_records_schema_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "fala2.sqlite"
+            SQLiteRuntimeBackend(db_path)
+            with sqlite3.connect(db_path) as connection:
+                row = connection.execute(
+                    """
+                    SELECT id, version, name
+                    FROM schema_migrations
+                    WHERE id = 'runtime_backend'
+                    """
+                ).fetchone()
+
+        self.assertEqual(row, ("runtime_backend", 1, "runtime_backend"))
 
     def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:
         async def scenario() -> None:

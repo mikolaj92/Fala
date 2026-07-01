@@ -101,7 +101,8 @@ The conformance checks cover:
 - manual gate completion through command/audit events;
 - rebuilding the built-in `run_summary` projection from SQLite state and events;
 - process scheduling, atomic claim/lease, retry, fail, and completion;
-- bridge inbox/outbox persistence.
+- bridge inbox/outbox persistence;
+- SQLite `schema_migrations` version marker.
 
 ## CLI Inspection
 
