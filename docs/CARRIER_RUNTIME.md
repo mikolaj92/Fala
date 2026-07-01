@@ -144,8 +144,8 @@ The conformance checks cover:
 
 - transactional carrier acceptance and carrier persistence;
 - transactional run creation, run persistence, and status transitions;
-- transactional carrier type/relation/observation/artifact/process scheduling
-  mutation and persistence;
+- transactional carrier type/relation/observation/artifact/process mutation and
+  persistence;
 - idempotent command submission;
 - ordered command-linked events;
 - observations, artifacts, gates, and projections;

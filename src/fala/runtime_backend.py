@@ -596,6 +596,19 @@ class RuntimeBackend(Protocol):
         error: dict[str, Any] | None = None,
     ) -> Process: ...
 
+    async def transition_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        status: CarrierProcessStatus,
+        command: RuntimeCommand,
+        events: Sequence[RuntimeEvent] = (),
+        output: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+        available_at: datetime | None = None,
+    ) -> tuple[Process, CommandSubmission]: ...
+
     async def cancel_process(
         self,
         *,
@@ -703,6 +716,14 @@ _TERMINAL_PROCESS_STATUSES = {
     CarrierProcessStatus.failed,
     CarrierProcessStatus.cancelled,
     CarrierProcessStatus.timed_out,
+}
+_PROCESS_TRANSITION_COMMANDS = {
+    CarrierProcessStatus.succeeded: "process.complete",
+    CarrierProcessStatus.failed: "process.fail",
+    CarrierProcessStatus.retry_wait: "process.retry",
+    CarrierProcessStatus.waiting: "process.wait",
+    CarrierProcessStatus.cancelled: "process.cancel",
+    CarrierProcessStatus.timed_out: "process.timeout",
 }
 _RUN_STATUS_TRANSITIONS = {
     CarrierRunStatus.created: {
@@ -2311,6 +2332,221 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
+    async def transition_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        status: CarrierProcessStatus,
+        command: RuntimeCommand,
+        events: Sequence[RuntimeEvent] = (),
+        output: dict[str, Any] | None = None,
+        error: dict[str, Any] | None = None,
+        available_at: datetime | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        expected_command_type = _PROCESS_TRANSITION_COMMANDS.get(status)
+        if expected_command_type is None:
+            raise ValueError(f"Unsupported process transition status: {status.value}")
+        if command.run_id != run_id:
+            raise ValueError("process transition command run_id must match run_id")
+        if command.command_type != expected_command_type:
+            raise ValueError(
+                f"transition to {status.value!r} requires command_type "
+                f"{expected_command_type!r}"
+            )
+
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing_command = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing_command is not None:
+                    stored_command = _command_from_row(existing_command)
+                    stored_process_id = stored_command.payload.get(
+                        "process_id",
+                        process_id,
+                    )
+                    stored_process = connection.execute(
+                        "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                        (run_id, str(stored_process_id)),
+                    ).fetchone()
+                    if stored_process is None:
+                        raise ValueError(
+                            "Replayed process transition has no stored process: "
+                            f"{stored_process_id!r}"
+                        )
+                    connection.commit()
+                    return (
+                        _process_from_row(stored_process),
+                        CommandSubmission(
+                            command=stored_command,
+                            events=[],
+                            replayed=True,
+                        ),
+                    )
+
+                row = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (run_id, process_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Unknown process: {process_id!r}")
+                process = _process_from_row(row)
+                now = _now()
+
+                _insert_runtime_command_row(connection, command)
+                if status in {
+                    CarrierProcessStatus.succeeded,
+                    CarrierProcessStatus.failed,
+                }:
+                    if process.status != CarrierProcessStatus.running:
+                        raise ValueError(
+                            f"Process {process_id!r} is not running: "
+                            f"{process.status.value}"
+                        )
+                    stored_output = (
+                        output or {}
+                        if status == CarrierProcessStatus.succeeded
+                        else {}
+                    )
+                    stored_error = (
+                        error or {}
+                        if status == CarrierProcessStatus.failed
+                        else {}
+                    )
+                    connection.execute(
+                        """
+                        UPDATE processes
+                        SET status = ?,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            output_json = ?,
+                            error_json = ?,
+                            updated_at = ?,
+                            finished_at = ?
+                        WHERE run_id = ? AND id = ?
+                        """,
+                        (
+                            status.value,
+                            _dumps(stored_output),
+                            _dumps(stored_error),
+                            now.isoformat(),
+                            now.isoformat(),
+                            run_id,
+                            process_id,
+                        ),
+                    )
+                elif status == CarrierProcessStatus.retry_wait:
+                    if process.status not in {
+                        CarrierProcessStatus.running,
+                        CarrierProcessStatus.failed,
+                    }:
+                        raise ValueError(
+                            f"Process {process_id!r} cannot be retried from status: "
+                            f"{process.status.value}"
+                        )
+                    if process.attempt >= process.max_attempts:
+                        raise ValueError(
+                            f"Process {process_id!r} exhausted retry attempts"
+                        )
+                    connection.execute(
+                        """
+                        UPDATE processes
+                        SET status = ?,
+                            available_at = ?,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            error_json = ?,
+                            updated_at = ?,
+                            finished_at = NULL
+                        WHERE run_id = ? AND id = ?
+                        """,
+                        (
+                            CarrierProcessStatus.retry_wait.value,
+                            (available_at or now).isoformat(),
+                            _dumps(error or process.error),
+                            now.isoformat(),
+                            run_id,
+                            process_id,
+                        ),
+                    )
+                elif status == CarrierProcessStatus.waiting:
+                    if process.status != CarrierProcessStatus.running:
+                        raise ValueError(
+                            f"Process {process_id!r} cannot wait from status: "
+                            f"{process.status.value}"
+                        )
+                    connection.execute(
+                        """
+                        UPDATE processes
+                        SET status = ?,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            output_json = ?,
+                            updated_at = ?
+                        WHERE run_id = ? AND id = ?
+                        """,
+                        (
+                            CarrierProcessStatus.waiting.value,
+                            _dumps(output or process.output),
+                            now.isoformat(),
+                            run_id,
+                            process_id,
+                        ),
+                    )
+                else:
+                    if process.status in _TERMINAL_PROCESS_STATUSES:
+                        raise ValueError(
+                            f"Process {process_id!r} status is terminal: "
+                            f"{process.status.value}"
+                        )
+                    connection.execute(
+                        """
+                        UPDATE processes
+                        SET status = ?,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            error_json = ?,
+                            updated_at = ?,
+                            finished_at = ?
+                        WHERE run_id = ? AND id = ?
+                        """,
+                        (
+                            status.value,
+                            _dumps(error or {}),
+                            now.isoformat(),
+                            now.isoformat(),
+                            run_id,
+                            process_id,
+                        ),
+                    )
+
+                updated = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (run_id, process_id),
+                ).fetchone()
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return (
+                    _process_from_row(updated),
+                    CommandSubmission(
+                        command=command,
+                        events=stored_events,
+                        replayed=False,
+                    ),
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
     async def _stop_process(
         self,
         *,
@@ -3357,19 +3593,13 @@ class RuntimeBackendService:
             event_type="process.completed",
             payload={"process_id": process_id},
         )
-        submission = await self.backend.submit_command(command, events=[event])
-        if submission.replayed:
-            existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
-            if existing is None:
-                raise ValueError(f"Replayed process complete has no stored process: {process_id!r}")
-            return existing, submission
-        return (
-            await self.backend.complete_process(
-                run_id=run_id,
-                process_id=process_id,
-                output=output,
-            ),
-            submission,
+        return await self.backend.transition_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.succeeded,
+            command=command,
+            events=[event],
+            output=output,
         )
 
     async def fail_process(
@@ -3412,19 +3642,13 @@ class RuntimeBackendService:
             event_type="process.failed",
             payload={"process_id": process_id},
         )
-        submission = await self.backend.submit_command(command, events=[event])
-        if submission.replayed:
-            existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
-            if existing is None:
-                raise ValueError(f"Replayed process fail has no stored process: {process_id!r}")
-            return existing, submission
-        return (
-            await self.backend.fail_process(
-                run_id=run_id,
-                process_id=process_id,
-                error=error,
-            ),
-            submission,
+        return await self.backend.transition_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.failed,
+            command=command,
+            events=[event],
+            error=error,
         )
 
     async def cancel_process(
@@ -3518,27 +3742,25 @@ class RuntimeBackendService:
             event_type=event_type,
             payload={"process_id": process_id},
         )
-        submission = await self.backend.submit_command(command, events=[event])
-        if submission.replayed:
-            replayed = await self.backend.get_process(run_id=run_id, process_id=process_id)
-            if replayed is None:
-                raise ValueError(f"Replayed process stop has no stored process: {process_id!r}")
-            return replayed, submission
         if status == CarrierProcessStatus.cancelled:
-            stopped = await self.backend.cancel_process(
+            return await self.backend.transition_process(
                 run_id=run_id,
                 process_id=process_id,
+                status=CarrierProcessStatus.cancelled,
+                command=command,
+                events=[event],
                 error=error,
             )
-        elif status == CarrierProcessStatus.timed_out:
-            stopped = await self.backend.timeout_process(
+        if status == CarrierProcessStatus.timed_out:
+            return await self.backend.transition_process(
                 run_id=run_id,
                 process_id=process_id,
+                status=CarrierProcessStatus.timed_out,
+                command=command,
+                events=[event],
                 error=error,
             )
-        else:
-            raise ValueError(f"Unsupported process stop status: {status.value}")
-        return stopped, submission
+        raise ValueError(f"Unsupported process stop status: {status.value}")
 
     async def retry_process(
         self,
@@ -3585,20 +3807,14 @@ class RuntimeBackendService:
             event_type="process.retry_scheduled",
             payload={"process_id": process_id},
         )
-        submission = await self.backend.submit_command(command, events=[event])
-        if submission.replayed:
-            existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
-            if existing is None:
-                raise ValueError(f"Replayed process retry has no stored process: {process_id!r}")
-            return existing, submission
-        return (
-            await self.backend.retry_process(
-                run_id=run_id,
-                process_id=process_id,
-                available_at=available_at,
-                error=error,
-            ),
-            submission,
+        return await self.backend.transition_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.retry_wait,
+            command=command,
+            events=[event],
+            available_at=available_at,
+            error=error,
         )
 
     async def wait_process(
@@ -3642,23 +3858,14 @@ class RuntimeBackendService:
             event_type="process.waiting",
             payload={"process_id": process_id},
         )
-        submission = await self.backend.submit_command(command, events=[event])
-        if submission.replayed:
-            replayed = await self.backend.get_process(run_id=run_id, process_id=process_id)
-            if replayed is None:
-                raise ValueError(f"Replayed process wait has no stored process: {process_id!r}")
-            return replayed, submission
-        waiting = existing.model_copy(
-            update={
-                "status": CarrierProcessStatus.waiting,
-                "lease_owner": None,
-                "lease_expires_at": None,
-                "output": output or existing.output,
-                "updated_at": _now(),
-            }
+        return await self.backend.transition_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.waiting,
+            command=command,
+            events=[event],
+            output=output,
         )
-        await self.backend.put_process(waiting)
-        return waiting, submission
 
     async def save_gate(
         self,

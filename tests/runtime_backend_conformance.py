@@ -332,6 +332,62 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert not schedule_submission.replayed
     assert schedule_replay.replayed
 
+    transition_run = Run(
+        id="run_transition_conformance",
+        status=CarrierRunStatus.active,
+    )
+    transition_carrier = Carrier(
+        id="carrier_transition",
+        run_id=transition_run.id,
+        carrier_type="case",
+    )
+    running_process = Process(
+        id="process_transition",
+        run_id=transition_run.id,
+        carrier_id=transition_carrier.id,
+        process_type="score",
+        status=CarrierProcessStatus.running,
+        attempt=1,
+    )
+    transition_command = RuntimeCommand(
+        run_id=transition_run.id,
+        command_type="process.complete",
+        idempotency_key="run_transition_conformance:process.complete",
+    )
+    await backend.put_run(transition_run)
+    await backend.put_carrier(transition_carrier)
+    await backend.put_process(running_process)
+    completed_process, transition_submission = await backend.transition_process(
+        run_id=transition_run.id,
+        process_id=running_process.id,
+        status=CarrierProcessStatus.succeeded,
+        command=transition_command,
+        events=[
+            RuntimeEvent(
+                run_id=transition_run.id,
+                carrier_id=transition_carrier.id,
+                process_id=running_process.id,
+                event_type="process.completed",
+            )
+        ],
+        output={"score": 1},
+    )
+    replayed_process, transition_replay = await backend.transition_process(
+        run_id=transition_run.id,
+        process_id=running_process.id,
+        status=CarrierProcessStatus.succeeded,
+        command=transition_command.model_copy(
+            update={"id": "command_transition_replay"}
+        ),
+        events=[],
+        output={"score": 2},
+    )
+    assert completed_process.status == CarrierProcessStatus.succeeded
+    assert completed_process.output == {"score": 1}
+    assert replayed_process == completed_process
+    assert not transition_submission.replayed
+    assert transition_replay.replayed
+
     run = Run(
         id="run_conformance",
         status=CarrierRunStatus.created,

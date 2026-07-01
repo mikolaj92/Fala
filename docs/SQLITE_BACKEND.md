@@ -18,8 +18,8 @@ one SQLite transaction.
 Carrier acceptance stores the carrier row, `carrier.accept` command, and
 `carrier.accepted` event in one SQLite transaction.
 Carrier type registration, carrier relation recording, observation recording,
-artifact recording, and process scheduling also commit their runtime command,
-event, and state change together.
+artifact recording, process scheduling, and process status transitions also
+commit their runtime command, event, and state change together.
 
 Runtime commands and events are guarded by SQLite triggers that reject direct
 updates and deletes. New runtime facts must be appended through command
