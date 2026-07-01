@@ -122,6 +122,7 @@ uv run fala gates list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala gate complete --db /tmp/fala-carrier.sqlite --run-id run_case --gate-id gate_review --value decision=approved
 uv run fala projections list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala projections rebuild --db /tmp/fala-carrier.sqlite --run-id run_case
+uv run fala trace --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-runtime
 ```
 
 ## Local Examples

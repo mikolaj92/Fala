@@ -2471,6 +2471,11 @@ def _build_parser() -> argparse.ArgumentParser:
     trace.add_argument("--document-id", default=None)
     trace.add_argument("--process-id", default=None)
     trace.add_argument("--operation-type", default=None)
+    trace.add_argument(
+        "--carrier-runtime",
+        action="store_true",
+        help="Trace Carrier-first SQLite runtime state instead of document process attempts.",
+    )
 
     lineage = subparsers.add_parser(
         "document-lineage",
@@ -4088,6 +4093,8 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         }
 
     if args.command == "trace":
+        if args.carrier_runtime:
+            return await _carrier_runtime_trace(args)
         service = RuntimeService(registry=registry, store=create_state_store(args.db))
         return {
             "ok": True,
@@ -4357,6 +4364,58 @@ def _carrier_runtime_list_result(
         "count": len(payload),
         key: payload,
     }
+
+
+async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
+    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    run = await backend.get_run(run_id=args.run_id)
+    events = await backend.list_events(run_id=args.run_id)
+    carriers = await backend.list_carriers(run_id=args.run_id)
+    carrier_relations = await backend.list_carrier_relations(run_id=args.run_id)
+    observations = await backend.list_observations(run_id=args.run_id)
+    artifacts = await backend.list_artifacts(run_id=args.run_id)
+    processes = await backend.list_processes(run_id=args.run_id)
+    gates = await backend.list_gates(run_id=args.run_id)
+    projections = await backend.list_projections(run_id=args.run_id)
+    trace = {
+        "run_id": args.run_id,
+        "run": run.model_dump(mode="json") if run is not None else None,
+        "counts": {
+            "artifacts": len(artifacts),
+            "carrier_relations": len(carrier_relations),
+            "carriers": len(carriers),
+            "events": len(events),
+            "gates": len(gates),
+            "observations": len(observations),
+            "processes": len(processes),
+            "projections": len(projections),
+        },
+        "timeline": [
+            {
+                "sequence": event.sequence,
+                "type": event.event_type,
+                "carrier_id": event.carrier_id,
+                "actor": event.actor,
+                "created_at": event.created_at.isoformat(),
+            }
+            for event in events
+        ],
+        "events": [event.model_dump(mode="json") for event in events],
+        "carriers": [carrier.model_dump(mode="json") for carrier in carriers],
+        "carrier_relations": [
+            relation.model_dump(mode="json") for relation in carrier_relations
+        ],
+        "observations": [
+            observation.model_dump(mode="json") for observation in observations
+        ],
+        "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
+        "processes": [process.model_dump(mode="json") for process in processes],
+        "gates": [gate.model_dump(mode="json") for gate in gates],
+        "projections": [
+            projection.model_dump(mode="json") for projection in projections
+        ],
+    }
+    return {"ok": True, "trace": trace}
 
 
 def _carrier_runtime_db_path(target: str) -> str:

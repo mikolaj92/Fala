@@ -918,6 +918,21 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 1,
             )
 
+            trace = _run_cli_json(
+                "trace",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--carrier-runtime",
+            )
+            payload = trace["trace"]
+            self.assertEqual(payload["counts"]["carriers"], 2)
+            self.assertEqual(payload["counts"]["events"], 12)
+            self.assertEqual(payload["counts"]["projections"], 2)
+            self.assertEqual(payload["timeline"][-1]["type"], "projection.rebuilt")
+            self.assertEqual(payload["gates"][0]["status"], "completed")
+
     def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
