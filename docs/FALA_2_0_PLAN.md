@@ -75,11 +75,10 @@ workflow API.
 | CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, and bridge delivery exist. Advanced pool policy commands remain incomplete. |
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings. More examples and package manifests are needed. |
-| Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, and run archive export exist. Deterministic execution replay is not yet complete. |
+| Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, run archive export, and guarded deterministic `replay-execution` exist. Broader deterministic adapter coverage can still expand. |
 | Docs/examples | PARTIAL | Dedicated Fala 2 conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain pack, security, migration, and version policy docs exist. More runnable examples can still be added. |
 
 ## Next Work
 
 1. Add archived-run retention policy controls.
-2. Add deterministic execution replay boundaries for recorded steps.
-3. Add advanced runtime-pool policies such as least-busy and round-robin.
+2. Add advanced runtime-pool policies such as least-busy and round-robin.

@@ -1535,6 +1535,95 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(process.status, CarrierProcessStatus.succeeded)
             self.assertEqual(process.output["value"], 3)
 
+    def test_cli_replay_execution_returns_recorded_output_and_reruns_deterministic_process(self) -> None:
+        async def setup(db_path: Path) -> None:
+            service = RuntimeBackendService.sqlite(db_path)
+            await service.create_run(
+                Run(id="run_replay"),
+                idempotency_key="run_replay:create",
+            )
+            await service.schedule_process(
+                Process(
+                    id="process_replay",
+                    run_id="run_replay",
+                    process_type="python_function",
+                    status=CarrierProcessStatus.ready,
+                    input={
+                        "adapter": {
+                            "kind": "python_function",
+                            "ref": "tests.test_fala2_runtime_backend._carrier_cli_step",
+                        },
+                        "value": 6,
+                    },
+                    metadata={"deterministic": True},
+                ),
+                idempotency_key="run_replay:process.schedule:process_replay",
+            )
+            await service.backend.put_process(
+                Process(
+                    id="process_not_deterministic",
+                    run_id="run_replay",
+                    process_type="python_function",
+                    status=CarrierProcessStatus.succeeded,
+                    input={},
+                    output={"value": 1},
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "state.sqlite"
+            asyncio.run(setup(db_path))
+            _run_cli_json(
+                "run-until-idle",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_replay",
+            )
+
+            recorded = _run_cli_json(
+                "replay-execution",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_replay",
+                "--process-id",
+                "process_replay",
+            )
+            self.assertTrue(recorded["ok"])
+            self.assertEqual(recorded["mode"], "recorded")
+            self.assertTrue(recorded["rerunnable"])
+            self.assertEqual(recorded["recorded"]["output"]["value"], 7)
+
+            rerun = _run_cli_json(
+                "replay-execution",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_replay",
+                "--process-id",
+                "process_replay",
+                "--rerun",
+            )
+            self.assertTrue(rerun["ok"])
+            self.assertEqual(rerun["mode"], "rerun")
+            self.assertTrue(rerun["rerun"]["matches_recorded_output"])
+            self.assertEqual(rerun["rerun"]["output"]["value"], 7)
+
+            code, refused = _run_cli_raw(
+                "replay-execution",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_replay",
+                "--process-id",
+                "process_not_deterministic",
+                "--rerun",
+            )
+            self.assertEqual(code, 1)
+            self.assertFalse(refused["ok"])
+            self.assertIn("not marked deterministic", refused["error"])
+
     def test_cli_run_until_idle_delegates_fala_runtime_process_to_bridge_outbox(self) -> None:
         async def setup(source_path: Path, target_path: Path) -> None:
             source = RuntimeBackendService.sqlite(source_path)

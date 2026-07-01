@@ -140,6 +140,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "runs",
             "runtimes",
             "run-until-idle",
+            "replay-execution",
             "diagnose-waits",
             "trace",
         }
@@ -407,6 +408,13 @@ def _build_parser() -> argparse.ArgumentParser:
     run_until_idle.add_argument("--max-ticks", type=int, default=100)
     run_until_idle.add_argument("--work-dir", default=None)
 
+    replay_execution = subparsers.add_parser("replay-execution", help="Replay or verify a recorded Carrier process execution.")
+    replay_execution.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    replay_execution.add_argument("--run-id", required=True)
+    replay_execution.add_argument("--process-id", required=True)
+    replay_execution.add_argument("--rerun", action="store_true", help="Rerun only if process metadata marks it deterministic.")
+    replay_execution.add_argument("--work-dir", default=None)
+
     diagnose_waits = subparsers.add_parser("diagnose-waits", help="Diagnose Carrier waits and wait-graph deadlocks.")
     diagnose_waits.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     diagnose_waits.add_argument("--run-id", required=True)
@@ -493,6 +501,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "projections",
         "runtimes",
         "run-until-idle",
+        "replay-execution",
         "runs",
         "trace",
     }:
@@ -545,6 +554,8 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         return await _carrier_runtime_gc(args)
     if args.command == "run-until-idle":
         return await _carrier_runtime_run_until_idle(args)
+    if args.command == "replay-execution":
+        return await _carrier_runtime_replay_execution(args)
 
     backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
     if args.command == "create-run":
@@ -1147,6 +1158,94 @@ async def _carrier_runtime_run_until_idle(args: argparse.Namespace) -> dict[str,
         "completed": completed,
         "failed": failed,
         "waiting": waiting,
+    }
+
+
+async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[str, Any]:
+    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    process = await backend.get_process(
+        run_id=args.run_id,
+        process_id=args.process_id,
+    )
+    if process is None:
+        return {
+            "ok": False,
+            "run_id": args.run_id,
+            "process_id": args.process_id,
+            "error": "process not found",
+        }
+
+    deterministic = bool(process.metadata.get("deterministic"))
+    base = {
+        "ok": True,
+        "run_id": process.run_id,
+        "process_id": process.id,
+        "status": process.status.value,
+        "deterministic": deterministic,
+        "recorded": {
+            "input": process.input,
+            "output": process.output,
+            "error": process.error,
+        },
+    }
+    if not args.rerun:
+        return {
+            **base,
+            "mode": "recorded",
+            "rerunnable": deterministic,
+        }
+    if not deterministic:
+        return {
+            **base,
+            "ok": False,
+            "mode": "rerun",
+            "error": "process is not marked deterministic",
+        }
+    if process.status != CarrierProcessStatus.succeeded:
+        return {
+            **base,
+            "ok": False,
+            "mode": "rerun",
+            "error": f"process is not succeeded: {process.status.value}",
+        }
+
+    adapter, step_input, config = _process_step_request_parts(process)
+    if adapter.kind in {"manual_gate", "fala_runtime"}:
+        return {
+            **base,
+            "ok": False,
+            "mode": "rerun",
+            "error": f"{adapter.kind} processes cannot be execution-rerun locally",
+        }
+    work_dir = Path(args.work_dir).expanduser() if args.work_dir else None
+    if work_dir is not None:
+        work_dir.mkdir(parents=True, exist_ok=True)
+    result = await create_step_adapter(adapter.kind).run(
+        StepRunRequest(
+            run_id=process.run_id,
+            process_id=process.id,
+            carrier_id=process.carrier_id,
+            adapter=adapter,
+            input=step_input,
+            config=config,
+            work_dir=work_dir,
+        )
+    )
+    rerun_output = {
+        **result.output,
+        "adapter": {
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        },
+    }
+    return {
+        **base,
+        "mode": "rerun",
+        "rerun": {
+            "output": rerun_output,
+            "matches_recorded_output": rerun_output == process.output,
+        },
     }
 
 
