@@ -3037,6 +3037,15 @@ def _group_counts(
     return {str(row[0]): int(row["count"]) for row in rows}
 
 
+def _int_scalar(
+    connection: sqlite3.Connection,
+    sql: str,
+    params: tuple[Any, ...],
+) -> int:
+    value = connection.execute(sql, params).fetchone()[0]
+    return int(value or 0)
+
+
 def _build_run_summary_projection(
     connection: sqlite3.Connection,
     run_id: str,
@@ -3053,6 +3062,49 @@ def _build_run_summary_projection(
             (run_id,),
         ).fetchone()[0]
     )
+    resource_accounting = {
+        "artifact_bytes": _int_scalar(
+            connection,
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM artifacts WHERE run_id = ?",
+            (run_id,),
+        ),
+        "bridge_command_count": _int_scalar(
+            connection,
+            """
+            SELECT COUNT(*)
+            FROM runtime_commands
+            WHERE run_id = ? AND command_type LIKE 'bridge.%'
+            """,
+            (run_id,),
+        ),
+        "bridge_delivery_count": _count_rows(connection, "bridge_outbox", run_id)
+        + _count_rows(connection, "bridge_inbox", run_id),
+        "process_attempts": _int_scalar(
+            connection,
+            "SELECT COALESCE(SUM(attempt), 0) FROM processes WHERE run_id = ?",
+            (run_id,),
+        ),
+        "process_input_bytes": _int_scalar(
+            connection,
+            "SELECT COALESCE(SUM(LENGTH(input_json)), 0) FROM processes WHERE run_id = ?",
+            (run_id,),
+        ),
+        "process_output_bytes": _int_scalar(
+            connection,
+            "SELECT COALESCE(SUM(LENGTH(output_json)), 0) FROM processes WHERE run_id = ?",
+            (run_id,),
+        ),
+        "spawned_run_count": 0,
+        "subprocess_count": _int_scalar(
+            connection,
+            """
+            SELECT COUNT(*)
+            FROM processes
+            WHERE run_id = ? AND process_type = 'subprocess'
+            """,
+            (run_id,),
+        ),
+    }
     data = {
         "artifact_count": _count_rows(connection, "artifacts", run_id),
         "carrier_count": _count_rows(connection, "carriers", run_id),
@@ -3079,6 +3131,7 @@ def _build_run_summary_projection(
             column="status",
             run_id=run_id,
         ),
+        "resource_accounting": resource_accounting,
         "run_id": run_id,
         "source_event_sequence": source_event_sequence,
     }

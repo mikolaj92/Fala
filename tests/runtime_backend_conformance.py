@@ -279,6 +279,9 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         "running": 1,
         "succeeded": 1,
     }
+    assert summary.data["resource_accounting"]["artifact_bytes"] == 3
+    assert summary.data["resource_accounting"]["process_attempts"] == 3
+    assert summary.data["resource_accounting"]["bridge_delivery_count"] == 0
     assert await backend.get_projection(
         run_id=carrier.run_id,
         name="run_summary",

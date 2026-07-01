@@ -533,6 +533,14 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(summary.data["gate_status_counts"], {"open": 1})
                 self.assertEqual(summary.data["process_status_counts"], {"ready": 1})
                 self.assertEqual(
+                    summary.data["resource_accounting"]["artifact_bytes"],
+                    0,
+                )
+                self.assertEqual(
+                    summary.data["resource_accounting"]["process_attempts"],
+                    0,
+                )
+                self.assertEqual(
                     summary.data["event_type_counts"]["projection.rebuilt"],
                     1,
                 )
@@ -920,6 +928,14 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(summary["source_event_sequence"], 12)
             self.assertEqual(summary["data"]["carrier_count"], 2)
             self.assertEqual(summary["data"]["artifact_count"], 1)
+            self.assertEqual(
+                summary["data"]["resource_accounting"]["artifact_bytes"],
+                3,
+            )
+            self.assertEqual(
+                summary["data"]["resource_accounting"]["bridge_delivery_count"],
+                0,
+            )
             self.assertEqual(
                 summary["data"]["event_type_counts"]["projection.rebuilt"],
                 1,

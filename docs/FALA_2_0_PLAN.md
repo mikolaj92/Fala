@@ -310,7 +310,7 @@ not complete enough to close the requirement.
 | 30 | Trace / debug / export | PARTIAL | Carrier trace.json, timeline.json, graph.dot, report.html, and bundle export exist; harden replay/export formats. |
 | 31 | Step SDK | PARTIAL | Standardize subprocess input/output manifests and transactional runtime commit. |
 | 32 | Actor model | PARTIAL | Use actor fields consistently for CLI, worker, web, adapter, bridge, and human actions. |
-| 33 | Resource accounting | PARTIAL | Surface runtime, attempts, sizes, artifact count, event count, subprocess count, spawned runs, and bridge metrics. |
+| 33 | Resource accounting | PARTIAL | `run_summary` surfaces attempts, bytes, subprocess, bridge, artifact, and event counts; wire these into budgets and CLI views. |
 | 34 | Conformance tests | PARTIAL | Complete backend conformance tests for every required mutation and recovery/idempotency behavior. |
 | 35 | Docs | PARTIAL | Add the target conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain-pack, security, and migration docs. |
 | 36 | Examples | PARTIAL | Add runnable local SQLite examples for documents, Splot/arbitration, and multi-Fala composition. |
