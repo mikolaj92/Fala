@@ -13,3 +13,12 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Run tests
         run: uv run --python 3.12 --with pytest pytest
+      - name: Build package
+        run: uv build --out-dir dist
+      - name: Smoke install wheel
+        run: |
+          tmpdir="$(mktemp -d)"
+          cd "$tmpdir"
+          uv init --bare
+          uv add "$GITHUB_WORKSPACE"/dist/*.whl
+          uv run fala --help

@@ -32,7 +32,7 @@ The Fala architecture is built around these modules:
 Install the released wheel with `uv`:
 
 ```bash
-uv add https://github.com/mikolaj92/Fala/releases/download/0.1.0/fala_runtime-0.1.0-py3-none-any.whl
+uv add https://github.com/mikolaj92/Fala/releases/download/0.1.1/fala_runtime-0.1.1-py3-none-any.whl
 uv run fala --help
 ```
 
