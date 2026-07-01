@@ -2482,6 +2482,102 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_runtime_backend_service_validates_process_transition_matrix(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                process = Process(
+                    id="process_matrix",
+                    run_id="run_process_matrix",
+                    process_type="score",
+                    status=CarrierProcessStatus.ready,
+                    max_attempts=2,
+                )
+                await service.schedule_process(
+                    process,
+                    idempotency_key="run_process_matrix:process.schedule:matrix",
+                )
+
+                with self.assertRaisesRegex(ValueError, "not running"):
+                    await service.complete_process(
+                        run_id=process.run_id,
+                        process_id=process.id,
+                        idempotency_key="run_process_matrix:process.complete:ready",
+                    )
+                with self.assertRaisesRegex(ValueError, "not running"):
+                    await service.fail_process(
+                        run_id=process.run_id,
+                        process_id=process.id,
+                        idempotency_key="run_process_matrix:process.fail:ready",
+                    )
+                with self.assertRaisesRegex(ValueError, "cannot wait from status"):
+                    await service.wait_process(
+                        run_id=process.run_id,
+                        process_id=process.id,
+                        idempotency_key="run_process_matrix:process.wait:ready",
+                    )
+
+                claimed = await service.claim_next_ready_process(
+                    run_id=process.run_id,
+                    worker_id="worker:matrix",
+                )
+                assert claimed is not None
+                failed, fail_submission = await service.fail_process(
+                    run_id=process.run_id,
+                    process_id=process.id,
+                    error={"message": "temporary"},
+                    idempotency_key="run_process_matrix:process.fail:running",
+                    actor="worker:matrix",
+                )
+                retry_wait, retry_submission = await service.retry_process(
+                    run_id=process.run_id,
+                    process_id=process.id,
+                    error={"message": "retry"},
+                    idempotency_key="run_process_matrix:process.retry:failed",
+                )
+                claimed_again = await service.claim_next_ready_process(
+                    run_id=process.run_id,
+                    worker_id="worker:matrix",
+                )
+                assert claimed_again is not None
+                succeeded, complete_submission = await service.complete_process(
+                    run_id=process.run_id,
+                    process_id=process.id,
+                    output={"score": 1},
+                    idempotency_key="run_process_matrix:process.complete:retry",
+                )
+                with self.assertRaisesRegex(ValueError, "cannot be retried"):
+                    await service.retry_process(
+                        run_id=process.run_id,
+                        process_id=process.id,
+                        idempotency_key="run_process_matrix:process.retry:succeeded",
+                    )
+
+                self.assertEqual(failed.status, CarrierProcessStatus.failed)
+                self.assertFalse(fail_submission.replayed)
+                self.assertEqual(retry_wait.status, CarrierProcessStatus.retry_wait)
+                self.assertFalse(retry_submission.replayed)
+                self.assertEqual(
+                    claimed_again.status,
+                    CarrierProcessStatus.running,
+                )
+                self.assertEqual(claimed_again.attempt, 2)
+                self.assertEqual(succeeded.status, CarrierProcessStatus.succeeded)
+                self.assertEqual(succeeded.output, {"score": 1})
+                self.assertFalse(complete_submission.replayed)
+                events = await service.backend.list_events(run_id=process.run_id)
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    [
+                        "process.scheduled",
+                        "process.failed",
+                        "process.retry_scheduled",
+                        "process.completed",
+                    ],
+                )
+
+        asyncio.run(scenario())
+
     def test_runtime_backend_service_open_gate_is_create_only(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
