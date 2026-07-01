@@ -30,6 +30,8 @@ surfaces and are loaded lazily from `fala`.
 
 Document workflows live in `fala.domain_packs.documents`; see
 `docs/DOCUMENT_DOMAIN_PACK.md` for the Document to Carrier migration mapping.
+Splot arbitration workflows live in `fala.domain_packs.splot`; see
+`docs/SPLOT_DOMAIN_PACK.md` for the domain/core boundary.
 
 ## Core Concepts
 

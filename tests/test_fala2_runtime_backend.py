@@ -7,6 +7,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import inspect
 from pathlib import Path
 
 from fala.carrier_runtime import FalaRuntime
@@ -16,6 +17,16 @@ from fala.domain_packs.documents import (
     document_from_carrier,
     document_observation,
     document_projection,
+)
+from fala.domain_packs import splot
+from fala.domain_packs.splot import (
+    SPLOT_ARBITRATION_CASE,
+    SplotArbitrationCase,
+    carrier_from_case,
+    case_from_carrier,
+    case_projection,
+    jurisdiction_observation,
+    review_gate,
 )
 from fala.runtime_backend import (
     BridgeDelivery,
@@ -218,6 +229,67 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(projection.data["document_type"], "invoice_document")
 
         asyncio.run(scenario())
+
+    def test_splot_domain_pack_uses_public_carrier_runtime_api(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                case = SplotArbitrationCase(
+                    id="splot_case_1",
+                    claim_id="SP-1",
+                    claimant="Alice",
+                    respondent="Beta LLC",
+                    amount=1200,
+                    currency="EUR",
+                    rules="splot-fast-track",
+                    artifacts=[
+                        {
+                            "id": "statement",
+                            "kind": "claim_statement",
+                            "uri": "file:///tmp/statement.pdf",
+                        }
+                    ],
+                )
+                carrier = carrier_from_case(case, run_id="run_splot")
+
+                stored, submission = await runtime.accept_carrier(
+                    carrier,
+                    idempotency_key="run_splot:carrier.accept:splot_case_1",
+                )
+                observation, _ = await runtime.record_observation(
+                    jurisdiction_observation(
+                        stored,
+                        admissible=True,
+                        reason="contract clause present",
+                    ),
+                    idempotency_key="run_splot:observation.jurisdiction:splot_case_1",
+                )
+                gate, _ = await runtime.save_gate(
+                    review_gate(stored, status=GateStatus.completed),
+                    idempotency_key="run_splot:gate.review:splot_case_1",
+                )
+                projection, _ = await runtime.save_projection(
+                    case_projection(stored),
+                    idempotency_key="run_splot:projection.case:splot_case_1",
+                )
+
+                self.assertFalse(submission.replayed)
+                self.assertEqual(stored.carrier_type, SPLOT_ARBITRATION_CASE)
+                self.assertEqual(case_from_carrier(stored), case)
+                self.assertEqual(observation.kind, "splot.jurisdiction")
+                self.assertEqual(observation.values["admissible"], True)
+                self.assertEqual(gate.kind, "splot.review")
+                self.assertEqual(gate.status, GateStatus.completed)
+                self.assertEqual(projection.name, "splot.case:SP-1")
+                self.assertEqual(projection.data["artifact_count"], 1)
+
+        asyncio.run(scenario())
+
+    def test_splot_domain_pack_does_not_use_document_runtime_internals(self) -> None:
+        source = inspect.getsource(splot)
+        self.assertNotIn("RuntimeDocument", source)
+        self.assertNotIn("document_id", source)
+        self.assertNotIn("document_type", source)
 
     def test_runtime_backend_service_accepts_carrier_idempotently(self) -> None:
         async def scenario() -> None:
