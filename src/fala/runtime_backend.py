@@ -4,7 +4,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
@@ -176,6 +176,43 @@ class Artifact(BaseModel):
     content_hash: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
+
+
+class CarrierProcessStatus(StrEnum):
+    pending = "pending"
+    ready = "ready"
+    running = "running"
+    waiting = "waiting"
+    retry_wait = "retry_wait"
+    succeeded = "succeeded"
+    failed = "failed"
+    cancel_requested = "cancel_requested"
+    cancelled = "cancelled"
+    timed_out = "timed_out"
+
+
+class Process(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: _new_id("process"))
+    run_id: str
+    process_type: str
+    carrier_id: str | None = None
+    status: CarrierProcessStatus = CarrierProcessStatus.pending
+    priority: int = 0
+    attempt: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=1, ge=1)
+    available_at: datetime = Field(default_factory=_now)
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    input: dict[str, Any] = Field(default_factory=dict)
+    output: dict[str, Any] = Field(default_factory=dict)
+    error: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class GateStatus(StrEnum):
@@ -367,6 +404,51 @@ class RuntimeBackend(Protocol):
         carrier_id: str | None = None,
         kind: str | None = None,
     ) -> list[Artifact]: ...
+
+    async def put_process(self, process: Process) -> None: ...
+
+    async def get_process(self, *, run_id: str, process_id: str) -> Process | None: ...
+
+    async def list_processes(
+        self,
+        *,
+        run_id: str,
+        status: CarrierProcessStatus | None = None,
+        carrier_id: str | None = None,
+    ) -> list[Process]: ...
+
+    async def claim_next_ready_process(
+        self,
+        *,
+        worker_id: str,
+        run_id: str | None = None,
+        lease_seconds: float = 300.0,
+    ) -> Process | None: ...
+
+    async def complete_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        output: dict[str, Any] | None = None,
+    ) -> Process: ...
+
+    async def fail_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+    ) -> Process: ...
+
+    async def retry_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        available_at: datetime | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> Process: ...
 
     async def put_gate(self, gate: Gate) -> None: ...
 
@@ -594,6 +676,31 @@ class SQLiteRuntimeBackend:
                         REFERENCES carriers (run_id, id)
                 );
 
+                CREATE TABLE IF NOT EXISTS processes (
+                    run_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    process_type TEXT NOT NULL,
+                    carrier_id TEXT,
+                    status TEXT NOT NULL,
+                    priority INTEGER NOT NULL,
+                    attempt INTEGER NOT NULL,
+                    max_attempts INTEGER NOT NULL,
+                    available_at TEXT NOT NULL,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    input_json TEXT NOT NULL,
+                    output_json TEXT NOT NULL,
+                    error_json TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    PRIMARY KEY (run_id, id),
+                    FOREIGN KEY (run_id, carrier_id)
+                        REFERENCES carriers (run_id, id)
+                );
+
                 CREATE TABLE IF NOT EXISTS gates (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -668,6 +775,12 @@ class SQLiteRuntimeBackend:
                     ON observations (run_id, carrier_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_artifacts_carrier
                     ON artifacts (run_id, carrier_id, kind, created_at);
+                CREATE INDEX IF NOT EXISTS idx_processes_ready
+                    ON processes (status, available_at, priority, created_at);
+                CREATE INDEX IF NOT EXISTS idx_processes_run_status
+                    ON processes (run_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_processes_carrier
+                    ON processes (run_id, carrier_id, status);
                 CREATE INDEX IF NOT EXISTS idx_gates_status
                     ON gates (run_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_bridge_outbox_status
@@ -1163,6 +1276,299 @@ class SQLiteRuntimeBackend:
                 params,
             ).fetchall()
         return [_artifact_from_row(row) for row in rows]
+
+    async def put_process(self, process: Process) -> None:
+        async with self._lock:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO processes (
+                        run_id, id, process_type, carrier_id, status, priority,
+                        attempt, max_attempts, available_at, lease_owner,
+                        lease_expires_at, input_json, output_json, error_json,
+                        metadata, created_at, updated_at, started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, id) DO UPDATE SET
+                        process_type = excluded.process_type,
+                        carrier_id = excluded.carrier_id,
+                        status = excluded.status,
+                        priority = excluded.priority,
+                        attempt = excluded.attempt,
+                        max_attempts = excluded.max_attempts,
+                        available_at = excluded.available_at,
+                        lease_owner = excluded.lease_owner,
+                        lease_expires_at = excluded.lease_expires_at,
+                        input_json = excluded.input_json,
+                        output_json = excluded.output_json,
+                        error_json = excluded.error_json,
+                        metadata = excluded.metadata,
+                        created_at = excluded.created_at,
+                        updated_at = excluded.updated_at,
+                        started_at = excluded.started_at,
+                        finished_at = excluded.finished_at
+                    """,
+                    _process_args(process),
+                )
+                connection.commit()
+
+    async def get_process(self, *, run_id: str, process_id: str) -> Process | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                (run_id, process_id),
+            ).fetchone()
+        return _process_from_row(row) if row is not None else None
+
+    async def list_processes(
+        self,
+        *,
+        run_id: str,
+        status: CarrierProcessStatus | None = None,
+        carrier_id: str | None = None,
+    ) -> list[Process]:
+        clauses = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status.value)
+        if carrier_id is not None:
+            clauses.append("carrier_id = ?")
+            params.append(carrier_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM processes
+                WHERE {' AND '.join(clauses)}
+                ORDER BY priority DESC, available_at ASC, created_at ASC, id ASC
+                """,
+                params,
+            ).fetchall()
+        return [_process_from_row(row) for row in rows]
+
+    async def claim_next_ready_process(
+        self,
+        *,
+        worker_id: str,
+        run_id: str | None = None,
+        lease_seconds: float = 300.0,
+    ) -> Process | None:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be greater than zero")
+        now = _now()
+        expires_at = now + timedelta(seconds=lease_seconds)
+        clauses = [
+            """
+            (
+                status = ?
+                OR (status = ? AND available_at <= ?)
+                OR (status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
+            )
+            """,
+            "attempt < max_attempts",
+        ]
+        params: list[Any] = [
+            CarrierProcessStatus.ready.value,
+            CarrierProcessStatus.retry_wait.value,
+            now.isoformat(),
+            CarrierProcessStatus.running.value,
+            now.isoformat(),
+        ]
+        if run_id is not None:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    f"""
+                    SELECT * FROM processes
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY priority DESC, available_at ASC, created_at ASC, id ASC
+                    LIMIT 1
+                    """,
+                    params,
+                ).fetchone()
+                if row is None:
+                    connection.commit()
+                    return None
+                connection.execute(
+                    """
+                    UPDATE processes
+                    SET status = ?,
+                        attempt = attempt + 1,
+                        lease_owner = ?,
+                        lease_expires_at = ?,
+                        updated_at = ?,
+                        started_at = COALESCE(started_at, ?)
+                    WHERE run_id = ? AND id = ?
+                    """,
+                    (
+                        CarrierProcessStatus.running.value,
+                        worker_id,
+                        expires_at.isoformat(),
+                        now.isoformat(),
+                        now.isoformat(),
+                        row["run_id"],
+                        row["id"],
+                    ),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (row["run_id"], row["id"]),
+                ).fetchone()
+                connection.commit()
+                return _process_from_row(updated)
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+    async def complete_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        output: dict[str, Any] | None = None,
+    ) -> Process:
+        return await self._finish_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.succeeded,
+            output=output or {},
+            error={},
+        )
+
+    async def fail_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+    ) -> Process:
+        return await self._finish_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.failed,
+            output={},
+            error=error or {},
+        )
+
+    async def retry_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        available_at: datetime | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> Process:
+        next_available_at = available_at or _now()
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (run_id, process_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Unknown process: {process_id!r}")
+                process = _process_from_row(row)
+                if process.attempt >= process.max_attempts:
+                    raise ValueError(f"Process {process_id!r} exhausted retry attempts")
+                now = _now()
+                connection.execute(
+                    """
+                    UPDATE processes
+                    SET status = ?,
+                        available_at = ?,
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        error_json = ?,
+                        updated_at = ?,
+                        finished_at = NULL
+                    WHERE run_id = ? AND id = ?
+                    """,
+                    (
+                        CarrierProcessStatus.retry_wait.value,
+                        next_available_at.isoformat(),
+                        _dumps(error or process.error),
+                        now.isoformat(),
+                        run_id,
+                        process_id,
+                    ),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (run_id, process_id),
+                ).fetchone()
+                connection.commit()
+                return _process_from_row(updated)
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+    async def _finish_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        status: CarrierProcessStatus,
+        output: dict[str, Any],
+        error: dict[str, Any],
+    ) -> Process:
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (run_id, process_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Unknown process: {process_id!r}")
+                process = _process_from_row(row)
+                if process.status != CarrierProcessStatus.running:
+                    raise ValueError(
+                        f"Process {process_id!r} is not running: {process.status.value}"
+                    )
+                now = _now()
+                connection.execute(
+                    """
+                    UPDATE processes
+                    SET status = ?,
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        output_json = ?,
+                        error_json = ?,
+                        updated_at = ?,
+                        finished_at = ?
+                    WHERE run_id = ? AND id = ?
+                    """,
+                    (
+                        status.value,
+                        _dumps(output),
+                        _dumps(error),
+                        now.isoformat(),
+                        now.isoformat(),
+                        run_id,
+                        process_id,
+                    ),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (run_id, process_id),
+                ).fetchone()
+                connection.commit()
+                return _process_from_row(updated)
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def put_gate(self, gate: Gate) -> None:
         async with self._lock:
@@ -1731,6 +2137,191 @@ class RuntimeBackendService:
         await self.backend.put_artifact(artifact)
         return artifact, submission
 
+    async def schedule_process(
+        self,
+        process: Process,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=process.run_id,
+            command_type="process.schedule",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={
+                "process_id": process.id,
+                "process_type": process.process_type,
+                "carrier_id": process.carrier_id,
+                "status": process.status.value,
+            },
+        )
+        event = RuntimeEvent(
+            run_id=process.run_id,
+            carrier_id=process.carrier_id,
+            event_type="process.scheduled",
+            payload={
+                "process_id": process.id,
+                "process_type": process.process_type,
+                "status": process.status.value,
+            },
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_process_id = submission.command.payload.get("process_id", process.id)
+            existing = await self.backend.get_process(
+                run_id=process.run_id,
+                process_id=str(existing_process_id),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed process schedule command has no stored process: "
+                    f"{existing_process_id!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_process(process)
+        return process, submission
+
+    async def claim_next_ready_process(
+        self,
+        *,
+        worker_id: str,
+        run_id: str | None = None,
+        lease_seconds: float = 300.0,
+    ) -> Process | None:
+        return await self.backend.claim_next_ready_process(
+            worker_id=worker_id,
+            run_id=run_id,
+            lease_seconds=lease_seconds,
+        )
+
+    async def complete_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        output: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=run_id,
+            command_type="process.complete",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"process_id": process_id},
+        )
+        event = RuntimeEvent(
+            run_id=run_id,
+            event_type="process.completed",
+            payload={"process_id": process_id},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+            if existing is None:
+                raise ValueError(f"Replayed process complete has no stored process: {process_id!r}")
+            return existing, submission
+        return (
+            await self.backend.complete_process(
+                run_id=run_id,
+                process_id=process_id,
+                output=output,
+            ),
+            submission,
+        )
+
+    async def fail_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=run_id,
+            command_type="process.fail",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"process_id": process_id},
+        )
+        event = RuntimeEvent(
+            run_id=run_id,
+            event_type="process.failed",
+            payload={"process_id": process_id},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+            if existing is None:
+                raise ValueError(f"Replayed process fail has no stored process: {process_id!r}")
+            return existing, submission
+        return (
+            await self.backend.fail_process(
+                run_id=run_id,
+                process_id=process_id,
+                error=error,
+            ),
+            submission,
+        )
+
+    async def retry_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        available_at: datetime | None = None,
+        error: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=run_id,
+            command_type="process.retry",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"process_id": process_id},
+        )
+        event = RuntimeEvent(
+            run_id=run_id,
+            event_type="process.retry_scheduled",
+            payload={"process_id": process_id},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+            if existing is None:
+                raise ValueError(f"Replayed process retry has no stored process: {process_id!r}")
+            return existing, submission
+        return (
+            await self.backend.retry_process(
+                run_id=run_id,
+                process_id=process_id,
+                available_at=available_at,
+                error=error,
+            ),
+            submission,
+        )
+
     async def save_gate(
         self,
         gate: Gate,
@@ -2037,6 +2628,19 @@ class RuntimeBackendService:
     ) -> list[Run]:
         return await self.backend.list_runs(status=status, limit=limit)
 
+    async def list_processes(
+        self,
+        *,
+        run_id: str,
+        status: CarrierProcessStatus | None = None,
+        carrier_id: str | None = None,
+    ) -> list[Process]:
+        return await self.backend.list_processes(
+            run_id=run_id,
+            status=status,
+            carrier_id=carrier_id,
+        )
+
     async def list_carriers(
         self,
         *,
@@ -2208,6 +2812,58 @@ def _run_from_row(row: sqlite3.Row) -> Run:
     )
 
 
+def _process_args(process: Process) -> tuple[Any, ...]:
+    return (
+        process.run_id,
+        process.id,
+        process.process_type,
+        process.carrier_id,
+        process.status.value,
+        process.priority,
+        process.attempt,
+        process.max_attempts,
+        process.available_at.isoformat(),
+        process.lease_owner,
+        process.lease_expires_at.isoformat()
+        if process.lease_expires_at is not None
+        else None,
+        _dumps(process.input),
+        _dumps(process.output),
+        _dumps(process.error),
+        _dumps(process.metadata),
+        process.created_at.isoformat(),
+        process.updated_at.isoformat(),
+        process.started_at.isoformat() if process.started_at is not None else None,
+        process.finished_at.isoformat() if process.finished_at is not None else None,
+    )
+
+
+def _process_from_row(row: sqlite3.Row) -> Process:
+    return Process(
+        id=row["id"],
+        run_id=row["run_id"],
+        process_type=row["process_type"],
+        carrier_id=row["carrier_id"],
+        status=CarrierProcessStatus(row["status"]),
+        priority=row["priority"],
+        attempt=row["attempt"],
+        max_attempts=row["max_attempts"],
+        available_at=_dt(row["available_at"]),
+        lease_owner=row["lease_owner"],
+        lease_expires_at=_dt(row["lease_expires_at"])
+        if row["lease_expires_at"] is not None
+        else None,
+        input=_loads(row["input_json"]),
+        output=_loads(row["output_json"]),
+        error=_loads(row["error_json"]),
+        metadata=_loads(row["metadata"]),
+        created_at=_dt(row["created_at"]),
+        updated_at=_dt(row["updated_at"]),
+        started_at=_dt(row["started_at"]) if row["started_at"] is not None else None,
+        finished_at=_dt(row["finished_at"]) if row["finished_at"] is not None else None,
+    )
+
+
 def _carrier_from_row(row: sqlite3.Row) -> Carrier:
     return Carrier(
         id=row["id"],
@@ -2354,6 +3010,7 @@ __all__ = [
     "Artifact",
     "BridgeDelivery",
     "BridgeDeliveryStatus",
+    "CarrierProcessStatus",
     "Carrier",
     "CarrierRunStatus",
     "CarrierRelation",
@@ -2364,6 +3021,7 @@ __all__ = [
     "Gate",
     "GateStatus",
     "Observation",
+    "Process",
     "Projection",
     "RuntimeBackend",
     "RuntimeBackendService",

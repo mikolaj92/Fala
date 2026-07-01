@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from fala.runtime_backend import (
     Artifact,
+    CarrierProcessStatus,
     CarrierRunStatus,
     Carrier,
     CarrierRelation,
@@ -12,6 +14,7 @@ from fala.runtime_backend import (
     Gate,
     GateStatus,
     Observation,
+    Process,
     Projection,
     Run,
     RuntimeBackend,
@@ -159,6 +162,101 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
+    async def schedule_process(
+        self,
+        process: Process,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self.service.schedule_process(
+            process,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def claim_next_ready_process(
+        self,
+        *,
+        worker_id: str,
+        run_id: str | None = None,
+        lease_seconds: float = 300.0,
+    ) -> Process | None:
+        return await self.service.claim_next_ready_process(
+            worker_id=worker_id,
+            run_id=run_id,
+            lease_seconds=lease_seconds,
+        )
+
+    async def complete_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        output: dict | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self.service.complete_process(
+            run_id=run_id,
+            process_id=process_id,
+            output=output,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def fail_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self.service.fail_process(
+            run_id=run_id,
+            process_id=process_id,
+            error=error,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def retry_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        idempotency_key: str,
+        available_at: datetime | None = None,
+        error: dict | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self.service.retry_process(
+            run_id=run_id,
+            process_id=process_id,
+            available_at=available_at,
+            error=error,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def save_gate(
         self,
         gate: Gate,
@@ -243,6 +341,19 @@ class FalaRuntime:
             run_id=run_id,
             carrier_id=carrier_id,
             kind=kind,
+        )
+
+    async def list_processes(
+        self,
+        *,
+        run_id: str,
+        status: CarrierProcessStatus | None = None,
+        carrier_id: str | None = None,
+    ) -> list[Process]:
+        return await self.service.list_processes(
+            run_id=run_id,
+            status=status,
+            carrier_id=carrier_id,
         )
 
     async def list_gates(

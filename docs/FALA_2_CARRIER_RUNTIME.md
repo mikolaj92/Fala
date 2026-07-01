@@ -20,6 +20,8 @@ The current Carrier-first path lives in `fala.runtime_backend`:
   carriers.
 - `Artifact` records immutable artifact metadata in SQLite. Artifact bytes stay
   in an `ArtifactStore`, usually the filesystem store.
+- `Process` records schedulable Carrier-first work with transactional SQLite
+  claim/lease, retry, completion, and failure operations.
 - `CarrierWorkerContext` in `fala.sdk` is the worker payload/env helper for v2 adapters.
 - `RuntimeRef`, `RunRef`, and `EventRef` identify other Fala runtimes, runs,
   and events without adding a non-SQLite first-party backend.
@@ -63,6 +65,9 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
 - Observation: a typed measurement or fact reported about a carrier.
 - Artifact: metadata for materialized output such as reports, extracts, or
   evidence snapshots. SQLite stores metadata; content lives in an artifact store.
+- Process: a scheduled execution unit. Current statuses are `pending`, `ready`,
+  `running`, `waiting`, `retry_wait`, `succeeded`, `failed`,
+  `cancel_requested`, `cancelled`, and `timed_out`.
 - Gate: a first-class decision point such as human review, approval, expiry, or
   cancellation.
 - Projection: a rebuildable read model keyed by run and projection name.
@@ -93,6 +98,7 @@ The conformance checks cover:
 - idempotent command submission;
 - ordered command-linked events;
 - observations, artifacts, gates, and projections;
+- process scheduling, atomic claim/lease, retry, fail, and completion;
 - bridge inbox/outbox persistence.
 
 ## CLI Inspection
@@ -107,6 +113,7 @@ uv run fala carriers inspect --db /tmp/fala-carrier.sqlite --run-id run_case --c
 uv run fala carrier-types list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala carrier-relations list --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
 uv run fala artifacts list --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
+uv run fala processes list --db /tmp/fala-carrier.sqlite --run-id run_case --status ready
 uv run fala events list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala observations list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala gates list --db /tmp/fala-carrier.sqlite --run-id run_case

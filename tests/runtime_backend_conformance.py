@@ -5,6 +5,7 @@ from fala.runtime_backend import (
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
+    CarrierProcessStatus,
     CarrierRunStatus,
     CarrierRelation,
     CarrierType,
@@ -12,6 +13,7 @@ from fala.runtime_backend import (
     Gate,
     GateStatus,
     Observation,
+    Process,
     Projection,
     RuntimeBackend,
     RuntimeBudget,
@@ -157,6 +159,79 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         carrier_id=carrier.id,
         kind="report",
     ) == [artifact]
+
+    process = Process(
+        id="process_score",
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+        process_type="score",
+        status=CarrierProcessStatus.ready,
+        max_attempts=2,
+        input={"carrier_id": carrier.id},
+    )
+    await backend.put_process(process)
+    assert await backend.list_processes(
+        run_id=carrier.run_id,
+        status=CarrierProcessStatus.ready,
+    ) == [process]
+    claimed = await backend.claim_next_ready_process(
+        run_id=carrier.run_id,
+        worker_id="worker_1",
+        lease_seconds=30,
+    )
+    assert claimed is not None
+    assert claimed.status == CarrierProcessStatus.running
+    assert claimed.attempt == 1
+    assert claimed.lease_owner == "worker_1"
+    assert (
+        await backend.claim_next_ready_process(
+            run_id=carrier.run_id,
+            worker_id="worker_2",
+            lease_seconds=30,
+        )
+        is None
+    )
+    completed = await backend.complete_process(
+        run_id=carrier.run_id,
+        process_id=process.id,
+        output={"score": 1},
+    )
+    assert completed.status == CarrierProcessStatus.succeeded
+    assert completed.output == {"score": 1}
+
+    retry_process = Process(
+        id="process_retry",
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+        process_type="retryable",
+        status=CarrierProcessStatus.ready,
+        max_attempts=2,
+    )
+    await backend.put_process(retry_process)
+    claimed_retry = await backend.claim_next_ready_process(
+        run_id=carrier.run_id,
+        worker_id="worker_1",
+    )
+    assert claimed_retry is not None
+    failed = await backend.fail_process(
+        run_id=carrier.run_id,
+        process_id=retry_process.id,
+        error={"message": "temporary"},
+    )
+    assert failed.status == CarrierProcessStatus.failed
+    waiting = await backend.retry_process(
+        run_id=carrier.run_id,
+        process_id=retry_process.id,
+        error={"message": "try again"},
+    )
+    assert waiting.status == CarrierProcessStatus.retry_wait
+    claimed_again = await backend.claim_next_ready_process(
+        run_id=carrier.run_id,
+        worker_id="worker_2",
+    )
+    assert claimed_again is not None
+    assert claimed_again.status == CarrierProcessStatus.running
+    assert claimed_again.attempt == 2
 
     gate = Gate(
         id="gate_review",

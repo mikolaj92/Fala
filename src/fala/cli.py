@@ -164,6 +164,7 @@ from fala.queue_bridge import (
     write_jsonl,
 )
 from fala.registry import PipelineRegistry
+from fala.runtime_backend import CarrierProcessStatus
 from fala.runtime_backend import CarrierRunStatus
 from fala.runtime_backend import GateStatus as CarrierGateStatus
 from fala.runtime_backend import Run as CarrierRun
@@ -1742,6 +1743,30 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_carrier_runtime_db_run_args(artifacts_inspect)
     artifacts_inspect.add_argument("--artifact-id", required=True)
 
+    processes = subparsers.add_parser(
+        "processes",
+        help="Inspect Carrier-first runtime processes.",
+    )
+    process_subparsers = processes.add_subparsers(
+        dest="process_command",
+        required=True,
+    )
+    processes_list = process_subparsers.add_parser("list", help="List processes.")
+    _add_carrier_runtime_db_run_args(processes_list)
+    processes_list.add_argument(
+        "--status",
+        choices=[status.value for status in CarrierProcessStatus],
+        default=None,
+    )
+    processes_list.add_argument("--carrier-id", default=None)
+    processes_list.add_argument("--jsonl", action="store_true")
+    processes_inspect = process_subparsers.add_parser(
+        "inspect",
+        help="Inspect one process.",
+    )
+    _add_carrier_runtime_db_run_args(processes_inspect)
+    processes_inspect.add_argument("--process-id", required=True)
+
     observations = subparsers.add_parser(
         "observations",
         help="Inspect Carrier-first runtime observations.",
@@ -2799,6 +2824,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "events",
         "gates",
         "observations",
+        "processes",
         "projections",
         "runs",
     }:
@@ -4186,6 +4212,28 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             "ok": artifact is not None,
             "artifact": artifact.model_dump(mode="json")
             if artifact is not None
+            else None,
+        }
+    if args.command == "processes":
+        if args.process_command == "list":
+            processes = await backend.list_processes(
+                run_id=args.run_id,
+                status=CarrierProcessStatus(args.status) if args.status else None,
+                carrier_id=args.carrier_id,
+            )
+            return _carrier_runtime_list_result(
+                "processes",
+                processes,
+                jsonl=args.jsonl,
+            )
+        process = await backend.get_process(
+            run_id=args.run_id,
+            process_id=args.process_id,
+        )
+        return {
+            "ok": process is not None,
+            "process": process.model_dump(mode="json")
+            if process is not None
             else None,
         }
     if args.command == "observations":

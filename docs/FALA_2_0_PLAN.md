@@ -48,9 +48,9 @@ The current implementation already has useful pieces:
 The current implementation also has mismatches with the Fala 2.0 target:
 
 - The legacy process runtime still uses `Document` as its public vocabulary.
-- `Run`, `Carrier`, `CarrierType`, `CarrierRelation`, `Observation`,
+- `Run`, `Carrier`, `CarrierType`, `CarrierRelation`, `Process`, `Observation`,
   `RuntimeBackend`, `RuntimeRef`, `RunRef`, and `EventRef` exist for the new
-  Carrier-first path, but they do not yet cover every process/run scheduling
+  Carrier-first path, but they do not yet cover every legacy scheduler/adaptor
   operation.
 - The legacy storage boundary is still `StateStore`; the new `RuntimeBackend`
   contract exists beside it rather than replacing it everywhere.

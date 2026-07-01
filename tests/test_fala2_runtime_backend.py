@@ -38,6 +38,7 @@ from fala.runtime_backend import (
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
+    CarrierProcessStatus,
     CarrierRunStatus,
     CarrierRelation,
     CarrierType,
@@ -46,6 +47,7 @@ from fala.runtime_backend import (
     Gate,
     GateStatus,
     Observation,
+    Process,
     Projection,
     RuntimeBudget,
     RuntimeCommand,
@@ -375,6 +377,82 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_fala_runtime_schedules_claims_and_completes_processes(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                await runtime.create_run(
+                    Run(id="run_processes"),
+                    idempotency_key="run_processes:create",
+                )
+                carrier = Carrier(
+                    id="carrier_process",
+                    run_id="run_processes",
+                    carrier_type="case",
+                )
+                await runtime.accept_carrier(
+                    carrier,
+                    idempotency_key="run_processes:carrier:carrier_process",
+                )
+                process = Process(
+                    id="process_score",
+                    run_id="run_processes",
+                    carrier_id=carrier.id,
+                    process_type="score",
+                    status=CarrierProcessStatus.ready,
+                    input={"score": 1},
+                )
+
+                scheduled, schedule_submission = await runtime.schedule_process(
+                    process,
+                    idempotency_key="run_processes:process:score",
+                )
+                replayed, replay_submission = await runtime.schedule_process(
+                    process.model_copy(update={"input": {"score": 2}}),
+                    idempotency_key="run_processes:process:score",
+                )
+                claimed = await runtime.claim_next_ready_process(
+                    run_id="run_processes",
+                    worker_id="worker_1",
+                    lease_seconds=30,
+                )
+                completed, complete_submission = await runtime.complete_process(
+                    run_id="run_processes",
+                    process_id=process.id,
+                    output={"score": 1},
+                    idempotency_key="run_processes:process:score:complete",
+                )
+
+                self.assertEqual(scheduled, process)
+                self.assertEqual(replayed, process)
+                self.assertFalse(schedule_submission.replayed)
+                self.assertTrue(replay_submission.replayed)
+                self.assertIsNotNone(claimed)
+                self.assertEqual(claimed.status, CarrierProcessStatus.running)
+                self.assertEqual(claimed.lease_owner, "worker_1")
+                self.assertEqual(completed.status, CarrierProcessStatus.succeeded)
+                self.assertEqual(completed.output, {"score": 1})
+                self.assertFalse(complete_submission.replayed)
+                self.assertEqual(
+                    await runtime.list_processes(
+                        run_id="run_processes",
+                        status=CarrierProcessStatus.succeeded,
+                    ),
+                    [completed],
+                )
+                events = await runtime.list_events(run_id="run_processes")
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    [
+                        "run.created",
+                        "carrier.accepted",
+                        "process.scheduled",
+                        "process.completed",
+                    ],
+                )
+
+        asyncio.run(scenario())
+
     def test_cli_inspects_carrier_runtime_state_without_web_stack(self) -> None:
         async def scenario(db_path: Path) -> None:
             runtime = FalaRuntime.sqlite(db_path)
@@ -430,6 +508,17 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     content_hash="sha256:abc",
                 ),
                 idempotency_key="run_cli:artifact:artifact_cli",
+            )
+            await runtime.schedule_process(
+                Process(
+                    id="process_cli",
+                    run_id="run_cli",
+                    carrier_id=stored.id,
+                    process_type="score",
+                    status=CarrierProcessStatus.ready,
+                    input={"case_id": "CLI-1"},
+                ),
+                idempotency_key="run_cli:process:process_cli",
             )
             await runtime.record_observation(
                 Observation(
@@ -609,6 +698,34 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertTrue(inspected_artifact["ok"])
             self.assertEqual(inspected_artifact["artifact"]["size_bytes"], 3)
 
+            processes = _run_cli_json(
+                "processes",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--carrier-id",
+                "carrier_cli",
+                "--status",
+                "ready",
+            )
+            self.assertEqual(processes["count"], 1)
+            self.assertEqual(processes["processes"][0]["id"], "process_cli")
+
+            inspected_process = _run_cli_json(
+                "processes",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--process-id",
+                "process_cli",
+            )
+            self.assertTrue(inspected_process["ok"])
+            self.assertEqual(inspected_process["process"]["process_type"], "score")
+
             events = _run_cli_json(
                 "events",
                 "list",
@@ -625,6 +742,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     "carrier.accepted",
                     "carrier_relation.recorded",
                     "artifact.recorded",
+                    "process.scheduled",
                     "observation.recorded",
                     "gate.saved",
                 ],
