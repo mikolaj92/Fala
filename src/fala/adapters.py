@@ -4,482 +4,257 @@ import asyncio
 import inspect
 import json
 import os
-import re
-import time
-from collections.abc import Callable
+import tempfile
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Protocol
 
 from fala.errors import FalaAdapterError
-from fala.sdk import PROCESS_RUNTIME_EVENT_PREFIX
-
-from fala.models import (
-    AdapterSpec,
-    ProcessEvent,
-    ProcessExecutionContext,
-    ProcessOutput,
-    ProcessSpec,
-    ProcessStatus,
-)
-
-SUBPROCESS_EVENT_PREFIX = PROCESS_RUNTIME_EVENT_PREFIX
-EventSink = Callable[[ProcessEvent], Any]
+from fala.models import CarrierAdapterSpec
 
 
-class ProcessAdapterError(FalaAdapterError):
-    pass
+@dataclass(frozen=True)
+class StepRunRequest:
+    run_id: str
+    process_id: str
+    adapter: CarrierAdapterSpec
+    carrier_id: str | None = None
+    input: dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
+    work_dir: Path | None = None
 
 
-class ProcessAdapter(Protocol):
-    async def run(
-        self,
-        spec: ProcessSpec,
-        context: ProcessExecutionContext,
-        *,
-        event_sink: EventSink | None = None,
-    ) -> ProcessOutput:
-        ...
+@dataclass(frozen=True)
+class StepRunResult:
+    output: dict[str, Any] = field(default_factory=dict)
+    stdout: str = ""
+    stderr: str = ""
+    returncode: int | None = None
+    waiting: bool = False
+    gate_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class SubprocessAdapter:
-    async def run(
-        self,
-        spec: ProcessSpec,
-        context: ProcessExecutionContext,
-        *,
-        event_sink: EventSink | None = None,
-    ) -> ProcessOutput:
-        command = spec.adapter.command
-        if not command:
-            raise ProcessAdapterError(f"Process {spec.id!r} missing subprocess command")
+class StepAdapter(Protocol):
+    async def run(self, request: StepRunRequest) -> StepRunResult: ...
 
-        env = _subprocess_env(spec, context)
-        payload = context.model_dump_json().encode("utf-8")
-        started = time.monotonic()
-        proc = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=spec.adapter.cwd,
+
+class PythonFunctionStepAdapter:
+    async def run(self, request: StepRunRequest) -> StepRunResult:
+        if request.adapter.kind != "python_function":
+            raise FalaAdapterError("python_function adapter received wrong adapter kind")
+        if not request.adapter.ref:
+            raise FalaAdapterError("python_function adapter requires ref")
+
+        function = _load_ref(request.adapter.ref)
+        result = function(request)
+        if inspect.isawaitable(result):
+            result = await result
+        return _coerce_result(result)
+
+
+class SubprocessStepAdapter:
+    async def run(self, request: StepRunRequest) -> StepRunResult:
+        if request.adapter.kind != "subprocess":
+            raise FalaAdapterError("subprocess adapter received wrong adapter kind")
+        if not request.adapter.command:
+            raise FalaAdapterError("subprocess adapter requires command")
+
+        if request.work_dir is None:
+            with tempfile.TemporaryDirectory(prefix="fala-step-") as tmp:
+                return await self._run_in_dir(request, Path(tmp))
+        return await self._run_in_dir(request, request.work_dir)
+
+    async def _run_in_dir(self, request: StepRunRequest, root: Path) -> StepRunResult:
+        input_dir = root / "input"
+        output_dir = root / "output"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = input_dir / "manifest.json"
+        result_path = output_dir / "result.json"
+        manifest_path.write_text(
+            json.dumps(_manifest(request), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        adapter_env = _resolve_adapter_env(request.adapter.env)
+        redacted_values = {
+            value for value in adapter_env.values() if value
+        }
+
+        env = {
+            **os.environ,
+            **adapter_env,
+            "FALA_STEP_INPUT_DIR": str(input_dir),
+            "FALA_STEP_OUTPUT_DIR": str(output_dir),
+            "FALA_STEP_MANIFEST": str(manifest_path),
+        }
+        process = await asyncio.create_subprocess_exec(
+            *request.adapter.command,
+            cwd=request.adapter.cwd,
             env=env,
-            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-
         try:
-            stdout, stderr_text, event_count = await asyncio.wait_for(
-                _communicate_with_event_stream(
-                    proc,
-                    payload=payload,
-                    context=context,
-                    event_sink=event_sink,
-                ),
-                timeout=spec.adapter.timeout_seconds or spec.timeout_seconds,
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=request.adapter.timeout_seconds,
             )
-        except asyncio.TimeoutError as exc:
-            proc.kill()
-            await proc.wait()
-            raise ProcessAdapterError(f"Process {spec.id!r} subprocess timed out") from exc
+        except TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise FalaAdapterError("subprocess adapter timed out") from exc
 
-        if proc.returncode != 0:
-            message = stderr_text.strip()
-            raise ProcessAdapterError(
-                f"Process {spec.id!r} subprocess failed with exit {proc.returncode}: {message}"
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        stdout_text = _redact(stdout_text, redacted_values)
+        stderr_text = _redact(stderr_text, redacted_values)
+        if process.returncode != 0:
+            raise FalaAdapterError(
+                f"subprocess adapter failed with exit {process.returncode}: "
+                f"{stderr_text.strip()}"
             )
-
-        text = stdout.decode("utf-8", errors="replace")
-        decoded = _decode_subprocess_json(text, spec.id)
-        output = _normalize_output(decoded, spec.id)
-
-        runtime_metadata: dict[str, Any] = {
-            "adapter_kind": "subprocess",
-            "duration_seconds": round(time.monotonic() - started, 6),
-            "exit_code": proc.returncode,
-        }
-        if event_count:
-            runtime_metadata["event_count"] = event_count
-        if stderr_text:
-            runtime_metadata["stderr_tail"] = stderr_text[-4000:]
-        return _with_runtime_metadata(output, runtime_metadata)
+        if not result_path.exists():
+            raise FalaAdapterError("subprocess adapter did not write output/result.json")
+        output = _load_output_result(result_path)
+        return StepRunResult(
+            output=output,
+            stdout=stdout_text,
+            stderr=stderr_text,
+            returncode=process.returncode,
+        )
 
 
-class HTTPProcessAdapter:
-    async def run(
-        self,
-        spec: ProcessSpec,
-        context: ProcessExecutionContext,
-        *,
-        event_sink: EventSink | None = None,
-    ) -> ProcessOutput:
-        url = spec.adapter.url
-        if not url:
-            raise ProcessAdapterError(f"Process {spec.id!r} missing http adapter url")
+class ManualGateStepAdapter:
+    async def run(self, request: StepRunRequest) -> StepRunResult:
+        if request.adapter.kind != "manual_gate":
+            raise FalaAdapterError("manual_gate adapter received wrong adapter kind")
+        return StepRunResult(
+            waiting=True,
+            gate_id=f"gate:{request.run_id}:{request.process_id}",
+            output={"status": "waiting"},
+        )
 
-        timeout = spec.adapter.timeout_seconds or spec.timeout_seconds
-        started = time.monotonic()
-        try:
-            import httpx
-        except ImportError as exc:
-            raise ProcessAdapterError(
-                "httpx is required to run http process adapters"
-            ) from exc
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, json=context.model_dump(mode="json"))
-                response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise ProcessAdapterError(
-                f"Process {spec.id!r} http adapter failed with status "
-                f"{exc.response.status_code}: {exc.response.text}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise ProcessAdapterError(f"Process {spec.id!r} http adapter failed: {exc}") from exc
 
-        try:
-            decoded = response.json()
-        except ValueError as exc:
-            raise ProcessAdapterError(
-                f"Process {spec.id!r} http adapter returned non-JSON response"
-            ) from exc
-        return _with_runtime_metadata(
-            _normalize_output(decoded, spec.id),
-            {
-                "adapter_kind": "http",
-                "duration_seconds": round(time.monotonic() - started, 6),
-                "http_status": response.status_code,
+class FalaRuntimeStepAdapter:
+    async def run(self, request: StepRunRequest) -> StepRunResult:
+        if request.adapter.kind != "fala_runtime":
+            raise FalaAdapterError("fala_runtime adapter received wrong adapter kind")
+        if not request.adapter.runtime_ref:
+            raise FalaAdapterError("fala_runtime adapter requires runtime_ref")
+        return StepRunResult(
+            waiting=True,
+            output={
+                "runtime_ref": request.adapter.runtime_ref,
+                "status": "submitted",
             },
         )
 
 
-class QueueProcessAdapter:
-    """Broker-agnostic slot for queue-backed processes.
-
-    Queue steps are executed by external workers that claim and write output
-    through the process-runtime API. The control plane never calls business
-    handlers in-process for queue steps.
-    """
-
-    async def run(
-        self,
-        spec: ProcessSpec,
-        context: ProcessExecutionContext,
-        *,
-        event_sink: EventSink | None = None,
-    ) -> ProcessOutput:
-        queue = spec.adapter.queue
-        if not queue:
-            raise ProcessAdapterError(f"Process {spec.id!r} missing queue adapter queue")
-        raise ProcessAdapterError(
-            f"Process {spec.id!r} queue {queue!r} cannot run in-process; "
-            "use process-runtime-worker --adapter-kind queue --command or an external worker"
-        )
+def create_step_adapter(kind: str) -> StepAdapter:
+    if kind == "python_function":
+        return PythonFunctionStepAdapter()
+    if kind == "subprocess":
+        return SubprocessStepAdapter()
+    if kind == "manual_gate":
+        return ManualGateStepAdapter()
+    if kind == "fala_runtime":
+        return FalaRuntimeStepAdapter()
+    raise FalaAdapterError(f"unknown step adapter kind: {kind!r}")
 
 
-class ManualProcessAdapter:
-    """Manual gates must be completed through the runtime control plane."""
-
-    async def run(
-        self,
-        spec: ProcessSpec,
-        context: ProcessExecutionContext,
-        *,
-        event_sink: EventSink | None = None,
-    ) -> ProcessOutput:
-        raise ProcessAdapterError(
-            f"Process {spec.id!r} manual adapter cannot run in-process; "
-            "write a ProcessOutput through complete-process or the runtime API"
-        )
-
-
-class ExternalCommandAdapter:
-    """Run a claimed process through a worker-local command.
-
-    This is useful for queue-backed processes: the control plane owns the claim
-    and observability, while a remote worker process owns execution.
-    """
-
-    def __init__(
-        self,
-        *,
-        command: list[str],
-        cwd: str | None = None,
-        env: dict[str, str] | None = None,
-        timeout_seconds: float | None = None,
-    ) -> None:
-        if not command:
-            raise ValueError("External command adapter requires a command")
-        self.command = list(command)
-        self.cwd = cwd
-        self.env = dict(env or {})
-        self.timeout_seconds = timeout_seconds
-        self._subprocess = SubprocessAdapter()
-
-    async def run(
-        self,
-        spec: ProcessSpec,
-        context: ProcessExecutionContext,
-        *,
-        event_sink: EventSink | None = None,
-    ) -> ProcessOutput:
-        claimed_adapter_kind = spec.adapter.kind
-        command_spec = spec.model_copy(
-            update={
-                "adapter": AdapterSpec(
-                    kind="subprocess",
-                    command=self.command,
-                    cwd=self.cwd,
-                    env=self.env,
-                    timeout_seconds=(
-                        self.timeout_seconds
-                        or spec.adapter.timeout_seconds
-                        or spec.timeout_seconds
-                    ),
-                )
-            }
-        )
-        output = await self._subprocess.run(
-            command_spec,
-            context,
-            event_sink=event_sink,
-        )
-        runtime_metadata = dict(output.metadata.get("process_runtime") or {})
-        runtime_metadata.update(
-            {
-                "execution_adapter_kind": "external_command",
-                "claimed_adapter_kind": claimed_adapter_kind,
-            }
-        )
-        metadata = dict(output.metadata)
-        metadata["process_runtime"] = runtime_metadata
-        return output.model_copy(update={"metadata": metadata})
-
-
-class AdapterRegistry:
-    def __init__(self, adapters: dict[str, ProcessAdapter] | None = None) -> None:
-        self._adapters = dict(adapters or {})
-
-    @classmethod
-    def default(cls) -> "AdapterRegistry":
-        return cls(
-            {
-                "subprocess": SubprocessAdapter(),
-                "http": HTTPProcessAdapter(),
-                "queue": QueueProcessAdapter(),
-                "manual": ManualProcessAdapter(),
-            }
-        )
-
-    def register(self, kind: str, adapter: ProcessAdapter) -> None:
-        self._adapters[kind] = adapter
-
-    def adapter(self, kind: str) -> ProcessAdapter:
-        try:
-            return self._adapters[kind]
-        except KeyError as exc:
-            raise ProcessAdapterError(f"No process adapter registered for kind {kind!r}") from exc
-
-    async def run(
-        self,
-        spec: ProcessSpec,
-        context: ProcessExecutionContext,
-        *,
-        event_sink: EventSink | None = None,
-    ) -> ProcessOutput:
-        return await self.adapter(spec.adapter.kind).run(
-            spec,
-            context,
-            event_sink=event_sink,
-        )
-
-
-async def _communicate_with_event_stream(
-    proc: asyncio.subprocess.Process,
-    *,
-    payload: bytes,
-    context: ProcessExecutionContext,
-    event_sink: EventSink | None,
-) -> tuple[bytes, str, int]:
-    stdout_task = asyncio.create_task(_read_stdout(proc))
-    stderr_task = asyncio.create_task(
-        _read_stderr_events(proc, context=context, event_sink=event_sink)
-    )
-    write_task = asyncio.create_task(_write_stdin(proc, payload))
-
+def _load_ref(ref: str) -> Any:
+    module_name, separator, attr_name = ref.partition(":")
+    if not separator:
+        module_name, separator, attr_name = ref.rpartition(".")
+    if not module_name or not attr_name:
+        raise FalaAdapterError(f"invalid python_function ref: {ref!r}")
     try:
-        await proc.wait()
-        await write_task
-        stdout = await stdout_task
-        stderr_text, event_count = await stderr_task
-        return stdout, stderr_text, event_count
-    except BaseException:
-        for task in (stdout_task, stderr_task, write_task):
-            task.cancel()
-        await asyncio.gather(stdout_task, stderr_task, write_task, return_exceptions=True)
-        raise
+        return getattr(import_module(module_name), attr_name)
+    except (ImportError, AttributeError) as exc:
+        raise FalaAdapterError(f"cannot load python_function ref: {ref!r}") from exc
 
 
-async def _write_stdin(proc: asyncio.subprocess.Process, payload: bytes) -> None:
-    if proc.stdin is None:
-        return
-    try:
-        proc.stdin.write(payload)
-        await proc.stdin.drain()
-    except (BrokenPipeError, ConnectionResetError):
-        return
-    finally:
-        proc.stdin.close()
+def _coerce_result(value: Any) -> StepRunResult:
+    if isinstance(value, StepRunResult):
+        return value
+    if isinstance(value, Mapping):
+        return StepRunResult(output=dict(value))
+    raise FalaAdapterError("python_function adapter must return dict or StepRunResult")
 
 
-async def _read_stdout(proc: asyncio.subprocess.Process) -> bytes:
-    if proc.stdout is None:
-        return b""
-    return await proc.stdout.read()
-
-
-async def _read_stderr_events(
-    proc: asyncio.subprocess.Process,
-    *,
-    context: ProcessExecutionContext,
-    event_sink: EventSink | None,
-) -> tuple[str, int]:
-    if proc.stderr is None:
-        return "", 0
-
-    stderr_lines: list[str] = []
-    event_count = 0
-    while line := await proc.stderr.readline():
-        text = line.decode("utf-8", errors="replace").rstrip("\r\n")
-        event = _event_from_stderr_line(text, context)
-        if event is None:
-            stderr_lines.append(text)
-            continue
-        event_count += 1
-        if event_sink is not None:
-            result = event_sink(event)
-            if inspect.isawaitable(result):
-                await result
-    return "\n".join(line for line in stderr_lines if line).strip(), event_count
-
-
-def _event_from_stderr_line(
-    text: str,
-    context: ProcessExecutionContext,
-) -> ProcessEvent | None:
-    if not text.startswith(SUBPROCESS_EVENT_PREFIX):
-        return None
-    raw = text[len(SUBPROCESS_EVENT_PREFIX):].strip()
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    event_type = payload.get("type")
-    if not isinstance(event_type, str) or not event_type:
-        return None
-    data = payload.get("data") or {}
-    if not isinstance(data, dict):
-        data = {"value": data}
-    status = payload.get("status")
-    try:
-        parsed_status = ProcessStatus(status) if status else None
-    except ValueError:
-        return None
-    return ProcessEvent(
-        run_id=context.run_id,
-        document_id=context.document_id,
-        process_id=context.process_id,
-        type=event_type,
-        status=parsed_status,
-        data=data,
-    )
-
-
-def _subprocess_env(spec: ProcessSpec, context: ProcessExecutionContext) -> dict[str, str]:
-    env = os.environ.copy()
-    env.update(spec.adapter.env)
-    env.update(_runtime_env(spec, context, env))
-    return env
-
-
-def _runtime_env(
-    spec: ProcessSpec,
-    context: ProcessExecutionContext,
-    env: dict[str, str],
-) -> dict[str, str]:
-    artifact_dir = _process_artifact_dir(spec, context, env)
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+def _manifest(request: StepRunRequest) -> dict[str, Any]:
+    adapter = request.adapter.model_dump(mode="json")
+    if adapter.get("env"):
+        adapter["env"] = {
+            key: _redacted_env_value(value)
+            for key, value in adapter["env"].items()
+        }
     return {
-        "PROCESS_RUNTIME_PIPELINE_ID": context.pipeline_id,
-        "PROCESS_RUNTIME_RUN_ID": context.run_id,
-        "PROCESS_RUNTIME_DOCUMENT_ID": context.document_id,
-        "PROCESS_RUNTIME_PROCESS_ID": context.process_id,
-        "PROCESS_RUNTIME_ATTEMPT": str(context.attempt),
-        "PROCESS_RUNTIME_ARTIFACT_DIR": str(artifact_dir),
+        "run_id": request.run_id,
+        "process_id": request.process_id,
+        "carrier_id": request.carrier_id,
+        "input": request.input,
+        "config": request.config,
+        "adapter": adapter,
     }
 
 
-def _process_artifact_dir(
-    spec: ProcessSpec,
-    context: ProcessExecutionContext,
-    env: dict[str, str],
-) -> Path:
-    configured_root = (
-        env.get("PROCESS_RUNTIME_ARTIFACT_ROOT")
-        or ".flow-runs/process-artifacts"
-    )
-    root = Path(configured_root).expanduser()
-    if not root.is_absolute():
-        base = Path(spec.adapter.cwd).expanduser() if spec.adapter.cwd else Path.cwd()
-        root = base / root
-    return (
-        root
-        / _slug(context.run_id)
-        / _slug(context.document_id)
-        / _slug(context.process_id)
-        / f"attempt-{context.attempt}"
-    ).resolve()
+def _resolve_adapter_env(env: Mapping[str, str]) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for key, value in env.items():
+        ref = _env_ref_name(value)
+        if ref is None:
+            resolved[key] = value
+            continue
+        if ref not in os.environ:
+            raise FalaAdapterError(f"adapter env references missing variable: {ref}")
+        resolved[key] = os.environ[ref]
+    return resolved
 
 
-def _slug(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._") or "item"
+def _redacted_env_value(value: str) -> str:
+    ref = _env_ref_name(value)
+    if ref is not None:
+        return f"${{env:{ref}}}"
+    return "<redacted>"
 
 
-def _normalize_output(value: Any, process_id: str) -> ProcessOutput:
-    if isinstance(value, ProcessOutput):
-        return value
-    if isinstance(value, dict):
-        return ProcessOutput.model_validate(value)
-    raise ProcessAdapterError(
-        f"Process {process_id!r} returned unsupported output type {type(value).__name__}"
-    )
+def _env_ref_name(value: str) -> str | None:
+    if value.startswith("${env:") and value.endswith("}"):
+        name = value[6:-1]
+        if not name:
+            raise FalaAdapterError("adapter env reference cannot be empty")
+        return name
+    return None
 
 
-def _with_runtime_metadata(output: ProcessOutput, runtime_metadata: dict[str, Any]) -> ProcessOutput:
-    metadata = dict(output.metadata)
-    existing = metadata.get("process_runtime")
-    if isinstance(existing, dict):
-        merged = {**existing, **runtime_metadata}
-    else:
-        merged = dict(runtime_metadata)
-    metadata["process_runtime"] = merged
-    return output.model_copy(update={"metadata": metadata})
+def _redact(text: str, secrets: set[str]) -> str:
+    redacted = text
+    for secret in sorted(secrets, key=len, reverse=True):
+        redacted = redacted.replace(secret, "<redacted>")
+    return redacted
 
 
-def _decode_subprocess_json(text: str, process_id: str) -> Any:
+def _load_output_result(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise FalaAdapterError("subprocess output/result.json is not valid JSON") from exc
+    if not isinstance(loaded, dict):
+        raise FalaAdapterError("subprocess output/result.json must contain an object")
+    return loaded
 
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped[0] not in "[{":
-            continue
-        try:
-            return json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
 
-    raise ProcessAdapterError(
-        f"Process {process_id!r} subprocess returned non-JSON stdout: {text!r}"
-    )
+__all__ = [
+    "FalaRuntimeStepAdapter",
+    "ManualGateStepAdapter",
+    "PythonFunctionStepAdapter",
+    "StepAdapter",
+    "StepRunRequest",
+    "StepRunResult",
+    "SubprocessStepAdapter",
+    "create_step_adapter",
+]

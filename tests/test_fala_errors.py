@@ -2,21 +2,19 @@ from __future__ import annotations
 
 import unittest
 
-from fala import (
-    ContractLintError,
-    EmbeddedRuntimeConfigError,
+from fala.errors import (
     FalaAdapterError,
+    FalaBackendError,
+    FalaBudgetExceeded,
     FalaConfigurationError,
+    FalaDeadlockDetected,
+    FalaExternalDependencyError,
     FalaHumanRequired,
+    FalaPermanentStepError,
     FalaPolicyBlocked,
     FalaRetryableStepError,
     FalaRuntimeError,
     FalaValidationError,
-    PipelineRegistryError,
-    PipelineRunError,
-    ProcessAdapterError,
-    RuntimeAuthError,
-    RuntimeServiceConcurrencyError,
 )
 
 
@@ -43,23 +41,25 @@ class FalaErrorTests(unittest.TestCase):
         self.assertTrue(FalaHumanRequired("review").human_required)
         self.assertFalse(FalaRuntimeError("plain").retryable)
 
-    def test_existing_errors_use_canonical_taxonomy(self) -> None:
-        self.assertIsInstance(ProcessAdapterError("adapter"), FalaAdapterError)
-        self.assertIsInstance(PipelineRegistryError("registry"), FalaConfigurationError)
-        self.assertIsInstance(PipelineRunError("run"), FalaRuntimeError)
-        self.assertIsInstance(ContractLintError("lint"), FalaValidationError)
-        self.assertIsInstance(
-            EmbeddedRuntimeConfigError("config"),
-            FalaConfigurationError,
-        )
-        self.assertIsInstance(
-            RuntimeServiceConcurrencyError("busy"),
-            FalaRuntimeError,
-        )
-        self.assertIsInstance(RuntimeAuthError(403, "forbidden"), FalaPolicyBlocked)
+    def test_error_taxonomy_is_complete(self) -> None:
+        expected = {
+            FalaAdapterError: "fala.adapter_error",
+            FalaBackendError: "fala.backend_error",
+            FalaBudgetExceeded: "fala.budget_exceeded",
+            FalaConfigurationError: "fala.configuration_error",
+            FalaDeadlockDetected: "fala.deadlock_detected",
+            FalaExternalDependencyError: "fala.external_dependency_error",
+            FalaHumanRequired: "fala.human_required",
+            FalaPermanentStepError: "fala.permanent_step_error",
+            FalaPolicyBlocked: "fala.policy_blocked",
+            FalaRetryableStepError: "fala.retryable_step_error",
+            FalaValidationError: "fala.validation_error",
+        }
 
-    def test_embedded_config_error_keeps_value_error_compatibility(self) -> None:
-        self.assertIsInstance(EmbeddedRuntimeConfigError("bad path"), ValueError)
+        for error_class, code in expected.items():
+            error = error_class("x")
+            self.assertIsInstance(error, FalaRuntimeError)
+            self.assertEqual(error.code, code)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable, Protocol
+from typing import BinaryIO, Iterable, Protocol
 from urllib.parse import unquote, urlparse
 
 from fala.models import ArtifactRef
@@ -63,23 +63,6 @@ class ArtifactStore(Protocol):
         ...
 
     def delete_blobs(self, digests: Iterable[str]) -> list[str]:
-        ...
-
-
-class S3Client(Protocol):
-    def put_object(self, **kwargs: Any) -> Any:
-        ...
-
-    def get_object(self, **kwargs: Any) -> Any:
-        ...
-
-    def head_object(self, **kwargs: Any) -> Any:
-        ...
-
-    def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]:
-        ...
-
-    def delete_objects(self, **kwargs: Any) -> Any:
         ...
 
 
@@ -364,220 +347,6 @@ class MemoryArtifactStore:
         return self._materialized_root / "blobs" / "sha256" / digest[:2] / digest
 
 
-class S3ArtifactStore:
-    """Content-addressed artifact store backed by S3-compatible object storage."""
-
-    def __init__(
-        self,
-        target: str,
-        *,
-        client: S3Client | None = None,
-        materialized_root: str | Path | None = None,
-    ) -> None:
-        parsed = urlparse(target)
-        if parsed.scheme != "s3":
-            raise ValueError("S3 artifact store target must use s3://")
-        if not parsed.netloc:
-            raise ValueError("S3 artifact store target must include a bucket")
-        self.bucket = parsed.netloc
-        self.prefix = unquote(parsed.path).strip("/")
-        self._location = _s3_location(self.bucket, self.prefix)
-        self._client = client or _default_s3_client()
-        self._materialized_root = _resolve_root(
-            materialized_root
-            or Path(tempfile.mkdtemp(prefix="fala-s3-artifacts-"))
-        )
-
-    @property
-    def location(self) -> str:
-        return self._location
-
-    def put_file(
-        self,
-        *,
-        kind: str,
-        path: str | Path,
-        artifact_id: str | None = None,
-        metadata: dict | None = None,
-    ) -> ArtifactRef:
-        source = Path(path).expanduser().resolve()
-        if not source.exists() or not source.is_file():
-            raise FileNotFoundError(f"Artifact source file not found: {source}")
-        digest, size_bytes = _sha256_file(source)
-        key = self._blob_key(digest)
-        if not self._object_exists(key):
-            with source.open("rb") as handle:
-                self._client.put_object(
-                    Bucket=self.bucket,
-                    Key=key,
-                    Body=handle,
-                    Metadata={"sha256": digest},
-                )
-        return self._artifact_ref(
-            kind=kind,
-            digest=digest,
-            size_bytes=size_bytes,
-            filename=source.name,
-            artifact_id=artifact_id,
-            metadata=metadata,
-            key=key,
-        )
-
-    def put_fileobj(
-        self,
-        *,
-        kind: str,
-        fileobj: BinaryIO,
-        filename: str,
-        artifact_id: str | None = None,
-        metadata: dict | None = None,
-    ) -> ArtifactRef:
-        data = fileobj.read()
-        digest = hashlib.sha256(data).hexdigest()
-        key = self._blob_key(digest)
-        if not self._object_exists(key):
-            self._client.put_object(
-                Bucket=self.bucket,
-                Key=key,
-                Body=data,
-                Metadata={"sha256": digest},
-            )
-        return self._artifact_ref(
-            kind=kind,
-            digest=digest,
-            size_bytes=len(data),
-            filename=filename,
-            artifact_id=artifact_id,
-            metadata=metadata,
-            key=key,
-        )
-
-    def open(self, artifact: ArtifactRef) -> BinaryIO:
-        digest = _digest_from_ref(artifact)
-        try:
-            response = self._client.get_object(
-                Bucket=self.bucket,
-                Key=self._blob_key(digest),
-            )
-        except Exception as exc:
-            raise FileNotFoundError("Stored artifact blob not found") from exc
-        body = response["Body"]
-        data = body.read() if hasattr(body, "read") else body
-        return BytesIO(data)
-
-    def resolve(self, artifact: ArtifactRef) -> Path:
-        digest = _digest_from_ref(artifact)
-        target = self._blob_path(digest)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
-            with self.open(artifact) as handle:
-                target.write_bytes(handle.read())
-        return target
-
-    def list_blobs(self) -> list[ArtifactBlobInfo]:
-        prefix = self._blob_prefix()
-        blobs: list[ArtifactBlobInfo] = []
-        token: str | None = None
-        while True:
-            kwargs: dict[str, Any] = {
-                "Bucket": self.bucket,
-                "Prefix": prefix,
-            }
-            if token:
-                kwargs["ContinuationToken"] = token
-            response = self._client.list_objects_v2(**kwargs)
-            for item in response.get("Contents", []) or []:
-                key = str(item.get("Key") or "")
-                digest = Path(key).name.lower()
-                if len(digest) != 64 or any(
-                    char not in "0123456789abcdef" for char in digest
-                ):
-                    continue
-                blobs.append(
-                    ArtifactBlobInfo(
-                        digest=digest,
-                        location=f"s3://{self.bucket}/{key}",
-                        size_bytes=int(item.get("Size") or 0),
-                    )
-                )
-            if not response.get("IsTruncated"):
-                break
-            token = response.get("NextContinuationToken")
-            if not token:
-                break
-        return sorted(blobs, key=lambda item: item.digest)
-
-    def delete_blobs(self, digests: Iterable[str]) -> list[str]:
-        normalized = [
-            digest.lower()
-            for digest in sorted(set(digests))
-            if _valid_sha256_digest(digest)
-        ]
-        deleted: list[str] = []
-        for chunk in _chunks(normalized, 1000):
-            if not chunk:
-                continue
-            objects = [{"Key": self._blob_key(digest)} for digest in chunk]
-            self._client.delete_objects(
-                Bucket=self.bucket,
-                Delete={"Objects": objects, "Quiet": True},
-            )
-            deleted.extend(chunk)
-            for digest in chunk:
-                self._blob_path(digest).unlink(missing_ok=True)
-        return deleted
-
-    def _artifact_ref(
-        self,
-        *,
-        kind: str,
-        digest: str,
-        size_bytes: int,
-        filename: str,
-        artifact_id: str | None,
-        metadata: dict | None,
-        key: str,
-    ) -> ArtifactRef:
-        merged_metadata = dict(metadata or {})
-        merged_metadata.update(
-            {
-                "sha256": digest,
-                "size_bytes": size_bytes,
-                "filename": filename,
-                "storage": {
-                    "backend": "s3",
-                    "bucket": self.bucket,
-                    "key": key,
-                    "content_addressed": True,
-                },
-            }
-        )
-        return ArtifactRef(
-            id=artifact_id or f"artifact_{digest[:12]}",
-            kind=kind,
-            uri=f"{FALA_ARTIFACT_SCHEME}://sha256/{digest}",
-            metadata=merged_metadata,
-        )
-
-    def _object_exists(self, key: str) -> bool:
-        try:
-            self._client.head_object(Bucket=self.bucket, Key=key)
-        except Exception:
-            return False
-        return True
-
-    def _blob_prefix(self) -> str:
-        parts = [self.prefix, "blobs", "sha256"]
-        return "/".join(part.strip("/") for part in parts if part.strip("/"))
-
-    def _blob_key(self, digest: str) -> str:
-        digest = digest.lower()
-        return f"{self._blob_prefix()}/{digest[:2]}/{digest}"
-
-    def _blob_path(self, digest: str) -> Path:
-        return self._materialized_root / "blobs" / "sha256" / digest[:2] / digest
-
-
 def create_artifact_store(target: str | Path | None = None) -> ArtifactStore:
     target_value = os.fspath(
         target
@@ -588,8 +357,6 @@ def create_artifact_store(target: str | Path | None = None) -> ArtifactStore:
     parsed = urlparse(target_value)
     if parsed.scheme == "memory":
         return MemoryArtifactStore(target_value)
-    if parsed.scheme == "s3":
-        return S3ArtifactStore(target_value)
     if parsed.scheme == "file":
         return FileArtifactStore(unquote(parsed.path))
     if not parsed.scheme:
@@ -661,28 +428,3 @@ def _remove_empty_parent_dirs(path: Path, *, stop_at: Path) -> None:
         except OSError:
             return
         current = current.parent
-
-
-def _default_s3_client() -> S3Client:
-    try:
-        import boto3
-    except ImportError as exc:  # pragma: no cover - optional dependency guard
-        raise RuntimeError(
-            "S3 artifact stores require boto3. Install fala[s3] or provide "
-            "an explicit S3-compatible client."
-        ) from exc
-    return boto3.client("s3")
-
-
-def _s3_location(bucket: str, prefix: str) -> str:
-    return f"s3://{bucket}/{prefix}" if prefix else f"s3://{bucket}"
-
-
-def _valid_sha256_digest(value: str) -> bool:
-    digest = value.lower()
-    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
-
-
-def _chunks(items: list[str], size: int) -> Iterable[list[str]]:
-    for index in range(0, len(items), size):
-        yield items[index:index + size]

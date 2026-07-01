@@ -1,6 +1,6 @@
 # Fala 2.0 Carrier Runtime
 
-Fala 2.0 starts from `Carrier`, not `RuntimeDocument`.
+Fala 2.0 starts from `Carrier`.
 
 The current Carrier-first path lives in `fala.runtime_backend`:
 
@@ -34,21 +34,17 @@ The current Carrier-first path lives in `fala.runtime_backend`:
   delegation policies, and `fala runtimes list/inspect` exposes them without a
   web server.
 
-The existing document/process runtime remains the legacy surface while the rest of
-the migration lands. New Fala 2.0 runtime work should use `fala.runtime_backend`
-or `fala.carrier_runtime` and should not add `RuntimeDocument`, `document_id`, or
-`document_type` to the new Carrier APIs. Web/API/client exports are outer
-surfaces and are loaded lazily from `fala`.
+New Fala 2.0 runtime work should use `fala.runtime_backend` or
+`fala.carrier_runtime`. Carrier APIs use `carrier_id` and `carrier_type`.
+Web/API/client exports are outer surfaces and are loaded lazily from `fala`.
 
-Document workflows live in `fala.domain_packs.documents`; see
-`docs/DOCUMENT_DOMAIN_PACK.md` for the Document to Carrier migration mapping.
 Splot arbitration workflows live in `fala.domain_packs.splot`; see
 `docs/SPLOT_DOMAIN_PACK.md` for the domain/core boundary.
 
 ## Core Concepts
 
 - Carrier: the typed unit of information moved by the runtime. It can represent
-  a case, reading, event, document-domain object, or any other domain value.
+  a case, reading, event, source, result, or any other domain value.
 - Run: the lifecycle record for a local Carrier-first execution. Current
   statuses are `created`, `active`, `waiting`, `completed`, `failed`,
   `cancel_requested`, `cancelled`, and `timed_out`.
@@ -74,8 +70,7 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
   `running`, `waiting`, `retry_wait`, `succeeded`, `failed`,
   `cancel_requested`, `cancelled`, and `timed_out`.
 - CarrierWaitGraphDiagnostic: a computed local SQLite wait report from process
-  `input`/`metadata` wait refs and gates. `fala diagnose-waits --db ... --run-id
-  ...` uses it when no legacy `--document-id` is provided.
+  `input`/`metadata` wait refs and gates.
 - Gate: a first-class decision point such as human review, approval, expiry, or
   cancellation.
 - Projection: a rebuildable read model keyed by run and projection name.
@@ -93,6 +88,51 @@ backends are external plugin work. The default Carrier-first path must run with
 only Python and SQLite.
 Use `fala db init --db .fala/state.sqlite`, `fala db migrate --db ...`, and
 `fala db status --db ...` for local schema setup and inspection.
+
+## Carrier Package Schema
+
+Carrier package v2 has a canonical model in `CarrierWorkflowPackageSpec` and a
+loader in `fala.yaml_loader.load_carrier_workflow_package_yaml`. Carrier fields
+are parsed only by the Carrier package loader.
+
+```yaml
+version: "2"
+id: example_flow
+
+carrier_types:
+  - id: input_text
+    media_types: [text/plain]
+
+observation_kinds:
+  - id: text_stats
+
+artifact_kinds:
+  - id: normalized_text
+    media_types: [text/plain]
+
+capabilities:
+  - id: normalize
+    accepts_carrier_types: [input_text]
+    emits_artifact_kinds: [normalized_text]
+    emits_observation_kinds: [text_stats]
+
+flows:
+  - id: basic
+    steps:
+      - id: normalize
+        capability: normalize
+        adapter:
+          kind: python_function
+          ref: examples.steps.normalize_text
+
+runtime:
+  backend:
+    kind: sqlite
+    path: .fala/state.sqlite
+  artifact_store:
+    kind: filesystem
+    root: .fala/artifacts
+```
 
 ## Conformance
 
@@ -133,13 +173,13 @@ uv run fala processes list --db /tmp/fala-carrier.sqlite --run-id run_case --sta
 uv run fala events list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala observations list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala gates list --db /tmp/fala-carrier.sqlite --run-id run_case
-uv run fala gate complete --db /tmp/fala-carrier.sqlite --run-id run_case --gate-id gate_review --value decision=approved
+uv run fala gates complete --db /tmp/fala-carrier.sqlite --run-id run_case --gate-id gate_review --value decision=approved
 uv run fala projections list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala projections rebuild --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala doctor --db /tmp/fala-carrier.sqlite
 uv run fala bridge list --db /tmp/fala-source.sqlite --run-id run_case
 uv run fala bridge deliver --db /tmp/fala-source.sqlite --run-id run_case --delivery-id bridge_1 --target-db /tmp/fala-target.sqlite
-uv run fala trace --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-runtime
+uv run fala trace --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala export-html --db /tmp/fala-carrier.sqlite --run-id run_case --out report.html
 uv run fala export-bundle --db /tmp/fala-carrier.sqlite --run-id run_case --out run_case.fala.zip
 ```
@@ -152,5 +192,5 @@ Run the local-first Carrier runtime example:
 uv run python examples/carrier-runtime/local_first.py /tmp/fala-carrier.sqlite
 ```
 
-The example uses one local SQLite file and exercises a non-document carrier,
-observation, gate, projection, and the document domain pack.
+The example uses one local SQLite file and exercises a carrier, observation,
+gate, and projection.

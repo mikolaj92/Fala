@@ -52,6 +52,19 @@ def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _ensure_runtime_event_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(runtime_events)").fetchall()
+    }
+    if "process_id" not in columns:
+        connection.execute("ALTER TABLE runtime_events ADD COLUMN process_id TEXT")
+    if "schema_version" not in columns:
+        connection.execute(
+            "ALTER TABLE runtime_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
+        )
+
+
 class CarrierRunStatus(StrEnum):
     created = "created"
     active = "active"
@@ -142,7 +155,9 @@ class RuntimeEvent(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("event"))
     run_id: str
     event_type: str
+    schema_version: int = Field(default=1, ge=1)
     carrier_id: str | None = None
+    process_id: str | None = None
     sequence: int | None = None
     command_id: str | None = None
     actor: str | None = None
@@ -570,7 +585,7 @@ class RuntimeBackend(Protocol):
 
 _BRIDGE_TABLES = {"bridge_outbox", "bridge_inbox"}
 _BUILT_IN_PROJECTIONS = ("run_summary",)
-_SQLITE_SCHEMA_VERSION = 2
+_SQLITE_SCHEMA_VERSION = 4
 SQLITE_RUNTIME_SCHEMA_VERSION = _SQLITE_SCHEMA_VERSION
 _TERMINAL_RUN_STATUSES = {
     CarrierRunStatus.completed,
@@ -719,7 +734,9 @@ class SQLiteRuntimeBackend:
                     sequence INTEGER NOT NULL,
                     id TEXT NOT NULL,
                     event_type TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL DEFAULT 1,
                     carrier_id TEXT,
+                    process_id TEXT,
                     command_id TEXT,
                     actor TEXT,
                     correlation_id TEXT,
@@ -891,6 +908,13 @@ class SQLiteRuntimeBackend:
                     ON bridge_outbox (run_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_bridge_inbox_status
                     ON bridge_inbox (run_id, status, updated_at);
+                """
+            )
+            _ensure_runtime_event_columns(connection)
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_runtime_events_process
+                    ON runtime_events (run_id, process_id, sequence)
                 """
             )
             connection.execute(
@@ -1312,9 +1336,9 @@ class SQLiteRuntimeBackend:
                         """
                         INSERT INTO runtime_events (
                             run_id, sequence, id, event_type, carrier_id,
-                            command_id, actor, correlation_id, causation_id,
-                            payload, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            process_id, schema_version, command_id, actor,
+                            correlation_id, causation_id, payload, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             stored_event.run_id,
@@ -1322,6 +1346,8 @@ class SQLiteRuntimeBackend:
                             stored_event.id,
                             stored_event.event_type,
                             stored_event.carrier_id,
+                            stored_event.process_id,
+                            stored_event.schema_version,
                             stored_event.command_id,
                             stored_event.actor,
                             stored_event.correlation_id,
@@ -2470,6 +2496,7 @@ class RuntimeBackendService:
         event = RuntimeEvent(
             run_id=process.run_id,
             carrier_id=process.carrier_id,
+            process_id=process.id,
             event_type="process.scheduled",
             payload={
                 "process_id": process.id,
@@ -2518,6 +2545,9 @@ class RuntimeBackendService:
         correlation_id: str | None = None,
         causation_id: str | None = None,
     ) -> tuple[Process, CommandSubmission]:
+        existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+        if existing is None:
+            raise ValueError(f"Unknown process: {process_id!r}")
         command = RuntimeCommand(
             run_id=run_id,
             command_type="process.complete",
@@ -2529,6 +2559,8 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
+            carrier_id=existing.carrier_id,
+            process_id=process_id,
             event_type="process.completed",
             payload={"process_id": process_id},
         )
@@ -2558,6 +2590,9 @@ class RuntimeBackendService:
         correlation_id: str | None = None,
         causation_id: str | None = None,
     ) -> tuple[Process, CommandSubmission]:
+        existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+        if existing is None:
+            raise ValueError(f"Unknown process: {process_id!r}")
         command = RuntimeCommand(
             run_id=run_id,
             command_type="process.fail",
@@ -2569,6 +2604,8 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
+            carrier_id=existing.carrier_id,
+            process_id=process_id,
             event_type="process.failed",
             payload={"process_id": process_id},
         )
@@ -2599,6 +2636,9 @@ class RuntimeBackendService:
         correlation_id: str | None = None,
         causation_id: str | None = None,
     ) -> tuple[Process, CommandSubmission]:
+        existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+        if existing is None:
+            raise ValueError(f"Unknown process: {process_id!r}")
         command = RuntimeCommand(
             run_id=run_id,
             command_type="process.retry",
@@ -2610,6 +2650,8 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
+            carrier_id=existing.carrier_id,
+            process_id=process_id,
             event_type="process.retry_scheduled",
             payload={"process_id": process_id},
         )
@@ -2628,6 +2670,54 @@ class RuntimeBackendService:
             ),
             submission,
         )
+
+    async def wait_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        output: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+        if existing is None:
+            raise ValueError(f"Unknown process: {process_id!r}")
+        command = RuntimeCommand(
+            run_id=run_id,
+            command_type="process.wait",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"process_id": process_id},
+        )
+        event = RuntimeEvent(
+            run_id=run_id,
+            carrier_id=existing.carrier_id,
+            process_id=process_id,
+            event_type="process.waiting",
+            payload={"process_id": process_id},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            replayed = await self.backend.get_process(run_id=run_id, process_id=process_id)
+            if replayed is None:
+                raise ValueError(f"Replayed process wait has no stored process: {process_id!r}")
+            return replayed, submission
+        waiting = existing.model_copy(
+            update={
+                "status": CarrierProcessStatus.waiting,
+                "lease_owner": None,
+                "lease_expires_at": None,
+                "output": output or existing.output,
+                "updated_at": _now(),
+            }
+        )
+        await self.backend.put_process(waiting)
+        return waiting, submission
 
     async def save_gate(
         self,
@@ -2663,6 +2753,49 @@ class RuntimeBackendService:
             if existing is None:
                 raise ValueError(
                     "Replayed gate command has no stored gate: "
+                    f"{existing_gate_id!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_gate(gate)
+        return gate, submission
+
+    async def open_gate(
+        self,
+        gate: Gate,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Gate, CommandSubmission]:
+        if gate.status != GateStatus.open:
+            raise ValueError("open_gate requires gate status 'open'")
+        command = RuntimeCommand(
+            run_id=gate.run_id,
+            command_type="gate.open",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"gate_id": gate.id, "kind": gate.kind},
+        )
+        event = RuntimeEvent(
+            run_id=gate.run_id,
+            carrier_id=gate.carrier_id,
+            event_type="gate.opened",
+            payload={"gate_id": gate.id, "kind": gate.kind},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_gate_id = submission.command.payload.get("gate_id", gate.id)
+            existing = await self.backend.get_gate(
+                run_id=gate.run_id,
+                gate_id=str(existing_gate_id),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed gate open command has no stored gate: "
                     f"{existing_gate_id!r}"
                 )
             return existing, submission
@@ -3756,7 +3889,9 @@ def _event_from_row(row: sqlite3.Row) -> RuntimeEvent:
         id=row["id"],
         run_id=row["run_id"],
         event_type=row["event_type"],
+        schema_version=row["schema_version"],
         carrier_id=row["carrier_id"],
+        process_id=row["process_id"],
         sequence=row["sequence"],
         command_id=row["command_id"],
         actor=row["actor"],

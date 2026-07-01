@@ -1,43 +1,29 @@
-pipeline: basic_enrichment
-title: Basic document enrichment
-description: Three independent program boundaries coordinated by Fala.
+id: basic_enrichment
+title: Basic carrier enrichment
+description: Three subprocess boundaries coordinated by Fala.
 tags: ["example"]
-version: "1"
-input_values:
-  source: "{source}"
+version: "2"
 steps:
   - id: ingest
     title: Ingest
-    capability: ingest_document
-    priority: 20
-    max_concurrency: 4
+    capability: ingest_source
     adapter:
       kind: subprocess
       command: ["python", "steps/ingest.py"]
       cwd: "."
   - id: enrich
     title: Enrich
-    capability: enrich_document
+    capability: enrich_source
     needs: [ingest]
-    priority: 10
-    max_concurrency: 2
     adapter:
       kind: subprocess
       command: ["python", "steps/enrich.py"]
       cwd: "."
   - id: export
     title: Export
-    capability: export_document
+    capability: export_source
     needs: [enrich]
     adapter:
       kind: subprocess
       command: ["python", "steps/export.py"]
       cwd: "."
-combines:
-  - id: document_result
-    mode: latest
-    needs: [ingest, enrich, export]
-reduces:
-  - id: exported_documents
-    process_id: export
-    mode: collect_values

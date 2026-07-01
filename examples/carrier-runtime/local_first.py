@@ -6,12 +6,6 @@ import sys
 from pathlib import Path
 
 from fala.carrier_runtime import FalaRuntime
-from fala.domain_packs.documents import (
-    DocumentCarrierInput,
-    carrier_from_document,
-    document_observation,
-    document_projection,
-)
 from fala.runtime_backend import Carrier, Gate, GateStatus, Observation, Projection
 
 
@@ -56,27 +50,6 @@ async def main(db_path: Path) -> dict:
             source_event_sequence=1,
         ),
         idempotency_key="run_local:projection.case_summary",
-    )
-
-    document = DocumentCarrierInput(
-        id="doc_invoice_1",
-        document_type="invoice_document",
-        media_type="application/pdf",
-        source_uri="file:///tmp/invoice.pdf",
-        values={"vendor": "Acme"},
-    )
-    document_carrier = carrier_from_document(document, run_id="run_local")
-    await runtime.accept_carrier(
-        document_carrier,
-        idempotency_key="run_local:carrier.accept:doc_invoice_1",
-    )
-    await runtime.record_observation(
-        document_observation(document_carrier),
-        idempotency_key="run_local:observation.document:doc_invoice_1",
-    )
-    await runtime.save_projection(
-        document_projection(document_carrier),
-        idempotency_key="run_local:projection.document:doc_invoice_1",
     )
 
     events = await runtime.list_events(run_id="run_local")

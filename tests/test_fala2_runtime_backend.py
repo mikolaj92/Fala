@@ -13,7 +13,7 @@ import tomllib
 import unittest
 import inspect
 import zipfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
@@ -36,7 +36,9 @@ from fala.domain_packs.splot import (
     jurisdiction_observation,
     review_gate,
 )
+from fala.artifacts import FileArtifactStore
 from fala.errors import FalaBudgetExceeded
+from fala.models import ArtifactRef
 from fala.runtime_backend import (
     Artifact,
     BridgeDelivery,
@@ -61,6 +63,7 @@ from fala.runtime_backend import (
     RuntimeRef,
     Run,
     RunRef,
+    SQLITE_RUNTIME_SCHEMA_VERSION,
     SQLiteRuntimeBackend,
 )
 
@@ -80,21 +83,30 @@ def _run_cli_raw(*args: str) -> tuple[int, dict]:
     return code, payload
 
 
+def _carrier_cli_step(request) -> dict:
+    return {"value": request.input["value"] + 1}
+
+
 class Fala2RuntimeBackendTests(unittest.TestCase):
-    def test_web_stack_is_optional_package_extra(self) -> None:
+    def test_external_infrastructure_is_not_packaged_with_core(self) -> None:
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
         project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
         dependencies = set(project["dependencies"])
-        extras = project["optional-dependencies"]
 
-        for package in {"fastapi", "httpx", "jinja2", "python-multipart", "uvicorn"}:
+        for package in {
+            "boto3",
+            "fastapi",
+            "httpx",
+            "jinja2",
+            "python-multipart",
+            "redis",
+            "uvicorn",
+        }:
             self.assertFalse(
                 any(dependency.startswith(package) for dependency in dependencies),
                 package,
             )
-        self.assertIn("httpx>=0.27.0", extras["client"])
-        self.assertIn("fastapi>=0.115.0", extras["api"])
-        self.assertIn("uvicorn>=0.30.0", extras["web"])
+        self.assertNotIn("optional-dependencies", project)
 
     def test_carrier_core_runs_without_web_api_or_http_client_imports(self) -> None:
         src_dir = Path(__file__).resolve().parents[1] / "src"
@@ -117,10 +129,8 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
             from fala import Carrier, FalaRuntime
             from fala.cli import _build_parser as build_cli_parser
-            from fala.worker_cli import _build_parser as build_worker_parser
 
-            assert build_cli_parser().prog == "process-runtime"
-            assert build_worker_parser().prog == "process-runtime-worker"
+            assert build_cli_parser().prog == "fala"
 
             async def main():
                 with tempfile.TemporaryDirectory() as tmp:
@@ -151,6 +161,119 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_cli_rejects_removed_aliases(self) -> None:
+        from fala.cli import _build_parser
+
+        parser = _build_parser()
+        removed_commands = [
+            "init-document",
+            "append-documents",
+            "discover-documents",
+            "list-documents",
+            "list-processes",
+            "dead-letter",
+            "stuck-work",
+            "replay-dead-letter",
+            "claim",
+            "work-once",
+            "complete-process",
+            "status",
+            "document-lineage",
+            "run-results",
+            "output-documents",
+            "stream-append",
+            "stream-list",
+            "scaffold",
+            "scaffold-blueprints",
+            "init-project",
+            "package-doctor",
+            "package-index",
+            "validate",
+            "validate-output",
+            "validate-context",
+            "contract",
+            "contract-lint",
+            "sync-contracts",
+            "inspect-run-input",
+            "serve",
+            "deployment",
+            "worker-deployment",
+            "worker-autoscaling",
+            "queue-export-claims",
+            "queue-run-work",
+            "queue-list-work",
+            "queue-requeue-work",
+            "queue-apply-results",
+            "supervise-workers",
+            "describe",
+        ]
+        for command in removed_commands:
+            with redirect_stderr(StringIO()):
+                with self.assertRaises(SystemExit, msg=command):
+                    parser.parse_args([command])
+        parser.parse_args(["create-run", "--db", "state.sqlite"])
+        with redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                parser.parse_args(["runs", "create", "--db", "state.sqlite"])
+        with redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                parser.parse_args(
+                    [
+                        "gates",
+                        "complete",
+                        "--db",
+                        "state.sqlite",
+                        "--run-id",
+                        "run_1",
+                    ]
+                )
+        with redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                parser.parse_args(
+                    ["gate", "list", "--db", "state.sqlite", "--run-id", "run_1"]
+                )
+        with redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                parser.parse_args(["queue-list-work", "--queue-db", "queue.sqlite"])
+        with redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                parser.parse_args(["doctor", "--carrier-runtime"])
+
+    def test_cli_schema_is_carrier_contract_only(self) -> None:
+        from fala.cli import _build_parser
+
+        parser = _build_parser()
+        parser.parse_args(["schema", "carrier-package"])
+        parser.parse_args(["run-until-idle", "--db", "state.sqlite"])
+        removed_models = [
+            "document-type",
+            "runtime-document-input",
+            "process-output",
+            "workflow-package",
+        ]
+        for model in removed_models:
+            with redirect_stderr(StringIO()):
+                with self.assertRaises(SystemExit, msg=model):
+                    parser.parse_args(["schema", model])
+
+    def test_top_level_api_does_not_export_document_core_symbols(self) -> None:
+        import fala
+
+        removed = {
+            "DocumentRelationSpec",
+            "DocumentTypeSpec",
+            "RuntimeDocument",
+            "RuntimeDocumentInput",
+            "SpawnDocumentInput",
+            "WorkflowPackageSpec",
+            "load_workflow_package_yaml",
+            "document_source_value_schema",
+            "route_runtime_documents",
+        }
+        for name in removed:
+            self.assertFalse(hasattr(fala, name), name)
+            self.assertNotIn(name, fala.__all__)
 
     def test_sqlite_backend_records_carrier_command_and_ordered_event(self) -> None:
         async def scenario() -> None:
@@ -203,6 +326,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 events = await backend.list_events(run_id="run_alpha")
                 self.assertEqual(len(events), 1)
                 self.assertEqual(events[0].sequence, 1)
+                self.assertEqual(events[0].schema_version, 1)
                 self.assertEqual(events[0].command_id, first.command.id)
                 self.assertEqual(events[0].carrier_id, carrier.id)
                 self.assertEqual(events[0].actor, "operator:mika")
@@ -459,6 +583,17 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                         "process.completed",
                     ],
                 )
+                process_events = [
+                    event for event in events if event.event_type.startswith("process.")
+                ]
+                self.assertEqual(
+                    [event.process_id for event in process_events],
+                    ["process_score", "process_score"],
+                )
+                self.assertEqual(
+                    [event.carrier_id for event in process_events],
+                    ["carrier_process", "carrier_process"],
+                )
 
         asyncio.run(scenario())
 
@@ -596,6 +731,64 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_cli_gc_removes_unreferenced_filesystem_artifact_blobs(self) -> None:
+        async def setup(root: Path) -> tuple[Artifact, ArtifactRef]:
+            runtime = FalaRuntime.sqlite(root / "state.sqlite")
+            run = Run(id="run_gc")
+            await runtime.create_run(run, idempotency_key="run_gc:create")
+            source = root / "source.txt"
+            source.write_text("referenced", encoding="utf-8")
+            orphan = root / "orphan.txt"
+            orphan.write_text("orphan", encoding="utf-8")
+            store = FileArtifactStore(root / "artifacts")
+
+            referenced, _ = await runtime.record_file_artifact(
+                run_id=run.id,
+                kind="text",
+                path=source,
+                artifact_store=store,
+                idempotency_key="run_gc:artifact:referenced",
+            )
+            orphan_ref = store.put_file(kind="text", path=orphan)
+            return referenced, orphan_ref
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            referenced, orphan_ref = asyncio.run(setup(root))
+            store = FileArtifactStore(root / "artifacts")
+
+            dry_run = _run_cli_json(
+                "gc",
+                "--db",
+                str(root / "state.sqlite"),
+                "--artifact-root",
+                str(root / "artifacts"),
+                "--dry-run",
+            )
+            self.assertEqual(dry_run["collectable"], [orphan_ref.metadata["sha256"]])
+            self.assertEqual(dry_run["deleted"], [])
+
+            collected = _run_cli_json(
+                "gc",
+                "--db",
+                str(root / "state.sqlite"),
+                "--artifact-root",
+                str(root / "artifacts"),
+            )
+            self.assertEqual(collected["deleted"], [orphan_ref.metadata["sha256"]])
+            self.assertTrue(
+                store.resolve(
+                    ArtifactRef(
+                        id=referenced.id,
+                        kind=referenced.kind,
+                        uri=referenced.uri,
+                        metadata=referenced.metadata,
+                    )
+                ).exists()
+            )
+            with self.assertRaises(FileNotFoundError):
+                store.resolve(orphan_ref)
+
     def test_cli_inspects_carrier_runtime_state_without_web_stack(self) -> None:
         async def scenario(db_path: Path) -> None:
             runtime = FalaRuntime.sqlite(db_path)
@@ -694,8 +887,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "carrier.sqlite"
             created_run = _run_cli_json(
-                "runs",
-                "create",
+                "create-run",
                 "--db",
                 str(db_path),
                 "--run-id",
@@ -902,6 +1094,21 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 "carrier_cli",
             )
             self.assertEqual(observations["observations"][0]["kind"], "score")
+            inspected_observation = _run_cli_json(
+                "observations",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--observation-id",
+                observations["observations"][0]["id"],
+            )
+            self.assertTrue(inspected_observation["ok"])
+            self.assertEqual(
+                inspected_observation["observation"]["kind"],
+                "score",
+            )
 
             gates = _run_cli_json(
                 "gates",
@@ -989,7 +1196,6 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--carrier-runtime",
             )
             payload = trace["trace"]
             self.assertEqual(payload["counts"]["carriers"], 2)
@@ -1034,12 +1240,212 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertIn('"carrier_cli" -> "carrier_cli_child"', graph)
             self.assertIn("derived_from", graph)
 
+    def test_cli_mutates_carriers_observations_and_processes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "carrier.sqlite"
+            _run_cli_json(
+                "create-run",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+            )
+
+            carrier = _run_cli_json(
+                "carriers",
+                "create",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+                "--carrier-id",
+                "carrier_mutate",
+                "--carrier-type",
+                "case",
+                "--payload-json",
+                '{"case_id":"M-1"}',
+                "--metadata-json",
+                '{"tenant":"demo"}',
+            )
+            self.assertTrue(carrier["ok"])
+            self.assertEqual(carrier["carrier"]["payload"], {"case_id": "M-1"})
+            self.assertEqual(carrier["command"]["command_type"], "carrier.accept")
+
+            artifact_path = Path(tmp_dir) / "report.txt"
+            artifact_path.write_text("case report", encoding="utf-8")
+            artifact = _run_cli_json(
+                "artifacts",
+                "record",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+                "--artifact-root",
+                str(Path(tmp_dir) / "artifacts"),
+                "--path",
+                str(artifact_path),
+                "--kind",
+                "report",
+                "--carrier-id",
+                "carrier_mutate",
+                "--media-type",
+                "text/plain",
+            )
+            self.assertTrue(artifact["ok"])
+            self.assertEqual(artifact["command"]["command_type"], "artifact.record")
+            self.assertEqual(artifact["artifact"]["size_bytes"], 11)
+
+            observation = _run_cli_json(
+                "observations",
+                "append",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+                "--observation-id",
+                "observation_mutate",
+                "--carrier-id",
+                "carrier_mutate",
+                "--kind",
+                "score",
+                "--values-json",
+                '{"score":7}',
+            )
+            self.assertTrue(observation["ok"])
+            self.assertEqual(
+                observation["command"]["command_type"],
+                "observation.record",
+            )
+
+            process = _run_cli_json(
+                "processes",
+                "schedule",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+                "--process-id",
+                "process_mutate",
+                "--carrier-id",
+                "carrier_mutate",
+                "--process-type",
+                "score",
+                "--status",
+                "ready",
+                "--input-json",
+                '{"value":2}',
+            )
+            self.assertTrue(process["ok"])
+            self.assertEqual(process["process"]["status"], "ready")
+            self.assertEqual(process["command"]["command_type"], "process.schedule")
+
+            gate = _run_cli_json(
+                "gate",
+                "open",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+                "--gate-id",
+                "gate_mutate",
+                "--carrier-id",
+                "carrier_mutate",
+                "--kind",
+                "human.review",
+                "--values-json",
+                '{"reason":"manual"}',
+            )
+            self.assertTrue(gate["ok"])
+            self.assertEqual(gate["gate"]["status"], "open")
+            self.assertEqual(gate["command"]["command_type"], "gate.open")
+
+            events = _run_cli_json(
+                "events",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+            )
+            self.assertEqual(
+                [event["event_type"] for event in events["events"]],
+                [
+                    "run.created",
+                    "carrier.accepted",
+                    "artifact.recorded",
+                    "observation.recorded",
+                    "process.scheduled",
+                    "gate.opened",
+                ],
+            )
+
+    def test_cli_init_and_run_until_idle_execute_carrier_process(self) -> None:
+        async def setup(db_path: Path) -> None:
+            backend = SQLiteRuntimeBackend(db_path)
+            service = RuntimeBackendService(backend)
+            await service.create_run(
+                Run(id="run_idle"),
+                idempotency_key="run_idle:create",
+            )
+            await service.schedule_process(
+                Process(
+                    id="process_idle",
+                    run_id="run_idle",
+                    process_type="python_function",
+                    status=CarrierProcessStatus.ready,
+                    input={
+                        "adapter": {
+                            "kind": "python_function",
+                            "ref": "tests.test_fala2_runtime_backend._carrier_cli_step",
+                        },
+                        "value": 2,
+                    },
+                ),
+                idempotency_key="run_idle:process.schedule:process_idle",
+            )
+
+        async def inspect(db_path: Path) -> Process:
+            backend = SQLiteRuntimeBackend(db_path)
+            process = await backend.get_process(
+                run_id="run_idle",
+                process_id="process_idle",
+            )
+            assert process is not None
+            return process
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            db_path = root / "state.sqlite"
+            init = _run_cli_json(
+                "init",
+                "--db",
+                str(db_path),
+                "--artifact-root",
+                str(root / "artifacts"),
+            )
+            self.assertTrue(init["ok"])
+            self.assertTrue(db_path.exists())
+            self.assertTrue((root / "artifacts").exists())
+
+            asyncio.run(setup(db_path))
+            result = _run_cli_json(
+                "run-until-idle",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_idle",
+            )
+            self.assertEqual(result["stopped_reason"], "idle")
+            self.assertEqual(len(result["completed"]), 1)
+            process = asyncio.run(inspect(db_path))
+            self.assertEqual(process.status, CarrierProcessStatus.succeeded)
+            self.assertEqual(process.output["value"], 3)
+
     def test_cli_cancels_carrier_runtime_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "carrier.sqlite"
             _run_cli_json(
-                "runs",
-                "create",
+                "create-run",
                 "--db",
                 str(db_path),
                 "--run-id",
@@ -1338,7 +1744,10 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     """
                 ).fetchone()
 
-        self.assertEqual(row, ("runtime_backend", 2, "runtime_backend"))
+        self.assertEqual(
+            row,
+            ("runtime_backend", SQLITE_RUNTIME_SCHEMA_VERSION, "runtime_backend"),
+        )
 
     def test_cli_db_init_status_and_migrate_manage_carrier_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1346,17 +1755,20 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
             initialized = _run_cli_json("db", "init", "--db", str(db_path))
             self.assertTrue(initialized["ok"])
-            self.assertEqual(initialized["schema_version"], 2)
+            self.assertEqual(initialized["schema_version"], SQLITE_RUNTIME_SCHEMA_VERSION)
             self.assertTrue(db_path.is_file())
 
             status = _run_cli_json("db", "status", "--db", str(db_path))
             self.assertTrue(status["ok"])
-            self.assertEqual(status["schema"]["current_version"], 2)
+            self.assertEqual(
+                status["schema"]["current_version"],
+                SQLITE_RUNTIME_SCHEMA_VERSION,
+            )
             self.assertEqual(status["schema"]["missing_tables"], [])
 
             migrated = _run_cli_json("db", "migrate", "--db", str(db_path))
             self.assertTrue(migrated["ok"])
-            self.assertEqual(migrated["schema_version"], 2)
+            self.assertEqual(migrated["schema_version"], SQLITE_RUNTIME_SCHEMA_VERSION)
 
     def test_cli_lists_and_inspects_runtime_pools(self) -> None:
         async def scenario(db_path: Path) -> None:
@@ -1490,8 +1902,14 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             doctor = _run_cli_json("doctor", "--db", str(db_path))
             self.assertTrue(doctor["ok"])
             self.assertEqual(doctor["schema"]["missing_tables"], [])
-            self.assertEqual(doctor["schema"]["current_version"], 2)
-            self.assertEqual(doctor["schema"]["latest_version"], 2)
+            self.assertEqual(
+                doctor["schema"]["current_version"],
+                SQLITE_RUNTIME_SCHEMA_VERSION,
+            )
+            self.assertEqual(
+                doctor["schema"]["latest_version"],
+                SQLITE_RUNTIME_SCHEMA_VERSION,
+            )
             self.assertEqual(doctor["counts"]["runs"], 1)
             self.assertEqual(doctor["counts"]["carriers"], 1)
             self.assertEqual(doctor["counts"]["runtime_events"], 2)
@@ -1505,7 +1923,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 str(output),
             )
             self.assertTrue(written["ok"])
-            self.assertEqual(written["current_version"], 2)
+            self.assertEqual(written["current_version"], SQLITE_RUNTIME_SCHEMA_VERSION)
             self.assertTrue(output.is_file())
 
     def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:

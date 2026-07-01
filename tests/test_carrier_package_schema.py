@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from fala.yaml_loader import workflow_package_from_mapping
+from fala.yaml_loader import (
+    carrier_workflow_package_from_mapping,
+)
 
 
 class CarrierPackageSchemaTests(unittest.TestCase):
-    def test_carrier_first_package_aliases_load_into_legacy_document_fields(self) -> None:
-        package = workflow_package_from_mapping(
+    def test_carrier_first_package_loads_canonical_fields(self) -> None:
+        package = carrier_workflow_package_from_mapping(
             {
                 "id": "carrier_package",
                 "version": "2",
@@ -22,60 +24,160 @@ class CarrierPackageSchemaTests(unittest.TestCase):
                         "target_carrier_types": ["normalized_text"],
                     }
                 ],
+                "observation_kinds": [
+                    {
+                        "id": "text_stats",
+                        "value_schema": {
+                            "type": "object",
+                            "properties": {"characters": {"type": "integer"}},
+                        },
+                    }
+                ],
+                "artifact_kinds": [
+                    {"id": "normalized_text", "media_types": ["text/plain"]}
+                ],
                 "capabilities": [
                     {
                         "id": "normalize",
                         "accepts_carrier_types": ["input_text"],
                         "emits_carrier_types": ["normalized_text"],
+                        "emits_artifact_kinds": ["normalized_text"],
+                        "emits_observation_kinds": ["text_stats"],
                     }
                 ],
-                "pipelines": ["flows/basic.yaml"],
+                "flows": [
+                    {
+                        "id": "basic",
+                        "steps": [
+                            {
+                                "id": "normalize",
+                                "capability": "normalize",
+                                "adapter": {
+                                    "kind": "python_function",
+                                    "ref": "examples.steps.normalize_text",
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "runtime": {
+                    "backend": {"kind": "sqlite", "path": ".fala/state.sqlite"},
+                    "artifact_store": {
+                        "kind": "filesystem",
+                        "root": ".fala/artifacts",
+                    },
+                },
             }
         )
 
-        self.assertEqual(
-            [item.id for item in package.document_types],
-            ["input_text", "normalized_text"],
-        )
-        self.assertEqual(package.document_relations[0].source_document_types, ["input_text"])
-        self.assertEqual(package.document_relations[0].target_document_types, ["normalized_text"])
-        self.assertEqual(package.capabilities[0].accepts_document_types, ["input_text"])
-        self.assertEqual(package.capabilities[0].emits_document_types, ["normalized_text"])
+        self.assertEqual([item.id for item in package.carrier_types], ["input_text", "normalized_text"])
+        self.assertEqual(package.carrier_relations[0].source_carrier_types, ["input_text"])
+        self.assertEqual(package.observation_kinds[0].id, "text_stats")
+        self.assertEqual(package.capabilities[0].accepts_carrier_types, ["input_text"])
+        self.assertEqual(package.flows[0].steps[0].adapter.kind, "python_function")
+        self.assertEqual(package.runtime.backend.path, ".fala/state.sqlite")
 
-    def test_carrier_and_document_package_keys_cannot_be_mixed(self) -> None:
-        with self.assertRaisesRegex(
-            ValueError,
-            "cannot define both 'carrier_types' and 'document_types'",
-        ):
-            workflow_package_from_mapping(
+    def test_carrier_first_package_rejects_document_core_keys(self) -> None:
+        with self.assertRaisesRegex(ValueError, "document_types"):
+            carrier_workflow_package_from_mapping(
                 {
-                    "id": "mixed_package",
-                    "carrier_types": [{"id": "carrier"}],
+                    "id": "carrier_package",
                     "document_types": [{"id": "document"}],
-                    "pipelines": ["flows/basic.yaml"],
+                    "flows": [
+                        {
+                            "id": "basic",
+                            "steps": [
+                                {
+                                    "id": "normalize",
+                                    "capability": "normalize",
+                                    "adapter": {
+                                        "kind": "python_function",
+                                        "ref": "examples.steps.normalize_text",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
                 }
             )
 
-    def test_carrier_and_document_capability_keys_cannot_be_mixed(self) -> None:
+    def test_carrier_first_package_validates_references(self) -> None:
         with self.assertRaisesRegex(
             ValueError,
-            "cannot define both 'accepts_carrier_types' and 'accepts_document_types'",
+            "Carrier capability 'normalize' accepts_carrier_types reference unknown id",
         ):
-            workflow_package_from_mapping(
+            carrier_workflow_package_from_mapping(
                 {
-                    "id": "mixed_capability",
-                    "carrier_types": [{"id": "input_text"}],
+                    "id": "carrier_package",
                     "capabilities": [
                         {
                             "id": "normalize",
-                            "accepts_carrier_types": ["input_text"],
-                            "accepts_document_types": ["input_text"],
+                            "accepts_carrier_types": ["missing_type"],
                         }
                     ],
-                    "pipelines": ["flows/basic.yaml"],
+                    "flows": [
+                        {
+                            "id": "basic",
+                            "steps": [
+                                {
+                                    "id": "normalize",
+                                    "capability": "normalize",
+                                    "adapter": {
+                                        "kind": "python_function",
+                                        "ref": "examples.steps.normalize_text",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
                 }
             )
 
+    def test_carrier_first_package_rejects_package_id_fallback(self) -> None:
+        with self.assertRaisesRegex(ValueError, "id"):
+            carrier_workflow_package_from_mapping(
+                {
+                    "package": "carrier_package",
+                    "flows": [
+                        {
+                            "id": "basic",
+                            "steps": [
+                                {
+                                    "id": "normalize",
+                                    "capability": "normalize",
+                                    "adapter": {
+                                        "kind": "python_function",
+                                        "ref": "examples.steps.normalize_text",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+
+    def test_carrier_first_package_rejects_pipeline_id_fallback(self) -> None:
+        with self.assertRaisesRegex(ValueError, "pipeline"):
+            carrier_workflow_package_from_mapping(
+                {
+                    "id": "carrier_package",
+                    "flows": [
+                        {
+                            "pipeline": "basic",
+                            "steps": [
+                                {
+                                    "id": "normalize",
+                                    "capability": "normalize",
+                                    "adapter": {
+                                        "kind": "python_function",
+                                        "ref": "examples.steps.normalize_text",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
 
 if __name__ == "__main__":
     unittest.main()

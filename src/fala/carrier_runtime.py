@@ -330,6 +330,23 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
+    async def open_gate(
+        self,
+        gate: Gate,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Gate, CommandSubmission]:
+        return await self.service.open_gate(
+            gate,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def complete_gate(
         self,
         *,
