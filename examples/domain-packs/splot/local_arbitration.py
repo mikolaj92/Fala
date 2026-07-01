@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from fala.carrier_runtime import FalaRuntime
+from fala.runtime_backend import Run
 from fala.domain_packs.splot import (
     SplotArbitrationCase,
     carrier_from_case,
@@ -17,6 +18,10 @@ from fala.domain_packs.splot import (
 
 async def main(db_path: Path) -> dict:
     runtime = FalaRuntime.sqlite(db_path)
+    await runtime.create_run(
+        Run(id="run_splot", title="Splot arbitration example"),
+        idempotency_key="run_splot:create",
+    )
     case = SplotArbitrationCase(
         id="splot_case_1",
         claim_id="SP-1",

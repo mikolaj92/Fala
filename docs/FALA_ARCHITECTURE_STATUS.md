@@ -76,7 +76,7 @@ workflow API.
 | Package schema | DONE | Current YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document, Splot, and Signals packs exist as Carrier mappings. More first-party domain packs can still be added. |
 | Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, run archive export, and guarded deterministic `replay-execution` exist. Deterministic rerun is covered for `python_function` and `subprocess`; manual and Fala-runtime steps remain non-local replay boundaries. |
-| Docs/examples | PARTIAL | Dedicated Fala conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain pack, security, migration, and version policy docs exist. Carrier runtime, pipeline, Splot, Signals, and multi-Fala examples exist. |
+| Docs/examples | PARTIAL | Dedicated Fala conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain pack, security, migration, and version policy docs exist. Carrier runtime, pipeline, Splot, Signals, and multi-Fala examples exist and create explicit run records. |
 
 ## Next Work
 

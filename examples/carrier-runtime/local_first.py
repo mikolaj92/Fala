@@ -6,11 +6,15 @@ import sys
 from pathlib import Path
 
 from fala.carrier_runtime import FalaRuntime
-from fala.runtime_backend import Carrier, Gate, GateStatus, Observation, Projection
+from fala.runtime_backend import Carrier, Gate, GateStatus, Observation, Projection, Run
 
 
 async def main(db_path: Path) -> dict:
     runtime = FalaRuntime.sqlite(db_path)
+    await runtime.create_run(
+        Run(id="run_local", title="Local carrier run"),
+        idempotency_key="run_local:create",
+    )
 
     case = Carrier(
         id="carrier_case_1",
