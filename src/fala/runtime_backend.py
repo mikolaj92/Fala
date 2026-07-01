@@ -691,6 +691,14 @@ class RuntimeBackend(Protocol):
 
     async def put_projection(self, projection: Projection) -> None: ...
 
+    async def save_projection(
+        self,
+        projection: Projection,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
     async def get_projection(self, *, run_id: str, name: str) -> Projection | None: ...
 
     async def list_projections(self, *, run_id: str) -> list[Projection]: ...
@@ -701,6 +709,15 @@ class RuntimeBackend(Protocol):
         run_id: str,
         names: Sequence[str] | None = None,
     ) -> list[Projection]: ...
+
+    async def rebuild_projections_with_command(
+        self,
+        *,
+        run_id: str,
+        names: Sequence[str] | None,
+        command: RuntimeCommand,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> tuple[list[Projection], CommandSubmission]: ...
 
     async def put_outbox_delivery(self, delivery: BridgeDelivery) -> None: ...
 
@@ -3126,30 +3143,55 @@ class SQLiteRuntimeBackend:
         async with self._lock:
             with self._connect() as connection:
                 _require_run_row(connection, projection.run_id)
-                connection.execute(
-                    """
-                    INSERT INTO projections (
-                        run_id, name, id, version, data,
-                        source_event_sequence, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(run_id, name) DO UPDATE SET
-                        id = excluded.id,
-                        version = excluded.version,
-                        data = excluded.data,
-                        source_event_sequence = excluded.source_event_sequence,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        projection.run_id,
-                        projection.name,
-                        projection.id,
-                        projection.version,
-                        _dumps(projection.data),
-                        projection.source_event_sequence,
-                        projection.updated_at.isoformat(),
-                    ),
-                )
+                _upsert_projection_row(connection, projection)
                 connection.commit()
+
+    async def save_projection(
+        self,
+        projection: Projection,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != projection.run_id:
+            raise ValueError(
+                "projection.save command run_id must match projection run_id"
+            )
+        if command.command_type != "projection.save":
+            raise ValueError("save_projection requires command_type 'projection.save'")
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                _require_run_row(connection, projection.run_id)
+                _insert_runtime_command_row(connection, command)
+                _upsert_projection_row(connection, projection)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def get_projection(self, *, run_id: str, name: str) -> Projection | None:
         with self._connect() as connection:
@@ -3178,7 +3220,9 @@ class SQLiteRuntimeBackend:
         names: Sequence[str] | None = None,
     ) -> list[Projection]:
         requested = (
-            list(dict.fromkeys(names)) if names is not None else list(_BUILT_IN_PROJECTIONS)
+            list(dict.fromkeys(names))
+            if names is not None
+            else list(_BUILT_IN_PROJECTIONS)
         )
         unsupported = sorted(set(requested) - set(_BUILT_IN_PROJECTIONS))
         if unsupported:
@@ -3190,32 +3234,90 @@ class SQLiteRuntimeBackend:
                 _require_run_row(connection, run_id)
                 for name in requested:
                     projection = _build_run_summary_projection(connection, run_id)
-                    connection.execute(
-                        """
-                        INSERT INTO projections (
-                            run_id, name, id, version, data,
-                            source_event_sequence, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(run_id, name) DO UPDATE SET
-                            id = excluded.id,
-                            version = excluded.version,
-                            data = excluded.data,
-                            source_event_sequence = excluded.source_event_sequence,
-                            updated_at = excluded.updated_at
-                        """,
-                        (
-                            projection.run_id,
-                            projection.name,
-                            projection.id,
-                            projection.version,
-                            _dumps(projection.data),
-                            projection.source_event_sequence,
-                            projection.updated_at.isoformat(),
-                        ),
-                    )
+                    _upsert_projection_row(connection, projection)
                     rebuilt.append(projection)
                 connection.commit()
         return rebuilt
+
+    async def rebuild_projections_with_command(
+        self,
+        *,
+        run_id: str,
+        names: Sequence[str] | None,
+        command: RuntimeCommand,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> tuple[list[Projection], CommandSubmission]:
+        if command.run_id != run_id:
+            raise ValueError("projection.rebuild command run_id must match run_id")
+        if command.command_type != "projection.rebuild":
+            raise ValueError(
+                "rebuild_projections_with_command requires command_type "
+                "'projection.rebuild'"
+            )
+        requested = (
+            list(dict.fromkeys(names)) if names is not None else list(_BUILT_IN_PROJECTIONS)
+        )
+        unsupported = sorted(set(requested) - set(_BUILT_IN_PROJECTIONS))
+        if unsupported:
+            raise ValueError(f"Unknown projection rebuild name: {unsupported[0]}")
+
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    stored_command = _command_from_row(existing)
+                    projections: list[Projection] = []
+                    for name in requested:
+                        row = connection.execute(
+                            "SELECT * FROM projections WHERE run_id = ? AND name = ?",
+                            (run_id, name),
+                        ).fetchone()
+                        if row is None:
+                            raise ValueError(
+                                "Replayed projection rebuild has no stored projection: "
+                                f"{name!r}"
+                            )
+                        projections.append(_projection_from_row(row))
+                    connection.commit()
+                    return (
+                        projections,
+                        CommandSubmission(
+                            command=stored_command,
+                            events=[],
+                            replayed=True,
+                        ),
+                    )
+
+                _require_run_row(connection, run_id)
+                _insert_runtime_command_row(connection, command)
+                stored_events = _append_runtime_events(connection, command, events)
+                rebuilt: list[Projection] = []
+                for name in requested:
+                    projection = _build_run_summary_projection(connection, run_id)
+                    _upsert_projection_row(connection, projection)
+                    rebuilt.append(projection)
+                connection.commit()
+                return (
+                    rebuilt,
+                    CommandSubmission(
+                        command=command,
+                        events=stored_events,
+                        replayed=False,
+                    ),
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def put_outbox_delivery(self, delivery: BridgeDelivery) -> None:
         await self._put_bridge_delivery("bridge_outbox", delivery)
@@ -4395,7 +4497,11 @@ class RuntimeBackendService:
             event_type="projection.saved",
             payload={"projection_name": projection.name, "version": projection.version},
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.save_projection(
+            projection,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             existing_name = submission.command.payload.get(
                 "projection_name",
@@ -4412,7 +4518,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_projection(projection)
         return projection, submission
 
     async def rebuild_projections(
@@ -4445,22 +4550,11 @@ class RuntimeBackendService:
             event_type="projection.rebuilt",
             payload={"projection_names": requested},
         )
-        submission = await self.backend.submit_command(command, events=[event])
-        if submission.replayed:
-            projections: list[Projection] = []
-            for name in requested:
-                existing = await self.backend.get_projection(run_id=run_id, name=name)
-                if existing is None:
-                    raise ValueError(
-                        "Replayed projection rebuild has no stored projection: "
-                        f"{name!r}"
-                    )
-                projections.append(existing)
-            return projections, submission
-
-        return (
-            await self.backend.rebuild_projections(run_id=run_id, names=requested),
-            submission,
+        return await self.backend.rebuild_projections_with_command(
+            run_id=run_id,
+            names=requested,
+            command=command,
+            events=[event],
         )
 
     async def enqueue_bridge_delivery(
@@ -5118,6 +5212,35 @@ def _insert_gate_row(connection: sqlite3.Connection, gate: Gate) -> None:
             _dumps(gate.metadata),
             gate.created_at.isoformat(),
             gate.updated_at.isoformat(),
+        ),
+    )
+
+
+def _upsert_projection_row(
+    connection: sqlite3.Connection,
+    projection: Projection,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO projections (
+            run_id, name, id, version, data,
+            source_event_sequence, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(run_id, name) DO UPDATE SET
+            id = excluded.id,
+            version = excluded.version,
+            data = excluded.data,
+            source_event_sequence = excluded.source_event_sequence,
+            updated_at = excluded.updated_at
+        """,
+        (
+            projection.run_id,
+            projection.name,
+            projection.id,
+            projection.version,
+            _dumps(projection.data),
+            projection.source_event_sequence,
+            projection.updated_at.isoformat(),
         ),
     )
 

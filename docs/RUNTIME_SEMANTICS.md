@@ -23,6 +23,8 @@ Carrier type registration, carrier relation recording, observation recording,
 artifact recording, process scheduling, and process status transitions follow
 the same command/event/state transaction pattern.
 Gate creation and terminal gate transitions use the same pattern.
+Projection save and rebuild commands also commit their read-model writes in the
+same backend transaction.
 
 Process execution:
 

@@ -493,6 +493,73 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert not gate_transition.replayed
     assert gate_transition_replay.replayed
 
+    projection_run = Run(
+        id="run_projection_conformance",
+        status=CarrierRunStatus.active,
+    )
+    saved_projection = Projection(
+        run_id=projection_run.id,
+        name="manual_projection",
+        data={"count": 1},
+        source_event_sequence=0,
+    )
+    projection_command = RuntimeCommand(
+        run_id=projection_run.id,
+        command_type="projection.save",
+        idempotency_key="run_projection_conformance:projection.save",
+    )
+    await backend.put_run(projection_run)
+    projection_submission = await backend.save_projection(
+        saved_projection,
+        projection_command,
+        events=[
+            RuntimeEvent(
+                run_id=projection_run.id,
+                event_type="projection.saved",
+            )
+        ],
+    )
+    projection_replay = await backend.save_projection(
+        saved_projection.model_copy(update={"data": {"count": 2}}),
+        projection_command.model_copy(update={"id": "command_projection_replay"}),
+        events=[],
+    )
+    assert await backend.get_projection(
+        run_id=projection_run.id,
+        name=saved_projection.name,
+    ) == saved_projection
+    assert not projection_submission.replayed
+    assert projection_replay.replayed
+
+    rebuild_command = RuntimeCommand(
+        run_id=projection_run.id,
+        command_type="projection.rebuild",
+        idempotency_key="run_projection_conformance:projection.rebuild",
+    )
+    rebuilt_projections, rebuild_submission = (
+        await backend.rebuild_projections_with_command(
+            run_id=projection_run.id,
+            names=["run_summary"],
+            command=rebuild_command,
+            events=[
+                RuntimeEvent(
+                    run_id=projection_run.id,
+                    event_type="projection.rebuilt",
+                )
+            ],
+        )
+    )
+    replayed_rebuild, rebuild_replay = await backend.rebuild_projections_with_command(
+        run_id=projection_run.id,
+        names=["run_summary"],
+        command=rebuild_command.model_copy(update={"id": "command_rebuild_replay"}),
+        events=[],
+    )
+    assert [projection.name for projection in rebuilt_projections] == ["run_summary"]
+    assert replayed_rebuild == rebuilt_projections
+    assert not rebuild_submission.replayed
+    assert rebuild_replay.replayed
+
     run = Run(
         id="run_conformance",
         status=CarrierRunStatus.created,
