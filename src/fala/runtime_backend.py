@@ -627,7 +627,26 @@ class RuntimeBackend(Protocol):
 
     async def put_gate(self, gate: Gate) -> None: ...
 
+    async def save_gate(
+        self,
+        gate: Gate,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
     async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None: ...
+
+    async def transition_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        status: GateStatus,
+        command: RuntimeCommand,
+        events: Sequence[RuntimeEvent] = (),
+        values: dict[str, Any] | None = None,
+    ) -> tuple[Gate, CommandSubmission]: ...
 
     async def complete_gate(
         self,
@@ -724,6 +743,11 @@ _PROCESS_TRANSITION_COMMANDS = {
     CarrierProcessStatus.waiting: "process.wait",
     CarrierProcessStatus.cancelled: "process.cancel",
     CarrierProcessStatus.timed_out: "process.timeout",
+}
+_GATE_TRANSITION_COMMANDS = {
+    GateStatus.completed: "gate.complete",
+    GateStatus.cancelled: "gate.cancel",
+    GateStatus.expired: "gate.expire",
 }
 _RUN_STATUS_TRANSITIONS = {
     CarrierRunStatus.created: {
@@ -2696,6 +2720,62 @@ class SQLiteRuntimeBackend:
                 )
                 connection.commit()
 
+    async def save_gate(
+        self,
+        gate: Gate,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != gate.run_id:
+            raise ValueError("gate command run_id must match gate run_id")
+        if command.command_type not in {"gate.save", "gate.open"}:
+            raise ValueError(
+                "save_gate requires command_type 'gate.save' or 'gate.open'"
+            )
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                _require_run_row(connection, gate.run_id)
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM gates WHERE run_id = ? AND id = ?",
+                        (gate.run_id, gate.id),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"Gate already exists: {gate.id!r}")
+
+                _insert_runtime_command_row(connection, command)
+                _insert_gate_row(connection, gate)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
     async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -2703,6 +2783,109 @@ class SQLiteRuntimeBackend:
                 (run_id, gate_id),
             ).fetchone()
         return _gate_from_row(row) if row is not None else None
+
+    async def transition_gate(
+        self,
+        *,
+        run_id: str,
+        gate_id: str,
+        status: GateStatus,
+        command: RuntimeCommand,
+        events: Sequence[RuntimeEvent] = (),
+        values: dict[str, Any] | None = None,
+    ) -> tuple[Gate, CommandSubmission]:
+        expected_command_type = _GATE_TRANSITION_COMMANDS.get(status)
+        if expected_command_type is None:
+            raise ValueError(f"Unsupported gate terminal status: {status.value}")
+        if command.run_id != run_id:
+            raise ValueError("gate transition command run_id must match run_id")
+        if command.command_type != expected_command_type:
+            raise ValueError(
+                f"transition to {status.value!r} requires command_type "
+                f"{expected_command_type!r}"
+            )
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing_command = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing_command is not None:
+                    stored_command = _command_from_row(existing_command)
+                    stored_gate_id = stored_command.payload.get("gate_id", gate_id)
+                    stored_gate = connection.execute(
+                        "SELECT * FROM gates WHERE run_id = ? AND id = ?",
+                        (run_id, str(stored_gate_id)),
+                    ).fetchone()
+                    if stored_gate is None:
+                        raise ValueError(
+                            "Replayed gate transition has no stored gate: "
+                            f"{stored_gate_id!r}"
+                        )
+                    connection.commit()
+                    return (
+                        _gate_from_row(stored_gate),
+                        CommandSubmission(
+                            command=stored_command,
+                            events=[],
+                            replayed=True,
+                        ),
+                    )
+
+                row = connection.execute(
+                    "SELECT * FROM gates WHERE run_id = ? AND id = ?",
+                    (run_id, gate_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Unknown gate: {gate_id!r}")
+                gate = _gate_from_row(row)
+                if gate.status != GateStatus.open:
+                    raise ValueError(
+                        f"Gate {gate_id!r} is not open: {gate.status.value}"
+                    )
+
+                now = _now()
+                _insert_runtime_command_row(connection, command)
+                connection.execute(
+                    """
+                    UPDATE gates
+                    SET status = ?,
+                        values_json = ?,
+                        updated_at = ?
+                    WHERE run_id = ? AND id = ?
+                    """,
+                    (
+                        status.value,
+                        _dumps(values or {}),
+                        now.isoformat(),
+                        run_id,
+                        gate_id,
+                    ),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM gates WHERE run_id = ? AND id = ?",
+                    (run_id, gate_id),
+                ).fetchone()
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return (
+                    _gate_from_row(updated),
+                    CommandSubmission(
+                        command=command,
+                        events=stored_events,
+                        replayed=False,
+                    ),
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def complete_gate(
         self,
@@ -3891,7 +4074,7 @@ class RuntimeBackendService:
             event_type="gate.saved",
             payload={"gate_id": gate.id, "status": gate.status.value},
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.save_gate(gate, command, events=[event])
         if submission.replayed:
             existing_gate_id = submission.command.payload.get("gate_id", gate.id)
             existing = await self.backend.get_gate(
@@ -3905,7 +4088,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_gate(gate)
         return gate, submission
 
     async def open_gate(
@@ -3945,7 +4127,7 @@ class RuntimeBackendService:
             event_type="gate.opened",
             payload={"gate_id": gate.id, "kind": gate.kind},
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.save_gate(gate, command, events=[event])
         if submission.replayed:
             existing_gate_id = submission.command.payload.get("gate_id", gate.id)
             existing = await self.backend.get_gate(
@@ -3959,7 +4141,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_gate(gate)
         return gate, submission
 
     async def complete_gate(
@@ -4082,38 +4263,13 @@ class RuntimeBackendService:
                 "value_keys": sorted((values or {}).keys()),
             },
         )
-        submission = await self.backend.submit_command(command, events=[event])
-        if submission.replayed:
-            replayed_gate = await self.backend.get_gate(run_id=run_id, gate_id=gate_id)
-            if replayed_gate is None:
-                raise ValueError(
-                    f"Replayed gate completion has no stored gate: {gate_id!r}"
-                )
-            return replayed_gate, submission
-
-        if status == GateStatus.completed:
-            finished = await self.backend.complete_gate(
-                run_id=run_id,
-                gate_id=gate_id,
-                values=values,
-            )
-        elif status == GateStatus.cancelled:
-            finished = await self.backend.cancel_gate(
-                run_id=run_id,
-                gate_id=gate_id,
-                values=values,
-            )
-        elif status == GateStatus.expired:
-            finished = await self.backend.expire_gate(
-                run_id=run_id,
-                gate_id=gate_id,
-                values=values,
-            )
-        else:
-            raise ValueError(f"Unsupported gate terminal status: {status.value}")
-        return (
-            finished,
-            submission,
+        return await self.backend.transition_gate(
+            run_id=run_id,
+            gate_id=gate_id,
+            status=status,
+            command=command,
+            events=[event],
+            values=values,
         )
 
     async def save_projection(
@@ -4841,6 +4997,28 @@ def _insert_process_row(connection: sqlite3.Connection, process: Process) -> Non
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         _process_args(process),
+    )
+
+
+def _insert_gate_row(connection: sqlite3.Connection, gate: Gate) -> None:
+    connection.execute(
+        """
+        INSERT INTO gates (
+            run_id, id, kind, carrier_id, status,
+            values_json, metadata, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            gate.run_id,
+            gate.id,
+            gate.kind,
+            gate.carrier_id,
+            gate.status.value,
+            _dumps(gate.values),
+            _dumps(gate.metadata),
+            gate.created_at.isoformat(),
+            gate.updated_at.isoformat(),
+        ),
     )
 
 

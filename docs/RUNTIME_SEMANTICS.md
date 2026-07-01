@@ -20,6 +20,7 @@ the carrier, `carrier.accept` command, and `carrier.accepted` event together.
 Carrier type registration, carrier relation recording, observation recording,
 artifact recording, process scheduling, and process status transitions follow
 the same command/event/state transaction pattern.
+Gate creation and terminal gate transitions use the same pattern.
 
 Process execution:
 

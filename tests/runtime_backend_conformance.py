@@ -388,6 +388,78 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert not transition_submission.replayed
     assert transition_replay.replayed
 
+    gate_run = Run(
+        id="run_gate_conformance",
+        status=CarrierRunStatus.active,
+    )
+    saved_gate = Gate(
+        id="gate_recorded",
+        run_id=gate_run.id,
+        kind="review",
+        status=GateStatus.open,
+    )
+    gate_command = RuntimeCommand(
+        run_id=gate_run.id,
+        command_type="gate.open",
+        idempotency_key="run_gate_conformance:gate.open",
+    )
+    await backend.put_run(gate_run)
+    gate_submission = await backend.save_gate(
+        saved_gate,
+        gate_command,
+        events=[
+            RuntimeEvent(
+                run_id=gate_run.id,
+                event_type="gate.opened",
+            )
+        ],
+    )
+    gate_replay = await backend.save_gate(
+        saved_gate.model_copy(update={"metadata": {"changed": True}}),
+        gate_command.model_copy(update={"id": "command_gate_replay"}),
+        events=[],
+    )
+    completed_gate, gate_transition = await backend.transition_gate(
+        run_id=gate_run.id,
+        gate_id=saved_gate.id,
+        status=GateStatus.completed,
+        command=RuntimeCommand(
+            run_id=gate_run.id,
+            command_type="gate.complete",
+            idempotency_key="run_gate_conformance:gate.complete",
+        ),
+        events=[
+            RuntimeEvent(
+                run_id=gate_run.id,
+                event_type="gate.completed",
+            )
+        ],
+        values={"decision": "approved"},
+    )
+    replayed_gate, gate_transition_replay = await backend.transition_gate(
+        run_id=gate_run.id,
+        gate_id=saved_gate.id,
+        status=GateStatus.completed,
+        command=RuntimeCommand(
+            run_id=gate_run.id,
+            command_type="gate.complete",
+            idempotency_key="run_gate_conformance:gate.complete",
+        ),
+        events=[],
+        values={"decision": "changed"},
+    )
+    assert (
+        await backend.get_gate(run_id=gate_run.id, gate_id=saved_gate.id)
+        == completed_gate
+    )
+    assert completed_gate.status == GateStatus.completed
+    assert completed_gate.values == {"decision": "approved"}
+    assert replayed_gate == completed_gate
+    assert not gate_submission.replayed
+    assert gate_replay.replayed
+    assert not gate_transition.replayed
+    assert gate_transition_replay.replayed
+
     run = Run(
         id="run_conformance",
         status=CarrierRunStatus.created,
