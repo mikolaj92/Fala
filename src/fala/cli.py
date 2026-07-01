@@ -14,7 +14,7 @@ from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel
 
-from fala.adapters import StepRunRequest, create_step_adapter
+from fala.adapters import StepRunRequest, StepRunResult, create_step_adapter
 from fala.artifacts import FileArtifactStore, digest_from_fala_artifact_uri
 from fala.models import (
     ArtifactKindSpec,
@@ -32,6 +32,7 @@ from fala.models import (
     ObservationKindSpec,
 )
 from fala.runtime_backend import Artifact as CarrierArtifact
+from fala.runtime_backend import BridgeDelivery
 from fala.runtime_backend import BridgeDeliveryStatus
 from fala.runtime_backend import Carrier
 from fala.runtime_backend import CarrierProcessStatus
@@ -1012,17 +1013,26 @@ async def _carrier_runtime_run_until_idle(args: argparse.Namespace) -> dict[str,
             step_work_dir = work_root / process.id if work_root is not None else None
             if step_work_dir is not None:
                 step_work_dir.mkdir(parents=True, exist_ok=True)
-            result = await create_step_adapter(adapter.kind).run(
-                StepRunRequest(
-                    run_id=process.run_id,
-                    process_id=process.id,
-                    carrier_id=process.carrier_id,
-                    adapter=adapter,
-                    input=step_input,
-                    config=config,
-                    work_dir=step_work_dir,
-                )
+            request = StepRunRequest(
+                run_id=process.run_id,
+                process_id=process.id,
+                carrier_id=process.carrier_id,
+                adapter=adapter,
+                input=step_input,
+                config=config,
+                work_dir=step_work_dir,
             )
+            if adapter.kind == "fala_runtime":
+                result = await _carrier_runtime_enqueue_fala_runtime_process(
+                    backend=backend,
+                    service=service,
+                    process=process,
+                    request=request,
+                    db_path=_carrier_runtime_db_path(args.db),
+                    actor=args.worker_id,
+                )
+            else:
+                result = await create_step_adapter(adapter.kind).run(request)
             if result.waiting:
                 if result.gate_id is not None:
                     await service.save_gate(
@@ -1090,6 +1100,90 @@ async def _carrier_runtime_run_until_idle(args: argparse.Namespace) -> dict[str,
         "failed": failed,
         "waiting": waiting,
     }
+
+
+async def _carrier_runtime_enqueue_fala_runtime_process(
+    *,
+    backend: SQLiteRuntimeBackend,
+    service: RuntimeBackendService,
+    process: CarrierProcess,
+    request: StepRunRequest,
+    db_path: str,
+    actor: str,
+) -> StepRunResult:
+    if request.adapter.runtime_ref is None:
+        raise ValueError("fala_runtime adapter requires runtime_ref")
+    if process.carrier_id is None:
+        raise ValueError("fala_runtime process requires carrier_id")
+
+    carrier = await backend.get_carrier(
+        run_id=process.run_id,
+        carrier_id=process.carrier_id,
+    )
+    if carrier is None:
+        raise ValueError(f"Unknown carrier for fala_runtime process: {process.carrier_id!r}")
+
+    events = await backend.list_events(
+        run_id=process.run_id,
+        carrier_id=process.carrier_id,
+    )
+    source_runtime = RuntimeRef(
+        id=str(request.config.get("source_runtime_id") or "local"),
+        uri=f"sqlite://{Path(db_path).expanduser().resolve()}",
+    )
+    target_runtime = RuntimeRef(
+        id=str(request.config.get("target_runtime_id") or _runtime_ref_id(request.adapter.runtime_ref)),
+        uri=request.adapter.runtime_ref,
+    )
+    target_run_id = str(request.config.get("target_run_id") or process.run_id)
+    budget = RuntimeBudget.model_validate(request.config.get("budget") or {})
+    delivery_id = str(
+        request.config.get("delivery_id")
+        or f"bridge:{process.run_id}:{process.id}"
+    )
+    delivery = BridgeDelivery(
+        id=delivery_id,
+        run_id=process.run_id,
+        idempotency_key=f"{process.run_id}:bridge.enqueue:{process.id}:{process.attempt}",
+        source=RunRef(runtime=source_runtime, run_id=process.run_id),
+        target=RunRef(runtime=target_runtime, run_id=target_run_id),
+        carrier=carrier,
+        event_ref=EventRef(
+            runtime=source_runtime,
+            run_id=process.run_id,
+            event_id=events[-1].id if events else None,
+            sequence=events[-1].sequence if events else None,
+        ),
+        pool_id=request.config.get("pool_id"),
+        budget=budget,
+        metadata={
+            "process_id": process.id,
+            "process_type": process.process_type,
+        },
+    )
+    outbox, submission = await service.enqueue_bridge_delivery(
+        delivery,
+        actor=actor,
+    )
+    return StepRunResult(
+        waiting=True,
+        output={
+            "status": "submitted",
+            "runtime_ref": request.adapter.runtime_ref,
+            "target_run_id": target_run_id,
+            "delivery_id": outbox.id,
+            "command_id": submission.command.id,
+            "replayed": submission.replayed,
+        },
+    )
+
+
+def _runtime_ref_id(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme in {"sqlite", "sqlite3"}:
+        path = Path(_carrier_runtime_db_path(value))
+        return path.stem or "sqlite"
+    return value
 
 
 def _process_step_request_parts(

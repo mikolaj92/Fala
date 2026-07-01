@@ -62,7 +62,7 @@ Supported v2 adapter kinds are:
 - `python`: importable Python function.
 - `subprocess`: local command as an argument list.
 - `manual_gate`: explicit operator gate.
-- `fala_runtime`: delegation to another Fala runtime.
+- `fala_runtime`: delegation to another Fala runtime through bridge outbox.
 
 Subprocess commands are lists, not shell strings. The runtime prepares input
 manifests, captures stdout/stderr, validates output manifests, and commits

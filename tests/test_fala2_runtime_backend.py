@@ -1480,6 +1480,115 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(process.status, CarrierProcessStatus.succeeded)
             self.assertEqual(process.output["value"], 3)
 
+    def test_cli_run_until_idle_delegates_fala_runtime_process_to_bridge_outbox(self) -> None:
+        async def setup(source_path: Path, target_path: Path) -> None:
+            source = RuntimeBackendService.sqlite(source_path)
+            await source.create_run(
+                Run(id="run_source"),
+                idempotency_key="run_source:create",
+            )
+            await source.accept_carrier(
+                Carrier(
+                    id="carrier_delegate",
+                    run_id="run_source",
+                    carrier_type="case",
+                    payload={"claim": "DELEGATE-1"},
+                ),
+                idempotency_key="run_source:carrier.accept:carrier_delegate",
+            )
+            await source.schedule_process(
+                Process(
+                    id="process_delegate",
+                    run_id="run_source",
+                    carrier_id="carrier_delegate",
+                    process_type="fala_runtime",
+                    status=CarrierProcessStatus.ready,
+                    input={
+                        "adapter": {
+                            "kind": "fala_runtime",
+                            "runtime_ref": f"sqlite://{target_path}",
+                        },
+                        "config": {
+                            "target_runtime_id": "target",
+                            "target_run_id": "run_target",
+                            "budget": {
+                                "runtime_hops": 1,
+                                "carrier_count": 1,
+                                "attempts": 1,
+                            },
+                        },
+                    },
+                ),
+                idempotency_key="run_source:process.schedule:process_delegate",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_path = Path(tmp_dir) / "source.sqlite"
+            target_path = Path(tmp_dir) / "target.sqlite"
+            asyncio.run(setup(source_path, target_path))
+
+            result = _run_cli_json(
+                "run-until-idle",
+                "--db",
+                str(source_path),
+                "--run-id",
+                "run_source",
+            )
+            self.assertEqual(result["stopped_reason"], "idle")
+            self.assertEqual(len(result["waiting"]), 1)
+            self.assertEqual(
+                result["waiting"][0]["output"]["status"],
+                "submitted",
+            )
+
+            outbox = _run_cli_json(
+                "bridge",
+                "list",
+                "--db",
+                str(source_path),
+                "--run-id",
+                "run_source",
+            )
+            self.assertEqual(outbox["count"], 1)
+            self.assertEqual(outbox["bridge_outbox"][0]["status"], "pending")
+            self.assertEqual(
+                outbox["bridge_outbox"][0]["carrier"]["id"],
+                "carrier_delegate",
+            )
+
+            delivered = _run_cli_json(
+                "bridge",
+                "deliver",
+                "--db",
+                str(source_path),
+                "--run-id",
+                "run_source",
+                "--delivery-id",
+                outbox["bridge_outbox"][0]["id"],
+                "--target-db",
+                str(target_path),
+            )
+            self.assertTrue(delivered["ok"])
+            self.assertEqual(delivered["imported"]["run_id"], "run_target")
+
+            inbox = _run_cli_json(
+                "bridge",
+                "list",
+                "--db",
+                str(target_path),
+                "--run-id",
+                "run_target",
+                "--box",
+                "inbox",
+                "--status",
+                "imported",
+            )
+            self.assertEqual(inbox["count"], 1)
+            self.assertEqual(
+                inbox["bridge_inbox"][0]["carrier"]["payload"]["claim"],
+                "DELEGATE-1",
+            )
+
     def test_cli_cancels_carrier_runtime_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "carrier.sqlite"
