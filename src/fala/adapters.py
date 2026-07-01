@@ -118,7 +118,7 @@ class SubprocessStepAdapter:
             )
         if not result_path.exists():
             raise FalaAdapterError("subprocess adapter did not write output/result.json")
-        output = _load_output_result(result_path)
+        output = _redact_value(_load_output_result(result_path), redacted_values)
         return StepRunResult(
             output=output,
             stdout=stdout_text,
@@ -236,6 +236,16 @@ def _redact(text: str, secrets: set[str]) -> str:
     for secret in sorted(secrets, key=len, reverse=True):
         redacted = redacted.replace(secret, "<redacted>")
     return redacted
+
+
+def _redact_value(value: Any, secrets: set[str]) -> Any:
+    if isinstance(value, str):
+        return _redact(value, secrets)
+    if isinstance(value, list):
+        return [_redact_value(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_value(item, secrets) for key, item in value.items()}
+    return value
 
 
 def _load_output_result(path: Path) -> dict[str, Any]:

@@ -102,7 +102,11 @@ from pathlib import Path
 assert os.environ["TOKEN"] == "secret-value"
 output = Path(os.environ["FALA_STEP_OUTPUT_DIR"])
 output.mkdir(parents=True, exist_ok=True)
-(output / "result.json").write_text(json.dumps({"ok": True}))
+(output / "result.json").write_text(json.dumps({
+    "ok": True,
+    "token": os.environ["TOKEN"],
+    "nested": ["prefix " + os.environ["TOKEN"] + " suffix"],
+}))
 print(os.environ["TOKEN"])
 """.strip(),
                     encoding="utf-8",
@@ -137,7 +141,10 @@ print(os.environ["TOKEN"])
                     {"TOKEN": "${env:FALA_TEST_TOKEN}"},
                 )
                 self.assertEqual(result.stdout.strip(), "<redacted>")
+                self.assertEqual(result.output["token"], "<redacted>")
+                self.assertEqual(result.output["nested"], ["prefix <redacted> suffix"])
                 self.assertNotIn("secret-value", json.dumps(manifest))
+                self.assertNotIn("secret-value", json.dumps(result.output))
 
         asyncio.run(scenario())
 
