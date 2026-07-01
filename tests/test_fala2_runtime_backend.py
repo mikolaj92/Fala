@@ -1339,6 +1339,47 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(archive_json["retention"]["retention_days"], 30)
             self.assertIn("retain_until", archive_json["retention"])
 
+    def test_cli_archive_gc_deletes_expired_run_archives(self) -> None:
+        def write_archive(path: Path, retain_until: str) -> None:
+            with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(
+                    "archive.json",
+                    json.dumps(
+                        {
+                            "format": "fala-run-archive-v1",
+                            "run_id": path.stem,
+                            "retention": {"retain_until": retain_until},
+                        }
+                    ),
+                )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            expired = root / "expired.zip"
+            retained = root / "retained.zip"
+            write_archive(expired, "2000-01-01T00:00:00Z")
+            write_archive(retained, "2999-01-01T00:00:00Z")
+
+            dry_run = _run_cli_json(
+                "archive-gc",
+                "--archive-root",
+                str(root),
+                "--dry-run",
+            )
+            self.assertEqual(dry_run["expired"], [str(expired.resolve())])
+            self.assertEqual(dry_run["deleted"], [])
+            self.assertTrue(expired.exists())
+            self.assertTrue(retained.exists())
+
+            collected = _run_cli_json(
+                "archive-gc",
+                "--archive-root",
+                str(root),
+            )
+            self.assertEqual(collected["deleted"], [str(expired.resolve())])
+            self.assertFalse(expired.exists())
+            self.assertTrue(retained.exists())
+
     def test_cli_mutates_carriers_observations_and_processes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "carrier.sqlite"

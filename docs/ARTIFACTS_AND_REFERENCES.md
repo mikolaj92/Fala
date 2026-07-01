@@ -14,6 +14,8 @@ This protects shared blobs even when `--run-id` is supplied.
 
 `fala archive-run --retention-days N` records archive retention metadata in the
 portable archive manifest.
+`fala archive-gc --archive-root <dir>` deletes expired archive bundles whose
+manifest `retain_until` has passed.
 
 Cross-runtime references use:
 

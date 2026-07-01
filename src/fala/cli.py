@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime, timezone
 from html import escape as html_escape
 import json
 import sqlite3
@@ -119,6 +120,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
         or getattr(args, "command", None)
         in {
             "schema",
+            "archive-gc",
             "archive-run",
             "db",
             "create-run",
@@ -185,6 +187,10 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_run.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     archive_run.add_argument("--out", required=True, help="Output .zip path.")
     archive_run.add_argument("--retention-days", type=int, default=None, help="Record archive retention period in archive metadata.")
+
+    archive_gc = subparsers.add_parser("archive-gc", help="Delete expired Fala run archive bundles.")
+    archive_gc.add_argument("--archive-root", required=True, help="Directory containing .zip run archives.")
+    archive_gc.add_argument("--dry-run", action="store_true")
 
     doctor = subparsers.add_parser("doctor", help="Check Carrier runtime readiness.")
     doctor.add_argument("--db", default=".fala/state.sqlite", help="Carrier runtime SQLite DB path or sqlite:// URL.")
@@ -484,6 +490,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         return _carrier_runtime_doctor(args)
 
     if args.command in {
+        "archive-gc",
         "archive-run",
         "artifacts",
         "bridge",
@@ -546,6 +553,8 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         }
     if args.command == "trace":
         return await _carrier_runtime_trace(args)
+    if args.command == "archive-gc":
+        return _carrier_runtime_archive_gc(args)
     if args.command == "archive-run":
         return await _carrier_runtime_archive_run(args)
     if args.command == "export-html":
@@ -1785,6 +1794,67 @@ async def _carrier_runtime_archive_run(args: argparse.Namespace) -> dict[str, An
         "files": sorted(files),
         "retention": retention,
     }
+
+
+def _carrier_runtime_archive_gc(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.archive_root).expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"Archive root does not exist: {root}")
+    now = datetime.now(timezone.utc)
+    expired: list[str] = []
+    kept: list[str] = []
+    invalid: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*.zip")):
+        try:
+            archive = _read_archive_manifest(path)
+            retain_until = archive.get("retention", {}).get("retain_until")
+            if not retain_until:
+                kept.append(str(path))
+                continue
+            if _parse_utc_timestamp(str(retain_until)) <= now:
+                expired.append(str(path))
+            else:
+                kept.append(str(path))
+        except Exception as exc:
+            invalid.append({"path": str(path), "error": str(exc)})
+
+    deleted: list[str] = []
+    if not args.dry_run:
+        for raw_path in expired:
+            path = Path(raw_path)
+            path.unlink()
+            deleted.append(raw_path)
+    return {
+        "ok": True,
+        "archive_root": str(root),
+        "dry_run": bool(args.dry_run),
+        "expired_count": len(expired),
+        "deleted_count": len(deleted),
+        "kept_count": len(kept),
+        "invalid_count": len(invalid),
+        "expired": expired,
+        "deleted": deleted,
+        "kept": kept,
+        "invalid": invalid,
+    }
+
+
+def _read_archive_manifest(path: Path) -> dict[str, Any]:
+    with zipfile.ZipFile(path) as archive:
+        loaded = json.loads(archive.read("archive.json"))
+    if not isinstance(loaded, dict):
+        raise ValueError("archive.json must contain an object")
+    if loaded.get("format") != "fala-run-archive-v1":
+        raise ValueError("not a Fala run archive")
+    return loaded
+
+
+def _parse_utc_timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise ValueError(f"invalid UTC timestamp: {value!r}") from exc
+    return parsed.replace(tzinfo=timezone.utc)
 
 
 def _render_carrier_runtime_html(trace: dict[str, Any]) -> str:

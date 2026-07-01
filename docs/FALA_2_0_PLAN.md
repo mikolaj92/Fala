@@ -66,7 +66,7 @@ workflow API.
 | SQLite backend | PARTIAL | Reference backend exists with commands, events, carriers, processes, gates, projections, artifacts, bridge inbox/outbox, and schema tracking. Further hardening is still needed around migrations and replay guarantees. |
 | External infrastructure removal | DONE | Core dependencies no longer include web, queue, Redis, Postgres, S3, or HTTP client stacks. |
 | Runtime backend boundary | PARTIAL | `RuntimeBackend` covers the current runtime operations; backend conformance should continue expanding with every new mutation. |
-| Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. GC protects blobs referenced by any run, archive export records retention metadata, and SQLite vacuum exists. Archive expiry enforcement can still expand. |
+| Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. GC protects blobs referenced by any run, archive export records retention metadata, archive-gc deletes expired archive bundles, and SQLite vacuum exists. |
 | Step adapters | PARTIAL | `python_function`, `subprocess`, `manual_gate`, and `fala_runtime` adapters exist. Subprocess uses manifests and argument-list commands. Fala-runtime processes enqueue bridge outbox deliveries and can resolve local runtime pools. |
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
 | Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
@@ -80,5 +80,5 @@ workflow API.
 
 ## Next Work
 
-1. Add archive expiry enforcement for retained archive bundles.
-2. Add cross-host bridge transport adapters beyond local SQLite delivery.
+1. Add cross-host bridge transport adapters beyond local SQLite delivery.
+2. Add richer domain-pack examples beyond documents and Splot.

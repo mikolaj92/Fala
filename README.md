@@ -162,6 +162,7 @@ uv run fala diagnose-waits --db .fala/state.sqlite --run-id run_local
 uv run fala trace --db .fala/state.sqlite --run-id run_local
 uv run fala replay-execution --db .fala/state.sqlite --run-id run_local --process-id process_123
 uv run fala archive-run run_local --db .fala/state.sqlite --out run_local.archive.zip --retention-days 30
+uv run fala archive-gc --archive-root .fala/archives --dry-run
 uv run fala export-bundle --db .fala/state.sqlite --run-id run_local --out run_local.fala.zip
 ```
 
