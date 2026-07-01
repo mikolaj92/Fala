@@ -12,6 +12,10 @@ The current Carrier-first path lives in `fala.runtime_backend`:
 - `RuntimeEvent` records ordered, command-linked runtime facts.
 - `SQLiteRuntimeBackend` is the bundled local backend.
 - `RuntimeBackendService` is the service facade for new Carrier-first writes.
+- `CarrierType` records the run-local typed carrier definitions available to a
+  flow.
+- `CarrierRelation` records durable lineage or dependency edges between
+  carriers.
 - `CarrierWorkerContext` in `fala.sdk` is the worker payload/env helper for v2 adapters.
 - `RuntimeRef`, `RunRef`, and `EventRef` identify other Fala runtimes, runs,
   and events without adding a non-SQLite first-party backend.
@@ -37,8 +41,13 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
 
 - Carrier: the typed unit of information moved by the runtime. It can represent
   a case, reading, event, document-domain object, or any other domain value.
+- CarrierType: the registered type metadata for a carrier in a run, including
+  media types and value schema metadata.
+- CarrierRelation: a durable relationship between two carriers, used for
+  lineage, derivation, dependency, and future wait-graph work.
 - RuntimeBackend: the persistence boundary for carriers, commands, events,
-  observations, gates, projections, and bridge inbox/outbox records.
+  carrier types, carrier relations, commands, events, observations, gates,
+  projections, and bridge inbox/outbox records.
 - RuntimeCommand: the only write path for state-changing runtime actions.
   Commands carry an idempotency key, actor, correlation id, causation id, and
   payload.
@@ -70,6 +79,7 @@ checks in `tests/test_runtime_backend_conformance.py`.
 The conformance checks cover:
 
 - carrier persistence;
+- carrier type and relation persistence;
 - idempotent command submission;
 - ordered command-linked events;
 - observations, gates, and projections;

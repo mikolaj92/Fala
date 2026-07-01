@@ -48,9 +48,9 @@ The current implementation already has useful pieces:
 The current implementation also has mismatches with the Fala 2.0 target:
 
 - The legacy process runtime still uses `Document` as its public vocabulary.
-- `Carrier`, `Observation`, `RuntimeBackend`, `RuntimeRef`, `RunRef`, and
-  `EventRef` exist for the new Carrier-first path, but they do not yet cover
-  every process/run scheduling operation.
+- `Carrier`, `CarrierType`, `CarrierRelation`, `Observation`, `RuntimeBackend`,
+  `RuntimeRef`, `RunRef`, and `EventRef` exist for the new Carrier-first path,
+  but they do not yet cover every process/run scheduling operation.
 - The legacy storage boundary is still `StateStore`; the new `RuntimeBackend`
   contract exists beside it rather than replacing it everywhere.
 - Postgres appears as first-party code and documentation today. For Fala 2.0 it
@@ -112,8 +112,8 @@ Goal: establish the Fala 2.0 ontology without breaking current users.
 
 Work items:
 
-1. Add `Carrier`, `CarrierType`, `CarrierRelation`, and carrier payload/value
-   models.
+1. Extend `Carrier`, `CarrierType`, `CarrierRelation`, and carrier payload/value
+   models until scheduler/service code no longer needs document core fields.
 2. Map current `RuntimeDocument*` types to carrier compatibility wrappers.
 3. Rename new runtime APIs around carrier semantics while keeping document API
    aliases for compatibility.

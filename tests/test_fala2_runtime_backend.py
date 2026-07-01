@@ -37,6 +37,8 @@ from fala.runtime_backend import (
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
+    CarrierRelation,
+    CarrierType,
     DelegationPolicy,
     EventRef,
     Gate,
@@ -216,6 +218,96 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(carrier.carrier_type, "arbitration_case")
                 self.assertNotIn("document_type", carrier.payload)
                 self.assertEqual([event.event_type for event in events], ["carrier.accepted"])
+
+        asyncio.run(scenario())
+
+    def test_fala_runtime_registers_carrier_types_and_relations(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                carrier_type = CarrierType(
+                    id="arbitration_case",
+                    run_id="run_types",
+                    title="Arbitration case",
+                    media_types=["application/json"],
+                    value_schema={"type": "object"},
+                )
+                source = Carrier(
+                    id="carrier_source",
+                    run_id="run_types",
+                    carrier_type="arbitration_case",
+                )
+                target = Carrier(
+                    id="carrier_target",
+                    run_id="run_types",
+                    carrier_type="arbitration_case",
+                )
+                relation = CarrierRelation(
+                    id="relation_derived",
+                    run_id="run_types",
+                    relation_type="derived_from",
+                    source_carrier_id=source.id,
+                    target_carrier_id=target.id,
+                )
+
+                stored_type, type_submission = await runtime.register_carrier_type(
+                    carrier_type,
+                    idempotency_key="run_types:carrier_type:arbitration_case",
+                )
+                replay_type, replay_type_submission = await runtime.register_carrier_type(
+                    carrier_type.model_copy(update={"title": "Changed"}),
+                    idempotency_key="run_types:carrier_type:arbitration_case",
+                )
+                await runtime.accept_carrier(
+                    source,
+                    idempotency_key="run_types:carrier.accept:source",
+                )
+                await runtime.accept_carrier(
+                    target,
+                    idempotency_key="run_types:carrier.accept:target",
+                )
+                stored_relation, relation_submission = (
+                    await runtime.record_carrier_relation(
+                        relation,
+                        idempotency_key="run_types:relation:derived",
+                    )
+                )
+                replay_relation, replay_relation_submission = (
+                    await runtime.record_carrier_relation(
+                        relation.model_copy(update={"relation_type": "changed"}),
+                        idempotency_key="run_types:relation:derived",
+                    )
+                )
+
+                self.assertEqual(stored_type, carrier_type)
+                self.assertEqual(replay_type, carrier_type)
+                self.assertFalse(type_submission.replayed)
+                self.assertTrue(replay_type_submission.replayed)
+                self.assertEqual(stored_relation, relation)
+                self.assertEqual(replay_relation, relation)
+                self.assertFalse(relation_submission.replayed)
+                self.assertTrue(replay_relation_submission.replayed)
+                self.assertEqual(
+                    await runtime.list_carrier_types(run_id="run_types"),
+                    [carrier_type],
+                )
+                self.assertEqual(
+                    await runtime.list_carrier_relations(
+                        run_id="run_types",
+                        carrier_id=target.id,
+                    ),
+                    [relation],
+                )
+                events = await runtime.list_events(run_id="run_types")
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    [
+                        "carrier_type.registered",
+                        "carrier.accepted",
+                        "carrier.accepted",
+                        "carrier_relation.recorded",
+                    ],
+                )
 
         asyncio.run(scenario())
 

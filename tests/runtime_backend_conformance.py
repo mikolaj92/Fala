@@ -4,6 +4,8 @@ from fala.runtime_backend import (
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
+    CarrierRelation,
+    CarrierType,
     EventRef,
     Gate,
     GateStatus,
@@ -20,6 +22,20 @@ from fala.runtime_backend import (
 
 async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     runtime = RuntimeRef(id="local", uri="sqlite://local")
+    carrier_type = CarrierType(
+        id="case",
+        run_id="run_conformance",
+        title="Case",
+        media_types=["application/json"],
+        value_schema={"type": "object"},
+    )
+    await backend.put_carrier_type(carrier_type)
+    assert await backend.get_carrier_type(
+        run_id=carrier_type.run_id,
+        carrier_type_id=carrier_type.id,
+    ) == carrier_type
+    assert await backend.list_carrier_types(run_id=carrier_type.run_id) == [carrier_type]
+
     carrier = Carrier(
         id="carrier_conformance",
         run_id="run_conformance",
@@ -32,6 +48,30 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         carrier_id=carrier.id,
     ) == carrier
     assert await backend.list_carriers(run_id=carrier.run_id) == [carrier]
+    child_carrier = Carrier(
+        id="carrier_child",
+        run_id=carrier.run_id,
+        carrier_type="case",
+        payload={"case_id": "C-1-child"},
+    )
+    await backend.put_carrier(child_carrier)
+    relation = CarrierRelation(
+        id="relation_conformance",
+        run_id=carrier.run_id,
+        relation_type="derived_from",
+        source_carrier_id=carrier.id,
+        target_carrier_id=child_carrier.id,
+    )
+    await backend.put_carrier_relation(relation)
+    assert await backend.get_carrier_relation(
+        run_id=carrier.run_id,
+        relation_id=relation.id,
+    ) == relation
+    assert await backend.list_carrier_relations(run_id=carrier.run_id) == [relation]
+    assert await backend.list_carrier_relations(
+        run_id=carrier.run_id,
+        carrier_id=child_carrier.id,
+    ) == [relation]
 
     command = RuntimeCommand(
         run_id=carrier.run_id,

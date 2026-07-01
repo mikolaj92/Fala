@@ -4,6 +4,8 @@ from pathlib import Path
 
 from fala.runtime_backend import (
     Carrier,
+    CarrierRelation,
+    CarrierType,
     CommandSubmission,
     Gate,
     GateStatus,
@@ -44,6 +46,40 @@ class FalaRuntime:
     ) -> tuple[Carrier, CommandSubmission]:
         return await self.service.accept_carrier(
             carrier,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def register_carrier_type(
+        self,
+        carrier_type: CarrierType,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[CarrierType, CommandSubmission]:
+        return await self.service.register_carrier_type(
+            carrier_type,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def record_carrier_relation(
+        self,
+        relation: CarrierRelation,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[CarrierRelation, CommandSubmission]:
+        return await self.service.record_carrier_relation(
+            relation,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
@@ -114,6 +150,22 @@ class FalaRuntime:
             carrier_id=carrier_id,
             after_sequence=after_sequence,
             limit=limit,
+        )
+
+    async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]:
+        return await self.service.list_carrier_types(run_id=run_id)
+
+    async def list_carrier_relations(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        relation_type: str | None = None,
+    ) -> list[CarrierRelation]:
+        return await self.service.list_carrier_relations(
+            run_id=run_id,
+            carrier_id=carrier_id,
+            relation_type=relation_type,
         )
 
     async def list_gates(

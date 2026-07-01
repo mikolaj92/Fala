@@ -32,6 +32,13 @@ def _loads(value: str) -> dict[str, Any]:
     return loaded
 
 
+def _loads_str_list(value: str) -> list[str]:
+    loaded = json.loads(value)
+    if not isinstance(loaded, list) or not all(isinstance(item, str) for item in loaded):
+        raise ValueError("Stored runtime JSON payload is not a string list")
+    return loaded
+
+
 def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
@@ -46,6 +53,32 @@ class Carrier(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+
+
+class CarrierType(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    run_id: str
+    title: str | None = None
+    description: str | None = None
+    media_types: list[str] = Field(default_factory=list)
+    value_schema: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class CarrierRelation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: _new_id("carrier_relation"))
+    run_id: str
+    relation_type: str
+    source_carrier_id: str
+    target_carrier_id: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
 
 
 class RuntimeCommand(BaseModel):
@@ -212,6 +245,14 @@ class BridgeDelivery(BaseModel):
 
 
 class RuntimeBackend(Protocol):
+    async def put_carrier_type(self, carrier_type: CarrierType) -> None: ...
+
+    async def get_carrier_type(
+        self, *, run_id: str, carrier_type_id: str
+    ) -> CarrierType | None: ...
+
+    async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]: ...
+
     async def put_carrier(self, carrier: Carrier) -> None: ...
 
     async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None: ...
@@ -223,6 +264,20 @@ class RuntimeBackend(Protocol):
         carrier_type: str | None = None,
         limit: int | None = None,
     ) -> list[Carrier]: ...
+
+    async def put_carrier_relation(self, relation: CarrierRelation) -> None: ...
+
+    async def get_carrier_relation(
+        self, *, run_id: str, relation_id: str
+    ) -> CarrierRelation | None: ...
+
+    async def list_carrier_relations(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        relation_type: str | None = None,
+    ) -> list[CarrierRelation]: ...
 
     async def submit_command(
         self, command: RuntimeCommand, *, events: Sequence[RuntimeEvent] = ()
@@ -323,6 +378,34 @@ class SQLiteRuntimeBackend:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, id)
+                );
+
+                CREATE TABLE IF NOT EXISTS carrier_types (
+                    run_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    title TEXT,
+                    description TEXT,
+                    media_types TEXT NOT NULL,
+                    value_schema_json TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, id)
+                );
+
+                CREATE TABLE IF NOT EXISTS carrier_relations (
+                    run_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    relation_type TEXT NOT NULL,
+                    source_carrier_id TEXT NOT NULL,
+                    target_carrier_id TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, id),
+                    FOREIGN KEY (run_id, source_carrier_id)
+                        REFERENCES carriers (run_id, id),
+                    FOREIGN KEY (run_id, target_carrier_id)
+                        REFERENCES carriers (run_id, id)
                 );
 
                 CREATE TABLE IF NOT EXISTS runtime_commands (
@@ -432,6 +515,10 @@ class SQLiteRuntimeBackend:
 
                 CREATE INDEX IF NOT EXISTS idx_runtime_events_carrier
                     ON runtime_events (run_id, carrier_id, sequence);
+                CREATE INDEX IF NOT EXISTS idx_carrier_relations_source
+                    ON carrier_relations (run_id, source_carrier_id, relation_type);
+                CREATE INDEX IF NOT EXISTS idx_carrier_relations_target
+                    ON carrier_relations (run_id, target_carrier_id, relation_type);
                 CREATE INDEX IF NOT EXISTS idx_observations_carrier
                     ON observations (run_id, carrier_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_gates_status
@@ -443,6 +530,63 @@ class SQLiteRuntimeBackend:
                 """
             )
             connection.commit()
+
+    async def put_carrier_type(self, carrier_type: CarrierType) -> None:
+        async with self._lock:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO carrier_types (
+                        run_id, id, title, description, media_types,
+                        value_schema_json, metadata, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, id) DO UPDATE SET
+                        title = excluded.title,
+                        description = excluded.description,
+                        media_types = excluded.media_types,
+                        value_schema_json = excluded.value_schema_json,
+                        metadata = excluded.metadata,
+                        created_at = excluded.created_at,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        carrier_type.run_id,
+                        carrier_type.id,
+                        carrier_type.title,
+                        carrier_type.description,
+                        json.dumps(carrier_type.media_types),
+                        _dumps(carrier_type.value_schema),
+                        _dumps(carrier_type.metadata),
+                        carrier_type.created_at.isoformat(),
+                        carrier_type.updated_at.isoformat(),
+                    ),
+                )
+                connection.commit()
+
+    async def get_carrier_type(
+        self,
+        *,
+        run_id: str,
+        carrier_type_id: str,
+    ) -> CarrierType | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM carrier_types WHERE run_id = ? AND id = ?",
+                (run_id, carrier_type_id),
+            ).fetchone()
+        return _carrier_type_from_row(row) if row is not None else None
+
+    async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM carrier_types
+                WHERE run_id = ?
+                ORDER BY id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [_carrier_type_from_row(row) for row in rows]
 
     async def put_carrier(self, carrier: Carrier) -> None:
         async with self._lock:
@@ -503,6 +647,73 @@ class SQLiteRuntimeBackend:
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()
         return [_carrier_from_row(row) for row in rows]
+
+    async def put_carrier_relation(self, relation: CarrierRelation) -> None:
+        async with self._lock:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO carrier_relations (
+                        run_id, id, relation_type, source_carrier_id,
+                        target_carrier_id, metadata, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, id) DO UPDATE SET
+                        relation_type = excluded.relation_type,
+                        source_carrier_id = excluded.source_carrier_id,
+                        target_carrier_id = excluded.target_carrier_id,
+                        metadata = excluded.metadata,
+                        created_at = excluded.created_at
+                    """,
+                    (
+                        relation.run_id,
+                        relation.id,
+                        relation.relation_type,
+                        relation.source_carrier_id,
+                        relation.target_carrier_id,
+                        _dumps(relation.metadata),
+                        relation.created_at.isoformat(),
+                    ),
+                )
+                connection.commit()
+
+    async def get_carrier_relation(
+        self,
+        *,
+        run_id: str,
+        relation_id: str,
+    ) -> CarrierRelation | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM carrier_relations WHERE run_id = ? AND id = ?",
+                (run_id, relation_id),
+            ).fetchone()
+        return _carrier_relation_from_row(row) if row is not None else None
+
+    async def list_carrier_relations(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        relation_type: str | None = None,
+    ) -> list[CarrierRelation]:
+        clauses = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if carrier_id is not None:
+            clauses.append("(source_carrier_id = ? OR target_carrier_id = ?)")
+            params.extend([carrier_id, carrier_id])
+        if relation_type is not None:
+            clauses.append("relation_type = ?")
+            params.append(relation_type)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM carrier_relations
+                WHERE {' AND '.join(clauses)}
+                ORDER BY created_at ASC, id ASC
+                """,
+                params,
+            ).fetchall()
+        return [_carrier_relation_from_row(row) for row in rows]
 
     async def submit_command(
         self,
@@ -933,6 +1144,49 @@ class RuntimeBackendService:
     def sqlite(cls, path: str | Path) -> "RuntimeBackendService":
         return cls(SQLiteRuntimeBackend(path))
 
+    async def register_carrier_type(
+        self,
+        carrier_type: CarrierType,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[CarrierType, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=carrier_type.run_id,
+            command_type="carrier_type.register",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"carrier_type_id": carrier_type.id},
+        )
+        event = RuntimeEvent(
+            run_id=carrier_type.run_id,
+            event_type="carrier_type.registered",
+            payload={"carrier_type_id": carrier_type.id},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_type_id = submission.command.payload.get(
+                "carrier_type_id",
+                carrier_type.id,
+            )
+            existing = await self.backend.get_carrier_type(
+                run_id=carrier_type.run_id,
+                carrier_type_id=str(existing_type_id),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed carrier type command has no stored carrier type: "
+                    f"{existing_type_id!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_carrier_type(carrier_type)
+        return carrier_type, submission
+
     async def accept_carrier(
         self,
         carrier: Carrier,
@@ -973,6 +1227,59 @@ class RuntimeBackendService:
 
         await self.backend.put_carrier(carrier)
         return carrier, submission
+
+    async def record_carrier_relation(
+        self,
+        relation: CarrierRelation,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[CarrierRelation, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=relation.run_id,
+            command_type="carrier_relation.record",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={
+                "relation_id": relation.id,
+                "relation_type": relation.relation_type,
+                "source_carrier_id": relation.source_carrier_id,
+                "target_carrier_id": relation.target_carrier_id,
+            },
+        )
+        event = RuntimeEvent(
+            run_id=relation.run_id,
+            carrier_id=relation.source_carrier_id,
+            event_type="carrier_relation.recorded",
+            payload={
+                "relation_id": relation.id,
+                "relation_type": relation.relation_type,
+                "target_carrier_id": relation.target_carrier_id,
+            },
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_relation_id = submission.command.payload.get(
+                "relation_id",
+                relation.id,
+            )
+            existing = await self.backend.get_carrier_relation(
+                run_id=relation.run_id,
+                relation_id=str(existing_relation_id),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed carrier relation command has no stored relation: "
+                    f"{existing_relation_id!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_carrier_relation(relation)
+        return relation, submission
 
     async def record_observation(
         self,
@@ -1313,6 +1620,22 @@ class RuntimeBackendService:
             limit=limit,
         )
 
+    async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]:
+        return await self.backend.list_carrier_types(run_id=run_id)
+
+    async def list_carrier_relations(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        relation_type: str | None = None,
+    ) -> list[CarrierRelation]:
+        return await self.backend.list_carrier_relations(
+            run_id=run_id,
+            carrier_id=carrier_id,
+            relation_type=relation_type,
+        )
+
     async def list_gates(
         self,
         *,
@@ -1412,6 +1735,32 @@ def _carrier_from_row(row: sqlite3.Row) -> Carrier:
     )
 
 
+def _carrier_type_from_row(row: sqlite3.Row) -> CarrierType:
+    return CarrierType(
+        id=row["id"],
+        run_id=row["run_id"],
+        title=row["title"],
+        description=row["description"],
+        media_types=_loads_str_list(row["media_types"]),
+        value_schema=_loads(row["value_schema_json"]),
+        metadata=_loads(row["metadata"]),
+        created_at=_dt(row["created_at"]),
+        updated_at=_dt(row["updated_at"]),
+    )
+
+
+def _carrier_relation_from_row(row: sqlite3.Row) -> CarrierRelation:
+    return CarrierRelation(
+        id=row["id"],
+        run_id=row["run_id"],
+        relation_type=row["relation_type"],
+        source_carrier_id=row["source_carrier_id"],
+        target_carrier_id=row["target_carrier_id"],
+        metadata=_loads(row["metadata"]),
+        created_at=_dt(row["created_at"]),
+    )
+
+
 def _command_from_row(row: sqlite3.Row) -> RuntimeCommand:
     return RuntimeCommand(
         id=row["id"],
@@ -1505,6 +1854,8 @@ __all__ = [
     "BridgeDelivery",
     "BridgeDeliveryStatus",
     "Carrier",
+    "CarrierRelation",
+    "CarrierType",
     "CommandSubmission",
     "DelegationPolicy",
     "EventRef",
