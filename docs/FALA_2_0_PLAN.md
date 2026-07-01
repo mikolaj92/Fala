@@ -291,7 +291,7 @@ not complete enough to close the requirement.
 | 11 | State machines | PARTIAL | Run/process statuses and gate completion exist; finish full transition validation and tests. |
 | 12 | Multi-Fala composition | PARTIAL | Local SQLite bridge deliver exists; add runtime pools, wait graph, budgets, and no-global-transaction guidance. |
 | 13 | Runtime pools | PARTIAL | Add routing policies and persistence for multi-runtime pools. |
-| 14 | Budgets and safety limits | PARTIAL | Enforce runtime budgets for retries, gates, artifact bytes, pending processes, spawned runs, and delegation. |
+| 14 | Budgets and safety limits | PARTIAL | Bridge delegation enforces hop/carrier/attempt budgets; add retry, gate, artifact byte, pending process, and spawned-run limits. |
 | 15 | Cycles and deadlock detection | PARTIAL | Add wait graph diagnostics and distinguish valid feedback cycles from deadlocks. |
 | 16 | Web/UI | PARTIAL | Keep web optional, read-only by default, localhost-bound, and mutation-through-command only; add static export. |
 | 17 | CLI | PARTIAL | Carrier inspect/mutate, doctor, trace, export, and bridge deliver exist; finish waits diagnosis and compatibility aliases. |

@@ -103,6 +103,7 @@ The conformance checks cover:
 - resource accounting fields in `run_summary`;
 - process scheduling, atomic claim/lease, retry, fail, and completion;
 - bridge inbox/outbox persistence;
+- bridge runtime hop, carrier, and attempt budget enforcement;
 - SQLite `schema_migrations` version marker.
 
 ## CLI Inspection

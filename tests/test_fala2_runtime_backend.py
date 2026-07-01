@@ -35,6 +35,7 @@ from fala.domain_packs.splot import (
     jurisdiction_observation,
     review_gate,
 )
+from fala.errors import FalaBudgetExceeded
 from fala.runtime_backend import (
     Artifact,
     BridgeDelivery,
@@ -1510,6 +1511,10 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
                 self.assertEqual(delivered.status, BridgeDeliveryStatus.delivered)
                 self.assertEqual(imported.status, BridgeDeliveryStatus.imported)
+                self.assertEqual(delivered.budget.runtime_hops, 0)
+                self.assertEqual(imported.budget.runtime_hops, 0)
+                self.assertEqual(delivered.budget.carrier_count, 0)
+                self.assertEqual(imported.budget.carrier_count, 0)
                 self.assertFalse(delivered_submission.replayed)
                 self.assertFalse(import_submission.replayed)
                 self.assertEqual(replay_delivered, delivered)
@@ -1553,6 +1558,57 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(
                     [event.event_type for event in await target.backend.list_events(run_id="run_target")],
                     ["bridge.inbox.imported"],
+                )
+
+        asyncio.run(scenario())
+
+    def test_sqlite_bridge_enforces_attempt_budget(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                source_path = Path(tmp_dir) / "source.sqlite"
+                target_path = Path(tmp_dir) / "target.sqlite"
+                source = RuntimeBackendService.sqlite(source_path)
+                target = RuntimeBackendService.sqlite(target_path)
+                source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
+                target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
+                carrier = Carrier(
+                    id="carrier_budget",
+                    run_id="run_source",
+                    carrier_type="case",
+                )
+                await source.accept_carrier(
+                    carrier,
+                    idempotency_key="run_source:carrier.accept:carrier_budget",
+                )
+                source_events = await source.backend.list_events(run_id="run_source")
+                delivery = BridgeDelivery(
+                    id="bridge_budget",
+                    run_id="run_source",
+                    idempotency_key="run_source:bridge:budget",
+                    source=RunRef(runtime=source_ref, run_id="run_source"),
+                    target=RunRef(runtime=target_ref, run_id="run_target"),
+                    carrier=carrier,
+                    event_ref=EventRef(
+                        runtime=source_ref,
+                        run_id="run_source",
+                        event_id=source_events[0].id,
+                        sequence=source_events[0].sequence,
+                    ),
+                    budget=RuntimeBudget(runtime_hops=1, carrier_count=1, attempts=1),
+                    attempts=1,
+                )
+                await source.backend.put_outbox_delivery(delivery)
+
+                with self.assertRaises(FalaBudgetExceeded):
+                    await source.deliver_bridge_delivery(
+                        run_id="run_source",
+                        delivery_id="bridge_budget",
+                        target=target,
+                        idempotency_key="run_source:bridge.deliver:budget",
+                    )
+                self.assertEqual(
+                    await target.list_inbox_deliveries(run_id="run_target"),
+                    [],
                 )
 
         asyncio.run(scenario())

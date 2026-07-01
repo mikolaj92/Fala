@@ -12,6 +12,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fala.errors import FalaBudgetExceeded
+
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
@@ -2654,6 +2656,7 @@ class RuntimeBackendService:
         causation_id: str | None = None,
     ) -> tuple[BridgeDelivery, CommandSubmission]:
         delivery_key = idempotency_key or delivery.idempotency_key
+        _validate_bridge_budget(delivery)
         delivery = delivery.model_copy(
             update={
                 "idempotency_key": delivery_key,
@@ -2703,6 +2706,8 @@ class RuntimeBackendService:
         causation_id: str | None = None,
     ) -> tuple[BridgeDelivery, CommandSubmission]:
         delivery_key = idempotency_key or delivery.idempotency_key
+        _validate_bridge_budget(delivery, next_attempt=True)
+        imported_budget = _consume_bridge_budget(delivery.budget)
         local_carrier = delivery.carrier.model_copy(
             update={
                 "run_id": delivery.target.run_id,
@@ -2722,6 +2727,7 @@ class RuntimeBackendService:
                 "carrier": local_carrier,
                 "status": BridgeDeliveryStatus.imported,
                 "attempts": delivery.attempts + 1,
+                "budget": imported_budget,
                 "updated_at": _now(),
             }
         )
@@ -2780,6 +2786,7 @@ class RuntimeBackendService:
         )
         if delivery is None:
             raise ValueError(f"Unknown outbox delivery: {delivery_id!r}")
+        _validate_bridge_budget(delivery, next_attempt=True)
 
         imported, import_submission = await target.import_bridge_delivery(
             delivery,
@@ -2792,6 +2799,7 @@ class RuntimeBackendService:
             update={
                 "status": BridgeDeliveryStatus.delivered,
                 "attempts": delivery.attempts + 1,
+                "budget": _consume_bridge_budget(delivery.budget),
                 "updated_at": _now(),
             }
         )
@@ -2993,6 +3001,48 @@ def _bridge_event_payload(delivery: BridgeDelivery) -> dict[str, Any]:
         "status": delivery.status.value,
         "attempts": delivery.attempts,
     }
+
+
+def _validate_bridge_budget(
+    delivery: BridgeDelivery,
+    *,
+    next_attempt: bool = False,
+) -> None:
+    if delivery.status != BridgeDeliveryStatus.pending:
+        return
+    budget = delivery.budget
+    if budget.runtime_hops and budget.runtime_hops < 1:
+        raise FalaBudgetExceeded(
+            "Bridge delivery exceeded runtime hop budget",
+            details={"delivery_id": delivery.id, "runtime_hops": budget.runtime_hops},
+        )
+    if budget.carrier_count and budget.carrier_count < 1:
+        raise FalaBudgetExceeded(
+            "Bridge delivery exceeded carrier budget",
+            details={"delivery_id": delivery.id, "carrier_count": budget.carrier_count},
+        )
+    if budget.attempts and next_attempt and delivery.attempts + 1 > budget.attempts:
+        raise FalaBudgetExceeded(
+            "Bridge delivery exceeded attempt budget",
+            details={
+                "delivery_id": delivery.id,
+                "attempts": budget.attempts,
+                "next_attempt": delivery.attempts + 1,
+            },
+        )
+
+
+def _consume_bridge_budget(budget: RuntimeBudget) -> RuntimeBudget:
+    return budget.model_copy(
+        update={
+            "runtime_hops": budget.runtime_hops - 1
+            if budget.runtime_hops > 0
+            else 0,
+            "carrier_count": budget.carrier_count - 1
+            if budget.carrier_count > 0
+            else 0,
+        }
+    )
 
 
 def _validate_run_status_transition(
