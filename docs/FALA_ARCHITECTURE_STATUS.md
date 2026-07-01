@@ -1,6 +1,6 @@
-# Fala 2.0 Architecture Status
+# Fala Architecture Status
 
-Fala 2.0 is now defined as an embedded, SQLite-first runtime for observable
+Fala is now defined as an embedded, SQLite-first runtime for observable
 information flows.
 
 The core ontology is Carrier-first:
@@ -54,7 +54,7 @@ The old document workflow runtime, web/API layer, queue bridge, worker CLI,
 state-store layer, project scaffolding, package registry, and deployment helpers
 were removed from the core source tree.
 
-Fala 2.0 does not keep command aliases or fallback loaders for the old document
+Fala does not keep command aliases or fallback loaders for the old document
 workflow API.
 
 ## Phase Status
@@ -69,7 +69,7 @@ workflow API.
 | Artifact store | PARTIAL | Filesystem store is default and SQLite stores metadata. GC protects blobs referenced by any run, archive export records retention metadata, archive-gc deletes expired archive bundles, and SQLite vacuum exists. |
 | Step adapters | PARTIAL | `python_function`, `subprocess`, `manual_gate`, and `fala_runtime` adapters exist. Subprocess uses manifests and argument-list commands. Fala-runtime processes enqueue bridge outbox deliveries and can resolve local runtime pools. |
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
-| Event log | PARTIAL | Events are ordered, command-linked, schema-versioned, and SQLite-guarded against direct update/delete. Event payload migration tooling can still expand. |
+| Event log | PARTIAL | Events are ordered, command-linked, schema-versioned, SQLite-guarded against direct update/delete, and CLI-validatable by schema version. Event payload migration transforms can still expand. |
 | State machines | PARTIAL | Run/process/gate statuses exist with transition checks for current command paths, including run/process transition matrix coverage, process scheduling initial-status guards, terminal process retry/complete, wait-from-running, and gate complete/cancel/expire terminal transitions. Process cancel/timed-out command paths remain future work. |
 | Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, file handoff, and `manual`/`least_busy`/`round_robin` pool policies exist. Network transports remain optional future work. |
 | CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor with adapter reference checks, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, local bridge delivery, and bridge file export/import exist. Optional network transport commands remain incomplete. |

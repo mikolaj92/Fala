@@ -359,6 +359,12 @@ def _build_parser() -> argparse.ArgumentParser:
     events_list.add_argument("--after-sequence", type=int, default=None)
     events_list.add_argument("--limit", type=int, default=None)
     events_list.add_argument("--jsonl", action="store_true")
+    events_validate = event_subparsers.add_parser(
+        "validate-schema",
+        help="Validate event schema versions for a run.",
+    )
+    _add_carrier_runtime_db_run_args(events_validate)
+    events_validate.add_argument("--max-schema-version", type=int, default=1)
 
     gates = subparsers.add_parser("gates", help="Inspect Carrier runtime gates.")
     gate_subparsers = gates.add_subparsers(dest="gate_command", required=True)
@@ -1013,6 +1019,12 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             jsonl=args.jsonl,
         )
     if args.command == "events":
+        if args.event_command == "validate-schema":
+            events = await backend.list_events(run_id=args.run_id)
+            return _carrier_runtime_event_schema_report(
+                events,
+                max_schema_version=args.max_schema_version,
+            )
         events = await backend.list_events(
             run_id=args.run_id,
             carrier_id=args.carrier_id,
@@ -1122,6 +1134,38 @@ def _carrier_runtime_list_result(
         "ok": True,
         "count": len(payload),
         key: payload,
+    }
+
+
+def _carrier_runtime_event_schema_report(
+    events: list[RuntimeEvent],
+    *,
+    max_schema_version: int,
+) -> dict[str, Any]:
+    if max_schema_version < 1:
+        raise ValueError("--max-schema-version must be greater than zero")
+    versions: dict[str, int] = {}
+    unsupported: list[dict[str, Any]] = []
+    for event in events:
+        version = str(event.schema_version)
+        versions[version] = versions.get(version, 0) + 1
+        if event.schema_version > max_schema_version:
+            unsupported.append(
+                {
+                    "id": event.id,
+                    "sequence": event.sequence,
+                    "event_type": event.event_type,
+                    "schema_version": event.schema_version,
+                }
+            )
+    return {
+        "ok": not unsupported,
+        "event_count": len(events),
+        "max_schema_version": max_schema_version,
+        "schema_versions": dict(
+            sorted(versions.items(), key=lambda item: int(item[0]))
+        ),
+        "unsupported_events": unsupported,
     }
 
 

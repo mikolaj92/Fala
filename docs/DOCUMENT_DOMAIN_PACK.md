@@ -1,6 +1,6 @@
 # Document Domain Pack
 
-Fala 2.0 core starts with `Carrier`. Document workflows are modeled by the
+Fala core starts with `Carrier`. Document workflows are modeled by the
 `fala.domain_packs.documents` domain pack.
 
 The pack maps document concepts onto Carrier-first runtime objects:

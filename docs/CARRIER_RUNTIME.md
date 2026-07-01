@@ -1,6 +1,6 @@
-# Fala 2.0 Carrier Runtime
+# Fala Carrier Runtime
 
-Fala 2.0 starts from `Carrier`.
+Fala starts from `Carrier`.
 
 The current Carrier-first path lives in `fala.runtime_backend`:
 
@@ -34,7 +34,7 @@ The current Carrier-first path lives in `fala.runtime_backend`:
   delegation policies, and `fala runtimes list/inspect` exposes them without a
   web server.
 
-New Fala 2.0 runtime work should use `fala.runtime_backend` or
+New Fala runtime work should use `fala.runtime_backend` or
 `fala.carrier_runtime`. Carrier APIs use `carrier_id` and `carrier_type`.
 Web/API/client exports are outer surfaces and are loaded lazily from `fala`.
 
@@ -171,6 +171,7 @@ uv run fala carrier-relations list --db /tmp/fala-carrier.sqlite --run-id run_ca
 uv run fala artifacts list --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
 uv run fala processes list --db /tmp/fala-carrier.sqlite --run-id run_case --status ready
 uv run fala events list --db /tmp/fala-carrier.sqlite --run-id run_case
+uv run fala events validate-schema --db /tmp/fala-carrier.sqlite --run-id run_case --max-schema-version 1
 uv run fala observations list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala gates list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala gate complete --db /tmp/fala-carrier.sqlite --run-id run_case --gate-id gate_review --value decision=approved

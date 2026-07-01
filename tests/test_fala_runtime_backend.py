@@ -97,7 +97,7 @@ def _carrier_cli_step(request) -> dict:
     return {"value": request.input["value"] + 1}
 
 
-class Fala2RuntimeBackendTests(unittest.TestCase):
+class FalaRuntimeBackendTests(unittest.TestCase):
     def test_external_infrastructure_is_not_packaged_with_core(self) -> None:
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
         project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
@@ -288,7 +288,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_sqlite_backend_records_carrier_command_and_ordered_event(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala2.sqlite")
+                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
                 carrier = Carrier(
                     run_id="run_alpha",
                     carrier_type="invoice",
@@ -363,7 +363,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "fala2.sqlite"
+            db_path = Path(tmp_dir) / "fala.sqlite"
             asyncio.run(scenario(db_path))
             with sqlite3.connect(db_path) as connection:
                 with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
@@ -381,10 +381,76 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                         ("run_events",),
                     )
 
+    def test_cli_events_validate_schema_reports_unsupported_versions(self) -> None:
+        async def setup(db_path: Path) -> None:
+            backend = SQLiteRuntimeBackend(db_path)
+            await backend.submit_command(
+                RuntimeCommand(
+                    run_id="run_event_schema",
+                    command_type="event.append",
+                    idempotency_key="run_event_schema:event.v1",
+                ),
+                events=[
+                    RuntimeEvent(
+                        run_id="run_event_schema",
+                        event_type="runtime.v1",
+                        schema_version=1,
+                    )
+                ],
+            )
+            await backend.submit_command(
+                RuntimeCommand(
+                    run_id="run_event_schema",
+                    command_type="event.append",
+                    idempotency_key="run_event_schema:event.v2",
+                ),
+                events=[
+                    RuntimeEvent(
+                        run_id="run_event_schema",
+                        event_type="runtime.v2",
+                        schema_version=2,
+                    )
+                ],
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "fala.sqlite"
+            asyncio.run(setup(db_path))
+
+            strict_code, strict = _run_cli_raw(
+                "events",
+                "validate-schema",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_event_schema",
+                "--max-schema-version",
+                "1",
+            )
+            compatible = _run_cli_json(
+                "events",
+                "validate-schema",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_event_schema",
+                "--max-schema-version",
+                "2",
+            )
+
+        self.assertFalse(strict["ok"])
+        self.assertEqual(strict_code, 1)
+        self.assertEqual(strict["event_count"], 2)
+        self.assertEqual(strict["schema_versions"], {"1": 1, "2": 1})
+        self.assertEqual(len(strict["unsupported_events"]), 1)
+        self.assertEqual(strict["unsupported_events"][0]["schema_version"], 2)
+        self.assertTrue(compatible["ok"])
+        self.assertEqual(compatible["unsupported_events"], [])
+
     def test_fala_runtime_accepts_non_document_carrier_flow(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
                 carrier = Carrier(
                     id="carrier_case_2",
                     run_id="run_case",
@@ -409,7 +475,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_fala_runtime_registers_carrier_types_and_relations(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
                 carrier_type = CarrierType(
                     id="arbitration_case",
                     run_id="run_types",
@@ -499,7 +565,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_fala_runtime_creates_and_transitions_runs(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
                 run = Run(
                     id="run_lifecycle",
                     title="Lifecycle",
@@ -560,7 +626,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_fala_runtime_validates_run_status_transition_matrix(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
 
                 async def create_run(run_id: str) -> None:
                     await runtime.create_run(
@@ -637,7 +703,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_fala_runtime_schedules_claims_and_completes_processes(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await runtime.create_run(
                     Run(id="run_processes"),
                     idempotency_key="run_processes:create",
@@ -737,7 +803,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_fala_runtime_rebuilds_run_summary_projection(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await runtime.create_run(
                     Run(id="run_summary", title="Summary run"),
                     idempotency_key="run_summary:create",
@@ -1679,7 +1745,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     input={
                         "adapter": {
                             "kind": "python_function",
-                            "ref": "tests.test_fala2_runtime_backend._carrier_cli_step",
+                            "ref": "tests.test_fala_runtime_backend._carrier_cli_step",
                         },
                         "value": 2,
                     },
@@ -1740,7 +1806,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     input={
                         "adapter": {
                             "kind": "python_function",
-                            "ref": "tests.test_fala2_runtime_backend._carrier_cli_step",
+                            "ref": "tests.test_fala_runtime_backend._carrier_cli_step",
                         },
                         "value": 6,
                     },
@@ -2097,7 +2163,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
                 document = DocumentCarrierInput(
                     id="doc_invoice_1",
                     document_type="invoice_document",
@@ -2143,7 +2209,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_splot_domain_pack_uses_public_carrier_runtime_api(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
                 case = SplotArbitrationCase(
                     id="splot_case_1",
                     claim_id="SP-1",
@@ -2235,7 +2301,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_signals_domain_pack_uses_public_carrier_runtime_api(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
                 sample = SignalMetricSample(
                     id="metric_cpu_1",
                     name="cpu.utilization",
@@ -2295,7 +2361,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_accepts_carrier_idempotently(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 carrier = Carrier(
                     id="carrier_case_1",
                     run_id="run_service",
@@ -2328,7 +2394,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_replays_gate_and_projection_writes(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 gate = Gate(
                     id="gate_review",
                     run_id="run_service",
@@ -2390,7 +2456,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_wait_process_requires_running_status(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await service.schedule_process(
                     Process(
                         id="process_wait",
@@ -2446,7 +2512,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_schedule_process_requires_initial_status(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 process = Process(
                     id="process_initial",
                     run_id="run_process_initial",
@@ -2485,7 +2551,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_validates_process_transition_matrix(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 process = Process(
                     id="process_matrix",
                     run_id="run_process_matrix",
@@ -2581,7 +2647,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_open_gate_is_create_only(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 gate = Gate(
                     id="gate_open_once",
                     run_id="run_gate_open",
@@ -2625,7 +2691,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_completes_gate_idempotently(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 gate = Gate(
                     id="gate_review",
                     run_id="run_service",
@@ -2678,7 +2744,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_cancels_and_expires_gates(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 cancel_gate = Gate(
                     id="gate_cancel",
                     run_id="run_gate_terminal",
@@ -2753,7 +2819,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
     def test_sqlite_backend_records_schema_migration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "fala2.sqlite"
+            db_path = Path(tmp_dir) / "fala.sqlite"
             SQLiteRuntimeBackend(db_path)
             with sqlite3.connect(db_path) as connection:
                 row = connection.execute(
@@ -2771,7 +2837,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
     def test_cli_db_init_status_and_migrate_manage_carrier_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "fala2.sqlite"
+            db_path = Path(tmp_dir) / "fala.sqlite"
 
             initialized = _run_cli_json("db", "init", "--db", str(db_path))
             self.assertTrue(initialized["ok"])
@@ -2818,7 +2884,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             await backend.put_delegation_policy(policy)
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "fala2.sqlite"
+            db_path = Path(tmp_dir) / "fala.sqlite"
             asyncio.run(scenario(db_path))
 
             listed = _run_cli_json("runtimes", "list", "--db", str(db_path))
@@ -2847,7 +2913,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
     def test_cli_creates_runtime_pool_and_delegation_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "fala2.sqlite"
+            db_path = Path(tmp_dir) / "fala.sqlite"
             pool = _run_cli_json(
                 "runtimes",
                 "create-pool",
@@ -2937,7 +3003,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             return await runtime.diagnose_waits(run_id="run_waits")
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "fala2.sqlite"
+            db_path = Path(tmp_dir) / "fala.sqlite"
             direct = asyncio.run(scenario(db_path))
             self.assertTrue(direct.deadlocked)
             self.assertEqual(
@@ -3083,7 +3149,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala2.sqlite")
+                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
                 carrier = Carrier(
                     run_id="run_beta",
                     carrier_type="message",
@@ -3145,7 +3211,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_runtime_backend_service_lists_runtime_systems(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 carrier = Carrier(
                     run_id="run_query",
                     carrier_type="message",

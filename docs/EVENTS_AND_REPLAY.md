@@ -15,6 +15,7 @@ Replay levels:
 
 Debug/export commands:
 
+- `fala events validate-schema`
 - `fala trace`
 - `fala replay-execution`
 - `fala export-html`

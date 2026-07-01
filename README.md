@@ -17,7 +17,7 @@ The default runtime path is serverless and local:
 
 ## Shape
 
-The Fala 2.0 architecture is built around these modules:
+The Fala architecture is built around these modules:
 
 - `fala.carrier_runtime.FalaRuntime`: embedded runtime facade.
 - `fala.runtime_backend.SQLiteRuntimeBackend`: SQLite backend and command/event
@@ -218,11 +218,11 @@ Carrier-first domain-pack examples live under `examples/domain-packs`.
 
 ## Development Check
 
-Focused Fala 2.0 checks:
+Focused Fala checks:
 
 ```bash
 uv run python -m unittest \
-  tests.test_fala2_runtime_backend \
+  tests.test_fala_runtime_backend \
   tests.test_carrier_package_schema \
   tests.test_runtime_backend_conformance \
   tests.test_fala_carriers
