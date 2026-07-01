@@ -545,6 +545,14 @@ class RuntimeBackend(Protocol):
 
     async def put_process(self, process: Process) -> None: ...
 
+    async def schedule_process(
+        self,
+        process: Process,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
     async def get_process(self, *, run_id: str, process_id: str) -> Process | None: ...
 
     async def list_processes(
@@ -2004,6 +2012,69 @@ class SQLiteRuntimeBackend:
                 )
                 connection.commit()
 
+    async def schedule_process(
+        self,
+        process: Process,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != process.run_id:
+            raise ValueError(
+                "process.schedule command run_id must match process run_id"
+            )
+        if command.command_type != "process.schedule":
+            raise ValueError("schedule_process requires command_type 'process.schedule'")
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                if process.status not in {
+                    CarrierProcessStatus.pending,
+                    CarrierProcessStatus.ready,
+                }:
+                    raise ValueError(
+                        "schedule_process requires process status 'pending' or 'ready'"
+                    )
+                _require_run_row(connection, process.run_id)
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM processes WHERE run_id = ? AND id = ?",
+                        (process.run_id, process.id),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"Process already exists: {process.id!r}")
+
+                _insert_runtime_command_row(connection, command)
+                _insert_process_row(connection, process)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
     async def get_process(self, *, run_id: str, process_id: str) -> Process | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -3213,7 +3284,11 @@ class RuntimeBackendService:
                 "status": process.status.value,
             },
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.schedule_process(
+            process,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             existing_process_id = submission.command.payload.get("process_id", process.id)
             existing = await self.backend.get_process(
@@ -3227,7 +3302,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_process(process)
         return process, submission
 
     async def claim_next_ready_process(
@@ -4546,6 +4620,20 @@ def _insert_artifact_row(
             _dumps(artifact.metadata),
             artifact.created_at.isoformat(),
         ),
+    )
+
+
+def _insert_process_row(connection: sqlite3.Connection, process: Process) -> None:
+    connection.execute(
+        """
+        INSERT INTO processes (
+            run_id, id, process_type, carrier_id, status, priority,
+            attempt, max_attempts, available_at, lease_owner,
+            lease_expires_at, input_json, output_json, error_json,
+            metadata, created_at, updated_at, started_at, finished_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        _process_args(process),
     )
 
 

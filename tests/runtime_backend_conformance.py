@@ -284,6 +284,54 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert not artifact_submission.replayed
     assert artifact_replay.replayed
 
+    schedule_run = Run(
+        id="run_schedule_conformance",
+        status=CarrierRunStatus.active,
+    )
+    schedule_carrier = Carrier(
+        id="carrier_schedule",
+        run_id=schedule_run.id,
+        carrier_type="case",
+    )
+    scheduled_process = Process(
+        id="process_scheduled",
+        run_id=schedule_run.id,
+        carrier_id=schedule_carrier.id,
+        process_type="score",
+        status=CarrierProcessStatus.ready,
+        input={"carrier_id": schedule_carrier.id},
+    )
+    schedule_command = RuntimeCommand(
+        run_id=schedule_run.id,
+        command_type="process.schedule",
+        idempotency_key="run_schedule_conformance:process.scheduled",
+    )
+    await backend.put_run(schedule_run)
+    await backend.put_carrier(schedule_carrier)
+    schedule_submission = await backend.schedule_process(
+        scheduled_process,
+        schedule_command,
+        events=[
+            RuntimeEvent(
+                run_id=schedule_run.id,
+                carrier_id=schedule_carrier.id,
+                process_id=scheduled_process.id,
+                event_type="process.scheduled",
+            )
+        ],
+    )
+    schedule_replay = await backend.schedule_process(
+        scheduled_process.model_copy(update={"priority": 100}),
+        schedule_command.model_copy(update={"id": "command_schedule_replay"}),
+        events=[],
+    )
+    assert await backend.get_process(
+        run_id=schedule_run.id,
+        process_id=scheduled_process.id,
+    ) == scheduled_process
+    assert not schedule_submission.replayed
+    assert schedule_replay.replayed
+
     run = Run(
         id="run_conformance",
         status=CarrierRunStatus.created,

@@ -2914,6 +2914,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     ),
                     idempotency_key="run_process_initial:process.schedule:initial",
                 )
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await service.schedule_process(
+                        process,
+                        idempotency_key="run_process_initial:process.schedule:again",
+                    )
                 with self.assertRaisesRegex(ValueError, "pending' or 'ready"):
                     await service.schedule_process(
                         Process(
