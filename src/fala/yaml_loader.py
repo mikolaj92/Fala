@@ -37,8 +37,79 @@ def workflow_package_from_mapping(data: dict[str, Any]) -> WorkflowPackageSpec:
     raw = dict(data)
     if "id" not in raw and "package" in raw:
         raw["id"] = raw.pop("package")
+    _move_alias(
+        raw,
+        alias="carrier_types",
+        canonical="document_types",
+        context="Workflow package",
+    )
+    _move_alias(
+        raw,
+        alias="carrier_relations",
+        canonical="document_relations",
+        context="Workflow package",
+    )
+    raw["document_relations"] = [
+        _normalize_document_relation_mapping(item)
+        for item in raw.get("document_relations") or []
+    ]
+    raw["capabilities"] = [
+        _normalize_capability_mapping(item) for item in raw.get("capabilities") or []
+    ]
     raw["workers"] = [_normalize_worker_mapping(item) for item in raw.get("workers") or []]
     return WorkflowPackageSpec.model_validate(raw)
+
+
+def _move_alias(
+    data: dict[str, Any],
+    *,
+    alias: str,
+    canonical: str,
+    context: str,
+) -> None:
+    if alias not in data:
+        return
+    if canonical in data:
+        raise ValueError(f"{context} cannot define both {alias!r} and {canonical!r}")
+    data[canonical] = data.pop(alias)
+
+
+def _normalize_document_relation_mapping(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    relation = dict(item)
+    _move_alias(
+        relation,
+        alias="source_carrier_types",
+        canonical="source_document_types",
+        context=f"Document relation {relation.get('id', '<unknown>')!r}",
+    )
+    _move_alias(
+        relation,
+        alias="target_carrier_types",
+        canonical="target_document_types",
+        context=f"Document relation {relation.get('id', '<unknown>')!r}",
+    )
+    return relation
+
+
+def _normalize_capability_mapping(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    capability = dict(item)
+    _move_alias(
+        capability,
+        alias="accepts_carrier_types",
+        canonical="accepts_document_types",
+        context=f"Capability {capability.get('id', '<unknown>')!r}",
+    )
+    _move_alias(
+        capability,
+        alias="emits_carrier_types",
+        canonical="emits_document_types",
+        context=f"Capability {capability.get('id', '<unknown>')!r}",
+    )
+    return capability
 
 
 def _resolve_relative_paths(data: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:

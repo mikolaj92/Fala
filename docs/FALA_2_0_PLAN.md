@@ -269,6 +269,51 @@ Exit criteria:
 | Multi-Fala | Local-first via backend/plugin boundary |
 | Tests | SQLite conformance first |
 
+## Requirement checklist from the audit prompt
+
+This checklist is the source of truth for whether the long Fala 2.0 audit prompt
+is fully satisfied. `PARTIAL` means useful code or docs exist, but the target is
+not complete enough to close the requirement.
+
+| # | Area | Status | Next task |
+| --- | --- | --- | --- |
+| 1 | Product definition | PARTIAL | Make README, docs, package metadata, and examples consistently present Fala as an embedded SQLite-first information-flow runtime. |
+| 2 | Core ontology: Carrier over Document | PARTIAL | Finish carrier-first API/schema names and move document names behind compatibility/domain-pack aliases. |
+| 3 | Core concepts | PARTIAL | Fill gaps around process/run scheduling, refs, projection rebuilds, and clean Event/Observation/Artifact/Projection separation. |
+| 4 | SQLite backend | PARTIAL | Promote SQLite backend to the complete reference backend for runs, processes, gates, commands, inbox/outbox, artifacts metadata, and projections. |
+| 5 | External infrastructure | PARTIAL | Keep FastAPI/web optional and remove or isolate any remaining first-party external infra assumptions. |
+| 6 | Runtime backend adapter boundary | PARTIAL | Expand `RuntimeBackend` until service/scheduler/adapters no longer rely on legacy `StateStore` for core mutations. |
+| 7 | Artifact store | PARTIAL | Verify immutable filesystem artifacts, metadata-only SQLite records, GC, and large-file behavior. |
+| 8 | Step adapters | PARTIAL | Harden subprocess/manual/fala-runtime contracts, manifests, audit events, and validation. |
+| 9 | Commands and idempotency | PARTIAL | Route all runtime mutations through command APIs with actor, causation, correlation, and deduplication. |
+| 10 | Event log | PARTIAL | Make append-only events the consistent source for projections/replay with schema/version metadata. |
+| 11 | State machines | PARTIAL | Add explicit target run/process/gate statuses, transition validation, and tests. |
+| 12 | Multi-Fala composition | PARTIAL | Implement delegation through runtime refs, outbox/inbox, wait graph, budgets, and no global transactions. |
+| 13 | Runtime pools | PARTIAL | Add routing policies and persistence for multi-runtime pools. |
+| 14 | Budgets and safety limits | PARTIAL | Enforce runtime budgets for retries, gates, artifact bytes, pending processes, spawned runs, and delegation. |
+| 15 | Cycles and deadlock detection | PARTIAL | Add wait graph diagnostics and distinguish valid feedback cycles from deadlocks. |
+| 16 | Web/UI | PARTIAL | Keep web optional, read-only by default, localhost-bound, and mutation-through-command only; add static export. |
+| 17 | CLI | PARTIAL | Complete carrier-first inspect/mutate commands, doctor, waits diagnosis, trace, bridge, and compatibility aliases. |
+| 18 | Package schema | PARTIAL | Finish carrier-first YAML, runtime config, flows, validation, and backward compatibility. |
+| 19 | Domain packs | PARTIAL | Move document-specific runtime logic into `fala.domains.documents` or equivalent compatibility package. |
+| 20 | Splot integration | PARTIAL | Keep Splot as a domain pack/adapter and add an end-to-end carrier/artifact/gate example. |
+| 21 | Replay | PARTIAL | Define history replay, projection rebuild, deterministic execution replay, and trace export boundaries. |
+| 22 | Versioning and digests | PARTIAL | Store runtime/backend/package/flow/adapter/schema versions and digests per run. |
+| 23 | Migrations | PARTIAL | Cover SQLite, package, event payload, artifact kind, domain pack, and report/profile migrations. |
+| 24 | Error taxonomy | MISSING | Add canonical Fala error classes and wire them into retry/fail/gate behavior. |
+| 25 | Security and trust boundaries | PARTIAL | Audit subprocess/YAML/web/operator/secrets boundaries and prevent direct adapter DB mutation. |
+| 26 | Secrets and redaction | PARTIAL | Resolve env secrets safely and redact them from events, reports, traces, metadata, and exports. |
+| 27 | Retention and garbage collection | PARTIAL | Finish run archive, SQLite compact/vacuum, dry-run GC, artifact GC, and shared artifact safeguards. |
+| 28 | Projections | PARTIAL | Make projections explicitly versioned, rebuildable, stale-detectable read models. |
+| 29 | Doctor / validation | PARTIAL | Expand `fala doctor`-style checks for carrier schema, adapters, graph, SQLite status, artifact store, and bridge config. |
+| 30 | Trace / debug / export | PARTIAL | Add/finish trace.json, timeline.json, graph.dot, report.html, and portable bundle export. |
+| 31 | Step SDK | PARTIAL | Standardize subprocess input/output manifests and transactional runtime commit. |
+| 32 | Actor model | PARTIAL | Use actor fields consistently for CLI, worker, web, adapter, bridge, and human actions. |
+| 33 | Resource accounting | PARTIAL | Surface runtime, attempts, sizes, artifact count, event count, subprocess count, spawned runs, and bridge metrics. |
+| 34 | Conformance tests | PARTIAL | Complete backend conformance tests for every required mutation and recovery/idempotency behavior. |
+| 35 | Docs | PARTIAL | Add the target conceptual, runtime, adapter, SQLite, artifact, replay, composition, domain-pack, security, and migration docs. |
+| 36 | Examples | PARTIAL | Add runnable local SQLite examples for documents, Splot/arbitration, and multi-Fala composition. |
+
 ## Open decisions
 
 1. Should non-SQLite backend plugin interfaces live in this repository, or only
