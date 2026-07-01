@@ -4,9 +4,10 @@ import json
 import os
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
-from fastapi import Request
+if TYPE_CHECKING:
+    from fastapi import Request
 
 
 class RuntimeRole(StrEnum):

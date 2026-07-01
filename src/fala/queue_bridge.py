@@ -8,14 +8,12 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any, ClassVar, Iterable, Iterator, Protocol, TextIO
+from typing import TYPE_CHECKING, Any, ClassVar, Iterable, Iterator, Protocol, TextIO
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from fala.adapters import AdapterRegistry
-from fala.client import ProcessRuntimeClient
 from fala.models import (
     ProcessEvent,
     ProcessExecutionContext,
@@ -27,6 +25,11 @@ from fala.models import (
     new_id,
 )
 from fala.scheduler import ClaimedProcess, ScheduledProcess
+
+if TYPE_CHECKING:
+    import httpx
+
+    from fala.client import ProcessRuntimeClient
 
 
 class QueueWorkEnvelope(BaseModel):
@@ -1596,6 +1599,10 @@ async def apply_queue_result(
     client: ProcessRuntimeClient,
     result: QueueResultEnvelope,
 ) -> dict[str, Any]:
+    try:
+        import httpx
+    except ImportError as exc:
+        raise RuntimeError("httpx is required to apply queue results") from exc
     duplicate = await _queue_result_duplicate_response(client, result, None)
     if duplicate is not None:
         return duplicate

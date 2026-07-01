@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib import import_module
+
 from fala.adapters import (
     AdapterRegistry,
     ExternalCommandAdapter,
@@ -33,7 +35,7 @@ from fala.blueprints import (
     scaffold_blueprint_from_mapping,
     scaffold_blueprint_summary,
 )
-from fala.client import ProcessRuntimeClient
+from fala.carrier_runtime import FalaRuntime
 from fala.contract_lint import (
     ContractLintError,
     discover_step_contracts,
@@ -250,7 +252,6 @@ from fala.runtime_backend import (
     RunRef,
     SQLiteRuntimeBackend,
 )
-from fala.routes import create_runtime_router
 from fala.runner import PipelineRunError, PipelineRunner
 from fala.schema_migrations import (
     RUNTIME_SCHEMA_MIGRATIONS,
@@ -297,11 +298,23 @@ from fala.yaml_loader import (
     load_pipeline_yaml,
     load_workflow_package_yaml,
 )
-from fala.web import (
-    create_runtime_web_app,
-    create_runtime_web_router,
-    mount_runtime_web,
-)
+
+_LAZY_EXPORTS = {
+    "ProcessRuntimeClient": ("fala.client", "ProcessRuntimeClient"),
+    "create_runtime_router": ("fala.routes", "create_runtime_router"),
+    "create_runtime_web_app": ("fala.web", "create_runtime_web_app"),
+    "create_runtime_web_router": ("fala.web", "create_runtime_web_router"),
+    "mount_runtime_web": ("fala.web", "mount_runtime_web"),
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY_EXPORTS:
+        module_name, export_name = _LAZY_EXPORTS[name]
+        value = getattr(import_module(module_name), export_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module 'fala' has no attribute {name!r}")
 
 __all__ = [
     "AdapterRegistry",
@@ -337,6 +350,7 @@ __all__ = [
     "ExistingRunPolicy",
     "EventRef",
     "ExternalCommandAdapter",
+    "FalaRuntime",
     "FileArtifactStore",
     "Gate",
     "GateStatus",

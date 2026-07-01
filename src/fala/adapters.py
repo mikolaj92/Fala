@@ -10,7 +10,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-import httpx
 from fala.sdk import PROCESS_RUNTIME_EVENT_PREFIX
 
 from fala.models import (
@@ -116,6 +115,12 @@ class HTTPProcessAdapter:
 
         timeout = spec.adapter.timeout_seconds or spec.timeout_seconds
         started = time.monotonic()
+        try:
+            import httpx
+        except ImportError as exc:
+            raise ProcessAdapterError(
+                "httpx is required to run http process adapters"
+            ) from exc
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=context.model_dump(mode="json"))

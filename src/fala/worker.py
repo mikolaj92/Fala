@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
 from fala.adapters import AdapterRegistry
-from fala.client import ProcessRuntimeClient
 from fala.models import (
     AdapterKind,
     AdapterSpec,
@@ -20,6 +19,9 @@ from fala.models import (
     RuntimeWorkerStatus,
 )
 from fala.scheduler import ClaimedProcess
+
+if TYPE_CHECKING:
+    from fala.client import ProcessRuntimeClient
 
 
 class ProcessWorkerOutcome(str, Enum):

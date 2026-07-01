@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -27,6 +31,57 @@ from fala.runtime_backend import (
 
 
 class Fala2RuntimeBackendTests(unittest.TestCase):
+    def test_carrier_core_runs_without_web_api_or_http_client_imports(self) -> None:
+        src_dir = Path(__file__).resolve().parents[1] / "src"
+        script = textwrap.dedent(
+            """
+            import asyncio
+            import builtins
+            import tempfile
+            from pathlib import Path
+
+            blocked = {"fastapi", "jinja2", "starlette", "uvicorn", "httpx"}
+            original_import = builtins.__import__
+
+            def guarded_import(name, *args, **kwargs):
+                if name.split(".", 1)[0] in blocked:
+                    raise AssertionError(f"blocked optional import: {name}")
+                return original_import(name, *args, **kwargs)
+
+            builtins.__import__ = guarded_import
+
+            from fala import Carrier, FalaRuntime
+
+            async def main():
+                with tempfile.TemporaryDirectory() as tmp:
+                    runtime = FalaRuntime.sqlite(Path(tmp) / "core.sqlite")
+                    carrier = Carrier(
+                        id="carrier_core",
+                        run_id="run_core",
+                        carrier_type="case",
+                    )
+                    stored, submission = await runtime.accept_carrier(
+                        carrier,
+                        idempotency_key="run_core:carrier.accept:carrier_core",
+                    )
+                    events = await runtime.list_events(run_id="run_core")
+                    assert stored == carrier
+                    assert not submission.replayed
+                    assert [event.event_type for event in events] == ["carrier.accepted"]
+
+            asyncio.run(main())
+            """
+        )
+        env = {**os.environ, "PYTHONPATH": str(src_dir)}
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_sqlite_backend_records_carrier_command_and_ordered_event(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
