@@ -13,7 +13,7 @@ async def main(db_path: Path) -> dict:
     runtime = FalaRuntime.sqlite(db_path)
     await runtime.create_run(
         Run(id="run_local", title="Local carrier run"),
-        idempotency_key="run_local:create",
+        idempotency_key="run_local:run.create",
     )
 
     case = Carrier(

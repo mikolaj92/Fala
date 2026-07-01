@@ -11,7 +11,7 @@ SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from fala import Carrier, RuntimeCommand, RuntimeEvent, SQLiteRuntimeBackend
+from fala import Carrier, Run, RuntimeCommand, RuntimeEvent, SQLiteRuntimeBackend
 
 
 class CarrierRuntimeTests(unittest.TestCase):
@@ -19,6 +19,7 @@ class CarrierRuntimeTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                await backend.put_run(Run(id="run_carrier"))
                 carrier = Carrier(
                     run_id="run_carrier",
                     carrier_type="arbitration_case",

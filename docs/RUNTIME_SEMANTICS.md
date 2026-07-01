@@ -7,6 +7,9 @@ audit.
 Run cancellation is a first-class `run.cancel` command and emits
 `run.cancel_requested`.
 
+Except for `run.create`, command submission requires the target run to already
+exist.
+
 Process execution:
 
 - `ready` processes can be atomically claimed.

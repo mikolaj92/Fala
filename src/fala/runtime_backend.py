@@ -1369,6 +1369,8 @@ class SQLiteRuntimeBackend:
                         events=[],
                         replayed=True,
                     )
+                if command.command_type != "run.create":
+                    _require_run_row(connection, command.run_id)
 
                 connection.execute(
                     """
@@ -4038,6 +4040,12 @@ def _validate_run_status_transition(
         raise ValueError(
             f"Invalid run status transition: {current.value!r} -> {target.value!r}"
         )
+
+
+def _require_run_row(connection: sqlite3.Connection, run_id: str) -> None:
+    row = connection.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Unknown run: {run_id!r}")
 
 
 def _count_rows(connection: sqlite3.Connection, table: str, run_id: str) -> int:

@@ -97,6 +97,11 @@ def _carrier_cli_step(request) -> dict:
     return {"value": request.input["value"] + 1}
 
 
+async def _put_test_run(target, run_id: str) -> None:
+    backend = getattr(target, "backend", target)
+    await backend.put_run(Run(id=run_id))
+
+
 class FalaRuntimeBackendTests(unittest.TestCase):
     def test_external_infrastructure_is_not_packaged_with_core(self) -> None:
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -137,7 +142,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
             builtins.__import__ = guarded_import
 
-            from fala import Carrier, FalaRuntime
+            from fala import Carrier, FalaRuntime, Run
             from fala.cli import _build_parser as build_cli_parser
 
             assert build_cli_parser().prog == "fala"
@@ -145,6 +150,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             async def main():
                 with tempfile.TemporaryDirectory() as tmp:
                     runtime = FalaRuntime.sqlite(Path(tmp) / "core.sqlite")
+                    await runtime.backend.put_run(Run(id="run_core"))
                     carrier = Carrier(
                         id="carrier_core",
                         run_id="run_core",
@@ -289,6 +295,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                await backend.put_run(Run(id="run_alpha"))
                 carrier = Carrier(
                     run_id="run_alpha",
                     carrier_type="invoice",
@@ -344,9 +351,33 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_sqlite_backend_rejects_non_create_command_for_unknown_run(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                with self.assertRaisesRegex(ValueError, "Unknown run"):
+                    await backend.submit_command(
+                        RuntimeCommand(
+                            run_id="run_missing",
+                            command_type="carrier.accept",
+                            idempotency_key="run_missing:carrier.accept",
+                        )
+                    )
+                submission = await backend.submit_command(
+                    RuntimeCommand(
+                        run_id="run_missing",
+                        command_type="run.create",
+                        idempotency_key="run_missing:create",
+                    )
+                )
+                self.assertFalse(submission.replayed)
+
+        asyncio.run(scenario())
+
     def test_sqlite_runtime_events_are_append_only(self) -> None:
         async def scenario(db_path: Path) -> None:
             backend = SQLiteRuntimeBackend(db_path)
+            await backend.put_run(Run(id="run_events"))
             await backend.submit_command(
                 RuntimeCommand(
                     run_id="run_events",
@@ -384,6 +415,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_sqlite_runtime_commands_are_append_only(self) -> None:
         async def scenario(db_path: Path) -> None:
             backend = SQLiteRuntimeBackend(db_path)
+            await backend.put_run(Run(id="run_commands"))
             await backend.submit_command(
                 RuntimeCommand(
                     run_id="run_commands",
@@ -415,6 +447,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_cli_events_validate_schema_reports_unsupported_versions(self) -> None:
         async def setup(db_path: Path) -> None:
             backend = SQLiteRuntimeBackend(db_path)
+            await backend.put_run(Run(id="run_event_schema"))
             await backend.submit_command(
                 RuntimeCommand(
                     run_id="run_event_schema",
@@ -482,6 +515,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(runtime, "run_case")
                 carrier = Carrier(
                     id="carrier_case_2",
                     run_id="run_case",
@@ -507,6 +541,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(runtime, "run_types")
                 carrier_type = CarrierType(
                     id="arbitration_case",
                     run_id="run_types",
@@ -2086,9 +2121,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_cli_run_until_idle_delegates_fala_runtime_process_to_bridge_outbox(self) -> None:
         async def setup(source_path: Path, target_path: Path) -> None:
             source = RuntimeBackendService.sqlite(source_path)
+            target = RuntimeBackendService.sqlite(target_path)
             await source.create_run(
                 Run(id="run_source"),
                 idempotency_key="run_source:create",
+            )
+            await target.create_run(
+                Run(id="run_target"),
+                idempotency_key="run_target:create",
             )
             await source.accept_carrier(
                 Carrier(
@@ -2381,6 +2421,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(runtime, "run_docs")
                 document = DocumentCarrierInput(
                     id="doc_invoice_1",
                     document_type="invoice_document",
@@ -2427,6 +2468,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(runtime, "run_splot")
                 case = SplotArbitrationCase(
                     id="splot_case_1",
                     claim_id="SP-1",
@@ -2519,6 +2561,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(runtime, "run_signals")
                 sample = SignalMetricSample(
                     id="metric_cpu_1",
                     name="cpu.utilization",
@@ -2579,6 +2622,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_service")
                 carrier = Carrier(
                     id="carrier_case_1",
                     run_id="run_service",
@@ -2612,6 +2656,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_service")
                 gate = Gate(
                     id="gate_review",
                     run_id="run_service",
@@ -2674,6 +2719,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_wait_service")
                 await service.schedule_process(
                     Process(
                         id="process_wait",
@@ -2730,6 +2776,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_process_initial")
                 process = Process(
                     id="process_initial",
                     run_id="run_process_initial",
@@ -2769,6 +2816,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_process_matrix")
                 process = Process(
                     id="process_matrix",
                     run_id="run_process_matrix",
@@ -2865,6 +2913,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_process_stop")
                 cancel_process = Process(
                     id="process_cancel",
                     run_id="run_process_stop",
@@ -2941,6 +2990,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_gate_open")
                 gate = Gate(
                     id="gate_open_once",
                     run_id="run_gate_open",
@@ -2985,6 +3035,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_service")
                 gate = Gate(
                     id="gate_review",
                     run_id="run_service",
@@ -3038,6 +3089,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_gate_terminal")
                 cancel_gate = Gate(
                     id="gate_cancel",
                     run_id="run_gate_terminal",
@@ -3505,6 +3557,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_query")
                 carrier = Carrier(
                     run_id="run_query",
                     carrier_type="message",
@@ -3568,6 +3621,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 target_path = Path(tmp_dir) / "target.sqlite"
                 source = RuntimeBackendService.sqlite(source_path)
                 target = RuntimeBackendService.sqlite(target_path)
+                await _put_test_run(source, "run_source")
+                await _put_test_run(target, "run_target")
                 source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
                 target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
                 pool = RuntimePool(
@@ -3707,6 +3762,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 target_path = Path(tmp_dir) / "target.sqlite"
                 source = RuntimeBackendService.sqlite(source_path)
                 target = RuntimeBackendService.sqlite(target_path)
+                await _put_test_run(source, "run_source")
+                await _put_test_run(target, "run_target")
                 source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
                 target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
                 carrier = Carrier(
@@ -3754,6 +3811,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_cli_delivers_bridge_between_local_carrier_runtimes(self) -> None:
         async def scenario(source_path: Path, target_path: Path) -> None:
             source = RuntimeBackendService.sqlite(source_path)
+            target = RuntimeBackendService.sqlite(target_path)
+            await _put_test_run(source, "run_source")
+            await _put_test_run(target, "run_target")
             source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
             target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
             carrier = Carrier(
@@ -3855,6 +3915,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_cli_exports_and_imports_bridge_delivery_file(self) -> None:
         async def scenario(source_path: Path, target_path: Path) -> None:
             source = RuntimeBackendService.sqlite(source_path)
+            target = RuntimeBackendService.sqlite(target_path)
+            await _put_test_run(source, "run_source")
+            await _put_test_run(target, "run_target")
             source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
             target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
             carrier = Carrier(
