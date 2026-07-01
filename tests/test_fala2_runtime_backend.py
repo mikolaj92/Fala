@@ -12,6 +12,7 @@ from fala.runtime_backend import (
     Observation,
     Projection,
     RuntimeCommand,
+    RuntimeBackendService,
     RuntimeEvent,
     SQLiteRuntimeBackend,
 )
@@ -73,6 +74,39 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(events[0].carrier_id, carrier.id)
                 self.assertEqual(events[0].actor, "operator:mika")
                 self.assertEqual(events[0].correlation_id, "corr_1")
+
+        asyncio.run(scenario())
+
+    def test_runtime_backend_service_accepts_carrier_idempotently(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                carrier = Carrier(
+                    id="carrier_case_1",
+                    run_id="run_service",
+                    carrier_type="arbitration_case",
+                    payload={"claim_id": "CLM-1"},
+                )
+
+                first_carrier, first_submission = await service.accept_carrier(
+                    carrier,
+                    idempotency_key="run_service:carrier.accept:carrier_case_1",
+                    actor="operator:mika",
+                )
+                replay_carrier, replay_submission = await service.accept_carrier(
+                    carrier.model_copy(update={"payload": {"claim_id": "changed"}}),
+                    idempotency_key="run_service:carrier.accept:carrier_case_1",
+                    actor="operator:mika",
+                )
+
+                self.assertEqual(first_carrier, carrier)
+                self.assertFalse(first_submission.replayed)
+                self.assertEqual(replay_carrier, carrier)
+                self.assertTrue(replay_submission.replayed)
+                self.assertEqual(replay_submission.events, [])
+                events = await service.backend.list_events(run_id="run_service")
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0].event_type, "carrier.accepted")
 
         asyncio.run(scenario())
 

@@ -568,6 +568,68 @@ class SQLiteRuntimeBackend:
         return _projection_from_row(row) if row is not None else None
 
 
+class RuntimeBackendService:
+    def __init__(self, backend: RuntimeBackend) -> None:
+        self.backend = backend
+
+    @classmethod
+    def sqlite(cls, path: str | Path) -> "RuntimeBackendService":
+        return cls(SQLiteRuntimeBackend(path))
+
+    async def accept_carrier(
+        self,
+        carrier: Carrier,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Carrier, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=carrier.run_id,
+            command_type="carrier.accept",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"carrier_id": carrier.id, "carrier_type": carrier.carrier_type},
+        )
+        event = RuntimeEvent(
+            run_id=carrier.run_id,
+            carrier_id=carrier.id,
+            event_type="carrier.accepted",
+            payload={"carrier_type": carrier.carrier_type},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_carrier_id = submission.command.payload.get("carrier_id", carrier.id)
+            existing = await self.backend.get_carrier(
+                run_id=carrier.run_id,
+                carrier_id=str(existing_carrier_id),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed carrier acceptance command has no stored carrier: "
+                    f"{existing_carrier_id!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_carrier(carrier)
+        return carrier, submission
+
+    async def record_observation(self, observation: Observation) -> Observation:
+        await self.backend.put_observation(observation)
+        return observation
+
+    async def save_gate(self, gate: Gate) -> Gate:
+        await self.backend.put_gate(gate)
+        return gate
+
+    async def save_projection(self, projection: Projection) -> Projection:
+        await self.backend.put_projection(projection)
+        return projection
+
+
 def _carrier_from_row(row: sqlite3.Row) -> Carrier:
     return Carrier(
         id=row["id"],
@@ -656,6 +718,7 @@ __all__ = [
     "Observation",
     "Projection",
     "RuntimeBackend",
+    "RuntimeBackendService",
     "RuntimeCommand",
     "RuntimeEvent",
     "SQLiteRuntimeBackend",

@@ -8,6 +8,7 @@ The current Carrier-first path lives in `fala.runtime_backend`:
 - `RuntimeCommand` is the idempotent write path.
 - `RuntimeEvent` records ordered, command-linked runtime facts.
 - `SQLiteRuntimeBackend` is the bundled local backend.
+- `RuntimeBackendService` is the service facade for new Carrier-first writes.
 
 The existing document/process runtime remains the legacy surface while the rest of
 the migration lands. New Fala 2.0 runtime work should use `fala.runtime_backend`
