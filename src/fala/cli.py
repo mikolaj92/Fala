@@ -407,6 +407,14 @@ def _build_parser() -> argparse.ArgumentParser:
     bridge_deliver.add_argument("--target-db", required=True)
     bridge_deliver.add_argument("--idempotency-key", default=None)
     bridge_deliver.add_argument("--import-idempotency-key", default=None)
+    bridge_export = bridge_subparsers.add_parser("export", help="Export one outbox bridge delivery to JSON.")
+    _add_carrier_runtime_db_run_args(bridge_export)
+    bridge_export.add_argument("--delivery-id", required=True)
+    bridge_export.add_argument("--out", required=True)
+    bridge_import = bridge_subparsers.add_parser("import", help="Import one bridge delivery JSON file.")
+    _add_carrier_runtime_db_arg(bridge_import)
+    bridge_import.add_argument("--file", required=True)
+    bridge_import.add_argument("--idempotency-key", default=None)
 
     run_until_idle = subparsers.add_parser("run-until-idle", help="Run ready Carrier processes until idle.")
     run_until_idle.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
@@ -776,6 +784,48 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 deliveries,
                 jsonl=args.jsonl,
             )
+        if args.bridge_command == "export":
+            delivery = await service.backend.get_outbox_delivery(
+                run_id=args.run_id,
+                delivery_id=args.delivery_id,
+            )
+            if delivery is None:
+                return {
+                    "ok": False,
+                    "run_id": args.run_id,
+                    "delivery_id": args.delivery_id,
+                    "error": "outbox delivery not found",
+                }
+            out = Path(args.out).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(
+                json.dumps(delivery.model_dump(mode="json"), indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+            return {
+                "ok": True,
+                "run_id": args.run_id,
+                "delivery_id": args.delivery_id,
+                "out": str(out),
+            }
+        if args.bridge_command == "import":
+            path = Path(args.file).expanduser()
+            delivery = BridgeDelivery.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+            imported, submission = await service.import_bridge_delivery(
+                delivery,
+                idempotency_key=args.idempotency_key
+                or f"{delivery.target.run_id}:bridge.file.import:{delivery.id}",
+                actor="cli:user",
+            )
+            return {
+                "ok": True,
+                "imported": imported.model_dump(mode="json"),
+                "command": submission.command.model_dump(mode="json"),
+                "replayed": submission.replayed,
+            }
         target = RuntimeBackendService.sqlite(_carrier_runtime_db_path(args.target_db))
         delivered, imported, delivery_submission, import_submission = (
             await service.deliver_bridge_delivery(

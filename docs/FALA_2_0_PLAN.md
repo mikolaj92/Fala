@@ -71,8 +71,8 @@ workflow API.
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
 | Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
 | State machines | PARTIAL | Run/process/gate statuses exist with transition checks for key paths. More illegal-transition tests are needed. |
-| Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, and `manual`/`least_busy`/`round_robin` pool policies exist. Cross-host delivery remains future work. |
-| CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, and bridge delivery exist. Cross-host bridge commands remain incomplete. |
+| Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, file handoff, and `manual`/`least_busy`/`round_robin` pool policies exist. Network transports remain optional future work. |
+| CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, local bridge delivery, and bridge file export/import exist. Optional network transport commands remain incomplete. |
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |
 | Domain packs | PARTIAL | Document and Splot packs exist as Carrier mappings; Signals exists as a Carrier-first domain-pack example. More first-party domain packs can still be added. |
 | Replay/export | PARTIAL | Trace, timeline, DOT, HTML, debug bundle, run archive export, and guarded deterministic `replay-execution` exist. Broader deterministic adapter coverage can still expand. |
@@ -80,5 +80,5 @@ workflow API.
 
 ## Next Work
 
-1. Add cross-host bridge transport adapters beyond local SQLite delivery.
-2. Promote more example domain packs into reusable first-party modules when they prove stable.
+1. Promote more example domain packs into reusable first-party modules when they prove stable.
+2. Add optional network bridge transports if a concrete deployment needs them.

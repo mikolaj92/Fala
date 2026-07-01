@@ -2949,6 +2949,100 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 "run_source",
             )
 
+    def test_cli_exports_and_imports_bridge_delivery_file(self) -> None:
+        async def scenario(source_path: Path, target_path: Path) -> None:
+            source = RuntimeBackendService.sqlite(source_path)
+            source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
+            target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
+            carrier = Carrier(
+                id="carrier_file_bridge",
+                run_id="run_source",
+                carrier_type="case",
+                payload={"claim": "FILE-BRIDGE"},
+            )
+            await source.accept_carrier(
+                carrier,
+                idempotency_key="run_source:carrier.accept:carrier_file_bridge",
+            )
+            source_events = await source.backend.list_events(run_id="run_source")
+            await source.enqueue_bridge_delivery(
+                BridgeDelivery(
+                    id="bridge_file",
+                    run_id="run_source",
+                    idempotency_key="run_source:bridge:file",
+                    source=RunRef(runtime=source_ref, run_id="run_source"),
+                    target=RunRef(runtime=target_ref, run_id="run_target"),
+                    carrier=carrier,
+                    event_ref=EventRef(
+                        runtime=source_ref,
+                        run_id="run_source",
+                        event_id=source_events[0].id,
+                        sequence=source_events[0].sequence,
+                    ),
+                    budget=RuntimeBudget(runtime_hops=1, carrier_count=1),
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_path = Path(tmp_dir) / "source.sqlite"
+            target_path = Path(tmp_dir) / "target.sqlite"
+            export_path = Path(tmp_dir) / "bridge_file.json"
+            asyncio.run(scenario(source_path, target_path))
+
+            exported = _run_cli_json(
+                "bridge",
+                "export",
+                "--db",
+                str(source_path),
+                "--run-id",
+                "run_source",
+                "--delivery-id",
+                "bridge_file",
+                "--out",
+                str(export_path),
+            )
+            self.assertTrue(exported["ok"])
+            self.assertTrue(export_path.is_file())
+            self.assertEqual(json.loads(export_path.read_text())["id"], "bridge_file")
+
+            imported = _run_cli_json(
+                "bridge",
+                "import",
+                "--db",
+                str(target_path),
+                "--file",
+                str(export_path),
+            )
+            self.assertTrue(imported["ok"])
+            self.assertEqual(imported["imported"]["run_id"], "run_target")
+            self.assertFalse(imported["replayed"])
+
+            replay = _run_cli_json(
+                "bridge",
+                "import",
+                "--db",
+                str(target_path),
+                "--file",
+                str(export_path),
+            )
+            self.assertTrue(replay["replayed"])
+
+            inbox = _run_cli_json(
+                "bridge",
+                "list",
+                "--db",
+                str(target_path),
+                "--run-id",
+                "run_target",
+                "--box",
+                "inbox",
+            )
+            self.assertEqual(inbox["count"], 1)
+            self.assertEqual(
+                inbox["bridge_inbox"][0]["carrier"]["payload"]["claim"],
+                "FILE-BRIDGE",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

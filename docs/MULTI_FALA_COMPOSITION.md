@@ -21,3 +21,9 @@ Runtime pool policies:
   `metadata.pending_processes`.
 - `round_robin`: rotate through runtimes and persist the cursor in pool
   metadata.
+
+Bridge delivery modes:
+
+- local SQLite delivery: `fala bridge deliver --target-db ...`
+- file handoff: `fala bridge export --out delivery.json` and
+  `fala bridge import --file delivery.json`

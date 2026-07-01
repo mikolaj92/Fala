@@ -156,6 +156,8 @@ uv run fala gate complete --db .fala/state.sqlite --run-id run_local --gate-id g
 uv run fala projections rebuild --db .fala/state.sqlite --run-id run_local
 uv run fala run-until-idle --db .fala/state.sqlite --run-id run_local
 uv run fala gc --db .fala/state.sqlite --artifact-root .fala/artifacts --dry-run
+uv run fala bridge export --db .fala/state.sqlite --run-id run_local --delivery-id bridge_123 --out bridge.json
+uv run fala bridge import --db /tmp/target.sqlite --file bridge.json
 
 uv run fala doctor --db .fala/state.sqlite --package examples/pipelines/basic/carrier-package.yaml
 uv run fala diagnose-waits --db .fala/state.sqlite --run-id run_local
