@@ -1,0 +1,63 @@
+version: "2"
+id: splot_arbitration_basic
+title: Splot arbitration basic
+
+carrier_types:
+  - id: splot.arbitration_case
+    media_types:
+      - application/json
+    value_schema:
+      type: object
+      required:
+        - claim_id
+        - claimant
+        - respondent
+      properties:
+        claim_id:
+          type: string
+        claimant:
+          type: string
+        respondent:
+          type: string
+
+observation_kinds:
+  - id: splot.jurisdiction
+    value_schema:
+      type: object
+      required:
+        - admissible
+      properties:
+        admissible:
+          type: boolean
+        reason:
+          type: string
+
+artifact_kinds:
+  - id: splot.decision_report
+    media_types:
+      - application/json
+
+capabilities:
+  - id: splot.review
+    accepts_carrier_types:
+      - splot.arbitration_case
+    emits_observation_kinds:
+      - splot.jurisdiction
+    emits_artifact_kinds:
+      - splot.decision_report
+
+flows:
+  - id: basic
+    steps:
+      - id: review
+        capability: splot.review
+        adapter:
+          kind: manual_gate
+
+runtime:
+  backend:
+    kind: sqlite
+    path: .fala/splot.sqlite
+  artifact_store:
+    kind: filesystem
+    root: .fala/artifacts

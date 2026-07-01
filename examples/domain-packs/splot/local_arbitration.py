@@ -13,7 +13,6 @@ from fala.domain_packs.splot import (
     jurisdiction_observation,
     review_gate,
 )
-from fala.runtime_backend import GateStatus
 
 
 async def main(db_path: Path) -> dict:
@@ -47,9 +46,15 @@ async def main(db_path: Path) -> dict:
         ),
         idempotency_key="run_splot:observation.jurisdiction:splot_case_1",
     )
-    await runtime.save_gate(
-        review_gate(carrier, status=GateStatus.completed),
+    gate, _ = await runtime.open_gate(
+        review_gate(carrier),
         idempotency_key="run_splot:gate.review:splot_case_1",
+    )
+    await runtime.complete_gate(
+        run_id=carrier.run_id,
+        gate_id=gate.id,
+        values={"decision": "approved"},
+        idempotency_key="run_splot:gate.review.complete:splot_case_1",
     )
     await runtime.save_projection(
         case_projection(carrier),

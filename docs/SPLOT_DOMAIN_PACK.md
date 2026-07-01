@@ -34,3 +34,13 @@ Run the local example:
 ```bash
 uv run python examples/domain-packs/splot/local_arbitration.py /tmp/splot.sqlite
 ```
+
+Validate the carrier package manifest:
+
+```bash
+uv run fala schema carrier-package
+uv run python - <<'PY'
+from fala import load_carrier_workflow_package_yaml
+print(load_carrier_workflow_package_yaml("examples/domain-packs/splot/carrier-package.yaml").id)
+PY
+```

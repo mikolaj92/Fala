@@ -66,6 +66,7 @@ from fala.runtime_backend import (
     SQLITE_RUNTIME_SCHEMA_VERSION,
     SQLiteRuntimeBackend,
 )
+from fala.yaml_loader import load_carrier_workflow_package_yaml
 
 
 def _run_cli_json(*args: str) -> dict:
@@ -1588,14 +1589,21 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     ),
                     idempotency_key="run_splot:observation.jurisdiction:splot_case_1",
                 )
-                gate, _ = await runtime.save_gate(
-                    review_gate(stored, status=GateStatus.completed),
+                opened_gate, _ = await runtime.open_gate(
+                    review_gate(stored),
                     idempotency_key="run_splot:gate.review:splot_case_1",
+                )
+                gate, _ = await runtime.complete_gate(
+                    run_id=stored.run_id,
+                    gate_id=opened_gate.id,
+                    values={"decision": "approved"},
+                    idempotency_key="run_splot:gate.review.complete:splot_case_1",
                 )
                 projection, _ = await runtime.save_projection(
                     case_projection(stored),
                     idempotency_key="run_splot:projection.case:splot_case_1",
                 )
+                events = await runtime.list_events(run_id=stored.run_id)
 
                 self.assertFalse(submission.replayed)
                 self.assertEqual(stored.carrier_type, SPLOT_ARBITRATION_CASE)
@@ -1606,8 +1614,27 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(gate.status, GateStatus.completed)
                 self.assertEqual(projection.name, "splot.case:SP-1")
                 self.assertEqual(projection.data["artifact_count"], 1)
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    [
+                        "carrier.accepted",
+                        "observation.recorded",
+                        "gate.opened",
+                        "gate.completed",
+                        "projection.saved",
+                    ],
+                )
 
         asyncio.run(scenario())
+
+    def test_splot_domain_pack_package_manifest_is_carrier_first(self) -> None:
+        package = load_carrier_workflow_package_yaml(
+            Path("examples/domain-packs/splot/carrier-package.yaml")
+        )
+
+        self.assertEqual(package.id, "splot_arbitration_basic")
+        self.assertEqual(package.carrier_types[0].id, SPLOT_ARBITRATION_CASE)
+        self.assertEqual(package.flows[0].steps[0].adapter.kind, "manual_gate")
 
     def test_splot_domain_pack_does_not_use_document_runtime_internals(self) -> None:
         source = inspect.getsource(splot)
