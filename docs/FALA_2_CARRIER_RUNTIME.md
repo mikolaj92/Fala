@@ -16,6 +16,8 @@ The current Carrier-first path lives in `fala.runtime_backend`:
   flow.
 - `CarrierRelation` records durable lineage or dependency edges between
   carriers.
+- `Artifact` records immutable artifact metadata in SQLite. Artifact bytes stay
+  in an `ArtifactStore`, usually the filesystem store.
 - `CarrierWorkerContext` in `fala.sdk` is the worker payload/env helper for v2 adapters.
 - `RuntimeRef`, `RunRef`, and `EventRef` identify other Fala runtimes, runs,
   and events without adding a non-SQLite first-party backend.
@@ -54,6 +56,8 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
 - RuntimeEvent: ordered facts linked to commands. Events are the audit trail for
   mutations and the source for projections.
 - Observation: a typed measurement or fact reported about a carrier.
+- Artifact: metadata for materialized output such as reports, extracts, or
+  evidence snapshots. SQLite stores metadata; content lives in an artifact store.
 - Gate: a first-class decision point such as human review, approval, expiry, or
   cancellation.
 - Projection: a rebuildable read model keyed by run and projection name.
@@ -61,8 +65,8 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
   pack metadata rather than document-specific core fields.
 - Audit: represented by command actor/correlation/causation metadata plus the
   ordered event log.
-- Artifacts: represented as carrier payload or observation values in core; a
-  domain pack can impose stronger artifact schemas.
+- ArtifactStore: the content store for artifact bytes. `FileArtifactStore` is
+  the local content-addressed default; SQLite keeps references and metadata.
 
 ## SQLite-Only Core
 
@@ -82,7 +86,7 @@ The conformance checks cover:
 - carrier type and relation persistence;
 - idempotent command submission;
 - ordered command-linked events;
-- observations, gates, and projections;
+- observations, artifacts, gates, and projections;
 - bridge inbox/outbox persistence.
 
 ## CLI Inspection
@@ -94,6 +98,7 @@ uv run fala carriers list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala carriers inspect --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
 uv run fala carrier-types list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala carrier-relations list --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
+uv run fala artifacts list --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
 uv run fala events list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala observations list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala gates list --db /tmp/fala-carrier.sqlite --run-id run_case

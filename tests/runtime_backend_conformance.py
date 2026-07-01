@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fala.runtime_backend import (
+    Artifact,
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
@@ -119,6 +120,30 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     )
     await backend.put_observation(observation)
     assert await backend.list_observations(run_id=carrier.run_id) == [observation]
+
+    artifact = Artifact(
+        id="artifact_report",
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+        kind="report",
+        uri="fala-artifact://sha256/abc",
+        media_type="application/json",
+        size_bytes=3,
+        content_hash="sha256:abc",
+    )
+    await backend.put_artifact(artifact)
+    await backend.put_artifact(
+        artifact.model_copy(update={"uri": "fala-artifact://sha256/changed"})
+    )
+    assert await backend.get_artifact(
+        run_id=carrier.run_id,
+        artifact_id=artifact.id,
+    ) == artifact
+    assert await backend.list_artifacts(
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+        kind="report",
+    ) == [artifact]
 
     gate = Gate(
         id="gate_review",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fala.runtime_backend import (
+    Artifact,
     Carrier,
     CarrierRelation,
     CarrierType,
@@ -103,6 +104,23 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
+    async def record_artifact(
+        self,
+        artifact: Artifact,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Artifact, CommandSubmission]:
+        return await self.service.record_artifact(
+            artifact,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def save_gate(
         self,
         gate: Gate,
@@ -166,6 +184,19 @@ class FalaRuntime:
             run_id=run_id,
             carrier_id=carrier_id,
             relation_type=relation_type,
+        )
+
+    async def list_artifacts(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        kind: str | None = None,
+    ) -> list[Artifact]:
+        return await self.service.list_artifacts(
+            run_id=run_id,
+            carrier_id=carrier_id,
+            kind=kind,
         )
 
     async def list_gates(

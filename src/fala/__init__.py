@@ -247,6 +247,7 @@ from fala.queue_bridge import (
     write_jsonl,
 )
 from fala.runtime_backend import (
+    Artifact,
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
@@ -338,6 +339,7 @@ __all__ = [
     "AdapterKind",
     "AdapterProcessRuntimeWorker",
     "AdapterSpec",
+    "Artifact",
     "ArtifactStore",
     "ArtifactKindSpec",
     "ArtifactRef",

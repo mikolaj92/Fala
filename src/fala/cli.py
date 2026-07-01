@@ -1688,6 +1688,26 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_carrier_runtime_db_run_args(carrier_relations_inspect)
     carrier_relations_inspect.add_argument("--relation-id", required=True)
 
+    artifacts = subparsers.add_parser(
+        "artifacts",
+        help="Inspect Carrier-first runtime artifact metadata.",
+    )
+    artifact_subparsers = artifacts.add_subparsers(
+        dest="artifact_command",
+        required=True,
+    )
+    artifacts_list = artifact_subparsers.add_parser("list", help="List artifacts.")
+    _add_carrier_runtime_db_run_args(artifacts_list)
+    artifacts_list.add_argument("--carrier-id", default=None)
+    artifacts_list.add_argument("--kind", default=None)
+    artifacts_list.add_argument("--jsonl", action="store_true")
+    artifacts_inspect = artifact_subparsers.add_parser(
+        "inspect",
+        help="Inspect one artifact.",
+    )
+    _add_carrier_runtime_db_run_args(artifacts_inspect)
+    artifacts_inspect.add_argument("--artifact-id", required=True)
+
     observations = subparsers.add_parser(
         "observations",
         help="Inspect Carrier-first runtime observations.",
@@ -2738,6 +2758,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         return await _project_lifecycle_command(args)
 
     if args.command in {
+        "artifacts",
         "carrier-relations",
         "carrier-types",
         "carriers",
@@ -4065,6 +4086,28 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             "ok": relation is not None,
             "carrier_relation": relation.model_dump(mode="json")
             if relation is not None
+            else None,
+        }
+    if args.command == "artifacts":
+        if args.artifact_command == "list":
+            artifacts = await backend.list_artifacts(
+                run_id=args.run_id,
+                carrier_id=args.carrier_id,
+                kind=args.kind,
+            )
+            return _carrier_runtime_list_result(
+                "artifacts",
+                artifacts,
+                jsonl=args.jsonl,
+            )
+        artifact = await backend.get_artifact(
+            run_id=args.run_id,
+            artifact_id=args.artifact_id,
+        )
+        return {
+            "ok": artifact is not None,
+            "artifact": artifact.model_dump(mode="json")
+            if artifact is not None
             else None,
         }
     if args.command == "observations":

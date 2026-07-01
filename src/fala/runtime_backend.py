@@ -131,6 +131,21 @@ class Observation(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
+class Artifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: _new_id("artifact"))
+    run_id: str
+    kind: str
+    uri: str
+    carrier_id: str | None = None
+    media_type: str | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
+    content_hash: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
+
+
 class GateStatus(StrEnum):
     open = "open"
     completed = "completed"
@@ -298,6 +313,18 @@ class RuntimeBackend(Protocol):
         self, *, run_id: str, carrier_id: str | None = None
     ) -> list[Observation]: ...
 
+    async def put_artifact(self, artifact: Artifact) -> None: ...
+
+    async def get_artifact(self, *, run_id: str, artifact_id: str) -> Artifact | None: ...
+
+    async def list_artifacts(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        kind: str | None = None,
+    ) -> list[Artifact]: ...
+
     async def put_gate(self, gate: Gate) -> None: ...
 
     async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None: ...
@@ -451,6 +478,22 @@ class SQLiteRuntimeBackend:
                     PRIMARY KEY (run_id, id)
                 );
 
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    run_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    uri TEXT NOT NULL,
+                    carrier_id TEXT,
+                    media_type TEXT,
+                    size_bytes INTEGER,
+                    content_hash TEXT,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, id),
+                    FOREIGN KEY (run_id, carrier_id)
+                        REFERENCES carriers (run_id, id)
+                );
+
                 CREATE TABLE IF NOT EXISTS gates (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -521,6 +564,8 @@ class SQLiteRuntimeBackend:
                     ON carrier_relations (run_id, target_carrier_id, relation_type);
                 CREATE INDEX IF NOT EXISTS idx_observations_carrier
                     ON observations (run_id, carrier_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_artifacts_carrier
+                    ON artifacts (run_id, carrier_id, kind, created_at);
                 CREATE INDEX IF NOT EXISTS idx_gates_status
                     ON gates (run_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_bridge_outbox_status
@@ -894,6 +939,66 @@ class SQLiteRuntimeBackend:
                 params,
             ).fetchall()
         return [_observation_from_row(row) for row in rows]
+
+    async def put_artifact(self, artifact: Artifact) -> None:
+        async with self._lock:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        run_id, id, kind, uri, carrier_id, media_type,
+                        size_bytes, content_hash, metadata, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, id) DO NOTHING
+                    """,
+                    (
+                        artifact.run_id,
+                        artifact.id,
+                        artifact.kind,
+                        artifact.uri,
+                        artifact.carrier_id,
+                        artifact.media_type,
+                        artifact.size_bytes,
+                        artifact.content_hash,
+                        _dumps(artifact.metadata),
+                        artifact.created_at.isoformat(),
+                    ),
+                )
+                connection.commit()
+
+    async def get_artifact(self, *, run_id: str, artifact_id: str) -> Artifact | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM artifacts WHERE run_id = ? AND id = ?",
+                (run_id, artifact_id),
+            ).fetchone()
+        return _artifact_from_row(row) if row is not None else None
+
+    async def list_artifacts(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        kind: str | None = None,
+    ) -> list[Artifact]:
+        clauses = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if carrier_id is not None:
+            clauses.append("carrier_id = ?")
+            params.append(carrier_id)
+        if kind is not None:
+            clauses.append("kind = ?")
+            params.append(kind)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM artifacts
+                WHERE {' AND '.join(clauses)}
+                ORDER BY created_at ASC, id ASC
+                """,
+                params,
+            ).fetchall()
+        return [_artifact_from_row(row) for row in rows]
 
     async def put_gate(self, gate: Gate) -> None:
         async with self._lock:
@@ -1322,6 +1427,58 @@ class RuntimeBackendService:
         await self.backend.put_observation(observation)
         return observation, submission
 
+    async def record_artifact(
+        self,
+        artifact: Artifact,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Artifact, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=artifact.run_id,
+            command_type="artifact.record",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={
+                "artifact_id": artifact.id,
+                "kind": artifact.kind,
+                "uri": artifact.uri,
+            },
+        )
+        event = RuntimeEvent(
+            run_id=artifact.run_id,
+            carrier_id=artifact.carrier_id,
+            event_type="artifact.recorded",
+            payload={
+                "artifact_id": artifact.id,
+                "kind": artifact.kind,
+                "uri": artifact.uri,
+            },
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_artifact_id = submission.command.payload.get(
+                "artifact_id",
+                artifact.id,
+            )
+            existing = await self.backend.get_artifact(
+                run_id=artifact.run_id,
+                artifact_id=str(existing_artifact_id),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed artifact command has no stored artifact: "
+                    f"{existing_artifact_id!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_artifact(artifact)
+        return artifact, submission
+
     async def save_gate(
         self,
         gate: Gate,
@@ -1607,6 +1764,19 @@ class RuntimeBackendService:
             carrier_id=carrier_id,
         )
 
+    async def list_artifacts(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        kind: str | None = None,
+    ) -> list[Artifact]:
+        return await self.backend.list_artifacts(
+            run_id=run_id,
+            carrier_id=carrier_id,
+            kind=kind,
+        )
+
     async def list_carriers(
         self,
         *,
@@ -1803,6 +1973,21 @@ def _observation_from_row(row: sqlite3.Row) -> Observation:
     )
 
 
+def _artifact_from_row(row: sqlite3.Row) -> Artifact:
+    return Artifact(
+        id=row["id"],
+        run_id=row["run_id"],
+        kind=row["kind"],
+        uri=row["uri"],
+        carrier_id=row["carrier_id"],
+        media_type=row["media_type"],
+        size_bytes=row["size_bytes"],
+        content_hash=row["content_hash"],
+        metadata=_loads(row["metadata"]),
+        created_at=_dt(row["created_at"]),
+    )
+
+
 def _gate_from_row(row: sqlite3.Row) -> Gate:
     return Gate(
         id=row["id"],
@@ -1851,6 +2036,7 @@ def _bridge_delivery_from_row(row: sqlite3.Row) -> BridgeDelivery:
 
 
 __all__ = [
+    "Artifact",
     "BridgeDelivery",
     "BridgeDeliveryStatus",
     "Carrier",

@@ -34,6 +34,7 @@ from fala.domain_packs.splot import (
     review_gate,
 )
 from fala.runtime_backend import (
+    Artifact,
     BridgeDelivery,
     BridgeDeliveryStatus,
     Carrier,
@@ -354,6 +355,19 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 ),
                 idempotency_key="run_cli:carrier_relation:relation_cli",
             )
+            await runtime.record_artifact(
+                Artifact(
+                    id="artifact_cli",
+                    run_id="run_cli",
+                    carrier_id=stored.id,
+                    kind="report",
+                    uri="fala-artifact://sha256/abc",
+                    media_type="application/json",
+                    size_bytes=3,
+                    content_hash="sha256:abc",
+                ),
+                idempotency_key="run_cli:artifact:artifact_cli",
+            )
             await runtime.record_observation(
                 Observation(
                     run_id=stored.run_id,
@@ -466,6 +480,34 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 "carrier_cli_child",
             )
 
+            artifacts = _run_cli_json(
+                "artifacts",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--carrier-id",
+                "carrier_cli",
+                "--kind",
+                "report",
+            )
+            self.assertEqual(artifacts["count"], 1)
+            self.assertEqual(artifacts["artifacts"][0]["id"], "artifact_cli")
+
+            inspected_artifact = _run_cli_json(
+                "artifacts",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--artifact-id",
+                "artifact_cli",
+            )
+            self.assertTrue(inspected_artifact["ok"])
+            self.assertEqual(inspected_artifact["artifact"]["size_bytes"], 3)
+
             events = _run_cli_json(
                 "events",
                 "list",
@@ -481,6 +523,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 [
                     "carrier.accepted",
                     "carrier_relation.recorded",
+                    "artifact.recorded",
                     "observation.recorded",
                     "gate.saved",
                 ],
