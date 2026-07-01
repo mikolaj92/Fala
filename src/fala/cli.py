@@ -1252,8 +1252,9 @@ async def _carrier_runtime_gc(args: argparse.Namespace) -> dict[str, Any]:
         else None
     )
     referenced: set[str] = set()
-    run_ids = [args.run_id] if args.run_id else [run.id for run in await backend.list_runs()]
-    for run_id in run_ids:
+    all_run_ids = [run.id for run in await backend.list_runs()]
+    run_ids = [args.run_id] if args.run_id else all_run_ids
+    for run_id in all_run_ids:
         for artifact in await backend.list_artifacts(run_id=run_id):
             digest = digest_from_fala_artifact_uri(artifact.uri)
             if digest is not None:
@@ -1276,6 +1277,7 @@ async def _carrier_runtime_gc(args: argparse.Namespace) -> dict[str, Any]:
         "dry_run": bool(args.dry_run),
         "artifact_root": str(store.root),
         "run_ids": run_ids,
+        "scanned_run_ids": all_run_ids,
         "referenced_count": len(referenced),
         "kept_count": len(kept),
         "collectable_count": len(collectable),

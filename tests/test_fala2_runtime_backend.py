@@ -803,6 +803,61 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 store.resolve(orphan_ref)
 
+    def test_cli_gc_run_scope_keeps_blobs_referenced_by_other_runs(self) -> None:
+        async def setup(root: Path) -> tuple[Artifact, ArtifactRef]:
+            runtime = FalaRuntime.sqlite(root / "state.sqlite")
+            await runtime.create_run(Run(id="run_gc"), idempotency_key="run_gc:create")
+            await runtime.create_run(
+                Run(id="run_keep"),
+                idempotency_key="run_keep:create",
+            )
+            source = root / "shared.txt"
+            source.write_text("shared", encoding="utf-8")
+            orphan = root / "orphan.txt"
+            orphan.write_text("orphan", encoding="utf-8")
+            store = FileArtifactStore(root / "artifacts")
+
+            shared, _ = await runtime.record_file_artifact(
+                run_id="run_keep",
+                kind="text",
+                path=source,
+                artifact_store=store,
+                idempotency_key="run_keep:artifact:shared",
+            )
+            orphan_ref = store.put_file(kind="text", path=orphan)
+            return shared, orphan_ref
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            shared, orphan_ref = asyncio.run(setup(root))
+            store = FileArtifactStore(root / "artifacts")
+
+            collected = _run_cli_json(
+                "gc",
+                "--db",
+                str(root / "state.sqlite"),
+                "--artifact-root",
+                str(root / "artifacts"),
+                "--run-id",
+                "run_gc",
+            )
+            self.assertEqual(collected["run_ids"], ["run_gc"])
+            self.assertEqual(
+                set(collected["scanned_run_ids"]),
+                {"run_gc", "run_keep"},
+            )
+            self.assertEqual(collected["deleted"], [orphan_ref.metadata["sha256"]])
+            self.assertTrue(
+                store.resolve(
+                    ArtifactRef(
+                        id=shared.id,
+                        kind=shared.kind,
+                        uri=shared.uri,
+                        metadata=shared.metadata,
+                    )
+                ).exists()
+            )
+
     def test_cli_inspects_carrier_runtime_state_without_web_stack(self) -> None:
         async def scenario(db_path: Path) -> None:
             runtime = FalaRuntime.sqlite(db_path)

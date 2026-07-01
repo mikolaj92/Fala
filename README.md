@@ -193,6 +193,8 @@ The runtime initializes SQLite with WAL mode, foreign keys, and a busy timeout.
 
 Artifact content belongs in an artifact store. SQLite stores metadata and refs;
 the default store is a local filesystem root such as `.fala/artifacts`.
+`fala gc` only deletes blobs that are not referenced by any run in the SQLite
+runtime, even when `--run-id` is supplied.
 
 ## Composition
 
