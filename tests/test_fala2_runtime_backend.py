@@ -1297,7 +1297,56 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                     """
                 ).fetchone()
 
-        self.assertEqual(row, ("runtime_backend", 1, "runtime_backend"))
+        self.assertEqual(row, ("runtime_backend", 2, "runtime_backend"))
+
+    def test_cli_lists_and_inspects_runtime_pools(self) -> None:
+        async def scenario(db_path: Path) -> None:
+            backend = SQLiteRuntimeBackend(db_path)
+            pool = RuntimePool(
+                id="local_pool",
+                runtimes=[
+                    RuntimeRef(id="source", uri="sqlite://source.sqlite"),
+                    RuntimeRef(id="target", uri="sqlite://target.sqlite"),
+                ],
+                carrier_types=["case"],
+                metadata={"tenant": "local"},
+            )
+            policy = DelegationPolicy(
+                id="policy_case",
+                pool_id=pool.id,
+                carrier_types=["case"],
+                budget=RuntimeBudget(runtime_hops=1, carrier_count=1, attempts=2),
+            )
+            await backend.put_runtime_pool(pool)
+            await backend.put_delegation_policy(policy)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "fala2.sqlite"
+            asyncio.run(scenario(db_path))
+
+            listed = _run_cli_json("runtimes", "list", "--db", str(db_path))
+            self.assertTrue(listed["ok"])
+            self.assertEqual(listed["count"], 1)
+            self.assertEqual(listed["runtime_pools"][0]["id"], "local_pool")
+            self.assertEqual(
+                listed["runtime_pools"][0]["runtimes"][1]["uri"],
+                "sqlite://target.sqlite",
+            )
+
+            inspected = _run_cli_json(
+                "runtimes",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--pool-id",
+                "local_pool",
+            )
+            self.assertTrue(inspected["ok"])
+            self.assertEqual(inspected["runtime_pool"]["id"], "local_pool")
+            self.assertEqual(
+                inspected["delegation_policies"][0]["budget"]["runtime_hops"],
+                1,
+            )
 
     def test_carrier_runtime_doctor_checks_sqlite_schema(self) -> None:
         async def scenario(db_path: Path) -> None:
@@ -1326,8 +1375,8 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             doctor = _run_cli_json("doctor", "--db", str(db_path))
             self.assertTrue(doctor["ok"])
             self.assertEqual(doctor["schema"]["missing_tables"], [])
-            self.assertEqual(doctor["schema"]["current_version"], 1)
-            self.assertEqual(doctor["schema"]["latest_version"], 1)
+            self.assertEqual(doctor["schema"]["current_version"], 2)
+            self.assertEqual(doctor["schema"]["latest_version"], 2)
             self.assertEqual(doctor["counts"]["runs"], 1)
             self.assertEqual(doctor["counts"]["carriers"], 1)
             self.assertEqual(doctor["counts"]["runtime_events"], 2)
@@ -1341,7 +1390,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 str(output),
             )
             self.assertTrue(written["ok"])
-            self.assertEqual(written["current_version"], 1)
+            self.assertEqual(written["current_version"], 2)
             self.assertTrue(output.is_file())
 
     def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:

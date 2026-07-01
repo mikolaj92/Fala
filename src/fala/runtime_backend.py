@@ -41,6 +41,13 @@ def _loads_str_list(value: str) -> list[str]:
     return loaded
 
 
+def _loads_runtime_refs(value: str) -> list["RuntimeRef"]:
+    loaded = json.loads(value)
+    if not isinstance(loaded, list):
+        raise ValueError("Stored runtime JSON payload is not a runtime ref list")
+    return [RuntimeRef.model_validate(item) for item in loaded]
+
+
 def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
@@ -342,6 +349,22 @@ class RuntimeBackend(Protocol):
         limit: int | None = None,
     ) -> list[Run]: ...
 
+    async def put_runtime_pool(self, pool: RuntimePool) -> None: ...
+
+    async def get_runtime_pool(self, *, pool_id: str) -> RuntimePool | None: ...
+
+    async def list_runtime_pools(self) -> list[RuntimePool]: ...
+
+    async def put_delegation_policy(self, policy: DelegationPolicy) -> None: ...
+
+    async def get_delegation_policy(
+        self, *, policy_id: str
+    ) -> DelegationPolicy | None: ...
+
+    async def list_delegation_policies(
+        self, *, pool_id: str | None = None
+    ) -> list[DelegationPolicy]: ...
+
     async def put_carrier_type(self, carrier_type: CarrierType) -> None: ...
 
     async def get_carrier_type(
@@ -514,7 +537,8 @@ class RuntimeBackend(Protocol):
 
 _BRIDGE_TABLES = {"bridge_outbox", "bridge_inbox"}
 _BUILT_IN_PROJECTIONS = ("run_summary",)
-_SQLITE_SCHEMA_VERSION = 1
+_SQLITE_SCHEMA_VERSION = 2
+SQLITE_RUNTIME_SCHEMA_VERSION = _SQLITE_SCHEMA_VERSION
 _TERMINAL_RUN_STATUSES = {
     CarrierRunStatus.completed,
     CarrierRunStatus.failed,
@@ -793,6 +817,27 @@ class SQLiteRuntimeBackend:
                     ON runtime_events (run_id, carrier_id, sequence);
                 CREATE INDEX IF NOT EXISTS idx_runs_status
                     ON runs (status, updated_at);
+
+                CREATE TABLE IF NOT EXISTS runtime_pools (
+                    id TEXT PRIMARY KEY,
+                    runtimes_json TEXT NOT NULL,
+                    carrier_types TEXT NOT NULL,
+                    metadata TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS delegation_policies (
+                    id TEXT PRIMARY KEY,
+                    pool_id TEXT NOT NULL,
+                    carrier_types TEXT NOT NULL,
+                    budget TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    FOREIGN KEY (pool_id)
+                        REFERENCES runtime_pools (id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_delegation_policies_pool
+                    ON delegation_policies (pool_id, id);
+
                 CREATE INDEX IF NOT EXISTS idx_carrier_relations_source
                     ON carrier_relations (run_id, source_carrier_id, relation_type);
                 CREATE INDEX IF NOT EXISTS idx_carrier_relations_target
@@ -893,6 +938,89 @@ class SQLiteRuntimeBackend:
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()
         return [_run_from_row(row) for row in rows]
+
+    async def put_runtime_pool(self, pool: RuntimePool) -> None:
+        async with self._lock:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO runtime_pools (
+                        id, runtimes_json, carrier_types, metadata
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        runtimes_json = excluded.runtimes_json,
+                        carrier_types = excluded.carrier_types,
+                        metadata = excluded.metadata
+                    """,
+                    _runtime_pool_args(pool),
+                )
+                connection.commit()
+
+    async def get_runtime_pool(self, *, pool_id: str) -> RuntimePool | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM runtime_pools WHERE id = ?",
+                (pool_id,),
+            ).fetchone()
+        return _runtime_pool_from_row(row) if row is not None else None
+
+    async def list_runtime_pools(self) -> list[RuntimePool]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM runtime_pools
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        return [_runtime_pool_from_row(row) for row in rows]
+
+    async def put_delegation_policy(self, policy: DelegationPolicy) -> None:
+        async with self._lock:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO delegation_policies (
+                        id, pool_id, carrier_types, budget, metadata
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        pool_id = excluded.pool_id,
+                        carrier_types = excluded.carrier_types,
+                        budget = excluded.budget,
+                        metadata = excluded.metadata
+                    """,
+                    _delegation_policy_args(policy),
+                )
+                connection.commit()
+
+    async def get_delegation_policy(
+        self,
+        *,
+        policy_id: str,
+    ) -> DelegationPolicy | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM delegation_policies WHERE id = ?",
+                (policy_id,),
+            ).fetchone()
+        return _delegation_policy_from_row(row) if row is not None else None
+
+    async def list_delegation_policies(
+        self,
+        *,
+        pool_id: str | None = None,
+    ) -> list[DelegationPolicy]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if pool_id is not None:
+            clauses.append("pool_id = ?")
+            params.append(pool_id)
+        sql = "SELECT * FROM delegation_policies"
+        if clauses:
+            sql += f" WHERE {' AND '.join(clauses)}"
+        sql += " ORDER BY pool_id ASC, id ASC"
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [_delegation_policy_from_row(row) for row in rows]
 
     async def put_carrier_type(self, carrier_type: CarrierType) -> None:
         async with self._lock:
@@ -2883,6 +3011,37 @@ class RuntimeBackendService:
     ) -> list[Run]:
         return await self.backend.list_runs(status=status, limit=limit)
 
+    async def save_runtime_pool(self, pool: RuntimePool) -> RuntimePool:
+        await self.backend.put_runtime_pool(pool)
+        return pool
+
+    async def get_runtime_pool(self, *, pool_id: str) -> RuntimePool | None:
+        return await self.backend.get_runtime_pool(pool_id=pool_id)
+
+    async def list_runtime_pools(self) -> list[RuntimePool]:
+        return await self.backend.list_runtime_pools()
+
+    async def save_delegation_policy(
+        self,
+        policy: DelegationPolicy,
+    ) -> DelegationPolicy:
+        await self.backend.put_delegation_policy(policy)
+        return policy
+
+    async def get_delegation_policy(
+        self,
+        *,
+        policy_id: str,
+    ) -> DelegationPolicy | None:
+        return await self.backend.get_delegation_policy(policy_id=policy_id)
+
+    async def list_delegation_policies(
+        self,
+        *,
+        pool_id: str | None = None,
+    ) -> list[DelegationPolicy]:
+        return await self.backend.list_delegation_policies(pool_id=pool_id)
+
     async def list_processes(
         self,
         *,
@@ -3246,6 +3405,48 @@ def _run_from_row(row: sqlite3.Row) -> Run:
     )
 
 
+def _runtime_pool_args(pool: RuntimePool) -> tuple[Any, ...]:
+    return (
+        pool.id,
+        json.dumps(
+            [runtime.model_dump(mode="json") for runtime in pool.runtimes],
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        json.dumps(pool.carrier_types, sort_keys=True, separators=(",", ":")),
+        _dumps(pool.metadata),
+    )
+
+
+def _runtime_pool_from_row(row: sqlite3.Row) -> RuntimePool:
+    return RuntimePool(
+        id=row["id"],
+        runtimes=_loads_runtime_refs(row["runtimes_json"]),
+        carrier_types=_loads_str_list(row["carrier_types"]),
+        metadata=_loads(row["metadata"]),
+    )
+
+
+def _delegation_policy_args(policy: DelegationPolicy) -> tuple[Any, ...]:
+    return (
+        policy.id,
+        policy.pool_id,
+        json.dumps(policy.carrier_types, sort_keys=True, separators=(",", ":")),
+        _dumps(policy.budget.model_dump(mode="json")),
+        _dumps(policy.metadata),
+    )
+
+
+def _delegation_policy_from_row(row: sqlite3.Row) -> DelegationPolicy:
+    return DelegationPolicy(
+        id=row["id"],
+        pool_id=row["pool_id"],
+        carrier_types=_loads_str_list(row["carrier_types"]),
+        budget=RuntimeBudget.model_validate(_loads(row["budget"])),
+        metadata=_loads(row["metadata"]),
+    )
+
+
 def _process_args(process: Process) -> tuple[Any, ...]:
     return (
         process.run_id,
@@ -3466,5 +3667,6 @@ __all__ = [
     "RuntimeRef",
     "Run",
     "RunRef",
+    "SQLITE_RUNTIME_SCHEMA_VERSION",
     "SQLiteRuntimeBackend",
 ]

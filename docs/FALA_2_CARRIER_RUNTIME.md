@@ -30,7 +30,9 @@ The current Carrier-first path lives in `fala.runtime_backend`:
   `RuntimeEvent`s.
 - `RuntimePool`, `DelegationPolicy`, and `RuntimeBudget` describe Carrier-first
   delegation targets and budgets for runtime hops, spawned runs, carriers, wall
-  time, attempts, and artifact bytes.
+  time, attempts, and artifact bytes. SQLite stores runtime pools and
+  delegation policies, and `fala runtimes list/inspect` exposes them without a
+  web server.
 
 The existing document/process runtime remains the legacy surface while the rest of
 the migration lands. New Fala 2.0 runtime work should use `fala.runtime_backend`

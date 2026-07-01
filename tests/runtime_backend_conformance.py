@@ -9,6 +9,7 @@ from fala.runtime_backend import (
     CarrierRunStatus,
     CarrierRelation,
     CarrierType,
+    DelegationPolicy,
     EventRef,
     Gate,
     GateStatus,
@@ -19,6 +20,7 @@ from fala.runtime_backend import (
     RuntimeBudget,
     RuntimeCommand,
     RuntimeEvent,
+    RuntimePool,
     RuntimeRef,
     Run,
     RunRef,
@@ -37,6 +39,24 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     await backend.put_run(run)
     assert await backend.get_run(run_id=run.id) == run
     assert await backend.list_runs(status=CarrierRunStatus.created) == [run]
+
+    pool = RuntimePool(
+        id="local_pool",
+        runtimes=[runtime, RuntimeRef(id="target", uri="sqlite://target")],
+        carrier_types=["case"],
+    )
+    policy = DelegationPolicy(
+        id="policy_case",
+        pool_id=pool.id,
+        carrier_types=["case"],
+        budget=RuntimeBudget(runtime_hops=1, carrier_count=1, attempts=2),
+    )
+    await backend.put_runtime_pool(pool)
+    await backend.put_delegation_policy(policy)
+    assert await backend.get_runtime_pool(pool_id=pool.id) == pool
+    assert await backend.list_runtime_pools() == [pool]
+    assert await backend.get_delegation_policy(policy_id=policy.id) == policy
+    assert await backend.list_delegation_policies(pool_id=pool.id) == [policy]
 
     carrier_type = CarrierType(
         id="case",

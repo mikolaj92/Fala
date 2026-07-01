@@ -212,7 +212,7 @@ Work items:
 2. Add local SQLite inbox/outbox tables for inter-runtime delivery.
 3. Add bridge commands for exporting, importing, delivering, and replaying
    runtime messages.
-4. Add runtime pools and delegation policies.
+4. Persist runtime pools and delegation policies, then execute routing policies.
 5. Add budgets for delegated work: attempts, wall time, carrier count, artifact
    bytes, spawned runs, and runtime hops.
 6. Keep all core composition features runnable with local SQLite files.
@@ -289,12 +289,12 @@ not complete enough to close the requirement.
 | 9 | Commands and idempotency | PARTIAL | Route all runtime mutations through command APIs with actor, causation, correlation, and deduplication. |
 | 10 | Event log | PARTIAL | Make append-only events the consistent source for projections/replay with schema/version metadata. |
 | 11 | State machines | PARTIAL | Run/process statuses, cancel request, and gate completion exist; finish full transition validation and cancellation propagation. |
-| 12 | Multi-Fala composition | PARTIAL | Local SQLite bridge deliver exists; add runtime pools, wait graph, budgets, and no-global-transaction guidance. |
-| 13 | Runtime pools | PARTIAL | Add routing policies and persistence for multi-runtime pools. |
+| 12 | Multi-Fala composition | PARTIAL | Local SQLite bridge deliver and persisted runtime pools exist; add wait graph, routing execution, and no-global-transaction guidance. |
+| 13 | Runtime pools | PARTIAL | Runtime pool/delegation policy persistence and CLI inspection exist; add routing policy execution. |
 | 14 | Budgets and safety limits | PARTIAL | Bridge delegation enforces hop/carrier/attempt budgets; add retry, gate, artifact byte, pending process, and spawned-run limits. |
 | 15 | Cycles and deadlock detection | PARTIAL | Add wait graph diagnostics and distinguish valid feedback cycles from deadlocks. |
 | 16 | Web/UI | PARTIAL | Keep web optional, read-only by default, localhost-bound, and mutation-through-command only; add static export. |
-| 17 | CLI | PARTIAL | Carrier inspect/mutate, doctor, trace, export, and bridge deliver exist; finish waits diagnosis and compatibility aliases. |
+| 17 | CLI | PARTIAL | Carrier inspect/mutate, runtimes inspect/list, doctor, trace, export, and bridge deliver exist; finish waits diagnosis and compatibility aliases. |
 | 18 | Package schema | PARTIAL | Finish carrier-first YAML, runtime config, flows, validation, and backward compatibility. |
 | 19 | Domain packs | PARTIAL | Move document-specific runtime logic into `fala.domains.documents` or equivalent compatibility package. |
 | 20 | Splot integration | PARTIAL | Keep Splot as a domain pack/adapter and add an end-to-end carrier/artifact/gate example. |

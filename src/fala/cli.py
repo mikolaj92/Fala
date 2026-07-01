@@ -173,6 +173,7 @@ from fala.runtime_backend import BridgeDeliveryStatus
 from fala.runtime_backend import GateStatus as CarrierGateStatus
 from fala.runtime_backend import Run as CarrierRun
 from fala.runtime_backend import RuntimeBackendService
+from fala.runtime_backend import SQLITE_RUNTIME_SCHEMA_VERSION
 from fala.runtime_backend import SQLiteRuntimeBackend
 from fala.scheduler import PipelineScheduler, ScheduleResult
 from fala.sdk import replay_step_manifest
@@ -326,6 +327,8 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "project-supervision",
             "replay-dead-letter",
             "run-gates",
+            "runs",
+            "runtimes",
             "stuck-work",
             "queue-metrics",
             "capability-demands",
@@ -1706,6 +1709,27 @@ def _build_parser() -> argparse.ArgumentParser:
     runs_cancel.add_argument("--reason", default=None)
     runs_cancel.add_argument("--idempotency-key", default=None)
 
+    runtimes = subparsers.add_parser(
+        "runtimes",
+        help="Inspect Carrier-first runtime pools.",
+    )
+    runtime_subparsers = runtimes.add_subparsers(
+        dest="runtime_command",
+        required=True,
+    )
+    runtimes_list = runtime_subparsers.add_parser(
+        "list",
+        help="List runtime pools.",
+    )
+    _add_carrier_runtime_db_arg(runtimes_list)
+    runtimes_list.add_argument("--jsonl", action="store_true")
+    runtimes_inspect = runtime_subparsers.add_parser(
+        "inspect",
+        help="Inspect one runtime pool.",
+    )
+    _add_carrier_runtime_db_arg(runtimes_inspect)
+    runtimes_inspect.add_argument("--pool-id", required=True)
+
     carriers = subparsers.add_parser(
         "carriers",
         help="Inspect Carrier-first runtime carriers.",
@@ -2943,6 +2967,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "observations",
         "processes",
         "projections",
+        "runtimes",
         "runs",
     }:
         return await _carrier_runtime_command(args)
@@ -4230,10 +4255,12 @@ _CARRIER_RUNTIME_REQUIRED_TABLES = (
     "carrier_relations",
     "carrier_types",
     "carriers",
+    "delegation_policies",
     "gates",
     "observations",
     "processes",
     "projections",
+    "runtime_pools",
     "runtime_commands",
     "runtime_events",
     "runs",
@@ -4296,6 +4323,23 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         return {
             "ok": run is not None,
             "run": run.model_dump(mode="json") if run is not None else None,
+        }
+    if args.command == "runtimes":
+        if args.runtime_command == "list":
+            pools = await backend.list_runtime_pools()
+            return _carrier_runtime_list_result(
+                "runtime_pools",
+                pools,
+                jsonl=args.jsonl,
+            )
+        pool = await backend.get_runtime_pool(pool_id=args.pool_id)
+        policies = await backend.list_delegation_policies(pool_id=args.pool_id)
+        return {
+            "ok": pool is not None,
+            "runtime_pool": pool.model_dump(mode="json") if pool is not None else None,
+            "delegation_policies": [
+                policy.model_dump(mode="json") for policy in policies
+            ],
         }
     if args.command == "carriers":
         if args.carrier_command == "list":
@@ -4579,20 +4623,23 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
             )
         }
 
+    latest_version = SQLITE_RUNTIME_SCHEMA_VERSION
     current_version = int(migration[0]) if migration is not None else None
     report = {
-        "ok": not missing_tables and current_version == 1,
+        "ok": not missing_tables and current_version == latest_version,
         "store_kind": "sqlite",
         "path": str(db_path),
         "schema": {
             "required_tables": list(_CARRIER_RUNTIME_REQUIRED_TABLES),
             "missing_tables": missing_tables,
             "current_version": current_version,
-            "latest_version": 1,
+            "latest_version": latest_version,
             "migrations": {
-                "ok": current_version == 1,
+                "ok": current_version == latest_version,
                 "applied_at": migration[1] if migration is not None else None,
-                "missing": [] if current_version == 1 else ["runtime_backend"],
+                "missing": []
+                if current_version == latest_version
+                else ["runtime_backend"],
             },
         },
         "counts": counts,
