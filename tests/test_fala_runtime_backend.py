@@ -2686,6 +2686,92 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_runtime_backend_service_records_observations_and_artifacts_idempotently(
+        self,
+    ) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await _put_test_run(service, "run_observe")
+                carrier = Carrier(
+                    id="carrier_observe",
+                    run_id="run_observe",
+                    carrier_type="arbitration_case",
+                    payload={"claim_id": "CLM-1"},
+                )
+                await service.accept_carrier(
+                    carrier,
+                    idempotency_key="run_observe:carrier.accept:carrier_observe",
+                )
+
+                observation = Observation(
+                    id="observation_score",
+                    run_id=carrier.run_id,
+                    carrier_id=carrier.id,
+                    kind="score",
+                    values={"score": 1},
+                )
+                first_observation, first_observation_submission = (
+                    await service.record_observation(
+                        observation,
+                        idempotency_key="run_observe:observation.record:score",
+                    )
+                )
+                replay_observation, replay_observation_submission = (
+                    await service.record_observation(
+                        observation.model_copy(update={"values": {"score": 2}}),
+                        idempotency_key="run_observe:observation.record:score",
+                    )
+                )
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await service.record_observation(
+                        observation,
+                        idempotency_key="run_observe:observation.record:again",
+                    )
+
+                artifact = Artifact(
+                    id="artifact_report",
+                    run_id=carrier.run_id,
+                    carrier_id=carrier.id,
+                    kind="report",
+                    uri="fala-artifact://sha256/report",
+                    media_type="application/json",
+                    size_bytes=6,
+                    content_hash="sha256:report",
+                )
+                first_artifact, first_artifact_submission = (
+                    await service.record_artifact(
+                        artifact,
+                        idempotency_key="run_observe:artifact.record:report",
+                    )
+                )
+                replay_artifact, replay_artifact_submission = (
+                    await service.record_artifact(
+                        artifact.model_copy(
+                            update={"uri": "fala-artifact://sha256/changed"}
+                        ),
+                        idempotency_key="run_observe:artifact.record:report",
+                    )
+                )
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await service.record_artifact(
+                        artifact,
+                        idempotency_key="run_observe:artifact.record:again",
+                    )
+
+                self.assertEqual(first_observation, observation)
+                self.assertFalse(first_observation_submission.replayed)
+                self.assertEqual(replay_observation, observation)
+                self.assertTrue(replay_observation_submission.replayed)
+                self.assertEqual(replay_observation_submission.events, [])
+                self.assertEqual(first_artifact, artifact)
+                self.assertFalse(first_artifact_submission.replayed)
+                self.assertEqual(replay_artifact, artifact)
+                self.assertTrue(replay_artifact_submission.replayed)
+                self.assertEqual(replay_artifact_submission.events, [])
+
+        asyncio.run(scenario())
+
     def test_runtime_backend_service_replays_gate_and_projection_writes(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:

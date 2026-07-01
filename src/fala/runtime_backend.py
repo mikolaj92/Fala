@@ -511,11 +511,27 @@ class RuntimeBackend(Protocol):
 
     async def put_observation(self, observation: Observation) -> None: ...
 
+    async def record_observation(
+        self,
+        observation: Observation,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
     async def list_observations(
         self, *, run_id: str, carrier_id: str | None = None
     ) -> list[Observation]: ...
 
     async def put_artifact(self, artifact: Artifact) -> None: ...
+
+    async def record_artifact(
+        self,
+        artifact: Artifact,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
 
     async def get_artifact(self, *, run_id: str, artifact_id: str) -> Artifact | None: ...
 
@@ -1759,6 +1775,64 @@ class SQLiteRuntimeBackend:
                 )
                 connection.commit()
 
+    async def record_observation(
+        self,
+        observation: Observation,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != observation.run_id:
+            raise ValueError(
+                "observation.record command run_id must match observation run_id"
+            )
+        if command.command_type != "observation.record":
+            raise ValueError(
+                "record_observation requires command_type 'observation.record'"
+            )
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                _require_run_row(connection, observation.run_id)
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM observations WHERE run_id = ? AND id = ?",
+                        (observation.run_id, observation.id),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"Observation already exists: {observation.id!r}")
+
+                _insert_runtime_command_row(connection, command)
+                _insert_observation_row(connection, observation)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
     async def list_observations(
         self, *, run_id: str, carrier_id: str | None = None
     ) -> list[Observation]:
@@ -1804,6 +1878,62 @@ class SQLiteRuntimeBackend:
                     ),
                 )
                 connection.commit()
+
+    async def record_artifact(
+        self,
+        artifact: Artifact,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != artifact.run_id:
+            raise ValueError(
+                "artifact.record command run_id must match artifact run_id"
+            )
+        if command.command_type != "artifact.record":
+            raise ValueError("record_artifact requires command_type 'artifact.record'")
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                _require_run_row(connection, artifact.run_id)
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM artifacts WHERE run_id = ? AND id = ?",
+                        (artifact.run_id, artifact.id),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"Artifact already exists: {artifact.id!r}")
+
+                _insert_runtime_command_row(connection, command)
+                _insert_artifact_row(connection, artifact)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def get_artifact(self, *, run_id: str, artifact_id: str) -> Artifact | None:
         with self._connect() as connection:
@@ -2951,7 +3081,11 @@ class RuntimeBackendService:
             event_type="observation.recorded",
             payload={"observation_id": observation.id, "kind": observation.kind},
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.record_observation(
+            observation,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             observations = await self.backend.list_observations(
                 run_id=observation.run_id,
@@ -2965,7 +3099,6 @@ class RuntimeBackendService:
                 f"{submission.command.payload.get('observation_id')!r}"
             )
 
-        await self.backend.put_observation(observation)
         return observation, submission
 
     async def record_artifact(
@@ -3000,7 +3133,11 @@ class RuntimeBackendService:
                 "uri": artifact.uri,
             },
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.record_artifact(
+            artifact,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             existing_artifact_id = submission.command.payload.get(
                 "artifact_id",
@@ -3017,7 +3154,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_artifact(artifact)
         return artifact, submission
 
     async def schedule_process(
@@ -4360,6 +4496,55 @@ def _insert_carrier_relation_row(
             relation.target_carrier_id,
             _dumps(relation.metadata),
             relation.created_at.isoformat(),
+        ),
+    )
+
+
+def _insert_observation_row(
+    connection: sqlite3.Connection,
+    observation: Observation,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO observations (
+            run_id, id, kind, carrier_id, values_json,
+            metadata, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            observation.run_id,
+            observation.id,
+            observation.kind,
+            observation.carrier_id,
+            _dumps(observation.values),
+            _dumps(observation.metadata),
+            observation.created_at.isoformat(),
+        ),
+    )
+
+
+def _insert_artifact_row(
+    connection: sqlite3.Connection,
+    artifact: Artifact,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO artifacts (
+            run_id, id, kind, uri, carrier_id, media_type,
+            size_bytes, content_hash, metadata, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            artifact.run_id,
+            artifact.id,
+            artifact.kind,
+            artifact.uri,
+            artifact.carrier_id,
+            artifact.media_type,
+            artifact.size_bytes,
+            artifact.content_hash,
+            _dumps(artifact.metadata),
+            artifact.created_at.isoformat(),
         ),
     )
 

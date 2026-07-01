@@ -189,6 +189,101 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert not relation_submission.replayed
     assert relation_replay.replayed
 
+    observation_run = Run(
+        id="run_observation_conformance",
+        status=CarrierRunStatus.active,
+    )
+    observation_carrier = Carrier(
+        id="carrier_observation",
+        run_id=observation_run.id,
+        carrier_type="case",
+    )
+    recorded_observation = Observation(
+        id="observation_recorded",
+        run_id=observation_run.id,
+        carrier_id=observation_carrier.id,
+        kind="score",
+        values={"score": 1},
+    )
+    observation_command = RuntimeCommand(
+        run_id=observation_run.id,
+        command_type="observation.record",
+        idempotency_key="run_observation_conformance:observation.recorded",
+    )
+    await backend.put_run(observation_run)
+    await backend.put_carrier(observation_carrier)
+    observation_submission = await backend.record_observation(
+        recorded_observation,
+        observation_command,
+        events=[
+            RuntimeEvent(
+                run_id=observation_run.id,
+                carrier_id=observation_carrier.id,
+                event_type="observation.recorded",
+            )
+        ],
+    )
+    observation_replay = await backend.record_observation(
+        recorded_observation.model_copy(update={"values": {"score": 2}}),
+        observation_command.model_copy(update={"id": "command_observation_replay"}),
+        events=[],
+    )
+    assert await backend.list_observations(
+        run_id=observation_run.id,
+        carrier_id=observation_carrier.id,
+    ) == [recorded_observation]
+    assert not observation_submission.replayed
+    assert observation_replay.replayed
+
+    artifact_run = Run(
+        id="run_artifact_conformance",
+        status=CarrierRunStatus.active,
+    )
+    artifact_carrier = Carrier(
+        id="carrier_artifact",
+        run_id=artifact_run.id,
+        carrier_type="case",
+    )
+    recorded_artifact = Artifact(
+        id="artifact_recorded",
+        run_id=artifact_run.id,
+        carrier_id=artifact_carrier.id,
+        kind="report",
+        uri="fala-artifact://sha256/recorded",
+        media_type="application/json",
+        size_bytes=8,
+        content_hash="sha256:recorded",
+    )
+    artifact_command = RuntimeCommand(
+        run_id=artifact_run.id,
+        command_type="artifact.record",
+        idempotency_key="run_artifact_conformance:artifact.recorded",
+    )
+    await backend.put_run(artifact_run)
+    await backend.put_carrier(artifact_carrier)
+    artifact_submission = await backend.record_artifact(
+        recorded_artifact,
+        artifact_command,
+        events=[
+            RuntimeEvent(
+                run_id=artifact_run.id,
+                carrier_id=artifact_carrier.id,
+                event_type="artifact.recorded",
+            )
+        ],
+    )
+    artifact_replay = await backend.record_artifact(
+        recorded_artifact.model_copy(update={"uri": "fala-artifact://sha256/changed"}),
+        artifact_command.model_copy(update={"id": "command_artifact_replay"}),
+        events=[],
+    )
+    assert await backend.get_artifact(
+        run_id=artifact_run.id,
+        artifact_id=recorded_artifact.id,
+    ) == recorded_artifact
+    assert not artifact_submission.replayed
+    assert artifact_replay.replayed
+
     run = Run(
         id="run_conformance",
         status=CarrierRunStatus.created,
