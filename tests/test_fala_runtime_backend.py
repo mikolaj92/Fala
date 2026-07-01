@@ -1713,6 +1713,25 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(process["process"]["status"], "ready")
             self.assertEqual(process["command"]["command_type"], "process.schedule")
 
+            cancelled_process = _run_cli_json(
+                "processes",
+                "cancel",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_mutate",
+                "--process-id",
+                "process_mutate",
+                "--error-json",
+                '{"reason":"operator"}',
+            )
+            self.assertTrue(cancelled_process["ok"])
+            self.assertEqual(cancelled_process["process"]["status"], "cancelled")
+            self.assertEqual(
+                cancelled_process["command"]["command_type"],
+                "process.cancel",
+            )
+
             gate = _run_cli_json(
                 "gate",
                 "open",
@@ -1768,6 +1787,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     "artifact.recorded",
                     "observation.recorded",
                     "process.scheduled",
+                    "process.cancelled",
                     "gate.opened",
                     "gate.cancelled",
                 ],
@@ -2686,6 +2706,82 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                         "process.completed",
                     ],
                 )
+
+        asyncio.run(scenario())
+
+    def test_runtime_backend_service_cancels_and_times_out_processes(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
+                cancel_process = Process(
+                    id="process_cancel",
+                    run_id="run_process_stop",
+                    process_type="score",
+                    status=CarrierProcessStatus.ready,
+                )
+                timeout_process = Process(
+                    id="process_timeout",
+                    run_id="run_process_stop",
+                    process_type="score",
+                    status=CarrierProcessStatus.ready,
+                )
+                await service.schedule_process(
+                    cancel_process,
+                    idempotency_key="run_process_stop:process.schedule:cancel",
+                )
+                await service.schedule_process(
+                    timeout_process,
+                    idempotency_key="run_process_stop:process.schedule:timeout",
+                )
+
+                cancelled, cancel_submission = await service.cancel_process(
+                    run_id="run_process_stop",
+                    process_id=cancel_process.id,
+                    error={"reason": "operator"},
+                    idempotency_key="run_process_stop:process.cancel:cancel",
+                    actor="cli:user",
+                )
+                replayed, replay = await service.cancel_process(
+                    run_id="run_process_stop",
+                    process_id=cancel_process.id,
+                    error={"reason": "changed"},
+                    idempotency_key="run_process_stop:process.cancel:cancel",
+                    actor="cli:user",
+                )
+                timed_out, timeout_submission = await service.timeout_process(
+                    run_id="run_process_stop",
+                    process_id=timeout_process.id,
+                    error={"reason": "timeout"},
+                    idempotency_key="run_process_stop:process.timeout:timeout",
+                    actor="system",
+                )
+
+                self.assertEqual(cancelled.status, CarrierProcessStatus.cancelled)
+                self.assertEqual(cancelled.error, {"reason": "operator"})
+                self.assertFalse(cancel_submission.replayed)
+                self.assertEqual(replayed, cancelled)
+                self.assertTrue(replay.replayed)
+                self.assertEqual(timed_out.status, CarrierProcessStatus.timed_out)
+                self.assertEqual(timed_out.error, {"reason": "timeout"})
+                self.assertFalse(timeout_submission.replayed)
+                with self.assertRaisesRegex(ValueError, "terminal"):
+                    await service.timeout_process(
+                        run_id="run_process_stop",
+                        process_id=cancel_process.id,
+                        idempotency_key="run_process_stop:process.timeout:cancel",
+                    )
+                events = await service.backend.list_events(run_id="run_process_stop")
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    [
+                        "process.scheduled",
+                        "process.scheduled",
+                        "process.cancelled",
+                        "process.timed_out",
+                    ],
+                )
+                self.assertEqual(events[2].actor, "cli:user")
+                self.assertEqual(events[3].actor, "system")
 
         asyncio.run(scenario())
 

@@ -266,6 +266,37 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert claimed_again.status == CarrierProcessStatus.running
     assert claimed_again.attempt == 2
 
+    cancel_process = Process(
+        id="process_cancel",
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+        process_type="cancelable",
+        status=CarrierProcessStatus.ready,
+    )
+    await backend.put_process(cancel_process)
+    cancelled_process = await backend.cancel_process(
+        run_id=carrier.run_id,
+        process_id=cancel_process.id,
+        error={"reason": "operator"},
+    )
+    assert cancelled_process.status == CarrierProcessStatus.cancelled
+    assert cancelled_process.error == {"reason": "operator"}
+    timeout_process = Process(
+        id="process_timeout",
+        run_id=carrier.run_id,
+        carrier_id=carrier.id,
+        process_type="timeoutable",
+        status=CarrierProcessStatus.running,
+    )
+    await backend.put_process(timeout_process)
+    timed_out_process = await backend.timeout_process(
+        run_id=carrier.run_id,
+        process_id=timeout_process.id,
+        error={"reason": "timeout"},
+    )
+    assert timed_out_process.status == CarrierProcessStatus.timed_out
+    assert timed_out_process.error == {"reason": "timeout"}
+
     gate = Gate(
         id="gate_review",
         run_id=carrier.run_id,
@@ -339,8 +370,10 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert summary.data["event_type_counts"] == {"carrier.accepted": 1}
     assert summary.data["carrier_count"] == 2
     assert summary.data["process_status_counts"] == {
+        "cancelled": 1,
         "running": 1,
         "succeeded": 1,
+        "timed_out": 1,
     }
     assert summary.data["resource_accounting"]["artifact_bytes"] == 3
     assert summary.data["resource_accounting"]["process_attempts"] == 3

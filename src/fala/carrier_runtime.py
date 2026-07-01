@@ -290,6 +290,48 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
+    async def cancel_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self.service.cancel_process(
+            run_id=run_id,
+            process_id=process_id,
+            error=error,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def timeout_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self.service.timeout_process(
+            run_id=run_id,
+            process_id=process_id,
+            error=error,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def retry_process(
         self,
         *,

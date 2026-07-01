@@ -172,6 +172,8 @@ uv run fala carrier-types list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala carrier-relations list --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
 uv run fala artifacts list --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
 uv run fala processes list --db /tmp/fala-carrier.sqlite --run-id run_case --status ready
+uv run fala processes cancel --db /tmp/fala-carrier.sqlite --run-id run_case --process-id process_123
+uv run fala processes timeout --db /tmp/fala-carrier.sqlite --run-id run_case --process-id process_123
 uv run fala events list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala events validate-schema --db /tmp/fala-carrier.sqlite --run-id run_case --max-schema-version 1
 uv run fala observations list --db /tmp/fala-carrier.sqlite --run-id run_case

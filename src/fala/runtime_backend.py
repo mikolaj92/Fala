@@ -540,6 +540,22 @@ class RuntimeBackend(Protocol):
         error: dict[str, Any] | None = None,
     ) -> Process: ...
 
+    async def cancel_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+    ) -> Process: ...
+
+    async def timeout_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+    ) -> Process: ...
+
     async def put_gate(self, gate: Gate) -> None: ...
 
     async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None: ...
@@ -625,6 +641,12 @@ _TERMINAL_RUN_STATUSES = {
     CarrierRunStatus.failed,
     CarrierRunStatus.cancelled,
     CarrierRunStatus.timed_out,
+}
+_TERMINAL_PROCESS_STATUSES = {
+    CarrierProcessStatus.succeeded,
+    CarrierProcessStatus.failed,
+    CarrierProcessStatus.cancelled,
+    CarrierProcessStatus.timed_out,
 }
 _RUN_STATUS_TRANSITIONS = {
     CarrierRunStatus.created: {
@@ -1785,6 +1807,34 @@ class SQLiteRuntimeBackend:
             error=error or {},
         )
 
+    async def cancel_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+    ) -> Process:
+        return await self._stop_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.cancelled,
+            error=error or {},
+        )
+
+    async def timeout_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+    ) -> Process:
+        return await self._stop_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.timed_out,
+            error=error or {},
+        )
+
     async def retry_process(
         self,
         *,
@@ -1832,6 +1882,63 @@ class SQLiteRuntimeBackend:
                         CarrierProcessStatus.retry_wait.value,
                         next_available_at.isoformat(),
                         _dumps(error or process.error),
+                        now.isoformat(),
+                        run_id,
+                        process_id,
+                    ),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (run_id, process_id),
+                ).fetchone()
+                connection.commit()
+                return _process_from_row(updated)
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+    async def _stop_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        status: CarrierProcessStatus,
+        error: dict[str, Any],
+    ) -> Process:
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT * FROM processes WHERE run_id = ? AND id = ?",
+                    (run_id, process_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Unknown process: {process_id!r}")
+                process = _process_from_row(row)
+                if process.status in _TERMINAL_PROCESS_STATUSES:
+                    raise ValueError(
+                        f"Process {process_id!r} status is terminal: "
+                        f"{process.status.value}"
+                    )
+                now = _now()
+                connection.execute(
+                    """
+                    UPDATE processes
+                    SET status = ?,
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        error_json = ?,
+                        updated_at = ?,
+                        finished_at = ?
+                    WHERE run_id = ? AND id = ?
+                    """,
+                    (
+                        status.value,
+                        _dumps(error),
+                        now.isoformat(),
                         now.isoformat(),
                         run_id,
                         process_id,
@@ -2839,6 +2946,119 @@ class RuntimeBackendService:
             ),
             submission,
         )
+
+    async def cancel_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self._stop_process(
+            run_id=run_id,
+            process_id=process_id,
+            error=error,
+            status=CarrierProcessStatus.cancelled,
+            command_type="process.cancel",
+            event_type="process.cancelled",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def timeout_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self._stop_process(
+            run_id=run_id,
+            process_id=process_id,
+            error=error,
+            status=CarrierProcessStatus.timed_out,
+            command_type="process.timeout",
+            event_type="process.timed_out",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def _stop_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        error: dict[str, Any] | None,
+        status: CarrierProcessStatus,
+        command_type: str,
+        event_type: str,
+        idempotency_key: str,
+        actor: str | None,
+        correlation_id: str | None,
+        causation_id: str | None,
+    ) -> tuple[Process, CommandSubmission]:
+        existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+        if existing is None:
+            raise ValueError(f"Unknown process: {process_id!r}")
+        replay = await self._replayed_submission(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            return existing, replay
+        if existing.status in _TERMINAL_PROCESS_STATUSES:
+            raise ValueError(
+                f"Process {process_id!r} status is terminal: {existing.status.value}"
+            )
+        command = RuntimeCommand(
+            run_id=run_id,
+            command_type=command_type,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"process_id": process_id},
+        )
+        event = RuntimeEvent(
+            run_id=run_id,
+            carrier_id=existing.carrier_id,
+            process_id=process_id,
+            event_type=event_type,
+            payload={"process_id": process_id},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            replayed = await self.backend.get_process(run_id=run_id, process_id=process_id)
+            if replayed is None:
+                raise ValueError(f"Replayed process stop has no stored process: {process_id!r}")
+            return replayed, submission
+        if status == CarrierProcessStatus.cancelled:
+            stopped = await self.backend.cancel_process(
+                run_id=run_id,
+                process_id=process_id,
+                error=error,
+            )
+        elif status == CarrierProcessStatus.timed_out:
+            stopped = await self.backend.timeout_process(
+                run_id=run_id,
+                process_id=process_id,
+                error=error,
+            )
+        else:
+            raise ValueError(f"Unsupported process stop status: {status.value}")
+        return stopped, submission
 
     async def retry_process(
         self,

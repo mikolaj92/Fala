@@ -350,6 +350,16 @@ def _build_parser() -> argparse.ArgumentParser:
     processes_inspect = process_subparsers.add_parser("inspect", help="Inspect one process.")
     _add_carrier_runtime_db_run_args(processes_inspect)
     processes_inspect.add_argument("--process-id", required=True)
+    processes_cancel = process_subparsers.add_parser("cancel", help="Cancel one process.")
+    _add_carrier_runtime_db_run_args(processes_cancel)
+    processes_cancel.add_argument("--process-id", required=True)
+    processes_cancel.add_argument("--error-json", default="{}")
+    processes_cancel.add_argument("--idempotency-key", default=None)
+    processes_timeout = process_subparsers.add_parser("timeout", help="Mark one process timed out.")
+    _add_carrier_runtime_db_run_args(processes_timeout)
+    processes_timeout.add_argument("--process-id", required=True)
+    processes_timeout.add_argument("--error-json", default="{}")
+    processes_timeout.add_argument("--idempotency-key", default=None)
 
     observations = subparsers.add_parser("observations", help="Inspect Carrier observations.")
     observation_subparsers = observations.add_subparsers(dest="observation_command", required=True)
@@ -981,6 +991,26 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 process,
                 idempotency_key=args.idempotency_key
                 or f"{process.run_id}:process.schedule:{process.id}",
+                actor="cli:user",
+            )
+            return {
+                "ok": True,
+                "process": stored.model_dump(mode="json"),
+                "command": submission.command.model_dump(mode="json"),
+                "replayed": submission.replayed,
+            }
+        if args.process_command in {"cancel", "timeout"}:
+            service = RuntimeBackendService(backend)
+            method = {
+                "cancel": service.cancel_process,
+                "timeout": service.timeout_process,
+            }[args.process_command]
+            stored, submission = await method(
+                run_id=args.run_id,
+                process_id=args.process_id,
+                error=_parse_json_object(args.error_json, "--error-json"),
+                idempotency_key=args.idempotency_key
+                or f"{args.run_id}:process.{args.process_command}:{args.process_id}",
                 actor="cli:user",
             )
             return {

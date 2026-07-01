@@ -11,6 +11,8 @@ Process execution:
 - adapters return completed output or a waiting state.
 - waiting processes are persisted as `waiting`.
 - failed attempts retry while attempts remain, otherwise they become `failed`.
+- cancellation and timeout move non-terminal processes to `cancelled` or
+  `timed_out` and clear worker leases.
 
 Run, process, and gate status transitions are validated in the runtime backend.
 Illegal terminal-state rewrites are rejected unless the same idempotent command
