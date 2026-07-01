@@ -207,7 +207,8 @@ Bridge records are delivered explicitly, without global transactions.
 
 Start with `docs/CONCEPTUAL_MODEL.md`, then `docs/RUNTIME_SEMANTICS.md`,
 `docs/SQLITE_BACKEND.md`, `docs/ADAPTER_CONTRACTS.md`, and
-`docs/MULTI_FALA_COMPOSITION.md`.
+`docs/MULTI_FALA_COMPOSITION.md`. Version policy lives in
+`docs/MIGRATIONS.md`.
 
 ## Development Check
 
