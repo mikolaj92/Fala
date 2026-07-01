@@ -25,6 +25,8 @@ commit their runtime command, event, and state change together.
 Gate creation and terminal transitions are committed the same way.
 Projection save and rebuild commands commit their projection writes in the same
 transaction.
+Bridge outbox enqueue/deliver and inbox import commands commit their local
+delivery rows with the command and event in one transaction.
 
 Runtime commands and events are guarded by SQLite triggers that reject direct
 updates and deletes. New runtime facts must be appended through command

@@ -721,6 +721,22 @@ class RuntimeBackend(Protocol):
 
     async def put_outbox_delivery(self, delivery: BridgeDelivery) -> None: ...
 
+    async def enqueue_outbox_delivery(
+        self,
+        delivery: BridgeDelivery,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
+    async def deliver_outbox_delivery(
+        self,
+        delivery: BridgeDelivery,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
     async def get_outbox_delivery(
         self, *, run_id: str, delivery_id: str
     ) -> BridgeDelivery | None: ...
@@ -733,6 +749,15 @@ class RuntimeBackend(Protocol):
     ) -> list[BridgeDelivery]: ...
 
     async def put_inbox_delivery(self, delivery: BridgeDelivery) -> None: ...
+
+    async def import_inbox_delivery(
+        self,
+        delivery: BridgeDelivery,
+        carrier: Carrier,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
 
     async def get_inbox_delivery(
         self, *, run_id: str, delivery_id: str
@@ -3322,6 +3347,44 @@ class SQLiteRuntimeBackend:
     async def put_outbox_delivery(self, delivery: BridgeDelivery) -> None:
         await self._put_bridge_delivery("bridge_outbox", delivery)
 
+    async def enqueue_outbox_delivery(
+        self,
+        delivery: BridgeDelivery,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.command_type != "bridge.outbox.enqueue":
+            raise ValueError(
+                "enqueue_outbox_delivery requires command_type "
+                "'bridge.outbox.enqueue'"
+            )
+        return await self._submit_bridge_delivery(
+            "bridge_outbox",
+            delivery,
+            command,
+            events=events,
+        )
+
+    async def deliver_outbox_delivery(
+        self,
+        delivery: BridgeDelivery,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.command_type != "bridge.outbox.deliver":
+            raise ValueError(
+                "deliver_outbox_delivery requires command_type "
+                "'bridge.outbox.deliver'"
+            )
+        return await self._submit_bridge_delivery(
+            "bridge_outbox",
+            delivery,
+            command,
+            events=events,
+        )
+
     async def get_outbox_delivery(
         self,
         *,
@@ -3348,6 +3411,28 @@ class SQLiteRuntimeBackend:
 
     async def put_inbox_delivery(self, delivery: BridgeDelivery) -> None:
         await self._put_bridge_delivery("bridge_inbox", delivery)
+
+    async def import_inbox_delivery(
+        self,
+        delivery: BridgeDelivery,
+        carrier: Carrier,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.command_type != "bridge.inbox.import":
+            raise ValueError(
+                "import_inbox_delivery requires command_type 'bridge.inbox.import'"
+            )
+        if carrier.run_id != delivery.run_id:
+            raise ValueError("imported carrier run_id must match delivery run_id")
+        return await self._submit_bridge_delivery(
+            "bridge_inbox",
+            delivery,
+            command,
+            events=events,
+            carrier=carrier,
+        )
 
     async def get_inbox_delivery(
         self,
@@ -3382,30 +3467,56 @@ class SQLiteRuntimeBackend:
         async with self._lock:
             with self._connect() as connection:
                 _require_run_row(connection, delivery.run_id)
-                connection.execute(
-                    f"""
-                    INSERT INTO {table} (
-                        run_id, id, idempotency_key, source_ref, target_ref,
-                        carrier_json, event_ref, pool_id, budget, status,
-                        attempts, metadata, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(run_id, id) DO UPDATE SET
-                        idempotency_key = excluded.idempotency_key,
-                        source_ref = excluded.source_ref,
-                        target_ref = excluded.target_ref,
-                        carrier_json = excluded.carrier_json,
-                        event_ref = excluded.event_ref,
-                        pool_id = excluded.pool_id,
-                        budget = excluded.budget,
-                        status = excluded.status,
-                        attempts = excluded.attempts,
-                        metadata = excluded.metadata,
-                        created_at = excluded.created_at,
-                        updated_at = excluded.updated_at
-                    """,
-                    _bridge_delivery_args(delivery),
-                )
+                _upsert_bridge_delivery_row(connection, table, delivery)
                 connection.commit()
+
+    async def _submit_bridge_delivery(
+        self,
+        table: str,
+        delivery: BridgeDelivery,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent],
+        carrier: Carrier | None = None,
+    ) -> CommandSubmission:
+        _require_bridge_table(table)
+        if command.run_id != delivery.run_id:
+            raise ValueError("bridge command run_id must match delivery run_id")
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                _require_run_row(connection, delivery.run_id)
+                _insert_runtime_command_row(connection, command)
+                if carrier is not None:
+                    _upsert_carrier_row(connection, carrier)
+                _upsert_bridge_delivery_row(connection, table, delivery)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def _get_bridge_delivery(
         self,
@@ -4591,7 +4702,11 @@ class RuntimeBackendService:
             event_type="bridge.outbox.enqueued",
             payload=_bridge_event_payload(delivery),
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.enqueue_outbox_delivery(
+            delivery,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             existing = await self.backend.get_outbox_delivery(
                 run_id=delivery.run_id,
@@ -4604,7 +4719,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_outbox_delivery(delivery)
         return delivery, submission
 
     async def import_bridge_delivery(
@@ -4657,7 +4771,12 @@ class RuntimeBackendService:
             event_type="bridge.inbox.imported",
             payload=_bridge_event_payload(imported),
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.import_inbox_delivery(
+            imported,
+            local_carrier,
+            command,
+            events=[event],
+        )
         if submission.replayed:
             existing = await self.backend.get_inbox_delivery(
                 run_id=imported.run_id,
@@ -4670,8 +4789,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_carrier(local_carrier)
-        await self.backend.put_inbox_delivery(imported)
         return imported, submission
 
     async def deliver_bridge_delivery(
@@ -4737,7 +4854,11 @@ class RuntimeBackendService:
                 "inbox_delivery_id": imported.id,
             },
         )
-        delivery_submission = await self.backend.submit_command(command, events=[event])
+        delivery_submission = await self.backend.deliver_outbox_delivery(
+            delivered,
+            command,
+            events=[event],
+        )
         if delivery_submission.replayed:
             existing = await self.backend.get_outbox_delivery(
                 run_id=delivery.run_id,
@@ -4750,7 +4871,6 @@ class RuntimeBackendService:
                 )
             return existing, imported, delivery_submission, import_submission
 
-        await self.backend.put_outbox_delivery(delivered)
         return delivered, imported, delivery_submission, import_submission
 
     async def list_observations(
@@ -5108,6 +5228,31 @@ def _insert_carrier_row(connection: sqlite3.Connection, carrier: Carrier) -> Non
     )
 
 
+def _upsert_carrier_row(connection: sqlite3.Connection, carrier: Carrier) -> None:
+    connection.execute(
+        """
+        INSERT INTO carriers (
+            run_id, id, carrier_type, payload, metadata,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(run_id, id) DO UPDATE SET
+            carrier_type = excluded.carrier_type,
+            payload = excluded.payload,
+            metadata = excluded.metadata,
+            updated_at = excluded.updated_at
+        """,
+        (
+            carrier.run_id,
+            carrier.id,
+            carrier.carrier_type,
+            _dumps(carrier.payload),
+            _dumps(carrier.metadata),
+            carrier.created_at.isoformat(),
+            carrier.updated_at.isoformat(),
+        ),
+    )
+
+
 def _insert_carrier_relation_row(
     connection: sqlite3.Connection,
     relation: CarrierRelation,
@@ -5213,6 +5358,37 @@ def _insert_gate_row(connection: sqlite3.Connection, gate: Gate) -> None:
             gate.created_at.isoformat(),
             gate.updated_at.isoformat(),
         ),
+    )
+
+
+def _upsert_bridge_delivery_row(
+    connection: sqlite3.Connection,
+    table: str,
+    delivery: BridgeDelivery,
+) -> None:
+    _require_bridge_table(table)
+    connection.execute(
+        f"""
+        INSERT INTO {table} (
+            run_id, id, idempotency_key, source_ref, target_ref,
+            carrier_json, event_ref, pool_id, budget, status,
+            attempts, metadata, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(run_id, id) DO UPDATE SET
+            idempotency_key = excluded.idempotency_key,
+            source_ref = excluded.source_ref,
+            target_ref = excluded.target_ref,
+            carrier_json = excluded.carrier_json,
+            event_ref = excluded.event_ref,
+            pool_id = excluded.pool_id,
+            budget = excluded.budget,
+            status = excluded.status,
+            attempts = excluded.attempts,
+            metadata = excluded.metadata,
+            created_at = excluded.created_at,
+            updated_at = excluded.updated_at
+        """,
+        _bridge_delivery_args(delivery),
     )
 
 

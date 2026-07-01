@@ -961,3 +961,97 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
             status=BridgeDeliveryStatus.imported,
         )
     ) == 1
+
+    commanded_delivery = delivery.model_copy(
+        update={
+            "id": "bridge_commanded",
+            "idempotency_key": "bridge:commanded",
+        }
+    )
+    enqueue_command = RuntimeCommand(
+        run_id=commanded_delivery.run_id,
+        command_type="bridge.outbox.enqueue",
+        idempotency_key=commanded_delivery.idempotency_key,
+    )
+    enqueue_submission = await backend.enqueue_outbox_delivery(
+        commanded_delivery,
+        enqueue_command,
+        events=[
+            RuntimeEvent(
+                run_id=commanded_delivery.run_id,
+                carrier_id=commanded_delivery.carrier.id,
+                event_type="bridge.outbox.enqueued",
+            )
+        ],
+    )
+    enqueue_replay = await backend.enqueue_outbox_delivery(
+        commanded_delivery.model_copy(update={"metadata": {"changed": True}}),
+        enqueue_command.model_copy(update={"id": "command_bridge_enqueue_replay"}),
+        events=[],
+    )
+    assert await backend.get_outbox_delivery(
+        run_id=commanded_delivery.run_id,
+        delivery_id=commanded_delivery.id,
+    ) == commanded_delivery
+    assert not enqueue_submission.replayed
+    assert enqueue_replay.replayed
+
+    imported_carrier = carrier.model_copy(update={"run_id": "run_target"})
+    imported_delivery = commanded_delivery.model_copy(
+        update={
+            "run_id": "run_target",
+            "carrier": imported_carrier,
+            "status": BridgeDeliveryStatus.imported,
+            "attempts": 1,
+        }
+    )
+    import_command = RuntimeCommand(
+        run_id=imported_delivery.run_id,
+        command_type="bridge.inbox.import",
+        idempotency_key="bridge:commanded:import",
+    )
+    import_submission = await backend.import_inbox_delivery(
+        imported_delivery,
+        imported_carrier,
+        import_command,
+        events=[
+            RuntimeEvent(
+                run_id=imported_delivery.run_id,
+                carrier_id=imported_carrier.id,
+                event_type="bridge.inbox.imported",
+            )
+        ],
+    )
+    assert await backend.get_inbox_delivery(
+        run_id=imported_delivery.run_id,
+        delivery_id=imported_delivery.id,
+    ) == imported_delivery
+    assert not import_submission.replayed
+
+    delivered_delivery = commanded_delivery.model_copy(
+        update={
+            "status": BridgeDeliveryStatus.delivered,
+            "attempts": 1,
+        }
+    )
+    deliver_command = RuntimeCommand(
+        run_id=delivered_delivery.run_id,
+        command_type="bridge.outbox.deliver",
+        idempotency_key="bridge:commanded:deliver",
+    )
+    deliver_submission = await backend.deliver_outbox_delivery(
+        delivered_delivery,
+        deliver_command,
+        events=[
+            RuntimeEvent(
+                run_id=delivered_delivery.run_id,
+                carrier_id=delivered_delivery.carrier.id,
+                event_type="bridge.outbox.delivered",
+            )
+        ],
+    )
+    assert await backend.get_outbox_delivery(
+        run_id=delivered_delivery.run_id,
+        delivery_id=delivered_delivery.id,
+    ) == delivered_delivery
+    assert not deliver_submission.replayed

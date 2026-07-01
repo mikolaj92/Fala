@@ -25,6 +25,9 @@ the same command/event/state transaction pattern.
 Gate creation and terminal gate transitions use the same pattern.
 Projection save and rebuild commands also commit their read-model writes in the
 same backend transaction.
+Bridge outbox enqueue/deliver and inbox import commit their local delivery
+record, command, and event in one backend transaction. Cross-runtime delivery
+still uses no global transaction.
 
 Process execution:
 
