@@ -110,6 +110,68 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_runtime_backend_service_replays_gate_and_projection_writes(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                gate = Gate(
+                    id="gate_review",
+                    run_id="run_service",
+                    kind="human.review",
+                    status=GateStatus.completed,
+                )
+                projection = Projection(
+                    id="projection_summary",
+                    run_id="run_service",
+                    name="summary",
+                    version=1,
+                    data={"completed_gates": 1},
+                    source_event_sequence=1,
+                )
+
+                first_gate, first_gate_submission = await service.save_gate(
+                    gate,
+                    idempotency_key="run_service:gate.save:gate_review",
+                    actor="operator:mika",
+                )
+                replay_gate, replay_gate_submission = await service.save_gate(
+                    gate.model_copy(update={"status": GateStatus.cancelled}),
+                    idempotency_key="run_service:gate.save:gate_review",
+                    actor="operator:mika",
+                )
+                first_projection, first_projection_submission = (
+                    await service.save_projection(
+                        projection,
+                        idempotency_key="run_service:projection.save:summary",
+                        correlation_id="corr_projection",
+                    )
+                )
+                replay_projection, replay_projection_submission = (
+                    await service.save_projection(
+                        projection.model_copy(update={"version": 2}),
+                        idempotency_key="run_service:projection.save:summary",
+                        correlation_id="corr_projection",
+                    )
+                )
+
+                self.assertEqual(first_gate, gate)
+                self.assertFalse(first_gate_submission.replayed)
+                self.assertEqual(replay_gate, gate)
+                self.assertTrue(replay_gate_submission.replayed)
+                self.assertEqual(first_projection, projection)
+                self.assertFalse(first_projection_submission.replayed)
+                self.assertEqual(replay_projection, projection)
+                self.assertTrue(replay_projection_submission.replayed)
+                events = await service.backend.list_events(run_id="run_service")
+                self.assertEqual([event.sequence for event in events], [1, 2])
+                self.assertEqual(
+                    [event.event_type for event in events],
+                    ["gate.saved", "projection.saved"],
+                )
+                self.assertEqual(events[1].correlation_id, "corr_projection")
+
+        asyncio.run(scenario())
+
     def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:

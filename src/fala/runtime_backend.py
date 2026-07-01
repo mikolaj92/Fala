@@ -617,17 +617,130 @@ class RuntimeBackendService:
         await self.backend.put_carrier(carrier)
         return carrier, submission
 
-    async def record_observation(self, observation: Observation) -> Observation:
+    async def record_observation(
+        self,
+        observation: Observation,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Observation, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=observation.run_id,
+            command_type="observation.record",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"observation_id": observation.id, "kind": observation.kind},
+        )
+        event = RuntimeEvent(
+            run_id=observation.run_id,
+            carrier_id=observation.carrier_id,
+            event_type="observation.recorded",
+            payload={"observation_id": observation.id, "kind": observation.kind},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            observations = await self.backend.list_observations(
+                run_id=observation.run_id,
+                carrier_id=observation.carrier_id,
+            )
+            for existing in observations:
+                if existing.id == submission.command.payload.get("observation_id"):
+                    return existing, submission
+            raise ValueError(
+                "Replayed observation command has no stored observation: "
+                f"{submission.command.payload.get('observation_id')!r}"
+            )
+
         await self.backend.put_observation(observation)
-        return observation
+        return observation, submission
 
-    async def save_gate(self, gate: Gate) -> Gate:
+    async def save_gate(
+        self,
+        gate: Gate,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Gate, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=gate.run_id,
+            command_type="gate.save",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"gate_id": gate.id, "status": gate.status.value},
+        )
+        event = RuntimeEvent(
+            run_id=gate.run_id,
+            carrier_id=gate.carrier_id,
+            event_type="gate.saved",
+            payload={"gate_id": gate.id, "status": gate.status.value},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_gate_id = submission.command.payload.get("gate_id", gate.id)
+            existing = await self.backend.get_gate(
+                run_id=gate.run_id,
+                gate_id=str(existing_gate_id),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed gate command has no stored gate: "
+                    f"{existing_gate_id!r}"
+                )
+            return existing, submission
+
         await self.backend.put_gate(gate)
-        return gate
+        return gate, submission
 
-    async def save_projection(self, projection: Projection) -> Projection:
+    async def save_projection(
+        self,
+        projection: Projection,
+        *,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Projection, CommandSubmission]:
+        command = RuntimeCommand(
+            run_id=projection.run_id,
+            command_type="projection.save",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"projection_name": projection.name, "version": projection.version},
+        )
+        event = RuntimeEvent(
+            run_id=projection.run_id,
+            event_type="projection.saved",
+            payload={"projection_name": projection.name, "version": projection.version},
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing_name = submission.command.payload.get(
+                "projection_name",
+                projection.name,
+            )
+            existing = await self.backend.get_projection(
+                run_id=projection.run_id,
+                name=str(existing_name),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed projection command has no stored projection: "
+                    f"{existing_name!r}"
+                )
+            return existing, submission
+
         await self.backend.put_projection(projection)
-        return projection
+        return projection, submission
 
 
 def _carrier_from_row(row: sqlite3.Row) -> Carrier:
