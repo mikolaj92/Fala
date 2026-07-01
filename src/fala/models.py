@@ -620,6 +620,7 @@ class PipelineSpec(BaseModel):
     version: str = "1"
     input_values: dict[str, str] = Field(default_factory=dict)
     work_items: WorkItemPolicy = Field(default_factory=WorkItemPolicy)
+    allow_feedback_cycles: bool = False
     steps: list[ProcessSpec]
     combines: list[CombineSpec] = Field(default_factory=list)
     reduces: list[RunReduceSpec] = Field(default_factory=list)
@@ -659,7 +660,8 @@ class PipelineSpec(BaseModel):
                     f"{reduce.process_id!r}"
                 )
 
-        _validate_acyclic(self.steps)
+        if not self.allow_feedback_cycles:
+            _validate_acyclic(self.steps)
         return self
 
 

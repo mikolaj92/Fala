@@ -101,6 +101,7 @@ from fala.scheduler import (
     PipelineScheduler,
     ProcessControlResult,
     ScheduleResult,
+    WaitGraphDiagnostic,
     process_condition_matches,
     resource_pool_allows,
     resource_pool_saturated,
@@ -1042,6 +1043,23 @@ class RuntimeService:
         )
         await self.sync_run_lifecycle(run_id)
         return result
+
+    async def diagnose_waits(
+        self,
+        *,
+        run_id: str,
+        document_id: str,
+        pipeline_id: str | None = None,
+    ) -> WaitGraphDiagnostic:
+        pipeline = await self.resolve_document_pipeline(
+            run_id=run_id,
+            document_id=document_id,
+            pipeline_id=pipeline_id,
+        )
+        return await PipelineScheduler(pipeline, self.store).diagnose_waits(
+            run_id=run_id,
+            document_id=document_id,
+        )
 
     async def claim_next(
         self,

@@ -1907,6 +1907,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit one stuck-work item per line instead of an envelope JSON object.",
     )
 
+    diagnose_waits = subparsers.add_parser(
+        "diagnose-waits",
+        help="Diagnose waiting runtime processes and wait-graph deadlocks.",
+    )
+    diagnose_waits.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    diagnose_waits.add_argument("--run-id", required=True)
+    diagnose_waits.add_argument("--document-id", required=True)
+    diagnose_waits.add_argument("--pipeline", default=None)
+
     stream_lag = subparsers.add_parser(
         "stream-lag",
         help="List process stream consumer lag for one runtime run.",
@@ -3355,6 +3364,18 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         return {
             "ok": True,
             "stuck_work": page.model_dump(mode="json"),
+        }
+
+    if args.command == "diagnose-waits":
+        service = RuntimeService(registry=registry, store=create_state_store(args.db))
+        diagnostic = await service.diagnose_waits(
+            run_id=args.run_id,
+            document_id=args.document_id,
+            pipeline_id=args.pipeline,
+        )
+        return {
+            "ok": True,
+            "wait_diagnostics": diagnostic.model_dump(mode="json"),
         }
 
     if args.command == "stream-lag":

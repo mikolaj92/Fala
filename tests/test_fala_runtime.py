@@ -14941,6 +14941,161 @@ class ProcessRuntimeTests(unittest.TestCase):
         self.assertEqual(claim.context.input.values["needs"]["first"], {"ok": True})
         self.assertEqual(claim.context.input.artifacts[0].uri, "file:///tmp/sample.pdf")
 
+    def test_feedback_cycles_require_explicit_pipeline_flag(self) -> None:
+        with self.assertRaises(ValidationError):
+            PipelineSpec(
+                id="cycle_rejected",
+                steps=[
+                    ProcessSpec(
+                        id="draft",
+                        needs=["review"],
+                        adapter=AdapterSpec(kind="queue", queue="cycle.draft"),
+                    ),
+                    ProcessSpec(
+                        id="review",
+                        needs=["draft"],
+                        adapter=AdapterSpec(kind="queue", queue="cycle.review"),
+                    ),
+                ],
+            )
+
+        pipeline = PipelineSpec(
+            id="cycle_allowed",
+            allow_feedback_cycles=True,
+            steps=[
+                ProcessSpec(
+                    id="draft",
+                    needs=["review"],
+                    adapter=AdapterSpec(kind="queue", queue="cycle.draft"),
+                ),
+                ProcessSpec(
+                    id="review",
+                    needs=["draft"],
+                    adapter=AdapterSpec(kind="queue", queue="cycle.review"),
+                ),
+            ],
+        )
+        self.assertTrue(pipeline.allow_feedback_cycles)
+
+    def test_scheduler_diagnoses_feedback_deadlock(self) -> None:
+        store = InMemoryStateStore()
+        pipeline = PipelineSpec(
+            id="cycle_deadlock",
+            allow_feedback_cycles=True,
+            steps=[
+                ProcessSpec(
+                    id="draft",
+                    needs=["review"],
+                    adapter=AdapterSpec(kind="queue", queue="cycle.draft"),
+                ),
+                ProcessSpec(
+                    id="review",
+                    needs=["draft"],
+                    adapter=AdapterSpec(kind="queue", queue="cycle.review"),
+                ),
+            ],
+        )
+        scheduler = PipelineScheduler(pipeline, store)
+
+        initialized = asyncio.run(
+            scheduler.initialize_document(
+                run_id="run_cycle",
+                document_id="doc_cycle",
+            )
+        )
+        self.assertEqual(initialized.waiting, ["draft", "review"])
+
+        diagnostic = asyncio.run(
+            scheduler.diagnose_waits(
+                run_id="run_cycle",
+                document_id="doc_cycle",
+            )
+        )
+
+        self.assertTrue(diagnostic.deadlocked)
+        self.assertEqual(
+            {frozenset(cycle) for cycle in diagnostic.deadlocks},
+            {frozenset({"draft", "review"})},
+        )
+        self.assertEqual(
+            diagnostic.wait_edges,
+            {"draft": ["review"], "review": ["draft"]},
+        )
+        self.assertEqual(
+            {item.process_id: item.missing_needs for item in diagnostic.blocked},
+            {"draft": ["review"], "review": ["draft"]},
+        )
+
+    def test_scheduler_bounds_feedback_cycle_when_seed_output_exists(self) -> None:
+        store = InMemoryStateStore()
+        pipeline = PipelineSpec(
+            id="cycle_seeded",
+            allow_feedback_cycles=True,
+            steps=[
+                ProcessSpec(
+                    id="draft",
+                    needs=["review"],
+                    adapter=AdapterSpec(kind="queue", queue="cycle.draft"),
+                ),
+                ProcessSpec(
+                    id="review",
+                    needs=["draft"],
+                    adapter=AdapterSpec(kind="queue", queue="cycle.review"),
+                ),
+            ],
+        )
+        scheduler = PipelineScheduler(pipeline, store)
+
+        asyncio.run(
+            scheduler.initialize_document(
+                run_id="run_seeded",
+                document_id="doc_seeded",
+            )
+        )
+        asyncio.run(
+            store.put_output(
+                run_id="run_seeded",
+                document_id="doc_seeded",
+                process_id="draft",
+                output=ProcessOutput(values={"iteration": 1}),
+            )
+        )
+        scheduled = asyncio.run(
+            scheduler.schedule_ready(
+                run_id="run_seeded",
+                document_id="doc_seeded",
+            )
+        )
+        self.assertEqual(scheduled.completed, ["draft"])
+        self.assertEqual([process.id for process in scheduled.queued], ["review"])
+
+        asyncio.run(
+            store.put_output(
+                run_id="run_seeded",
+                document_id="doc_seeded",
+                process_id="review",
+                output=ProcessOutput(values={"approved": True}),
+            )
+        )
+        completed = asyncio.run(
+            scheduler.schedule_ready(
+                run_id="run_seeded",
+                document_id="doc_seeded",
+            )
+        )
+        self.assertEqual(completed.completed, ["draft", "review"])
+        self.assertEqual(completed.queued, [])
+        self.assertEqual(completed.waiting, [])
+
+        repeated = asyncio.run(
+            scheduler.schedule_ready(
+                run_id="run_seeded",
+                document_id="doc_seeded",
+            )
+        )
+        self.assertEqual(repeated.completed, ["draft", "review"])
+        self.assertEqual(repeated.queued, [])
+
     def test_scheduler_defers_future_scheduled_document_until_due(self) -> None:
         store = InMemoryStateStore()
         pipeline = PipelineSpec(
@@ -18052,6 +18207,92 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(
                 listed_cli["stuck_work"]["items"][0]["reason"],
                 "claim_expired",
+            )
+
+    def test_runtime_exposes_wait_diagnostics_api_and_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline_dir = root / "pipelines"
+            pipeline_dir.mkdir()
+            (pipeline_dir / "cycle.yaml").write_text(
+                textwrap.dedent(
+                    """
+                    pipeline: cycle_diagnostics
+                    allow_feedback_cycles: true
+                    steps:
+                      - id: draft
+                        needs: [review]
+                        adapter:
+                          kind: queue
+                          queue: cycle.draft
+                      - id: review
+                        needs: [draft]
+                        adapter:
+                          kind: queue
+                          queue: cycle.review
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            db_path = root / "runtime.db"
+            registry = PipelineRegistry.from_directory(pipeline_dir)
+            service = RuntimeService(
+                registry=registry,
+                store=SQLiteStateStore(db_path),
+            )
+
+            async def seed() -> None:
+                await service.create_run_with_documents(
+                    RuntimeRunInput(
+                        run_id="run_waits",
+                        pipeline_id="cycle_diagnostics",
+                        documents=[RuntimeDocumentInput(document_id="doc_waits")],
+                    )
+                )
+
+            asyncio.run(seed())
+
+            app = FastAPI()
+            app.include_router(create_runtime_router(service), prefix="/api")
+
+            async def exercise_api() -> None:
+                async with ProcessRuntimeClient(
+                    "http://runtime.test",
+                    transport=httpx.ASGITransport(app=app),
+                ) as client:
+                    diagnostic = await client.diagnose_waits(
+                        run_id="run_waits",
+                        document_id="doc_waits",
+                    )
+                    self.assertTrue(diagnostic.deadlocked)
+                    self.assertEqual(
+                        {frozenset(cycle) for cycle in diagnostic.deadlocks},
+                        {frozenset({"draft", "review"})},
+                    )
+                    self.assertEqual(
+                        diagnostic.wait_edges,
+                        {"draft": ["review"], "review": ["draft"]},
+                    )
+
+            asyncio.run(exercise_api())
+
+            cli = _run_cli(
+                "--pipeline-dir",
+                str(pipeline_dir),
+                "diagnose-waits",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_waits",
+                "--document-id",
+                "doc_waits",
+            )
+            self.assertTrue(cli["ok"])
+            self.assertTrue(cli["wait_diagnostics"]["deadlocked"])
+            self.assertEqual(
+                cli["wait_diagnostics"]["wait_edges"],
+                {"draft": ["review"], "review": ["draft"]},
             )
 
     def test_runtime_stuck_work_uses_step_sla_policy_thresholds(self) -> None:

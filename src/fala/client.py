@@ -38,7 +38,7 @@ from fala.models import (
     RuntimeWorkerState,
     RuntimeWorkerStatus,
 )
-from fala.scheduler import ClaimedProcess, ProcessControlResult
+from fala.scheduler import ClaimedProcess, ProcessControlResult, WaitGraphDiagnostic
 
 
 class ProcessRuntimeClient:
@@ -1361,6 +1361,28 @@ class ProcessRuntimeClient:
             offset=offset,
         )
         return [item.model_dump(mode="json") for item in page.items]
+
+    async def diagnose_waits(
+        self,
+        *,
+        run_id: str,
+        document_id: str,
+        pipeline_id: str | None = None,
+    ) -> WaitGraphDiagnostic:
+        params = {
+            key: value
+            for key, value in {
+                "document_id": document_id,
+                "pipeline_id": pipeline_id,
+            }.items()
+            if value is not None
+        }
+        response = await self._client.get(
+            f"/api/runs/{self._part(run_id)}/process-runtime/wait-diagnostics",
+            params=params,
+        )
+        response.raise_for_status()
+        return WaitGraphDiagnostic.model_validate(response.json())
 
     async def stream_lag_page(
         self,

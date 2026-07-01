@@ -105,6 +105,36 @@ class ProcessControlResult(BaseModel):
     schedule: ScheduleResult
 
 
+class WaitDiagnosticIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    process_id: str
+    status: ProcessStatus | None = None
+    reason: str
+    missing_needs: list[str] = Field(default_factory=list)
+    blocked_by: list[str] = Field(default_factory=list)
+    dependency_statuses: dict[str, str | None] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class WaitGraphDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline_id: str
+    run_id: str
+    document_id: str
+    deadlocked: bool = False
+    deadlocks: list[list[str]] = Field(default_factory=list)
+    wait_edges: dict[str, list[str]] = Field(default_factory=dict)
+    blocked: list[WaitDiagnosticIssue] = Field(default_factory=list)
+    queued: list[str] = Field(default_factory=list)
+    running: list[str] = Field(default_factory=list)
+    completed: list[str] = Field(default_factory=list)
+    failed: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+    cancelled: list[str] = Field(default_factory=list)
+
+
 class PipelineScheduler:
     def __init__(self, pipeline: PipelineSpec, store: StateStore) -> None:
         self.pipeline = pipeline
@@ -386,6 +416,110 @@ class PipelineScheduler:
             failed=failed,
             skipped=skipped,
             cancelled=cancelled,
+        )
+
+    async def diagnose_waits(
+        self,
+        *,
+        run_id: str,
+        document_id: str,
+    ) -> WaitGraphDiagnostic:
+        schedule = await self.schedule_ready(run_id=run_id, document_id=document_id)
+        statuses = await self.store.list_statuses(run_id=run_id, document_id=document_id)
+        outputs = await self.store.list_outputs(run_id=run_id, document_id=document_id)
+        output_ids = set(outputs)
+        step_ids = {step.id for step in self.pipeline.steps}
+        wait_edges: dict[str, list[str]] = {}
+        blocked: list[WaitDiagnosticIssue] = []
+
+        for step in self.pipeline.steps:
+            if step.id in outputs:
+                continue
+            status = statuses.get(step.id)
+            if status not in {None, ProcessStatus.waiting}:
+                continue
+            missing_needs = self._missing_needs(step, outputs=output_ids)
+            if missing_needs:
+                dependency_statuses = {
+                    need: _status_value(statuses.get(need))
+                    for need in missing_needs
+                }
+                terminal_needs = [
+                    need
+                    for need in missing_needs
+                    if statuses.get(need)
+                    in {
+                        ProcessStatus.failed,
+                        ProcessStatus.skipped,
+                        ProcessStatus.cancelled,
+                    }
+                ]
+                blocked_by = [need for need in missing_needs if need in step_ids]
+                wait_edges[step.id] = blocked_by
+                blocked.append(
+                    WaitDiagnosticIssue(
+                        process_id=step.id,
+                        status=status,
+                        reason=(
+                            "terminal_dependencies"
+                            if terminal_needs
+                            else "missing_dependencies"
+                        ),
+                        missing_needs=missing_needs,
+                        blocked_by=blocked_by,
+                        dependency_statuses=dependency_statuses,
+                        data=(
+                            {"terminal_needs": terminal_needs}
+                            if terminal_needs
+                            else {}
+                        ),
+                    )
+                )
+                continue
+            if status != ProcessStatus.waiting:
+                continue
+
+            events = await self.store.list_events(
+                run_id=run_id,
+                document_id=document_id,
+                process_id=step.id,
+                descending=True,
+                limit=1,
+            )
+            event = events[0] if events else None
+            blocked.append(
+                WaitDiagnosticIssue(
+                    process_id=step.id,
+                    status=status,
+                    reason=(
+                        str(event.data.get("reason"))
+                        if event is not None and event.data.get("reason")
+                        else event.type
+                        if event is not None
+                        else "waiting"
+                    ),
+                    data=dict(event.data) if event is not None else {},
+                )
+            )
+
+        deadlocks = _wait_cycles(wait_edges)
+        deadlocked = bool(deadlocks) or any(
+            issue.reason == "terminal_dependencies" for issue in blocked
+        )
+        return WaitGraphDiagnostic(
+            pipeline_id=self.pipeline.id,
+            run_id=run_id,
+            document_id=document_id,
+            deadlocked=deadlocked,
+            deadlocks=deadlocks,
+            wait_edges=wait_edges,
+            blocked=blocked,
+            queued=[process.id for process in schedule.queued],
+            running=schedule.running,
+            completed=schedule.completed,
+            failed=schedule.failed,
+            skipped=schedule.skipped,
+            cancelled=schedule.cancelled,
         )
 
     async def claim_next(
@@ -1399,6 +1533,42 @@ def _latest_retry_after(events: list[ProcessEvent]) -> datetime | None:
         if retry_after is not None:
             return retry_after
     return None
+
+
+def _status_value(status: ProcessStatus | None) -> str | None:
+    return status.value if status is not None else None
+
+
+def _wait_cycles(edges: dict[str, list[str]]) -> list[list[str]]:
+    cycles: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    path: list[str] = []
+    visiting: dict[str, int] = {}
+    visited: set[str] = set()
+
+    def visit(node: str) -> None:
+        if node in visiting:
+            cycle = path[visiting[node] :]
+            key = tuple(sorted(cycle))
+            if key not in seen:
+                seen.add(key)
+                cycles.append(cycle)
+            return
+        if node in visited:
+            return
+
+        visiting[node] = len(path)
+        path.append(node)
+        for dependency in edges.get(node, []):
+            if dependency in edges:
+                visit(dependency)
+        path.pop()
+        visiting.pop(node, None)
+        visited.add(node)
+
+    for node in sorted(edges):
+        visit(node)
+    return cycles
 
 
 def _parse_retry_after(value: object) -> datetime | None:

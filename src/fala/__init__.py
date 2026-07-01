@@ -256,6 +256,8 @@ from fala.scheduler import (
     ProcessControlResult,
     ScheduledProcess,
     ScheduleResult,
+    WaitDiagnosticIssue,
+    WaitGraphDiagnostic,
 )
 from fala.service import RuntimeService
 from fala.sqlite_store import SQLiteStateStore
@@ -480,6 +482,8 @@ __all__ = [
     "WorkflowWorkerSpec",
     "WorkflowRegistryIndex",
     "WorkerSandboxSpec",
+    "WaitDiagnosticIssue",
+    "WaitGraphDiagnostic",
     "apply_queue_result",
     "apply_queue_results",
     "assign_queue_work_worker",

@@ -1860,6 +1860,23 @@ def create_runtime_router(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return page.model_dump(mode="json")
 
+    @router.get("/runs/{run_id}/process-runtime/wait-diagnostics")
+    async def diagnose_run_waits(
+        run_id: str,
+        document_id: str = Query(...),
+        pipeline_id: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        guard(run_id)
+        try:
+            diagnostic = await service.diagnose_waits(
+                run_id=run_id,
+                document_id=document_id,
+                pipeline_id=pipeline_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return diagnostic.model_dump(mode="json")
+
     @router.get("/runs/{run_id}/process-runtime/stream-lag")
     async def list_run_stream_lag(
         run_id: str,
