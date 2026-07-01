@@ -164,6 +164,8 @@ from fala.queue_bridge import (
     write_jsonl,
 )
 from fala.registry import PipelineRegistry
+from fala.runtime_backend import GateStatus as CarrierGateStatus
+from fala.runtime_backend import SQLiteRuntimeBackend
 from fala.scheduler import PipelineScheduler, ScheduleResult
 from fala.sdk import replay_step_manifest
 from fala.service import RuntimeService
@@ -291,10 +293,15 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "health",
             "audit-log",
             "append-documents",
+            "carriers",
             "list-documents",
             "list-processes",
             "dead-letter",
+            "events",
+            "gates",
+            "observations",
             "package-doctor",
+            "projections",
             "project-alerts",
             "project-bundle",
             "project-bundle-verify",
@@ -1623,6 +1630,78 @@ def _build_parser() -> argparse.ArgumentParser:
     describe = subparsers.add_parser("describe", help="Describe one pipeline.")
     describe.add_argument("pipeline_id")
 
+    carriers = subparsers.add_parser(
+        "carriers",
+        help="Inspect Carrier-first runtime carriers.",
+    )
+    carrier_subparsers = carriers.add_subparsers(dest="carrier_command", required=True)
+    carriers_list = carrier_subparsers.add_parser("list", help="List carriers.")
+    _add_carrier_runtime_db_run_args(carriers_list)
+    carriers_list.add_argument("--carrier-type", default=None)
+    carriers_list.add_argument("--limit", type=int, default=None)
+    carriers_list.add_argument("--jsonl", action="store_true")
+    carriers_inspect = carrier_subparsers.add_parser("inspect", help="Inspect one carrier.")
+    _add_carrier_runtime_db_run_args(carriers_inspect)
+    carriers_inspect.add_argument("--carrier-id", required=True)
+
+    observations = subparsers.add_parser(
+        "observations",
+        help="Inspect Carrier-first runtime observations.",
+    )
+    observation_subparsers = observations.add_subparsers(
+        dest="observation_command",
+        required=True,
+    )
+    observations_list = observation_subparsers.add_parser(
+        "list",
+        help="List observations.",
+    )
+    _add_carrier_runtime_db_run_args(observations_list)
+    observations_list.add_argument("--carrier-id", default=None)
+    observations_list.add_argument("--jsonl", action="store_true")
+
+    events = subparsers.add_parser(
+        "events",
+        help="Inspect Carrier-first runtime events.",
+    )
+    event_subparsers = events.add_subparsers(dest="event_command", required=True)
+    events_list = event_subparsers.add_parser("list", help="List ordered events.")
+    _add_carrier_runtime_db_run_args(events_list)
+    events_list.add_argument("--carrier-id", default=None)
+    events_list.add_argument("--after-sequence", type=int, default=None)
+    events_list.add_argument("--limit", type=int, default=None)
+    events_list.add_argument("--jsonl", action="store_true")
+
+    gates = subparsers.add_parser(
+        "gates",
+        help="Inspect Carrier-first runtime gates.",
+    )
+    gate_subparsers = gates.add_subparsers(dest="gate_command", required=True)
+    gates_list = gate_subparsers.add_parser("list", help="List gates.")
+    _add_carrier_runtime_db_run_args(gates_list)
+    gates_list.add_argument("--carrier-id", default=None)
+    gates_list.add_argument(
+        "--status",
+        choices=[status.value for status in CarrierGateStatus],
+        default=None,
+    )
+    gates_list.add_argument("--jsonl", action="store_true")
+
+    projections = subparsers.add_parser(
+        "projections",
+        help="Inspect Carrier-first runtime projections.",
+    )
+    projection_subparsers = projections.add_subparsers(
+        dest="projection_command",
+        required=True,
+    )
+    projections_list = projection_subparsers.add_parser(
+        "list",
+        help="List projections.",
+    )
+    _add_carrier_runtime_db_run_args(projections_list)
+    projections_list.add_argument("--jsonl", action="store_true")
+
     init = subparsers.add_parser("init-document", help="Initialize document graph in runtime store.")
     init.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     init.add_argument("--pipeline", required=True, help="Pipeline id.")
@@ -2613,6 +2692,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
 
     if args.command == "project-lifecycle":
         return await _project_lifecycle_command(args)
+
+    if args.command in {"carriers", "observations", "events", "gates", "projections"}:
+        return await _carrier_runtime_command(args)
 
     if args.command == "create-project-run":
         project_yaml = (
@@ -3868,6 +3950,101 @@ def _require_process_runtime_client() -> Any:
             "install `fala[client]` or `fala[web]`."
         ) from exc
     return ProcessRuntimeClient
+
+
+def _add_carrier_runtime_db_run_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--db", required=True, help="Carrier runtime SQLite DB path or sqlite:// URL.")
+    parser.add_argument("--run-id", required=True)
+
+
+async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
+    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    if args.command == "carriers":
+        if args.carrier_command == "list":
+            carriers = await backend.list_carriers(
+                run_id=args.run_id,
+                carrier_type=args.carrier_type,
+                limit=args.limit,
+            )
+            return _carrier_runtime_list_result("carriers", carriers, jsonl=args.jsonl)
+        carrier = await backend.get_carrier(
+            run_id=args.run_id,
+            carrier_id=args.carrier_id,
+        )
+        return {
+            "ok": carrier is not None,
+            "carrier": carrier.model_dump(mode="json") if carrier is not None else None,
+        }
+    if args.command == "observations":
+        observations = await backend.list_observations(
+            run_id=args.run_id,
+            carrier_id=args.carrier_id,
+        )
+        return _carrier_runtime_list_result(
+            "observations",
+            observations,
+            jsonl=args.jsonl,
+        )
+    if args.command == "events":
+        events = await backend.list_events(
+            run_id=args.run_id,
+            carrier_id=args.carrier_id,
+            after_sequence=args.after_sequence,
+            limit=args.limit,
+        )
+        return _carrier_runtime_list_result("events", events, jsonl=args.jsonl)
+    if args.command == "gates":
+        gates = await backend.list_gates(
+            run_id=args.run_id,
+            carrier_id=args.carrier_id,
+            status=CarrierGateStatus(args.status) if args.status else None,
+        )
+        return _carrier_runtime_list_result("gates", gates, jsonl=args.jsonl)
+    if args.command == "projections":
+        projections = await backend.list_projections(run_id=args.run_id)
+        return _carrier_runtime_list_result(
+            "projections",
+            projections,
+            jsonl=args.jsonl,
+        )
+    raise ValueError(f"Unknown Carrier runtime command: {args.command}")
+
+
+def _carrier_runtime_list_result(
+    key: str,
+    items: list[Any],
+    *,
+    jsonl: bool,
+) -> dict[str, Any] | None:
+    payload = [item.model_dump(mode="json") for item in items]
+    if jsonl:
+        for item in payload:
+            print(json.dumps(item, sort_keys=True))
+        return None
+    return {
+        "ok": True,
+        "count": len(payload),
+        key: payload,
+    }
+
+
+def _carrier_runtime_db_path(target: str) -> str:
+    parsed = urlparse(target)
+    if parsed.scheme in {"sqlite", "sqlite3"}:
+        if parsed.netloc and parsed.netloc != "localhost":
+            raise ValueError("SQLite URL host must be empty or localhost")
+        if parsed.netloc == "localhost":
+            path = parsed.path
+        elif target.startswith(f"{parsed.scheme}:////"):
+            path = parsed.path
+        else:
+            path = parsed.path.lstrip("/")
+        if not path:
+            raise ValueError("SQLite URL must include a database path")
+        return unquote(path)
+    if parsed.scheme:
+        raise ValueError(f"Unsupported Carrier runtime DB URL scheme: {parsed.scheme!r}")
+    return target
 
 
 async def _run_queue_work_from_args(

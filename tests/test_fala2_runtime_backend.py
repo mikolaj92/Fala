@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -9,9 +10,12 @@ import textwrap
 import tomllib
 import unittest
 import inspect
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from fala.carrier_runtime import FalaRuntime
+from fala.cli import main as fala_cli_main
 from fala.domain_packs.documents import (
     DocumentCarrierInput,
     carrier_from_document,
@@ -48,6 +52,16 @@ from fala.runtime_backend import (
     RunRef,
     SQLiteRuntimeBackend,
 )
+
+
+def _run_cli_json(*args: str) -> dict:
+    buffer = StringIO()
+    with redirect_stdout(buffer):
+        code = fala_cli_main(list(args))
+    payload = json.loads(buffer.getvalue())
+    if code != 0:
+        raise AssertionError(payload)
+    return payload
 
 
 class Fala2RuntimeBackendTests(unittest.TestCase):
@@ -204,6 +218,124 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual([event.event_type for event in events], ["carrier.accepted"])
 
         asyncio.run(scenario())
+
+    def test_cli_inspects_carrier_runtime_state_without_web_stack(self) -> None:
+        async def scenario(db_path: Path) -> None:
+            runtime = FalaRuntime.sqlite(db_path)
+            carrier = Carrier(
+                id="carrier_cli",
+                run_id="run_cli",
+                carrier_type="case",
+                payload={"case_id": "CLI-1"},
+            )
+            stored, _ = await runtime.accept_carrier(
+                carrier,
+                idempotency_key="run_cli:carrier.accept:carrier_cli",
+            )
+            await runtime.record_observation(
+                Observation(
+                    run_id=stored.run_id,
+                    carrier_id=stored.id,
+                    kind="score",
+                    values={"score": 1},
+                ),
+                idempotency_key="run_cli:observation.score:carrier_cli",
+            )
+            await runtime.save_gate(
+                Gate(
+                    run_id=stored.run_id,
+                    carrier_id=stored.id,
+                    kind="review",
+                    status=GateStatus.open,
+                ),
+                idempotency_key="run_cli:gate.review:carrier_cli",
+            )
+            await runtime.save_projection(
+                Projection(
+                    run_id=stored.run_id,
+                    name="case_summary",
+                    data={"carrier_id": stored.id},
+                    source_event_sequence=1,
+                ),
+                idempotency_key="run_cli:projection.case_summary",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "carrier.sqlite"
+            asyncio.run(scenario(db_path))
+
+            carriers = _run_cli_json(
+                "carriers",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+            )
+            self.assertEqual(carriers["count"], 1)
+            self.assertEqual(carriers["carriers"][0]["id"], "carrier_cli")
+
+            inspected = _run_cli_json(
+                "carriers",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--carrier-id",
+                "carrier_cli",
+            )
+            self.assertTrue(inspected["ok"])
+            self.assertEqual(inspected["carrier"]["carrier_type"], "case")
+
+            events = _run_cli_json(
+                "events",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--carrier-id",
+                "carrier_cli",
+            )
+            self.assertEqual(
+                [event["event_type"] for event in events["events"]],
+                ["carrier.accepted", "observation.recorded", "gate.saved"],
+            )
+
+            observations = _run_cli_json(
+                "observations",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--carrier-id",
+                "carrier_cli",
+            )
+            self.assertEqual(observations["observations"][0]["kind"], "score")
+
+            gates = _run_cli_json(
+                "gates",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--status",
+                "open",
+            )
+            self.assertEqual(gates["gates"][0]["kind"], "review")
+
+            projections = _run_cli_json(
+                "projections",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+            )
+            self.assertEqual(projections["projections"][0]["name"], "case_summary")
 
     def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
         async def scenario() -> None:

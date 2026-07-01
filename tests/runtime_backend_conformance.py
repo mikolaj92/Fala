@@ -31,6 +31,7 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         run_id=carrier.run_id,
         carrier_id=carrier.id,
     ) == carrier
+    assert await backend.list_carriers(run_id=carrier.run_id) == [carrier]
 
     command = RuntimeCommand(
         run_id=carrier.run_id,

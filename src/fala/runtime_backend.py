@@ -216,6 +216,14 @@ class RuntimeBackend(Protocol):
 
     async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None: ...
 
+    async def list_carriers(
+        self,
+        *,
+        run_id: str,
+        carrier_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[Carrier]: ...
+
     async def submit_command(
         self, command: RuntimeCommand, *, events: Sequence[RuntimeEvent] = ()
     ) -> CommandSubmission: ...
@@ -471,6 +479,30 @@ class SQLiteRuntimeBackend:
                 (run_id, carrier_id),
             ).fetchone()
         return _carrier_from_row(row) if row is not None else None
+
+    async def list_carriers(
+        self,
+        *,
+        run_id: str,
+        carrier_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[Carrier]:
+        clauses = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if carrier_type is not None:
+            clauses.append("carrier_type = ?")
+            params.append(carrier_type)
+        sql = f"""
+            SELECT * FROM carriers
+            WHERE {' AND '.join(clauses)}
+            ORDER BY created_at ASC, id ASC
+        """
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [_carrier_from_row(row) for row in rows]
 
     async def submit_command(
         self,
@@ -1266,6 +1298,19 @@ class RuntimeBackendService:
         return await self.backend.list_observations(
             run_id=run_id,
             carrier_id=carrier_id,
+        )
+
+    async def list_carriers(
+        self,
+        *,
+        run_id: str,
+        carrier_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[Carrier]:
+        return await self.backend.list_carriers(
+            run_id=run_id,
+            carrier_type=carrier_type,
+            limit=limit,
         )
 
     async def list_gates(

@@ -75,6 +75,19 @@ The conformance checks cover:
 - observations, gates, and projections;
 - bridge inbox/outbox persistence.
 
+## CLI Inspection
+
+Carrier-first SQLite state can be inspected without FastAPI or a web server:
+
+```bash
+uv run fala carriers list --db /tmp/fala-carrier.sqlite --run-id run_case
+uv run fala carriers inspect --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-id carrier_case
+uv run fala events list --db /tmp/fala-carrier.sqlite --run-id run_case
+uv run fala observations list --db /tmp/fala-carrier.sqlite --run-id run_case
+uv run fala gates list --db /tmp/fala-carrier.sqlite --run-id run_case
+uv run fala projections list --db /tmp/fala-carrier.sqlite --run-id run_case
+```
+
 ## Local Examples
 
 Run the local-first Carrier runtime example:
