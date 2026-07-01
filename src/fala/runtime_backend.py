@@ -386,6 +386,14 @@ class BridgeDelivery(BaseModel):
 
 
 class RuntimeBackend(Protocol):
+    async def create_run(
+        self,
+        run: Run,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission: ...
+
     async def put_run(self, run: Run) -> None: ...
 
     async def get_run(self, *, run_id: str) -> Run | None: ...
@@ -1016,6 +1024,59 @@ class SQLiteRuntimeBackend:
             )
             connection.commit()
 
+    async def create_run(
+        self,
+        run: Run,
+        command: RuntimeCommand,
+        *,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> CommandSubmission:
+        if command.run_id != run.id:
+            raise ValueError("run.create command run_id must match run id")
+        if command.command_type != "run.create":
+            raise ValueError("create_run requires command_type 'run.create'")
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    return CommandSubmission(
+                        command=_command_from_row(existing),
+                        events=[],
+                        replayed=True,
+                    )
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM runs WHERE id = ?",
+                        (run.id,),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"Run already exists: {run.id!r}")
+
+                _insert_run_row(connection, run)
+                _insert_runtime_command_row(connection, command)
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return CommandSubmission(
+                    command=command,
+                    events=stored_events,
+                    replayed=False,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
     async def put_run(self, run: Run) -> None:
         async with self._lock:
             with self._connect() as connection:
@@ -1372,78 +1433,11 @@ class SQLiteRuntimeBackend:
                         events=[],
                         replayed=True,
                     )
-                if command.command_type != "run.create":
-                    _require_run_row(connection, command.run_id)
-
-                connection.execute(
-                    """
-                    INSERT INTO runtime_commands (
-                        run_id, id, command_type, idempotency_key, actor,
-                        correlation_id, causation_id, payload, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        command.run_id,
-                        command.id,
-                        command.command_type,
-                        command.idempotency_key,
-                        command.actor,
-                        command.correlation_id,
-                        command.causation_id,
-                        _dumps(command.payload),
-                        command.created_at.isoformat(),
-                    ),
-                )
-
-                stored_events: list[RuntimeEvent] = []
-                for event in events:
-                    next_sequence = connection.execute(
-                        """
-                        SELECT COALESCE(MAX(sequence), 0) + 1
-                        FROM runtime_events
-                        WHERE run_id = ?
-                        """,
-                        (command.run_id,),
-                    ).fetchone()[0]
-                    stored_event = event.model_copy(
-                        update={
-                            "run_id": command.run_id,
-                            "sequence": int(next_sequence),
-                            "command_id": command.id,
-                            "actor": event.actor if event.actor is not None else command.actor,
-                            "correlation_id": event.correlation_id
-                            if event.correlation_id is not None
-                            else command.correlation_id,
-                            "causation_id": event.causation_id
-                            if event.causation_id is not None
-                            else command.causation_id,
-                        }
-                    )
-                    connection.execute(
-                        """
-                        INSERT INTO runtime_events (
-                            run_id, sequence, id, event_type, carrier_id,
-                            process_id, schema_version, command_id, actor,
-                            correlation_id, causation_id, payload, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            stored_event.run_id,
-                            stored_event.sequence,
-                            stored_event.id,
-                            stored_event.event_type,
-                            stored_event.carrier_id,
-                            stored_event.process_id,
-                            stored_event.schema_version,
-                            stored_event.command_id,
-                            stored_event.actor,
-                            stored_event.correlation_id,
-                            stored_event.causation_id,
-                            _dumps(stored_event.payload),
-                            stored_event.created_at.isoformat(),
-                        ),
-                    )
-                    stored_events.append(stored_event)
+                if command.command_type == "run.create":
+                    raise ValueError("run.create commands must use create_run")
+                _require_run_row(connection, command.run_id)
+                _insert_runtime_command_row(connection, command)
+                stored_events = _append_runtime_events(connection, command, events)
 
                 connection.commit()
                 return CommandSubmission(
@@ -2464,7 +2458,7 @@ class RuntimeBackendService:
             event_type="run.created",
             payload={"run_id": run.id, "status": run.status.value},
         )
-        submission = await self.backend.submit_command(command, events=[event])
+        submission = await self.backend.create_run(run, command, events=[event])
         if submission.replayed:
             existing_run_id = submission.command.payload.get("run_id", run.id)
             existing = await self.backend.get_run(run_id=str(existing_run_id))
@@ -2475,7 +2469,6 @@ class RuntimeBackendService:
                 )
             return existing, submission
 
-        await self.backend.put_run(run)
         return run, submission
 
     async def set_run_status(
@@ -4056,6 +4049,102 @@ def _require_run_row(connection: sqlite3.Connection, run_id: str) -> None:
     row = connection.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone()
     if row is None:
         raise ValueError(f"Unknown run: {run_id!r}")
+
+
+def _insert_run_row(connection: sqlite3.Connection, run: Run) -> None:
+    connection.execute(
+        """
+        INSERT INTO runs (
+            id, status, title, package_id, package_version,
+            package_digest, flow_id, flow_digest, runtime_version,
+            backend_version, schema_version, metadata, created_at,
+            updated_at, started_at, finished_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        _run_args(run),
+    )
+
+
+def _insert_runtime_command_row(
+    connection: sqlite3.Connection,
+    command: RuntimeCommand,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO runtime_commands (
+            run_id, id, command_type, idempotency_key, actor,
+            correlation_id, causation_id, payload, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            command.run_id,
+            command.id,
+            command.command_type,
+            command.idempotency_key,
+            command.actor,
+            command.correlation_id,
+            command.causation_id,
+            _dumps(command.payload),
+            command.created_at.isoformat(),
+        ),
+    )
+
+
+def _append_runtime_events(
+    connection: sqlite3.Connection,
+    command: RuntimeCommand,
+    events: Sequence[RuntimeEvent],
+) -> list[RuntimeEvent]:
+    stored_events: list[RuntimeEvent] = []
+    for event in events:
+        next_sequence = connection.execute(
+            """
+            SELECT COALESCE(MAX(sequence), 0) + 1
+            FROM runtime_events
+            WHERE run_id = ?
+            """,
+            (command.run_id,),
+        ).fetchone()[0]
+        stored_event = event.model_copy(
+            update={
+                "run_id": command.run_id,
+                "sequence": int(next_sequence),
+                "command_id": command.id,
+                "actor": event.actor if event.actor is not None else command.actor,
+                "correlation_id": event.correlation_id
+                if event.correlation_id is not None
+                else command.correlation_id,
+                "causation_id": event.causation_id
+                if event.causation_id is not None
+                else command.causation_id,
+            }
+        )
+        connection.execute(
+            """
+            INSERT INTO runtime_events (
+                run_id, sequence, id, event_type, carrier_id,
+                process_id, schema_version, command_id, actor,
+                correlation_id, causation_id, payload, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                stored_event.run_id,
+                stored_event.sequence,
+                stored_event.id,
+                stored_event.event_type,
+                stored_event.carrier_id,
+                stored_event.process_id,
+                stored_event.schema_version,
+                stored_event.command_id,
+                stored_event.actor,
+                stored_event.correlation_id,
+                stored_event.causation_id,
+                _dumps(stored_event.payload),
+                stored_event.created_at.isoformat(),
+            ),
+        )
+        stored_events.append(stored_event)
+    return stored_events
 
 
 def _count_rows(connection: sqlite3.Connection, table: str, run_id: str) -> int:

@@ -7,8 +7,11 @@ audit.
 Run cancellation is a first-class `run.cancel` command and emits
 `run.cancel_requested`.
 
-Except for `run.create`, command submission requires the target run to already
-exist.
+Run creation is committed by the backend as one transaction that stores the run,
+`run.create` command, and `run.created` event together. Direct
+`submit_command(run.create)` is rejected.
+
+Other command submission requires the target run to already exist.
 
 Run-scoped backend writes also require an existing run.
 

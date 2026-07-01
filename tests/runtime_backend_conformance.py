@@ -29,6 +29,37 @@ from fala.runtime_backend import (
 
 async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     runtime = RuntimeRef(id="local", uri="sqlite://local")
+    create_run = Run(
+        id="run_create_conformance",
+        status=CarrierRunStatus.active,
+    )
+    create_command = RuntimeCommand(
+        run_id=create_run.id,
+        command_type="run.create",
+        idempotency_key="run_create_conformance:create",
+    )
+    create_submission = await backend.create_run(
+        create_run,
+        create_command,
+        events=[
+            RuntimeEvent(
+                run_id=create_run.id,
+                event_type="run.created",
+                payload={"run_id": create_run.id},
+            )
+        ],
+    )
+    replay_create = await backend.create_run(
+        create_run.model_copy(update={"title": "changed"}),
+        create_command.model_copy(update={"id": "command_create_replay"}),
+        events=[],
+    )
+    assert await backend.get_run(run_id=create_run.id) == create_run
+    assert not create_submission.replayed
+    assert replay_create.replayed
+    create_events = await backend.list_events(run_id=create_run.id)
+    assert [event.event_type for event in create_events] == ["run.created"]
+
     run = Run(
         id="run_conformance",
         status=CarrierRunStatus.created,

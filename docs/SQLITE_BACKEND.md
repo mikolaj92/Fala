@@ -13,6 +13,9 @@ The backend initializes SQLite with WAL journal mode, foreign keys, and a busy
 timeout. Artifact bytes are not stored in SQLite by default; SQLite stores refs
 and metadata.
 
+Run creation stores the run row, `run.create` command, and `run.created` event in
+one SQLite transaction.
+
 Runtime commands and events are guarded by SQLite triggers that reject direct
 updates and deletes. New runtime facts must be appended through command
 submission.

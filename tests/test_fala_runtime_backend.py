@@ -351,7 +351,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_sqlite_backend_rejects_non_create_command_for_unknown_run(self) -> None:
+    def test_sqlite_backend_rejects_unknown_run_command_and_direct_run_create(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
@@ -363,14 +363,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                             idempotency_key="run_missing:carrier.accept",
                         )
                     )
-                submission = await backend.submit_command(
-                    RuntimeCommand(
-                        run_id="run_missing",
-                        command_type="run.create",
-                        idempotency_key="run_missing:create",
+                with self.assertRaisesRegex(ValueError, "create_run"):
+                    await backend.submit_command(
+                        RuntimeCommand(
+                            run_id="run_missing",
+                            command_type="run.create",
+                            idempotency_key="run_missing:create",
+                        )
                     )
-                )
-                self.assertFalse(submission.replayed)
 
         asyncio.run(scenario())
 
@@ -664,6 +664,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     idempotency_key="run_lifecycle:create",
                     actor="cli:user",
                 )
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await runtime.create_run(
+                        run,
+                        idempotency_key="run_lifecycle:create-again",
+                    )
                 active, active_submission = await runtime.set_run_status(
                     run_id=run.id,
                     status=CarrierRunStatus.active,
