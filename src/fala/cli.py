@@ -169,6 +169,7 @@ from fala.queue_bridge import (
 from fala.registry import PipelineRegistry
 from fala.runtime_backend import CarrierProcessStatus
 from fala.runtime_backend import CarrierRunStatus
+from fala.runtime_backend import BridgeDeliveryStatus
 from fala.runtime_backend import GateStatus as CarrierGateStatus
 from fala.runtime_backend import Run as CarrierRun
 from fala.runtime_backend import RuntimeBackendService
@@ -303,6 +304,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "carriers",
             "list-documents",
             "list-processes",
+            "bridge",
             "dead-letter",
             "doctor",
             "events",
@@ -1754,6 +1756,34 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_carrier_runtime_db_run_args(carrier_relations_inspect)
     carrier_relations_inspect.add_argument("--relation-id", required=True)
 
+    bridge = subparsers.add_parser(
+        "bridge",
+        help="Inspect and deliver Carrier-first runtime bridge records.",
+    )
+    bridge_subparsers = bridge.add_subparsers(dest="bridge_command", required=True)
+    bridge_list = bridge_subparsers.add_parser("list", help="List bridge deliveries.")
+    _add_carrier_runtime_db_run_args(bridge_list)
+    bridge_list.add_argument(
+        "--box",
+        choices=("outbox", "inbox"),
+        default="outbox",
+    )
+    bridge_list.add_argument(
+        "--status",
+        choices=[status.value for status in BridgeDeliveryStatus],
+        default=None,
+    )
+    bridge_list.add_argument("--jsonl", action="store_true")
+    bridge_deliver = bridge_subparsers.add_parser(
+        "deliver",
+        help="Deliver one outbox delivery into another local SQLite runtime.",
+    )
+    _add_carrier_runtime_db_run_args(bridge_deliver)
+    bridge_deliver.add_argument("--delivery-id", required=True)
+    bridge_deliver.add_argument("--target-db", required=True)
+    bridge_deliver.add_argument("--idempotency-key", default=None)
+    bridge_deliver.add_argument("--import-idempotency-key", default=None)
+
     artifacts = subparsers.add_parser(
         "artifacts",
         help="Inspect Carrier-first runtime artifact metadata.",
@@ -2895,6 +2925,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
 
     if args.command in {
         "artifacts",
+        "bridge",
         "carrier-relations",
         "carrier-types",
         "carriers",
@@ -4298,6 +4329,47 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             "carrier_relation": relation.model_dump(mode="json")
             if relation is not None
             else None,
+        }
+    if args.command == "bridge":
+        service = RuntimeBackendService(backend)
+        if args.bridge_command == "list":
+            status = BridgeDeliveryStatus(args.status) if args.status else None
+            deliveries = (
+                await service.list_outbox_deliveries(
+                    run_id=args.run_id,
+                    status=status,
+                )
+                if args.box == "outbox"
+                else await service.list_inbox_deliveries(
+                    run_id=args.run_id,
+                    status=status,
+                )
+            )
+            return _carrier_runtime_list_result(
+                f"bridge_{args.box}",
+                deliveries,
+                jsonl=args.jsonl,
+            )
+        target = RuntimeBackendService.sqlite(_carrier_runtime_db_path(args.target_db))
+        delivered, imported, delivery_submission, import_submission = (
+            await service.deliver_bridge_delivery(
+                run_id=args.run_id,
+                delivery_id=args.delivery_id,
+                target=target,
+                idempotency_key=args.idempotency_key
+                or f"{args.run_id}:bridge.deliver:{args.delivery_id}",
+                import_idempotency_key=args.import_idempotency_key,
+                actor="cli:user",
+            )
+        )
+        return {
+            "ok": True,
+            "delivered": delivered.model_dump(mode="json"),
+            "imported": imported.model_dump(mode="json"),
+            "delivery_command": delivery_submission.command.model_dump(mode="json"),
+            "import_command": import_submission.command.model_dump(mode="json"),
+            "delivery_replayed": delivery_submission.replayed,
+            "import_replayed": import_submission.replayed,
         }
     if args.command == "artifacts":
         if args.artifact_command == "list":

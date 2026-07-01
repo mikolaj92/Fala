@@ -289,12 +289,12 @@ not complete enough to close the requirement.
 | 9 | Commands and idempotency | PARTIAL | Route all runtime mutations through command APIs with actor, causation, correlation, and deduplication. |
 | 10 | Event log | PARTIAL | Make append-only events the consistent source for projections/replay with schema/version metadata. |
 | 11 | State machines | PARTIAL | Run/process statuses and gate completion exist; finish full transition validation and tests. |
-| 12 | Multi-Fala composition | PARTIAL | Implement delegation through runtime refs, outbox/inbox, wait graph, budgets, and no global transactions. |
+| 12 | Multi-Fala composition | PARTIAL | Local SQLite bridge deliver exists; add runtime pools, wait graph, budgets, and no-global-transaction guidance. |
 | 13 | Runtime pools | PARTIAL | Add routing policies and persistence for multi-runtime pools. |
 | 14 | Budgets and safety limits | PARTIAL | Enforce runtime budgets for retries, gates, artifact bytes, pending processes, spawned runs, and delegation. |
 | 15 | Cycles and deadlock detection | PARTIAL | Add wait graph diagnostics and distinguish valid feedback cycles from deadlocks. |
 | 16 | Web/UI | PARTIAL | Keep web optional, read-only by default, localhost-bound, and mutation-through-command only; add static export. |
-| 17 | CLI | PARTIAL | Complete carrier-first inspect/mutate commands, doctor, waits diagnosis, trace, bridge, and compatibility aliases. |
+| 17 | CLI | PARTIAL | Carrier inspect/mutate, doctor, trace, export, and bridge deliver exist; finish waits diagnosis and compatibility aliases. |
 | 18 | Package schema | PARTIAL | Finish carrier-first YAML, runtime config, flows, validation, and backward compatibility. |
 | 19 | Domain packs | PARTIAL | Move document-specific runtime logic into `fala.domains.documents` or equivalent compatibility package. |
 | 20 | Splot integration | PARTIAL | Keep Splot as a domain pack/adapter and add an end-to-end carrier/artifact/gate example. |

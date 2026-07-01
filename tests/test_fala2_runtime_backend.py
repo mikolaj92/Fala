@@ -1557,6 +1557,107 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_cli_delivers_bridge_between_local_carrier_runtimes(self) -> None:
+        async def scenario(source_path: Path, target_path: Path) -> None:
+            source = RuntimeBackendService.sqlite(source_path)
+            source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
+            target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
+            carrier = Carrier(
+                id="carrier_cli_bridge",
+                run_id="run_source",
+                carrier_type="case",
+                payload={"claim": "CLI-BRIDGE"},
+            )
+            await source.accept_carrier(
+                carrier,
+                idempotency_key="run_source:carrier.accept:carrier_cli_bridge",
+            )
+            source_events = await source.backend.list_events(run_id="run_source")
+            await source.enqueue_bridge_delivery(
+                BridgeDelivery(
+                    id="bridge_cli",
+                    run_id="run_source",
+                    idempotency_key="run_source:bridge:cli",
+                    source=RunRef(runtime=source_ref, run_id="run_source"),
+                    target=RunRef(runtime=target_ref, run_id="run_target"),
+                    carrier=carrier,
+                    event_ref=EventRef(
+                        runtime=source_ref,
+                        run_id="run_source",
+                        event_id=source_events[0].id,
+                        sequence=source_events[0].sequence,
+                    ),
+                    budget=RuntimeBudget(runtime_hops=1, carrier_count=1),
+                ),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_path = Path(tmp_dir) / "source.sqlite"
+            target_path = Path(tmp_dir) / "target.sqlite"
+            asyncio.run(scenario(source_path, target_path))
+
+            pending = _run_cli_json(
+                "bridge",
+                "list",
+                "--db",
+                str(source_path),
+                "--run-id",
+                "run_source",
+            )
+            self.assertEqual(pending["count"], 1)
+            self.assertEqual(pending["bridge_outbox"][0]["status"], "pending")
+
+            delivered = _run_cli_json(
+                "bridge",
+                "deliver",
+                "--db",
+                str(source_path),
+                "--run-id",
+                "run_source",
+                "--delivery-id",
+                "bridge_cli",
+                "--target-db",
+                str(target_path),
+            )
+            self.assertTrue(delivered["ok"])
+            self.assertEqual(delivered["delivered"]["status"], "delivered")
+            self.assertEqual(delivered["imported"]["status"], "imported")
+            self.assertFalse(delivered["delivery_replayed"])
+            self.assertFalse(delivered["import_replayed"])
+
+            replay = _run_cli_json(
+                "bridge",
+                "deliver",
+                "--db",
+                str(source_path),
+                "--run-id",
+                "run_source",
+                "--delivery-id",
+                "bridge_cli",
+                "--target-db",
+                str(target_path),
+            )
+            self.assertTrue(replay["delivery_replayed"])
+            self.assertTrue(replay["import_replayed"])
+
+            inbox = _run_cli_json(
+                "bridge",
+                "list",
+                "--db",
+                str(target_path),
+                "--run-id",
+                "run_target",
+                "--box",
+                "inbox",
+                "--status",
+                "imported",
+            )
+            self.assertEqual(inbox["count"], 1)
+            self.assertEqual(
+                inbox["bridge_inbox"][0]["carrier"]["metadata"]["source_run_id"],
+                "run_source",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
