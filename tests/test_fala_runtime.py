@@ -55,7 +55,6 @@ from fala import (  # noqa: E402
     PipelineRunner,
     PipelineScheduler,
     PipelineSpec,
-    PostgresStateStore,
     ProcessAction,
     ProcessConditionSpec,
     ProcessEvent,
@@ -119,10 +118,6 @@ from fala import (  # noqa: E402
 )
 from fala.cli import main as runtime_cli_main  # noqa: E402
 from fala.cli import _warn_public_serve_without_auth  # noqa: E402
-from fala.postgres_store import (  # noqa: E402
-    POSTGRES_SCHEMA_SQL,
-    POSTGRES_TRY_CLAIM_STATUS_SQL,
-)
 from fala.state import (  # noqa: E402
     build_runtime_document_state,
     build_runtime_state,
@@ -13657,7 +13652,7 @@ class ProcessRuntimeTests(unittest.TestCase):
 
         self.assertEqual(buffer.getvalue(), "")
 
-    def test_deployment_renders_compose_control_plane_postgres_and_workers(self) -> None:
+    def test_deployment_renders_compose_control_plane_sqlite_and_workers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             package_dir = root / "demo_package"
@@ -13714,7 +13709,6 @@ class ProcessRuntimeTests(unittest.TestCase):
                 "example/fala:test",
                 "--worker-image",
                 "example/fala-worker:test",
-                "--with-postgres",
                 "--env",
                 "FALA_API_KEYS=operator-secret:operator,worker-secret:worker",
                 "--worker-env",
@@ -13727,7 +13721,7 @@ class ProcessRuntimeTests(unittest.TestCase):
             compose = yaml.safe_load(payload["manifest"])
             services = compose["services"]
             self.assertIn("fala-control-plane", services)
-            self.assertIn("fala-postgres", services)
+            self.assertNotIn("fala-postgres", services)
             self.assertIn("fala_demo_package_extract_worker", services)
 
             control_plane = services["fala-control-plane"]
@@ -13735,15 +13729,13 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(control_plane["command"][0], "fala")
             self.assertIn("serve", control_plane["command"])
             self.assertEqual(control_plane["ports"], ["8000:8000"])
-            self.assertEqual(control_plane["depends_on"], ["fala-postgres"])
+            self.assertNotIn("depends_on", control_plane)
             self.assertEqual(
                 control_plane["environment"]["FALA_PIPELINE_DIR"],
                 "/app/pipelines",
             )
-            self.assertIn(
-                "fala-postgres",
-                control_plane["environment"]["FALA_DATABASE_URL"],
-            )
+            self.assertEqual(control_plane["environment"]["FALA_DB"], "/data/fala.db")
+            self.assertNotIn("FALA_DATABASE_URL", control_plane["environment"])
             self.assertEqual(
                 control_plane["environment"]["FALA_QUEUE_DB"],
                 "/data/queue.sqlite",
@@ -13786,7 +13778,7 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertIn("fala-data:/data", worker["volumes"])
             self.assertIn(f"{root.resolve()}:/app/pipelines:ro", worker["volumes"])
             self.assertIn("fala-data", compose["volumes"])
-            self.assertIn("fala-postgres-data", compose["volumes"])
+            self.assertNotIn("fala-postgres-data", compose["volumes"])
 
     def test_deployment_renders_generic_queue_broker_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -13944,8 +13936,6 @@ class ProcessRuntimeTests(unittest.TestCase):
                 "2",
                 "--worker-replicas",
                 "3",
-                "--database-url",
-                "postgresql://postgres/fala",
             )
 
             manifests = list(yaml.safe_load_all(payload["manifest"]))
@@ -13961,7 +13951,8 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(control_container["image"], "example/fala:test")
             env_by_name = {item["name"]: item["value"] for item in control_container["env"]}
             self.assertEqual(env_by_name["FALA_PIPELINE_DIR"], "/app/pipelines")
-            self.assertEqual(env_by_name["FALA_DATABASE_URL"], "postgresql://postgres/fala")
+            self.assertEqual(env_by_name["FALA_DB"], "/data/fala.db")
+            self.assertNotIn("FALA_DATABASE_URL", env_by_name)
             self.assertEqual(
                 control_container["volumeMounts"],
                 [{"name": "fala-data", "mountPath": "/data"}],
@@ -14061,7 +14052,7 @@ class ProcessRuntimeTests(unittest.TestCase):
                 "--image",
                 "example/fala-worker:test",
                 "--env",
-                "FALA_DATABASE_URL=postgresql://db/fala",
+                "FALA_DB=/data/fala.db",
             )
             self.assertTrue(compose_payload["ok"])
             compose = yaml.safe_load(compose_payload["manifest"])
@@ -14072,8 +14063,8 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertEqual(service["working_dir"], "/app")
             self.assertEqual(service["environment"]["OCR_MODE"], "fast")
             self.assertEqual(
-                service["environment"]["FALA_DATABASE_URL"],
-                "postgresql://db/fala",
+                service["environment"]["FALA_DB"],
+                "/data/fala.db",
             )
             self.assertEqual(
                 service["environment"]["OPENAI_API_KEY"],
@@ -15309,25 +15300,6 @@ class ProcessRuntimeTests(unittest.TestCase):
         self.assertEqual(set(claims_by_process), {"extract"})
         self.assertIn(claims_by_process["extract"].worker_id, {"worker-1", "worker-2"})
 
-    def test_postgres_state_store_is_optional_and_matches_store_surface(self) -> None:
-        store = PostgresStateStore(
-            "postgresql://fala:secret@db/fala",
-            ensure_schema=False,
-        )
-        self.assertEqual(store.dsn, "postgresql://fala:secret@db/fala")
-
-        expected_methods = [
-            name
-            for name, value in StateStore.__dict__.items()
-            if name.startswith("_") is False and callable(value)
-        ]
-        missing = [
-            name
-            for name in expected_methods
-            if not callable(getattr(PostgresStateStore, name, None))
-        ]
-        self.assertEqual(missing, [])
-
     def test_state_store_factory_defaults_to_sqlite_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "runtime.db"
@@ -15335,13 +15307,12 @@ class ProcessRuntimeTests(unittest.TestCase):
             self.assertIsInstance(store, SQLiteStateStore)
             self.assertEqual(store.path, db_path)
 
-    def test_state_store_factory_selects_postgres_for_dsn(self) -> None:
-        store = create_state_store(
-            "postgresql://fala:secret@db/fala",
-            ensure_schema=False,
-        )
-        self.assertIsInstance(store, PostgresStateStore)
-        self.assertEqual(store.dsn, "postgresql://fala:secret@db/fala")
+    def test_state_store_factory_rejects_non_sqlite_dsn(self) -> None:
+        with self.assertRaisesRegex(ValueError, "SQLite"):
+            create_state_store(
+                "postgresql://fala:secret@db/fala",
+                ensure_schema=False,
+            )
 
     def test_state_store_factory_reads_runtime_database_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -15415,136 +15386,6 @@ class ProcessRuntimeTests(unittest.TestCase):
                 legacy["schema"]["migrations"]["missing_count"],
                 RUNTIME_SCHEMA_VERSION,
             )
-
-    def test_postgres_state_store_schema_covers_runtime_tables(self) -> None:
-        for table in [
-            "runtime_schema_migrations",
-            "process_runs",
-            "operator_audit_events",
-            "process_worker_heartbeats",
-            "process_documents",
-            "process_events",
-            "process_statuses",
-            "process_document_inputs",
-            "process_claims",
-            "process_outputs",
-            "process_stream_chunks",
-            "process_stream_checkpoints",
-            "process_projections",
-        ]:
-            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", POSTGRES_SCHEMA_SQL)
-
-        for index in [
-            "idx_process_events_run_doc_process_ts_id",
-            "idx_process_statuses_run_status",
-            "idx_process_claims_run_doc_expires",
-            "idx_process_stream_chunks_lookup",
-        ]:
-            self.assertIn(index, POSTGRES_SCHEMA_SQL)
-
-    def test_postgres_claim_sql_is_atomic(self) -> None:
-        sql = " ".join(POSTGRES_TRY_CLAIM_STATUS_SQL.split())
-        self.assertIn("UPDATE process_statuses SET status = %s", sql)
-        self.assertIn("AND status = %s", sql)
-        self.assertIn("AND NOT EXISTS", sql)
-        self.assertIn("FROM process_outputs", sql)
-        self.assertIn("RETURNING process_id", sql)
-
-    def test_postgres_state_store_live_runtime_contract_when_configured(self) -> None:
-        dsn = os.environ.get("FALA_POSTGRES_TEST_DSN")
-        if not dsn:
-            self.skipTest("FALA_POSTGRES_TEST_DSN is not set")
-        try:
-            import psycopg  # noqa: F401
-        except ImportError:
-            self.skipTest("psycopg is not installed")
-
-        run_id = f"run_pg_{uuid.uuid4().hex}"
-        document_id = "doc_pg"
-        pipeline = PipelineSpec(
-            id="postgres_live_contract",
-            steps=[
-                ProcessSpec(
-                    id="extract",
-                    adapter=AdapterSpec(kind="queue", queue="postgres.extract"),
-                )
-            ],
-        )
-        registry = PipelineRegistry([pipeline])
-
-        async def exercise() -> tuple[list[object | None], RuntimeStreamChunk]:
-            store = create_state_store(dsn)
-            service = RuntimeService(registry=registry, store=store)
-            run, schedules = await service.create_run_with_documents(
-                RuntimeRunInput(
-                    run_id=run_id,
-                    pipeline_id=pipeline.id,
-                    documents=[
-                        RuntimeDocumentInput(
-                            document_id=document_id,
-                            values={"source": "postgres-live-test"},
-                        )
-                    ],
-                )
-            )
-            self.assertEqual(run.id, run_id)
-            self.assertEqual(len(schedules), 1)
-
-            scheduler_1 = PipelineScheduler(pipeline, create_state_store(dsn))
-            scheduler_2 = PipelineScheduler(pipeline, create_state_store(dsn))
-            claims = await asyncio.gather(
-                scheduler_1.claim_next(
-                    run_id=run_id,
-                    document_ids=[document_id],
-                    worker_id="worker-1",
-                    lease_seconds=120,
-                ),
-                scheduler_2.claim_next(
-                    run_id=run_id,
-                    document_ids=[document_id],
-                    worker_id="worker-2",
-                    lease_seconds=120,
-                ),
-            )
-
-            chunk = await service.append_stream_chunk(
-                run_id=run_id,
-                document_id=document_id,
-                process_id="extract",
-                pipeline_id=pipeline.id,
-                stream_id="pages",
-                values={"text": "hello"},
-            )
-            checkpoint = await service.put_stream_checkpoint(
-                run_id=run_id,
-                document_id=document_id,
-                process_id="extract",
-                stream_id="pages",
-                consumer_id="indexer",
-                sequence=chunk.sequence,
-                chunk_id=chunk.chunk_id,
-            )
-            loaded = await service.get_stream_checkpoint(
-                run_id=run_id,
-                document_id=document_id,
-                process_id="extract",
-                stream_id="pages",
-                consumer_id="indexer",
-            )
-            self.assertEqual(loaded, checkpoint)
-            return claims, chunk
-
-        try:
-            claims, chunk = asyncio.run(exercise())
-        finally:
-            cleanup_store = create_state_store(dsn)
-            asyncio.run(cleanup_store.delete_run(run_id))
-
-        claimed = [claim for claim in claims if claim is not None]
-        self.assertEqual(len(claimed), 1)
-        self.assertIn(claimed[0].worker_id, {"worker-1", "worker-2"})
-        self.assertEqual(chunk.sequence, 0)
-        self.assertEqual(chunk.values["text"], "hello")
 
     def test_state_store_lists_events_with_process_cursor_and_limit(self) -> None:
         base = datetime(2026, 1, 1, tzinfo=timezone.utc)

@@ -11,9 +11,7 @@ from fala.supervisor import SupervisedWorkerSpec
 
 DeploymentFormat = Literal["docker-compose", "kubernetes"]
 CONTROL_PLANE_SERVICE_NAME = "fala-control-plane"
-POSTGRES_SERVICE_NAME = "fala-postgres"
 DEFAULT_DATA_VOLUME = "fala-data"
-DEFAULT_POSTGRES_VOLUME = "fala-postgres-data"
 DEFAULT_DATA_MOUNT_PATH = "/data"
 DEFAULT_ARTIFACT_STORE_ROOT = "/data/artifact-store"
 DEFAULT_ARTIFACT_CACHE_ROOT = "/data/artifact-cache"
@@ -99,12 +97,6 @@ def render_control_plane_deployment_manifest(
     artifact_cache_root: str = DEFAULT_ARTIFACT_CACHE_ROOT,
     process_artifact_root: str = DEFAULT_PROCESS_ARTIFACT_ROOT,
     data_volume: str = DEFAULT_DATA_VOLUME,
-    include_postgres: bool = False,
-    postgres_image: str = "postgres:16",
-    postgres_database: str = "fala",
-    postgres_user: str = "fala",
-    postgres_password: str = "${FALA_POSTGRES_PASSWORD:-fala}",
-    postgres_volume: str = DEFAULT_POSTGRES_VOLUME,
 ) -> str:
     if control_plane_replicas < 1:
         raise ValueError("control_plane_replicas must be greater than zero")
@@ -124,15 +116,7 @@ def render_control_plane_deployment_manifest(
     control_env = _control_plane_environment(
         env or {},
         container_pipeline_dir=container_pipeline_dir,
-        database_url=(
-            database_url
-            or (
-                f"postgresql://{postgres_user}:{postgres_password}@"
-                f"{POSTGRES_SERVICE_NAME}:5432/{postgres_database}"
-                if include_postgres
-                else None
-            )
-        ),
+        database_url=database_url,
         sqlite_db=sqlite_db,
         queue_broker=queue_broker,
         queue_db=queue_db,
@@ -170,12 +154,6 @@ def render_control_plane_deployment_manifest(
             ),
             data_volume=data_volume,
             data_mount_path=DEFAULT_DATA_MOUNT_PATH,
-            include_postgres=include_postgres,
-            postgres_image=postgres_image,
-            postgres_database=postgres_database,
-            postgres_user=postgres_user,
-            postgres_password=postgres_password,
-            postgres_volume=postgres_volume,
         )
     if format == "kubernetes":
         return _render_control_plane_kubernetes(
@@ -190,12 +168,6 @@ def render_control_plane_deployment_manifest(
             worker_replicas=worker_replicas,
             data_volume=data_volume,
             data_mount_path=DEFAULT_DATA_MOUNT_PATH,
-            include_postgres=include_postgres,
-            postgres_image=postgres_image,
-            postgres_database=postgres_database,
-            postgres_user=postgres_user,
-            postgres_password=postgres_password,
-            postgres_volume=postgres_volume,
         )
     raise ValueError(f"Unsupported deployment format: {format}")
 
@@ -368,12 +340,6 @@ def _render_control_plane_docker_compose(
     pipeline_volume: str | None,
     data_volume: str,
     data_mount_path: str,
-    include_postgres: bool,
-    postgres_image: str,
-    postgres_database: str,
-    postgres_user: str,
-    postgres_password: str,
-    postgres_volume: str,
 ) -> str:
     data_mount = f"{data_volume}:{data_mount_path}"
     services: dict[str, Any] = {
@@ -396,29 +362,6 @@ def _render_control_plane_docker_compose(
     }
     if pipeline_volume is not None:
         services[CONTROL_PLANE_SERVICE_NAME]["volumes"].append(pipeline_volume)
-    if include_postgres:
-        services[CONTROL_PLANE_SERVICE_NAME]["depends_on"] = [POSTGRES_SERVICE_NAME]
-        services[POSTGRES_SERVICE_NAME] = {
-            "image": postgres_image,
-            "restart": "unless-stopped",
-            "environment": _compose_environment(
-                {
-                    "POSTGRES_DB": postgres_database,
-                    "POSTGRES_PASSWORD": postgres_password,
-                    "POSTGRES_USER": postgres_user,
-                }
-            ),
-            "volumes": [f"{postgres_volume}:/var/lib/postgresql/data"],
-            "healthcheck": {
-                "test": [
-                    "CMD-SHELL",
-                    f"pg_isready -U {postgres_user} -d {postgres_database}",
-                ],
-                "interval": "10s",
-                "timeout": "5s",
-                "retries": 5,
-            },
-        }
 
     worker_services = _docker_compose_worker_services(
         workers,
@@ -433,10 +376,7 @@ def _render_control_plane_docker_compose(
             volumes.append(data_mount)
     services.update(worker_services)
 
-    volumes: dict[str, Any] = {data_volume: {}}
-    if include_postgres:
-        volumes[postgres_volume] = {}
-    return _yaml_dump({"services": services, "volumes": volumes})
+    return _yaml_dump({"services": services, "volumes": {data_volume: {}}})
 
 
 def _control_plane_environment(
@@ -642,27 +582,10 @@ def _render_control_plane_kubernetes(
     worker_replicas: int,
     data_volume: str,
     data_mount_path: str,
-    include_postgres: bool,
-    postgres_image: str,
-    postgres_database: str,
-    postgres_user: str,
-    postgres_password: str,
-    postgres_volume: str,
 ) -> str:
     manifests: list[dict[str, Any]] = [
         _k8s_persistent_volume_claim(data_volume, namespace=namespace),
     ]
-    if include_postgres:
-        manifests.extend(
-            _k8s_postgres_manifests(
-                namespace=namespace,
-                image=postgres_image,
-                database=postgres_database,
-                user=postgres_user,
-                password=postgres_password,
-                volume=postgres_volume,
-            )
-        )
     control_plane = _k8s_control_plane_deployment(
         image=image,
         namespace=namespace,
@@ -778,75 +701,6 @@ def _k8s_control_plane_service(
     if namespace:
         manifest["metadata"]["namespace"] = namespace
     return manifest
-
-
-def _k8s_postgres_manifests(
-    *,
-    namespace: str | None,
-    image: str,
-    database: str,
-    user: str,
-    password: str,
-    volume: str,
-) -> list[dict[str, Any]]:
-    labels = {
-        "app.kubernetes.io/name": "postgres",
-        "app.kubernetes.io/component": "database",
-        "app.kubernetes.io/instance": POSTGRES_SERVICE_NAME,
-    }
-    deployment: dict[str, Any] = {
-        "apiVersion": "apps/v1",
-        "kind": "Deployment",
-        "metadata": {
-            "name": POSTGRES_SERVICE_NAME,
-            "labels": labels,
-        },
-        "spec": {
-            "replicas": 1,
-            "selector": {"matchLabels": {"app.kubernetes.io/instance": POSTGRES_SERVICE_NAME}},
-            "template": {
-                "metadata": {"labels": labels},
-                "spec": {
-                    "containers": [
-                        {
-                            "name": "postgres",
-                            "image": image,
-                            "env": _k8s_env(
-                                {
-                                    "POSTGRES_DB": database,
-                                    "POSTGRES_PASSWORD": password,
-                                    "POSTGRES_USER": user,
-                                }
-                            ),
-                            "ports": [{"name": "postgres", "containerPort": 5432}],
-                        }
-                    ],
-                },
-            },
-        },
-    }
-    _add_k8s_pvc_mount(
-        deployment,
-        claim_name=volume,
-        mount_path="/var/lib/postgresql/data",
-    )
-    service: dict[str, Any] = {
-        "apiVersion": "v1",
-        "kind": "Service",
-        "metadata": {
-            "name": POSTGRES_SERVICE_NAME,
-            "labels": labels,
-        },
-        "spec": {
-            "selector": {"app.kubernetes.io/instance": POSTGRES_SERVICE_NAME},
-            "ports": [{"name": "postgres", "port": 5432, "targetPort": "postgres"}],
-        },
-    }
-    pvc = _k8s_persistent_volume_claim(volume, namespace=namespace)
-    if namespace:
-        deployment["metadata"]["namespace"] = namespace
-        service["metadata"]["namespace"] = namespace
-    return [pvc, deployment, service]
 
 
 def _k8s_persistent_volume_claim(

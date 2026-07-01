@@ -209,7 +209,6 @@ from fala.models import (
     WorkerSandboxSpec,
 )
 from fala.registry import PipelineRegistry, PipelineRegistryError
-from fala.postgres_store import PostgresStateStore
 from fala.queue_bridge import (
     JsonlQueueTransport,
     MemoryQueueTransport,
@@ -345,7 +344,6 @@ __all__ = [
     "PipelineRegistry",
     "PipelineRegistryError",
     "PipelineSpec",
-    "PostgresStateStore",
     "ProcessAdapter",
     "ProcessAdapterError",
     "ProcessAction",

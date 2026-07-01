@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import os
-import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from fala.postgres_store import ConnectionFactory, POSTGRES_SCHEMA_SQL, PostgresStateStore
 from fala.schema_migrations import (
     RUNTIME_SCHEMA_VERSION,
     runtime_schema_migration_rows,
@@ -17,40 +15,43 @@ from fala.sqlite_store import SQLiteStateStore
 from fala.store import StateStore
 
 
-POSTGRES_SCHEMES = {"postgres", "postgresql"}
 SQLITE_SCHEMES = {"sqlite", "sqlite3"}
 
-EXPECTED_RUNTIME_TABLES = tuple(
-    sorted(
-        set(
-            re.findall(
-                r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z0-9_]*)",
-                POSTGRES_SCHEMA_SQL,
-                flags=re.IGNORECASE,
-            )
-        )
-    )
+EXPECTED_RUNTIME_TABLES = (
+    "operator_audit_events",
+    "process_claims",
+    "process_document_inputs",
+    "process_documents",
+    "process_events",
+    "process_outputs",
+    "process_projections",
+    "process_runs",
+    "process_statuses",
+    "process_stream_checkpoints",
+    "process_stream_chunks",
+    "process_worker_heartbeats",
+    "runtime_schema_migrations",
 )
 
 
 def create_state_store(
     target: str | os.PathLike[str],
     *,
-    postgres_connect_factory: ConnectionFactory | None = None,
     ensure_schema: bool = True,
 ) -> StateStore:
-    """Create a runtime state store from a filesystem path or database URL."""
+    """Create the shipped first-party runtime state store.
 
+    Fala 2.0 keeps a backend plugin boundary, but the core distribution ships
+    only SQLite. Non-SQLite backends belong in external RuntimeBackend plugins.
+    """
+
+    del ensure_schema
     target_text = os.fspath(target)
     parsed = urlparse(target_text)
-    if parsed.scheme in POSTGRES_SCHEMES:
-        return PostgresStateStore(
-            target_text,
-            connect_factory=postgres_connect_factory,
-            ensure_schema=ensure_schema,
-        )
     if parsed.scheme in SQLITE_SCHEMES:
         return SQLiteStateStore(_sqlite_path_from_url(target_text))
+    if parsed.scheme:
+        raise ValueError(_unsupported_backend_message(parsed.scheme))
     return SQLiteStateStore(target_text)
 
 
@@ -81,18 +82,18 @@ def runtime_db_diagnostics(
     target: str | os.PathLike[str],
     *,
     ensure_schema: bool = False,
-    postgres_connect_factory: ConnectionFactory | None = None,
 ) -> dict[str, Any]:
     target_text = os.fspath(target)
     parsed = urlparse(target_text)
-    if parsed.scheme in POSTGRES_SCHEMES:
-        return _postgres_db_diagnostics(
-            target_text,
-            ensure_schema=ensure_schema,
-            postgres_connect_factory=postgres_connect_factory,
-        )
     if parsed.scheme in SQLITE_SCHEMES:
         sqlite_path = Path(_sqlite_path_from_url(target_text))
+    elif parsed.scheme:
+        return _db_diagnostics_error(
+            store_kind="unsupported",
+            target=target_text,
+            ensure_schema=ensure_schema,
+            error=_unsupported_backend_message(parsed.scheme),
+        )
     else:
         sqlite_path = Path(target_text)
     return _sqlite_db_diagnostics(sqlite_path, ensure_schema=ensure_schema)
@@ -160,64 +161,6 @@ def _sqlite_db_diagnostics(path: Path, *, ensure_schema: bool) -> dict[str, Any]
     )
 
 
-def _postgres_db_diagnostics(
-    dsn: str,
-    *,
-    ensure_schema: bool,
-    postgres_connect_factory: ConnectionFactory | None,
-) -> dict[str, Any]:
-    try:
-        store = PostgresStateStore(
-            dsn,
-            connect_factory=postgres_connect_factory,
-            ensure_schema=ensure_schema,
-        )
-        with store._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = current_schema()
-                  AND table_type = 'BASE TABLE'
-                """
-            ).fetchall()
-            tables = sorted(str(row["table_name"]) for row in rows)
-            table_set = set(tables)
-            missing_tables = [
-                table for table in EXPECTED_RUNTIME_TABLES if table not in table_set
-            ]
-            migrations = _postgres_schema_migration_status(conn, table_set)
-            run_count = _postgres_count(conn, "process_runs", table_set)
-            document_count = _postgres_count(conn, "process_documents", table_set)
-            process_count = _postgres_count(conn, "process_statuses", table_set)
-    except Exception as exc:
-        return _db_diagnostics_error(
-            store_kind="postgres",
-            target=dsn,
-            ensure_schema=ensure_schema,
-            error=str(exc),
-        )
-    return _db_diagnostics_payload(
-        store_kind="postgres",
-        target=dsn,
-        ensure_schema=ensure_schema,
-        created=False,
-        tables=tables,
-        missing_tables=missing_tables,
-        migrations=migrations,
-        run_count=run_count,
-        document_count=document_count,
-        process_count=process_count,
-    )
-
-
-def _postgres_count(conn: Any, table: str, table_set: set[str]) -> int | None:
-    if table not in table_set:
-        return None
-    row = conn.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()
-    return int(row["count"])
-
-
 def _sqlite_schema_migration_status(
     conn: sqlite3.Connection,
     table_set: set[str],
@@ -245,30 +188,6 @@ def _sqlite_schema_migration_status(
         for row in rows
     ]
     return _schema_migration_status(applied, user_version=user_version)
-
-
-def _postgres_schema_migration_status(conn: Any, table_set: set[str]) -> dict[str, Any]:
-    if "runtime_schema_migrations" not in table_set:
-        return _schema_migration_status([], user_version=None)
-    rows = conn.execute(
-        """
-        SELECT version, migration_id, description, checksum, applied_at, payload
-        FROM runtime_schema_migrations
-        ORDER BY version ASC
-        """
-    ).fetchall()
-    applied = [
-        {
-            "version": int(row["version"]),
-            "migration_id": str(row["migration_id"]),
-            "description": str(row["description"]),
-            "checksum": str(row["checksum"]),
-            "applied_at": str(row["applied_at"]),
-            "payload": str(row["payload"]),
-        }
-        for row in rows
-    ]
-    return _schema_migration_status(applied, user_version=None)
 
 
 def _schema_migration_status(
@@ -403,3 +322,12 @@ def _sqlite_path_from_url(url: str) -> str:
     if not path:
         raise ValueError("SQLite URL must include a database path")
     return str(Path(unquote(path)))
+
+
+def _unsupported_backend_message(scheme: str) -> str:
+    return (
+        "Fala ships only the SQLite state store first-party. "
+        f"Unsupported backend URL scheme: {scheme!r}. "
+        "Use sqlite:// or a filesystem path, or provide a non-SQLite "
+        "RuntimeBackend as an external plugin."
+    )

@@ -347,7 +347,7 @@ def _build_parser() -> argparse.ArgumentParser:
         )
 
     def add_project_runtime_args(command: argparse.ArgumentParser) -> None:
-        command.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+        command.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
         add_project_base_args(command)
         command.add_argument("--package-id", default=None)
         command.add_argument("--pipeline-id", default=None)
@@ -541,7 +541,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "db-doctor",
         help="Check runtime database connectivity and schema readiness.",
     )
-    db_doctor.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    db_doctor.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     db_doctor.add_argument(
         "--ensure-schema",
         action="store_true",
@@ -725,7 +725,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Create a mixed project run and execute local/declared workers until idle.",
     )
     add_project_base_args(project_smoke)
-    project_smoke.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    project_smoke.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     project_smoke.add_argument("--run-id", default=None)
     project_smoke.add_argument("--title", default=None)
     project_smoke.add_argument("--worker-id", default="local-smoke")
@@ -1112,7 +1112,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--db",
         default=None,
         help=(
-            "Runtime DB path or Postgres DSN. Defaults to FALA_DATABASE_URL, "
+            "Runtime SQLite DB path or sqlite:// URL. Defaults to FALA_DATABASE_URL, "
             "FALA_DB, then fala.db."
         ),
     )
@@ -1302,7 +1302,7 @@ def _build_parser() -> argparse.ArgumentParser:
     deployment.add_argument(
         "--sqlite-db",
         default="/data/fala.db",
-        help="SQLite DB path inside the control-plane container when no Postgres URL is set.",
+        help="SQLite DB path inside the control-plane container.",
     )
     deployment.add_argument(
         "--queue-broker",
@@ -1344,16 +1344,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Worker process artifact root inside generated services.",
     )
     deployment.add_argument("--data-volume", default="fala-data")
-    deployment.add_argument("--with-postgres", action="store_true")
-    deployment.add_argument("--postgres-image", default="postgres:16")
-    deployment.add_argument("--postgres-database", default="fala")
-    deployment.add_argument("--postgres-user", default="fala")
-    deployment.add_argument(
-        "--postgres-password",
-        default="${FALA_POSTGRES_PASSWORD:-fala}",
-        help="Postgres password value in generated manifests.",
-    )
-    deployment.add_argument("--postgres-volume", default="fala-postgres-data")
     deployment.add_argument(
         "--env",
         action="append",
@@ -1636,7 +1626,7 @@ def _build_parser() -> argparse.ArgumentParser:
     describe.add_argument("pipeline_id")
 
     init = subparsers.add_parser("init-document", help="Initialize document graph in runtime store.")
-    init.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    init.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     init.add_argument("--pipeline", required=True, help="Pipeline id.")
     init.add_argument("--run-id", required=True)
     init.add_argument("--document-id", required=True)
@@ -1657,7 +1647,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "create-run",
         help="Create a run and initialize many documents in runtime store.",
     )
-    create_run.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    create_run.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     create_run.add_argument(
         "--pipeline",
         default=None,
@@ -1722,7 +1712,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "create-project-run",
         help="Create a mixed run from fala-project.yaml source-list routing.",
     )
-    create_project_run.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    create_project_run.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     create_project_run.add_argument(
         "--project-dir",
         default=".",
@@ -1758,7 +1748,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "append-documents",
         help="Append many documents to an existing runtime run.",
     )
-    append_documents.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    append_documents.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     append_documents.add_argument("--run-id", required=True)
     append_documents.add_argument(
         "--pipeline",
@@ -1812,7 +1802,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "list-documents",
         help="List runtime document registry records from runtime store.",
     )
-    list_documents.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    list_documents.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     list_documents.add_argument("--run-id", required=True)
     list_documents.add_argument(
         "--status",
@@ -1835,7 +1825,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "list-processes",
         help="List runtime process records from runtime store.",
     )
-    list_processes.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    list_processes.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     list_processes.add_argument("--run-id", required=True)
     list_processes.add_argument(
         "--status",
@@ -1863,7 +1853,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "dead-letter",
         help="List failed runtime processes requiring operator replay or triage.",
     )
-    dead_letter.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    dead_letter.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     dead_letter.add_argument("--run-id", required=True)
     dead_letter.add_argument("--pipeline", default=None)
     dead_letter.add_argument("--document-type", default=None)
@@ -1886,7 +1876,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "stuck-work",
         help="List queued, waiting, or running runtime processes that exceeded SLA thresholds.",
     )
-    stuck_work.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    stuck_work.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     stuck_work.add_argument("--run-id", required=True)
     stuck_work.add_argument(
         "--status",
@@ -1921,7 +1911,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "stream-lag",
         help="List process stream consumer lag for one runtime run.",
     )
-    stream_lag.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    stream_lag.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     stream_lag.add_argument("--run-id", required=True)
     stream_lag.add_argument("--pipeline", default=None)
     stream_lag.add_argument("--document-type", default=None)
@@ -1952,7 +1942,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "replay-dead-letter",
         help="Retry one failed runtime process from the dead-letter queue.",
     )
-    replay_dead_letter.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    replay_dead_letter.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     replay_dead_letter.add_argument("--run-id", required=True)
     replay_dead_letter.add_argument("--document-id", required=True)
     replay_dead_letter.add_argument("--process-id", required=True)
@@ -1968,7 +1958,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "control-run",
         help="Pause, resume, or cancel a runtime run.",
     )
-    control_run.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    control_run.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     control_run.add_argument("--run-id", required=True)
     control_run.add_argument(
         "--action",
@@ -2111,7 +2101,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     claim = subparsers.add_parser("claim", help="Claim next ready process from runtime store.")
-    claim.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    claim.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     claim.add_argument("--pipeline", required=True, help="Pipeline id.")
     claim.add_argument("--run-id", required=True)
     claim.add_argument("--worker-id", default=None)
@@ -2125,7 +2115,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "work-once",
         help="Claim one ready process, run its adapter, and persist output.",
     )
-    work.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    work.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     work.add_argument("--pipeline", required=True, help="Pipeline id.")
     work.add_argument("--run-id", required=True)
     work.add_argument("--worker-id", required=True)
@@ -2139,7 +2129,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "run-until-idle",
         help="Run ready processes until no matching claim remains.",
     )
-    run.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    run.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     run.add_argument("--pipeline", required=True, help="Pipeline id.")
     run.add_argument("--run-id", required=True)
     run.add_argument("--worker-id", required=True)
@@ -2159,7 +2149,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "complete-process",
         help="Write process output and mark the process completed.",
     )
-    complete.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    complete.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     complete.add_argument("--pipeline", default=None, help="Pipeline id.")
     complete.add_argument("--run-id", required=True)
     complete.add_argument("--document-id", required=True)
@@ -2180,7 +2170,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     status = subparsers.add_parser("status", help="Show runtime state for a run.")
-    status.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    status.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     status.add_argument("--run-id", required=True)
     status.add_argument(
         "--include-events",
@@ -2192,14 +2182,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "queue-metrics",
         help="Show queued/running bottlenecks and capacity for one run.",
     )
-    queue_metrics.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    queue_metrics.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     queue_metrics.add_argument("--run-id", required=True)
 
     capability_demands = subparsers.add_parser(
         "capability-demands",
         help="Show worker demand grouped by capability for one run.",
     )
-    capability_demands.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    capability_demands.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     capability_demands.add_argument("--run-id", required=True)
     capability_demands.add_argument("--stale-after-seconds", type=float, default=60.0)
 
@@ -2207,7 +2197,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "metrics-prometheus",
         help="Render Prometheus text metrics for one run.",
     )
-    prometheus_metrics.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    prometheus_metrics.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     prometheus_metrics.add_argument("--run-id", required=True)
     prometheus_metrics.add_argument("--stale-after-seconds", type=float, default=60.0)
 
@@ -2215,7 +2205,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "health",
         help="Show aggregated run health issues for one run.",
     )
-    health.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    health.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     health.add_argument("--run-id", required=True)
     health.add_argument("--stale-after-seconds", type=float, default=60.0)
 
@@ -2223,7 +2213,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "worker-health",
         help="Show worker heartbeats and stale/healthy state for one run.",
     )
-    worker_health.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    worker_health.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     worker_health.add_argument("--run-id", required=True)
     worker_health.add_argument("--stale-after-seconds", type=float, default=60.0)
 
@@ -2231,7 +2221,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "audit-log",
         help="Show operator audit events.",
     )
-    audit_log.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    audit_log.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     audit_log.add_argument("--run-id", default=None)
     audit_log.add_argument("--limit", type=int, default=100)
 
@@ -2239,7 +2229,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "trace",
         help="Show process attempt history for one run.",
     )
-    trace.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    trace.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     trace.add_argument("--run-id", required=True)
     trace.add_argument("--document-id", default=None)
     trace.add_argument("--process-id", default=None)
@@ -2249,14 +2239,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "document-lineage",
         help="Show parent/child document graph for one run.",
     )
-    lineage.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    lineage.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     lineage.add_argument("--run-id", required=True)
 
     results = subparsers.add_parser(
         "run-results",
         help="Export process outputs across documents in one run.",
     )
-    results.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    results.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     results.add_argument("--run-id", required=True)
     results.add_argument("--pipeline", default=None)
     results.add_argument("--process-id", default=None)
@@ -2276,7 +2266,7 @@ def _build_parser() -> argparse.ArgumentParser:
     output_documents.add_argument(
         "--db",
         required=True,
-        help="Runtime DB path or Postgres DSN.",
+        help="Runtime SQLite DB path or sqlite:// URL.",
     )
     output_documents.add_argument("--run-id", required=True)
     output_documents.add_argument("--pipeline", default=None)
@@ -2299,7 +2289,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "run-reductions",
         help="Compute declared run-level reductions from process outputs.",
     )
-    reductions.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    reductions.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     reductions.add_argument("--run-id", required=True)
     reductions.add_argument("--pipeline", default=None)
     reductions.add_argument("--reduce-id", default=None)
@@ -2308,7 +2298,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "artifact-gc",
         help="Plan or delete orphaned content-addressed artifact blobs.",
     )
-    artifact_gc.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    artifact_gc.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     artifact_gc.add_argument(
         "--artifact-store-root",
         default=None,
@@ -2324,7 +2314,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "run-retention",
         help="Plan or delete old runtime state for selected run statuses.",
     )
-    retention.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    retention.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     cutoff = retention.add_mutually_exclusive_group(required=True)
     cutoff.add_argument("--before", default=None, help="ISO datetime cutoff.")
     cutoff.add_argument(
@@ -2350,7 +2340,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "stream-append",
         help="Append one chunk to a process stream.",
     )
-    stream_append.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    stream_append.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     stream_append.add_argument("--run-id", required=True)
     stream_append.add_argument("--document-id", required=True)
     stream_append.add_argument("--process-id", required=True)
@@ -2370,7 +2360,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "stream-list",
         help="List chunks from a process stream.",
     )
-    stream_list.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    stream_list.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     stream_list.add_argument("--run-id", required=True)
     stream_list.add_argument("--document-id", required=True)
     stream_list.add_argument("--process-id", required=True)
@@ -2382,7 +2372,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "stream-checkpoint",
         help="Store one stream consumer checkpoint.",
     )
-    stream_checkpoint.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    stream_checkpoint.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     stream_checkpoint.add_argument("--run-id", required=True)
     stream_checkpoint.add_argument("--document-id", required=True)
     stream_checkpoint.add_argument("--process-id", required=True)
@@ -2396,7 +2386,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "stream-checkpoint-get",
         help="Read one stream consumer checkpoint.",
     )
-    stream_checkpoint_get.add_argument("--db", required=True, help="Runtime DB path or Postgres DSN.")
+    stream_checkpoint_get.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     stream_checkpoint_get.add_argument("--run-id", required=True)
     stream_checkpoint_get.add_argument("--document-id", required=True)
     stream_checkpoint_get.add_argument("--process-id", required=True)
@@ -3130,12 +3120,6 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             artifact_cache_root=args.artifact_cache_root,
             process_artifact_root=args.process_artifact_root,
             data_volume=args.data_volume,
-            include_postgres=args.with_postgres,
-            postgres_image=args.postgres_image,
-            postgres_database=args.postgres_database,
-            postgres_user=args.postgres_user,
-            postgres_password=args.postgres_password,
-            postgres_volume=args.postgres_volume,
         )
         return {
             "ok": True,
