@@ -314,15 +314,45 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
     def test_cli_inspects_carrier_runtime_state_without_web_stack(self) -> None:
         async def scenario(db_path: Path) -> None:
             runtime = FalaRuntime.sqlite(db_path)
+            carrier_type = CarrierType(
+                id="case",
+                run_id="run_cli",
+                title="Case",
+                media_types=["application/json"],
+            )
             carrier = Carrier(
                 id="carrier_cli",
                 run_id="run_cli",
                 carrier_type="case",
                 payload={"case_id": "CLI-1"},
             )
+            child = Carrier(
+                id="carrier_cli_child",
+                run_id="run_cli",
+                carrier_type="case",
+                payload={"case_id": "CLI-1-child"},
+            )
+            await runtime.register_carrier_type(
+                carrier_type,
+                idempotency_key="run_cli:carrier_type:case",
+            )
             stored, _ = await runtime.accept_carrier(
                 carrier,
                 idempotency_key="run_cli:carrier.accept:carrier_cli",
+            )
+            await runtime.accept_carrier(
+                child,
+                idempotency_key="run_cli:carrier.accept:carrier_cli_child",
+            )
+            await runtime.record_carrier_relation(
+                CarrierRelation(
+                    id="relation_cli",
+                    run_id="run_cli",
+                    relation_type="derived_from",
+                    source_carrier_id=stored.id,
+                    target_carrier_id=child.id,
+                ),
+                idempotency_key="run_cli:carrier_relation:relation_cli",
             )
             await runtime.record_observation(
                 Observation(
@@ -364,7 +394,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 "--run-id",
                 "run_cli",
             )
-            self.assertEqual(carriers["count"], 1)
+            self.assertEqual(carriers["count"], 2)
             self.assertEqual(carriers["carriers"][0]["id"], "carrier_cli")
 
             inspected = _run_cli_json(
@@ -380,6 +410,62 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertTrue(inspected["ok"])
             self.assertEqual(inspected["carrier"]["carrier_type"], "case")
 
+            carrier_types = _run_cli_json(
+                "carrier-types",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+            )
+            self.assertEqual(carrier_types["count"], 1)
+            self.assertEqual(carrier_types["carrier_types"][0]["id"], "case")
+
+            inspected_type = _run_cli_json(
+                "carrier-types",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--carrier-type-id",
+                "case",
+            )
+            self.assertTrue(inspected_type["ok"])
+            self.assertEqual(inspected_type["carrier_type"]["title"], "Case")
+
+            carrier_relations = _run_cli_json(
+                "carrier-relations",
+                "list",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--carrier-id",
+                "carrier_cli_child",
+            )
+            self.assertEqual(carrier_relations["count"], 1)
+            self.assertEqual(
+                carrier_relations["carrier_relations"][0]["relation_type"],
+                "derived_from",
+            )
+
+            inspected_relation = _run_cli_json(
+                "carrier-relations",
+                "inspect",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--relation-id",
+                "relation_cli",
+            )
+            self.assertTrue(inspected_relation["ok"])
+            self.assertEqual(
+                inspected_relation["carrier_relation"]["target_carrier_id"],
+                "carrier_cli_child",
+            )
+
             events = _run_cli_json(
                 "events",
                 "list",
@@ -392,7 +478,12 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             )
             self.assertEqual(
                 [event["event_type"] for event in events["events"]],
-                ["carrier.accepted", "observation.recorded", "gate.saved"],
+                [
+                    "carrier.accepted",
+                    "carrier_relation.recorded",
+                    "observation.recorded",
+                    "gate.saved",
+                ],
             )
 
             observations = _run_cli_json(

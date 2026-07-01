@@ -1644,6 +1644,50 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_carrier_runtime_db_run_args(carriers_inspect)
     carriers_inspect.add_argument("--carrier-id", required=True)
 
+    carrier_types = subparsers.add_parser(
+        "carrier-types",
+        help="Inspect Carrier-first runtime carrier types.",
+    )
+    carrier_type_subparsers = carrier_types.add_subparsers(
+        dest="carrier_type_command",
+        required=True,
+    )
+    carrier_types_list = carrier_type_subparsers.add_parser(
+        "list",
+        help="List carrier types.",
+    )
+    _add_carrier_runtime_db_run_args(carrier_types_list)
+    carrier_types_list.add_argument("--jsonl", action="store_true")
+    carrier_types_inspect = carrier_type_subparsers.add_parser(
+        "inspect",
+        help="Inspect one carrier type.",
+    )
+    _add_carrier_runtime_db_run_args(carrier_types_inspect)
+    carrier_types_inspect.add_argument("--carrier-type-id", required=True)
+
+    carrier_relations = subparsers.add_parser(
+        "carrier-relations",
+        help="Inspect Carrier-first runtime carrier relations.",
+    )
+    carrier_relation_subparsers = carrier_relations.add_subparsers(
+        dest="carrier_relation_command",
+        required=True,
+    )
+    carrier_relations_list = carrier_relation_subparsers.add_parser(
+        "list",
+        help="List carrier relations.",
+    )
+    _add_carrier_runtime_db_run_args(carrier_relations_list)
+    carrier_relations_list.add_argument("--carrier-id", default=None)
+    carrier_relations_list.add_argument("--relation-type", default=None)
+    carrier_relations_list.add_argument("--jsonl", action="store_true")
+    carrier_relations_inspect = carrier_relation_subparsers.add_parser(
+        "inspect",
+        help="Inspect one carrier relation.",
+    )
+    _add_carrier_runtime_db_run_args(carrier_relations_inspect)
+    carrier_relations_inspect.add_argument("--relation-id", required=True)
+
     observations = subparsers.add_parser(
         "observations",
         help="Inspect Carrier-first runtime observations.",
@@ -2693,7 +2737,15 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
     if args.command == "project-lifecycle":
         return await _project_lifecycle_command(args)
 
-    if args.command in {"carriers", "observations", "events", "gates", "projections"}:
+    if args.command in {
+        "carrier-relations",
+        "carrier-types",
+        "carriers",
+        "events",
+        "gates",
+        "observations",
+        "projections",
+    }:
         return await _carrier_runtime_command(args)
 
     if args.command == "create-project-run":
@@ -3974,6 +4026,46 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         return {
             "ok": carrier is not None,
             "carrier": carrier.model_dump(mode="json") if carrier is not None else None,
+        }
+    if args.command == "carrier-types":
+        if args.carrier_type_command == "list":
+            carrier_types = await backend.list_carrier_types(run_id=args.run_id)
+            return _carrier_runtime_list_result(
+                "carrier_types",
+                carrier_types,
+                jsonl=args.jsonl,
+            )
+        carrier_type = await backend.get_carrier_type(
+            run_id=args.run_id,
+            carrier_type_id=args.carrier_type_id,
+        )
+        return {
+            "ok": carrier_type is not None,
+            "carrier_type": carrier_type.model_dump(mode="json")
+            if carrier_type is not None
+            else None,
+        }
+    if args.command == "carrier-relations":
+        if args.carrier_relation_command == "list":
+            relations = await backend.list_carrier_relations(
+                run_id=args.run_id,
+                carrier_id=args.carrier_id,
+                relation_type=args.relation_type,
+            )
+            return _carrier_runtime_list_result(
+                "carrier_relations",
+                relations,
+                jsonl=args.jsonl,
+            )
+        relation = await backend.get_carrier_relation(
+            run_id=args.run_id,
+            relation_id=args.relation_id,
+        )
+        return {
+            "ok": relation is not None,
+            "carrier_relation": relation.model_dump(mode="json")
+            if relation is not None
+            else None,
         }
     if args.command == "observations":
         observations = await backend.list_observations(
