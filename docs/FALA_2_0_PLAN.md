@@ -306,7 +306,7 @@ not complete enough to close the requirement.
 | 26 | Secrets and redaction | PARTIAL | Resolve env secrets safely and redact them from events, reports, traces, metadata, and exports. |
 | 27 | Retention and garbage collection | PARTIAL | Finish run archive, SQLite compact/vacuum, dry-run GC, artifact GC, and shared artifact safeguards. |
 | 28 | Projections | PARTIAL | Built-in `run_summary` can be rebuilt; add stale detection and broader projection schemas. |
-| 29 | Doctor / validation | PARTIAL | Expand `fala doctor`-style checks for carrier schema, adapters, graph, SQLite status, artifact store, and bridge config. |
+| 29 | Doctor / validation | PARTIAL | `fala doctor` checks Carrier SQLite schema/status; expand to YAML, adapters, graph, artifact store, and bridge config. |
 | 30 | Trace / debug / export | PARTIAL | Carrier trace.json, timeline.json, graph.dot, report.html, and bundle export exist; harden replay/export formats. |
 | 31 | Step SDK | PARTIAL | Standardize subprocess input/output manifests and transactional runtime commit. |
 | 32 | Actor model | PARTIAL | Use actor fields consistently for CLI, worker, web, adapter, bridge, and human actions. |

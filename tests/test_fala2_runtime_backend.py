@@ -64,13 +64,18 @@ from fala.runtime_backend import (
 
 
 def _run_cli_json(*args: str) -> dict:
+    code, payload = _run_cli_raw(*args)
+    if code != 0:
+        raise AssertionError(payload)
+    return payload
+
+
+def _run_cli_raw(*args: str) -> tuple[int, dict]:
     buffer = StringIO()
     with redirect_stdout(buffer):
         code = fala_cli_main(list(args))
     payload = json.loads(buffer.getvalue())
-    if code != 0:
-        raise AssertionError(payload)
-    return payload
+    return code, payload
 
 
 class Fala2RuntimeBackendTests(unittest.TestCase):
@@ -1233,6 +1238,51 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 ).fetchone()
 
         self.assertEqual(row, ("runtime_backend", 1, "runtime_backend"))
+
+    def test_carrier_runtime_doctor_checks_sqlite_schema(self) -> None:
+        async def scenario(db_path: Path) -> None:
+            runtime = FalaRuntime.sqlite(db_path)
+            await runtime.create_run(
+                Run(id="run_doctor", title="Doctor run"),
+                idempotency_key="run_doctor:create",
+            )
+            await runtime.accept_carrier(
+                Carrier(
+                    id="carrier_doctor",
+                    run_id="run_doctor",
+                    carrier_type="case",
+                ),
+                idempotency_key="run_doctor:carrier.accept",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "missing.sqlite"
+            code, missing = _run_cli_raw("doctor", "--db", str(db_path))
+            self.assertEqual(code, 1)
+            self.assertFalse(missing["ok"])
+            self.assertIn("does not exist", missing["error"])
+
+            asyncio.run(scenario(db_path))
+            doctor = _run_cli_json("doctor", "--db", str(db_path))
+            self.assertTrue(doctor["ok"])
+            self.assertEqual(doctor["schema"]["missing_tables"], [])
+            self.assertEqual(doctor["schema"]["current_version"], 1)
+            self.assertEqual(doctor["schema"]["latest_version"], 1)
+            self.assertEqual(doctor["counts"]["runs"], 1)
+            self.assertEqual(doctor["counts"]["carriers"], 1)
+            self.assertEqual(doctor["counts"]["runtime_events"], 2)
+
+            output = Path(tmp_dir) / "doctor.json"
+            written = _run_cli_json(
+                "doctor",
+                "--db",
+                str(db_path),
+                "--output",
+                str(output),
+            )
+            self.assertTrue(written["ok"])
+            self.assertEqual(written["current_version"], 1)
+            self.assertTrue(output.is_file())
 
     def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:
         async def scenario() -> None:

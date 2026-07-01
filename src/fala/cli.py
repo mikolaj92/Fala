@@ -13,6 +13,7 @@ import os
 import pprint
 import shlex
 import shutil
+import sqlite3
 import sys
 import zipfile
 from collections import Counter, defaultdict
@@ -303,6 +304,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "list-documents",
             "list-processes",
             "dead-letter",
+            "doctor",
             "events",
             "export-bundle",
             "export-html",
@@ -565,6 +567,30 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output",
         default=None,
         help="Write JSON database report to this path instead of stdout envelope.",
+    )
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check Carrier-first runtime readiness.",
+    )
+    doctor.add_argument(
+        "--carrier-runtime",
+        action="store_true",
+        help="Accepted for clarity; `doctor` checks the Carrier runtime by default.",
+    )
+    doctor.add_argument(
+        "--db",
+        default=".fala/state.sqlite",
+        help="Carrier runtime SQLite DB path or sqlite:// URL.",
+    )
+    doctor.add_argument(
+        "--ensure-schema",
+        action="store_true",
+        help="Create/repair Carrier runtime schema before checking.",
+    )
+    doctor.add_argument(
+        "--output",
+        default=None,
+        help="Write JSON doctor report to this path instead of stdout envelope.",
     )
 
     package_doctor = subparsers.add_parser(
@@ -3157,6 +3183,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             }
         return report
 
+    if args.command == "doctor":
+        return _carrier_runtime_doctor(args)
+
     registry = PipelineRegistry.from_directory(_pipeline_dir(args))
 
     if args.command == "package-index":
@@ -4155,6 +4184,24 @@ def _add_carrier_runtime_db_run_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--run-id", required=True)
 
 
+_CARRIER_RUNTIME_REQUIRED_TABLES = (
+    "artifacts",
+    "bridge_inbox",
+    "bridge_outbox",
+    "carrier_relations",
+    "carrier_types",
+    "carriers",
+    "gates",
+    "observations",
+    "processes",
+    "projections",
+    "runtime_commands",
+    "runtime_events",
+    "runs",
+    "schema_migrations",
+)
+
+
 async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
     backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
     if args.command == "runs":
@@ -4388,6 +4435,97 @@ def _carrier_runtime_list_result(
         "count": len(payload),
         key: payload,
     }
+
+
+def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
+    db_path = Path(_carrier_runtime_db_path(args.db))
+    if args.ensure_schema:
+        SQLiteRuntimeBackend(db_path)
+    if not db_path.exists():
+        report = {
+            "ok": False,
+            "store_kind": "sqlite",
+            "path": str(db_path),
+            "error": f"SQLite database does not exist: {db_path}",
+        }
+        return _write_carrier_runtime_doctor_report(args, report)
+
+    with sqlite3.connect(db_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        missing_tables = sorted(set(_CARRIER_RUNTIME_REQUIRED_TABLES) - tables)
+        migration = None
+        if "schema_migrations" in tables:
+            migration = connection.execute(
+                """
+                SELECT version, applied_at
+                FROM schema_migrations
+                WHERE id = 'runtime_backend'
+                """
+            ).fetchone()
+        counts = {
+            table: _sqlite_count(connection, table) if table in tables else None
+            for table in (
+                "runs",
+                "carriers",
+                "runtime_commands",
+                "runtime_events",
+                "observations",
+                "artifacts",
+                "processes",
+                "gates",
+                "projections",
+                "bridge_outbox",
+                "bridge_inbox",
+            )
+        }
+
+    current_version = int(migration[0]) if migration is not None else None
+    report = {
+        "ok": not missing_tables and current_version == 1,
+        "store_kind": "sqlite",
+        "path": str(db_path),
+        "schema": {
+            "required_tables": list(_CARRIER_RUNTIME_REQUIRED_TABLES),
+            "missing_tables": missing_tables,
+            "current_version": current_version,
+            "latest_version": 1,
+            "migrations": {
+                "ok": current_version == 1,
+                "applied_at": migration[1] if migration is not None else None,
+                "missing": [] if current_version == 1 else ["runtime_backend"],
+            },
+        },
+        "counts": counts,
+    }
+    return _write_carrier_runtime_doctor_report(args, report)
+
+
+def _write_carrier_runtime_doctor_report(
+    args: argparse.Namespace,
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    if not args.output:
+        return report
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "ok": report["ok"],
+        "output": str(output),
+        "store_kind": report["store_kind"],
+        "missing_table_count": len(report.get("schema", {}).get("missing_tables", [])),
+        "current_version": report.get("schema", {}).get("current_version"),
+        "latest_version": report.get("schema", {}).get("latest_version"),
+    }
+
+
+def _sqlite_count(connection: sqlite3.Connection, table: str) -> int:
+    return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
 async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
