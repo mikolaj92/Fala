@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import tomllib
 import unittest
 import inspect
 from pathlib import Path
@@ -50,6 +51,21 @@ from fala.runtime_backend import (
 
 
 class Fala2RuntimeBackendTests(unittest.TestCase):
+    def test_web_stack_is_optional_package_extra(self) -> None:
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+        dependencies = set(project["dependencies"])
+        extras = project["optional-dependencies"]
+
+        for package in {"fastapi", "httpx", "jinja2", "python-multipart", "uvicorn"}:
+            self.assertFalse(
+                any(dependency.startswith(package) for dependency in dependencies),
+                package,
+            )
+        self.assertIn("httpx>=0.27.0", extras["client"])
+        self.assertIn("fastapi>=0.115.0", extras["api"])
+        self.assertIn("uvicorn>=0.30.0", extras["web"])
+
     def test_carrier_core_runs_without_web_api_or_http_client_imports(self) -> None:
         src_dir = Path(__file__).resolve().parents[1] / "src"
         script = textwrap.dedent(
@@ -70,6 +86,11 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             builtins.__import__ = guarded_import
 
             from fala import Carrier, FalaRuntime
+            from fala.cli import _build_parser as build_cli_parser
+            from fala.worker_cli import _build_parser as build_worker_parser
+
+            assert build_cli_parser().prog == "process-runtime"
+            assert build_worker_parser().prog == "process-runtime-worker"
 
             async def main():
                 with tempfile.TemporaryDirectory() as tmp:

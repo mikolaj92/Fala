@@ -34,7 +34,6 @@ from fala.blueprints import (
     scaffold_blueprint_from_mapping,
     scaffold_blueprint_summary,
 )
-from fala.client import ProcessRuntimeClient
 from fala.contract_lint import (
     discover_step_contracts,
     lint_step_contracts,
@@ -173,7 +172,6 @@ from fala.step_bundle import verify_step_replay_bundle, write_step_replay_bundle
 from fala.store import InMemoryStateStore, StateStore
 from fala.store_factory import create_state_store, runtime_db_diagnostics
 from fala.supervisor import ProcessSupervisor, build_package_worker_specs
-from fala.web import create_runtime_web_app
 from fala.yaml_loader import pipeline_from_mapping, workflow_package_from_mapping
 
 ADAPTER_KIND_CHOICES = ("subprocess", "http", "queue", "manual")
@@ -2407,9 +2405,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _serve_runtime_web(args: argparse.Namespace) -> int:
     try:
+        from fala.web import create_runtime_web_app
         import uvicorn
     except ImportError as exc:  # pragma: no cover - dependency guard
-        raise RuntimeError("uvicorn is required to run `fala serve`") from exc
+        raise RuntimeError(
+            "`fala serve` requires optional web dependencies; install `fala[web]`."
+        ) from exc
 
     _warn_public_serve_without_auth(args.host)
     app = create_runtime_web_app(
@@ -2722,6 +2723,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             if broker_target is not None
             else _CollectingQueueTransport()
         )
+        ProcessRuntimeClient = _require_process_runtime_client()
         async with ProcessRuntimeClient(
             args.base_url,
             api_key=args.api_key or os.environ.get("FALA_API_KEY"),
@@ -2773,6 +2775,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             ),
         )
         if args.renew_claim:
+            ProcessRuntimeClient = _require_process_runtime_client()
             async with ProcessRuntimeClient(
                 args.base_url,
                 api_key=args.api_key or os.environ.get("FALA_API_KEY"),
@@ -2843,6 +2846,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             if transport is not None
             else read_result_jsonl(_queue_text_source(args.result_file))
         )
+        ProcessRuntimeClient = _require_process_runtime_client()
         async with ProcessRuntimeClient(
             args.base_url,
             api_key=args.api_key or os.environ.get("FALA_API_KEY"),
@@ -3853,6 +3857,17 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         }
 
     raise ValueError(f"Unknown command: {args.command}")
+
+
+def _require_process_runtime_client() -> Any:
+    try:
+        from fala.client import ProcessRuntimeClient
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise RuntimeError(
+            "HTTP control-plane commands require optional client dependencies; "
+            "install `fala[client]` or `fala[web]`."
+        ) from exc
+    return ProcessRuntimeClient
 
 
 async def _run_queue_work_from_args(

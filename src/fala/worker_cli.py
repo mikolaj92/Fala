@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from fala.adapters import AdapterRegistry, ExternalCommandAdapter
-from fala.client import ProcessRuntimeClient
 from fala.models import ResourceSpec
 from fala.registry import PipelineRegistry
 from fala.worker import AdapterProcessRuntimeWorker
 
 ADAPTER_KIND_CHOICES = ("subprocess", "http", "queue")
+ProcessRuntimeClient: Any | None = None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,6 +126,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     if adapter_kind == "queue" and not command:
         raise ValueError("--adapter-kind queue requires --command or --package-worker")
 
+    ProcessRuntimeClient = _require_process_runtime_client()
     async with ProcessRuntimeClient(
         args.base_url,
         api_key=args.api_key or os.environ.get("FALA_API_KEY"),
@@ -201,6 +202,21 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             "idle_polls": idle_polls,
             "steps": steps,
         }
+
+
+def _require_process_runtime_client() -> Any:
+    global ProcessRuntimeClient
+    if ProcessRuntimeClient is not None:
+        return ProcessRuntimeClient
+    try:
+        from fala.client import ProcessRuntimeClient as client_class
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise RuntimeError(
+            "`process-runtime-worker` requires optional client dependencies; "
+            "install `fala[client]` or `fala[web]`."
+        ) from exc
+    ProcessRuntimeClient = client_class
+    return ProcessRuntimeClient
 
 
 def _resolve_worker_config(args: argparse.Namespace) -> dict[str, Any]:

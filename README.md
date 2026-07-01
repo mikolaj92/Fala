@@ -1,19 +1,22 @@
 # Fala
 
-Fala is a small Python framework for observable document workflows.
+Fala is a SQLite-first Python runtime for observable information flows.
 
 It manages graph state, process claims, leases, retries, timeouts, events,
 artifacts, and combineLatest-style projections. It does not own business logic.
 Each workflow step is a separate program, HTTP service, queue worker, or manual
-operator gate.
+operator gate. The Carrier-first embedded runtime does not require FastAPI,
+Uvicorn, httpx, Jinja, Redis, Postgres, Docker, or a web server.
 
 ## Shape
 
-- `fala`: core runtime models, run/document registry, scheduler, stores,
+- `fala`: core runtime models, Carrier runtime, run/document compatibility
+  registry, scheduler, stores,
   adapters, client, CLI, worker
 - `fala.sdk`: dependency-light helpers for step programs
 - `RuntimeService`: host-side service facade over a registry and store
-- `create_runtime_router`: optional FastAPI router for API integration
+- `create_runtime_router`: optional FastAPI router for API integration, available
+  with `fala[web]`
 - `SQLiteStateStore` as the shipped first-party state store; non-SQLite
   backends belong in external `RuntimeBackend` plugins
 - YAML packages define document types, artifact kinds, capabilities, pipelines,
@@ -58,9 +61,10 @@ schema version, applied migrations, missing migrations, and row counts. Without
 `--ensure-schema` it checks the target as-is; with `--ensure-schema` it creates
 or repairs the runtime schema before reporting.
 
-Run the bundled API and web panel:
+Run the optional bundled API and web panel:
 
 ```bash
+uv pip install -e '.[web]'
 uv run fala --pipeline-dir examples/pipelines \
   serve \
   --db fala.db \

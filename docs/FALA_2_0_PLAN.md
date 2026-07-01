@@ -47,17 +47,19 @@ The current implementation already has useful pieces:
 
 The current implementation also has mismatches with the Fala 2.0 target:
 
-- `Document` is still the core runtime vocabulary.
+- The legacy process runtime still uses `Document` as its public vocabulary.
 - `Carrier`, `Observation`, `RuntimeBackend`, `RuntimeRef`, `RunRef`, and
-  `EventRef` do not yet exist as first-class model concepts.
-- The storage boundary is currently `StateStore`, not a full runtime backend
-  plugin contract.
+  `EventRef` exist for the new Carrier-first path, but they do not yet cover
+  every process/run scheduling operation.
+- The legacy storage boundary is still `StateStore`; the new `RuntimeBackend`
+  contract exists beside it rather than replacing it everywhere.
 - Postgres appears as first-party code and documentation today. For Fala 2.0 it
   should be removed from the default distribution or moved out as an external
   plugin experiment.
-- FastAPI/web code is useful but should be optional around the embedded core.
-- Commands, idempotency, inbox/outbox, first-class gates, observations, and
-  projection rebuild semantics need a clearer runtime design.
+- FastAPI/web code is useful but should remain optional around the embedded core.
+- Commands, idempotency, inbox/outbox, first-class gates, and observations now
+  exist in the Carrier path; projection rebuild semantics and full runtime
+  scheduling commands still need a clearer design.
 
 ## Phase 1: Lock current behavior with conformance tests
 
