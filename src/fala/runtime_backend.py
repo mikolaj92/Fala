@@ -396,6 +396,15 @@ class RuntimeBackend(Protocol):
 
     async def put_run(self, run: Run) -> None: ...
 
+    async def transition_run(
+        self,
+        *,
+        run_id: str,
+        status: CarrierRunStatus,
+        command: RuntimeCommand,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> tuple[Run, CommandSubmission]: ...
+
     async def get_run(self, *, run_id: str) -> Run | None: ...
 
     async def list_runs(
@@ -1201,6 +1210,112 @@ class SQLiteRuntimeBackend:
                     _run_args(run),
                 )
                 connection.commit()
+
+    async def transition_run(
+        self,
+        *,
+        run_id: str,
+        status: CarrierRunStatus,
+        command: RuntimeCommand,
+        events: Sequence[RuntimeEvent] = (),
+    ) -> tuple[Run, CommandSubmission]:
+        if command.run_id != run_id:
+            raise ValueError("run transition command run_id must match run_id")
+        if command.command_type == "run.cancel":
+            if status != CarrierRunStatus.cancel_requested:
+                raise ValueError("run.cancel requires status 'cancel_requested'")
+        elif command.command_type != "run.status.set":
+            raise ValueError(
+                "transition_run requires command_type 'run.status.set' or 'run.cancel'"
+            )
+
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                existing_command = connection.execute(
+                    """
+                    SELECT * FROM runtime_commands
+                    WHERE run_id = ? AND idempotency_key = ?
+                    """,
+                    (command.run_id, command.idempotency_key),
+                ).fetchone()
+                if existing_command is not None:
+                    stored_command = _command_from_row(existing_command)
+                    stored_run_id = stored_command.payload.get("run_id", run_id)
+                    stored_run = connection.execute(
+                        "SELECT * FROM runs WHERE id = ?",
+                        (str(stored_run_id),),
+                    ).fetchone()
+                    if stored_run is None:
+                        raise ValueError(
+                            "Replayed run transition has no stored run: "
+                            f"{stored_run_id!r}"
+                        )
+                    connection.commit()
+                    return (
+                        _run_from_row(stored_run),
+                        CommandSubmission(
+                            command=stored_command,
+                            events=[],
+                            replayed=True,
+                        ),
+                    )
+
+                row = connection.execute(
+                    "SELECT * FROM runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Unknown run: {run_id!r}")
+                run = _run_from_row(row)
+                if run.status != status:
+                    _validate_run_status_transition(run.status, status)
+
+                now = _now()
+                started_at = run.started_at or (
+                    now if status == CarrierRunStatus.active else None
+                )
+                finished_at = (
+                    now if status in _TERMINAL_RUN_STATUSES else run.finished_at
+                )
+                _insert_runtime_command_row(connection, command)
+                connection.execute(
+                    """
+                    UPDATE runs
+                    SET status = ?,
+                        updated_at = ?,
+                        started_at = ?,
+                        finished_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        status.value,
+                        now.isoformat(),
+                        started_at.isoformat() if started_at is not None else None,
+                        finished_at.isoformat() if finished_at is not None else None,
+                        run_id,
+                    ),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                stored_events = _append_runtime_events(connection, command, events)
+                connection.commit()
+                return (
+                    _run_from_row(updated),
+                    CommandSubmission(
+                        command=command,
+                        events=stored_events,
+                        replayed=False,
+                    ),
+                )
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     async def get_run(self, *, run_id: str) -> Run | None:
         with self._connect() as connection:
@@ -3379,27 +3494,12 @@ class RuntimeBackendService:
                 **({"reason": reason} if reason is not None else {}),
             },
         )
-        submission = await self.backend.submit_command(command, events=[event])
-        if submission.replayed:
-            replayed_run = await self.backend.get_run(run_id=run_id)
-            if replayed_run is None:
-                raise ValueError(f"Replayed run status command has no stored run: {run_id!r}")
-            return replayed_run, submission
-
-        now = _now()
-        updated = existing.model_copy(
-            update={
-                "status": status,
-                "updated_at": now,
-                "started_at": existing.started_at
-                or (now if status == CarrierRunStatus.active else None),
-                "finished_at": now
-                if status in _TERMINAL_RUN_STATUSES
-                else existing.finished_at,
-            }
+        return await self.backend.transition_run(
+            run_id=run_id,
+            status=status,
+            command=command,
+            events=[event],
         )
-        await self.backend.put_run(updated)
-        return updated, submission
 
     async def register_carrier_type(
         self,

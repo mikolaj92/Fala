@@ -10,6 +10,8 @@ Run cancellation is a first-class `run.cancel` command and emits
 Run creation is committed by the backend as one transaction that stores the run,
 `run.create` command, and `run.created` event together. Direct
 `submit_command(run.create)` is rejected.
+Run status transitions are also committed as one transaction with their command
+and event.
 
 Other command submission requires the target run to already exist.
 

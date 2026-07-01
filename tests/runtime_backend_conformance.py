@@ -60,6 +60,39 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     create_events = await backend.list_events(run_id=create_run.id)
     assert [event.event_type for event in create_events] == ["run.created"]
 
+    run_status_run = Run(
+        id="run_status_conformance",
+        status=CarrierRunStatus.created,
+    )
+    run_status_command = RuntimeCommand(
+        run_id=run_status_run.id,
+        command_type="run.status.set",
+        idempotency_key="run_status_conformance:active",
+    )
+    await backend.put_run(run_status_run)
+    active_run, run_status_submission = await backend.transition_run(
+        run_id=run_status_run.id,
+        status=CarrierRunStatus.active,
+        command=run_status_command,
+        events=[
+            RuntimeEvent(
+                run_id=run_status_run.id,
+                event_type="run.status.changed",
+            )
+        ],
+    )
+    replayed_active_run, run_status_replay = await backend.transition_run(
+        run_id=run_status_run.id,
+        status=CarrierRunStatus.active,
+        command=run_status_command.model_copy(update={"id": "command_run_replay"}),
+        events=[],
+    )
+    assert active_run.status == CarrierRunStatus.active
+    assert active_run.started_at is not None
+    assert replayed_active_run == active_run
+    assert not run_status_submission.replayed
+    assert run_status_replay.replayed
+
     accept_run = Run(
         id="run_accept_conformance",
         status=CarrierRunStatus.active,
