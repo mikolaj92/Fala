@@ -2876,6 +2876,17 @@ class RuntimeBackendService:
     ) -> tuple[Gate, CommandSubmission]:
         if gate.status != GateStatus.open:
             raise ValueError("open_gate requires gate status 'open'")
+        existing = await self.backend.get_gate(run_id=gate.run_id, gate_id=gate.id)
+        replay = await self._replayed_submission(
+            run_id=gate.run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            if existing is None:
+                raise ValueError(f"Replayed gate open has no stored gate: {gate.id!r}")
+            return existing, replay
+        if existing is not None:
+            raise ValueError(f"Gate already exists: {gate.id!r}")
         command = RuntimeCommand(
             run_id=gate.run_id,
             command_type="gate.open",

@@ -2283,6 +2283,50 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_runtime_backend_service_open_gate_is_create_only(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                gate = Gate(
+                    id="gate_open_once",
+                    run_id="run_gate_open",
+                    kind="human.review",
+                    status=GateStatus.open,
+                )
+                opened, opened_submission = await service.open_gate(
+                    gate,
+                    idempotency_key="run_gate_open:gate.open:gate_open_once",
+                )
+                replayed, replay = await service.open_gate(
+                    gate.model_copy(update={"metadata": {"changed": True}}),
+                    idempotency_key="run_gate_open:gate.open:gate_open_once",
+                )
+
+                self.assertEqual(opened, gate)
+                self.assertFalse(opened_submission.replayed)
+                self.assertEqual(replayed, gate)
+                self.assertTrue(replay.replayed)
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await service.open_gate(
+                        gate.model_copy(update={"metadata": {"new": True}}),
+                        idempotency_key="run_gate_open:gate.open:duplicate",
+                    )
+
+                completed, _ = await service.complete_gate(
+                    run_id=gate.run_id,
+                    gate_id=gate.id,
+                    values={"decision": "approved"},
+                    idempotency_key="run_gate_open:gate.complete:gate_open_once",
+                )
+                self.assertEqual(completed.status, GateStatus.completed)
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    await service.open_gate(
+                        gate,
+                        idempotency_key="run_gate_open:gate.open:after_complete",
+                    )
+
+        asyncio.run(scenario())
+
     def test_runtime_backend_service_completes_gate_idempotently(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
