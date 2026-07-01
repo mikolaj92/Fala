@@ -6,14 +6,22 @@ import unittest
 from pathlib import Path
 
 from fala.runtime_backend import (
+    BridgeDelivery,
+    BridgeDeliveryStatus,
     Carrier,
+    DelegationPolicy,
+    EventRef,
     Gate,
     GateStatus,
     Observation,
     Projection,
+    RuntimeBudget,
     RuntimeCommand,
     RuntimeBackendService,
     RuntimeEvent,
+    RuntimePool,
+    RuntimeRef,
+    RunRef,
     SQLiteRuntimeBackend,
 )
 
@@ -288,6 +296,141 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(
                     await service.list_projections(run_id="run_query"),
                     [projection],
+                )
+
+        asyncio.run(scenario())
+
+    def test_sqlite_bridge_delivers_carrier_between_local_runtimes_idempotently(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                source_path = Path(tmp_dir) / "source.sqlite"
+                target_path = Path(tmp_dir) / "target.sqlite"
+                source = RuntimeBackendService.sqlite(source_path)
+                target = RuntimeBackendService.sqlite(target_path)
+                source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
+                target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
+                pool = RuntimePool(
+                    id="local_pair",
+                    runtimes=[source_ref, target_ref],
+                    carrier_types=["case"],
+                )
+                policy = DelegationPolicy(
+                    pool_id=pool.id,
+                    carrier_types=["case"],
+                    budget=RuntimeBudget(
+                        runtime_hops=1,
+                        spawned_runs=1,
+                        carrier_count=1,
+                        wall_time_seconds=30,
+                        attempts=2,
+                        artifact_bytes=4096,
+                    ),
+                )
+                carrier = Carrier(
+                    id="carrier_case",
+                    run_id="run_source",
+                    carrier_type="case",
+                    payload={"claim": "CLM-1"},
+                )
+
+                await source.accept_carrier(
+                    carrier,
+                    idempotency_key="run_source:carrier.accept:carrier_case",
+                )
+                source_events = await source.backend.list_events(run_id="run_source")
+                delivery = BridgeDelivery(
+                    id="bridge_case",
+                    run_id="run_source",
+                    idempotency_key="run_source:bridge:case",
+                    source=RunRef(runtime=source_ref, run_id="run_source"),
+                    target=RunRef(runtime=target_ref, run_id="run_target"),
+                    carrier=carrier,
+                    event_ref=EventRef(
+                        runtime=source_ref,
+                        run_id="run_source",
+                        event_id=source_events[0].id,
+                        sequence=source_events[0].sequence,
+                    ),
+                    pool_id=policy.pool_id,
+                    budget=policy.budget,
+                )
+
+                outbox, enqueue = await source.enqueue_bridge_delivery(delivery)
+                replay_outbox, enqueue_replay = await source.enqueue_bridge_delivery(
+                    delivery.model_copy(update={"metadata": {"changed": True}}),
+                    idempotency_key="run_source:bridge:case",
+                )
+
+                self.assertEqual(outbox.pool_id, "local_pair")
+                self.assertEqual(outbox.budget.runtime_hops, 1)
+                self.assertFalse(enqueue.replayed)
+                self.assertEqual(replay_outbox, outbox)
+                self.assertTrue(enqueue_replay.replayed)
+
+                delivered, imported, delivered_submission, import_submission = (
+                    await source.deliver_bridge_delivery(
+                        run_id="run_source",
+                        delivery_id="bridge_case",
+                        target=target,
+                        idempotency_key="run_source:bridge.deliver:case",
+                        import_idempotency_key="run_target:bridge.import:case",
+                    )
+                )
+                replay_delivered, replay_imported, delivered_replay, import_replay = (
+                    await source.deliver_bridge_delivery(
+                        run_id="run_source",
+                        delivery_id="bridge_case",
+                        target=target,
+                        idempotency_key="run_source:bridge.deliver:case",
+                        import_idempotency_key="run_target:bridge.import:case",
+                    )
+                )
+
+                self.assertEqual(delivered.status, BridgeDeliveryStatus.delivered)
+                self.assertEqual(imported.status, BridgeDeliveryStatus.imported)
+                self.assertFalse(delivered_submission.replayed)
+                self.assertFalse(import_submission.replayed)
+                self.assertEqual(replay_delivered, delivered)
+                self.assertEqual(replay_imported, imported)
+                self.assertTrue(delivered_replay.replayed)
+                self.assertTrue(import_replay.replayed)
+
+                target_carrier = await target.backend.get_carrier(
+                    run_id="run_target",
+                    carrier_id="carrier_case",
+                )
+                self.assertIsNotNone(target_carrier)
+                assert target_carrier is not None
+                self.assertEqual(target_carrier.run_id, "run_target")
+                self.assertEqual(
+                    target_carrier.metadata["source_runtime_id"],
+                    "source",
+                )
+                self.assertEqual(
+                    await source.list_outbox_deliveries(
+                        run_id="run_source",
+                        status=BridgeDeliveryStatus.delivered,
+                    ),
+                    [delivered],
+                )
+                self.assertEqual(
+                    await target.list_inbox_deliveries(
+                        run_id="run_target",
+                        status=BridgeDeliveryStatus.imported,
+                    ),
+                    [imported],
+                )
+                self.assertEqual(
+                    [event.event_type for event in await source.backend.list_events(run_id="run_source")],
+                    [
+                        "carrier.accepted",
+                        "bridge.outbox.enqueued",
+                        "bridge.outbox.delivered",
+                    ],
+                )
+                self.assertEqual(
+                    [event.event_type for event in await target.backend.list_events(run_id="run_target")],
+                    ["bridge.inbox.imported"],
                 )
 
         asyncio.run(scenario())

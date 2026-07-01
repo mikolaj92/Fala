@@ -131,6 +131,86 @@ class Projection(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class RuntimeRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    uri: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runtime: RuntimeRef
+    run_id: str
+
+
+class EventRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runtime: RuntimeRef
+    run_id: str
+    event_id: str | None = None
+    sequence: int | None = Field(default=None, ge=1)
+
+
+class RuntimeBudget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    runtime_hops: int = Field(default=0, ge=0)
+    spawned_runs: int = Field(default=0, ge=0)
+    carrier_count: int = Field(default=0, ge=0)
+    wall_time_seconds: float = Field(default=0.0, ge=0)
+    attempts: int = Field(default=0, ge=0)
+    artifact_bytes: int = Field(default=0, ge=0)
+
+
+class RuntimePool(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    runtimes: list[RuntimeRef] = Field(default_factory=list)
+    carrier_types: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DelegationPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: _new_id("delegation_policy"))
+    pool_id: str
+    carrier_types: list[str] = Field(default_factory=list)
+    budget: RuntimeBudget = Field(default_factory=RuntimeBudget)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BridgeDeliveryStatus(StrEnum):
+    pending = "pending"
+    delivered = "delivered"
+    imported = "imported"
+    failed = "failed"
+
+
+class BridgeDelivery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: _new_id("bridge"))
+    run_id: str
+    idempotency_key: str = Field(default_factory=lambda: _new_id("bridge_key"))
+    source: RunRef
+    target: RunRef
+    carrier: Carrier
+    event_ref: EventRef | None = None
+    pool_id: str | None = None
+    budget: RuntimeBudget = Field(default_factory=RuntimeBudget)
+    status: BridgeDeliveryStatus = BridgeDeliveryStatus.pending
+    attempts: int = Field(default=0, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
 class RuntimeBackend(Protocol):
     async def put_carrier(self, carrier: Carrier) -> None: ...
 
@@ -172,6 +252,35 @@ class RuntimeBackend(Protocol):
     async def get_projection(self, *, run_id: str, name: str) -> Projection | None: ...
 
     async def list_projections(self, *, run_id: str) -> list[Projection]: ...
+
+    async def put_outbox_delivery(self, delivery: BridgeDelivery) -> None: ...
+
+    async def get_outbox_delivery(
+        self, *, run_id: str, delivery_id: str
+    ) -> BridgeDelivery | None: ...
+
+    async def list_outbox_deliveries(
+        self,
+        *,
+        run_id: str,
+        status: BridgeDeliveryStatus | None = None,
+    ) -> list[BridgeDelivery]: ...
+
+    async def put_inbox_delivery(self, delivery: BridgeDelivery) -> None: ...
+
+    async def get_inbox_delivery(
+        self, *, run_id: str, delivery_id: str
+    ) -> BridgeDelivery | None: ...
+
+    async def list_inbox_deliveries(
+        self,
+        *,
+        run_id: str,
+        status: BridgeDeliveryStatus | None = None,
+    ) -> list[BridgeDelivery]: ...
+
+
+_BRIDGE_TABLES = {"bridge_outbox", "bridge_inbox"}
 
 
 class SQLiteRuntimeBackend:
@@ -275,12 +384,54 @@ class SQLiteRuntimeBackend:
                     PRIMARY KEY (run_id, name)
                 );
 
+                CREATE TABLE IF NOT EXISTS bridge_outbox (
+                    run_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    target_ref TEXT NOT NULL,
+                    carrier_json TEXT NOT NULL,
+                    event_ref TEXT,
+                    pool_id TEXT,
+                    budget TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, id),
+                    UNIQUE (run_id, idempotency_key)
+                );
+
+                CREATE TABLE IF NOT EXISTS bridge_inbox (
+                    run_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    target_ref TEXT NOT NULL,
+                    carrier_json TEXT NOT NULL,
+                    event_ref TEXT,
+                    pool_id TEXT,
+                    budget TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, id),
+                    UNIQUE (run_id, idempotency_key)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_runtime_events_carrier
                     ON runtime_events (run_id, carrier_id, sequence);
                 CREATE INDEX IF NOT EXISTS idx_observations_carrier
                     ON observations (run_id, carrier_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_gates_status
                     ON gates (run_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_bridge_outbox_status
+                    ON bridge_outbox (run_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_bridge_inbox_status
+                    ON bridge_inbox (run_id, status, updated_at);
                 """
             )
             connection.commit()
@@ -615,6 +766,132 @@ class SQLiteRuntimeBackend:
             ).fetchall()
         return [_projection_from_row(row) for row in rows]
 
+    async def put_outbox_delivery(self, delivery: BridgeDelivery) -> None:
+        await self._put_bridge_delivery("bridge_outbox", delivery)
+
+    async def get_outbox_delivery(
+        self,
+        *,
+        run_id: str,
+        delivery_id: str,
+    ) -> BridgeDelivery | None:
+        return await self._get_bridge_delivery(
+            "bridge_outbox",
+            run_id=run_id,
+            delivery_id=delivery_id,
+        )
+
+    async def list_outbox_deliveries(
+        self,
+        *,
+        run_id: str,
+        status: BridgeDeliveryStatus | None = None,
+    ) -> list[BridgeDelivery]:
+        return await self._list_bridge_deliveries(
+            "bridge_outbox",
+            run_id=run_id,
+            status=status,
+        )
+
+    async def put_inbox_delivery(self, delivery: BridgeDelivery) -> None:
+        await self._put_bridge_delivery("bridge_inbox", delivery)
+
+    async def get_inbox_delivery(
+        self,
+        *,
+        run_id: str,
+        delivery_id: str,
+    ) -> BridgeDelivery | None:
+        return await self._get_bridge_delivery(
+            "bridge_inbox",
+            run_id=run_id,
+            delivery_id=delivery_id,
+        )
+
+    async def list_inbox_deliveries(
+        self,
+        *,
+        run_id: str,
+        status: BridgeDeliveryStatus | None = None,
+    ) -> list[BridgeDelivery]:
+        return await self._list_bridge_deliveries(
+            "bridge_inbox",
+            run_id=run_id,
+            status=status,
+        )
+
+    async def _put_bridge_delivery(
+        self,
+        table: str,
+        delivery: BridgeDelivery,
+    ) -> None:
+        _require_bridge_table(table)
+        async with self._lock:
+            with self._connect() as connection:
+                connection.execute(
+                    f"""
+                    INSERT INTO {table} (
+                        run_id, id, idempotency_key, source_ref, target_ref,
+                        carrier_json, event_ref, pool_id, budget, status,
+                        attempts, metadata, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id, id) DO UPDATE SET
+                        idempotency_key = excluded.idempotency_key,
+                        source_ref = excluded.source_ref,
+                        target_ref = excluded.target_ref,
+                        carrier_json = excluded.carrier_json,
+                        event_ref = excluded.event_ref,
+                        pool_id = excluded.pool_id,
+                        budget = excluded.budget,
+                        status = excluded.status,
+                        attempts = excluded.attempts,
+                        metadata = excluded.metadata,
+                        created_at = excluded.created_at,
+                        updated_at = excluded.updated_at
+                    """,
+                    _bridge_delivery_args(delivery),
+                )
+                connection.commit()
+
+    async def _get_bridge_delivery(
+        self,
+        table: str,
+        *,
+        run_id: str,
+        delivery_id: str,
+    ) -> BridgeDelivery | None:
+        _require_bridge_table(table)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT * FROM {table} WHERE run_id = ? AND id = ?",
+                (run_id, delivery_id),
+            ).fetchone()
+        return _bridge_delivery_from_row(row) if row is not None else None
+
+    async def _list_bridge_deliveries(
+        self,
+        table: str,
+        *,
+        run_id: str,
+        status: BridgeDeliveryStatus | None = None,
+    ) -> list[BridgeDelivery]:
+        _require_bridge_table(table)
+        clauses = ["run_id = ?"]
+        params: list[Any] = [run_id]
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status.value)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM {table}
+                WHERE {' AND '.join(clauses)}
+                ORDER BY updated_at ASC, id ASC
+                """,
+                params,
+            ).fetchall()
+        return [_bridge_delivery_from_row(row) for row in rows]
+
 
 class RuntimeBackendService:
     def __init__(self, backend: RuntimeBackend) -> None:
@@ -790,6 +1067,196 @@ class RuntimeBackendService:
         await self.backend.put_projection(projection)
         return projection, submission
 
+    async def enqueue_bridge_delivery(
+        self,
+        delivery: BridgeDelivery,
+        *,
+        idempotency_key: str | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[BridgeDelivery, CommandSubmission]:
+        delivery_key = idempotency_key or delivery.idempotency_key
+        delivery = delivery.model_copy(
+            update={
+                "idempotency_key": delivery_key,
+                "run_id": delivery.source.run_id,
+                "status": BridgeDeliveryStatus.pending,
+                "updated_at": _now(),
+            }
+        )
+        command = RuntimeCommand(
+            run_id=delivery.run_id,
+            command_type="bridge.outbox.enqueue",
+            idempotency_key=delivery_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload=_bridge_command_payload(delivery),
+        )
+        event = RuntimeEvent(
+            run_id=delivery.run_id,
+            carrier_id=delivery.carrier.id,
+            event_type="bridge.outbox.enqueued",
+            payload=_bridge_event_payload(delivery),
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing = await self.backend.get_outbox_delivery(
+                run_id=delivery.run_id,
+                delivery_id=str(submission.command.payload.get("delivery_id")),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed bridge enqueue command has no stored outbox delivery: "
+                    f"{submission.command.payload.get('delivery_id')!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_outbox_delivery(delivery)
+        return delivery, submission
+
+    async def import_bridge_delivery(
+        self,
+        delivery: BridgeDelivery,
+        *,
+        idempotency_key: str | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[BridgeDelivery, CommandSubmission]:
+        delivery_key = idempotency_key or delivery.idempotency_key
+        local_carrier = delivery.carrier.model_copy(
+            update={
+                "run_id": delivery.target.run_id,
+                "metadata": {
+                    **delivery.carrier.metadata,
+                    "source_runtime_id": delivery.source.runtime.id,
+                    "source_run_id": delivery.source.run_id,
+                    "source_carrier_id": delivery.carrier.id,
+                },
+                "updated_at": _now(),
+            }
+        )
+        imported = delivery.model_copy(
+            update={
+                "run_id": delivery.target.run_id,
+                "idempotency_key": delivery_key,
+                "carrier": local_carrier,
+                "status": BridgeDeliveryStatus.imported,
+                "attempts": delivery.attempts + 1,
+                "updated_at": _now(),
+            }
+        )
+        command = RuntimeCommand(
+            run_id=imported.run_id,
+            command_type="bridge.inbox.import",
+            idempotency_key=delivery_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload=_bridge_command_payload(imported),
+        )
+        event = RuntimeEvent(
+            run_id=imported.run_id,
+            carrier_id=imported.carrier.id,
+            event_type="bridge.inbox.imported",
+            payload=_bridge_event_payload(imported),
+        )
+        submission = await self.backend.submit_command(command, events=[event])
+        if submission.replayed:
+            existing = await self.backend.get_inbox_delivery(
+                run_id=imported.run_id,
+                delivery_id=str(submission.command.payload.get("delivery_id")),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed bridge import command has no stored inbox delivery: "
+                    f"{submission.command.payload.get('delivery_id')!r}"
+                )
+            return existing, submission
+
+        await self.backend.put_carrier(local_carrier)
+        await self.backend.put_inbox_delivery(imported)
+        return imported, submission
+
+    async def deliver_bridge_delivery(
+        self,
+        *,
+        run_id: str,
+        delivery_id: str,
+        target: "RuntimeBackendService",
+        idempotency_key: str,
+        import_idempotency_key: str | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[
+        BridgeDelivery,
+        BridgeDelivery,
+        CommandSubmission,
+        CommandSubmission,
+    ]:
+        delivery = await self.backend.get_outbox_delivery(
+            run_id=run_id,
+            delivery_id=delivery_id,
+        )
+        if delivery is None:
+            raise ValueError(f"Unknown outbox delivery: {delivery_id!r}")
+
+        imported, import_submission = await target.import_bridge_delivery(
+            delivery,
+            idempotency_key=import_idempotency_key or f"{idempotency_key}:import",
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+        delivered = delivery.model_copy(
+            update={
+                "status": BridgeDeliveryStatus.delivered,
+                "attempts": delivery.attempts + 1,
+                "updated_at": _now(),
+            }
+        )
+        command = RuntimeCommand(
+            run_id=delivery.run_id,
+            command_type="bridge.outbox.deliver",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={
+                **_bridge_command_payload(delivered),
+                "inbox_run_id": imported.run_id,
+                "inbox_delivery_id": imported.id,
+            },
+        )
+        event = RuntimeEvent(
+            run_id=delivery.run_id,
+            carrier_id=delivery.carrier.id,
+            event_type="bridge.outbox.delivered",
+            payload={
+                **_bridge_event_payload(delivered),
+                "inbox_run_id": imported.run_id,
+                "inbox_delivery_id": imported.id,
+            },
+        )
+        delivery_submission = await self.backend.submit_command(command, events=[event])
+        if delivery_submission.replayed:
+            existing = await self.backend.get_outbox_delivery(
+                run_id=delivery.run_id,
+                delivery_id=str(delivery_submission.command.payload.get("delivery_id")),
+            )
+            if existing is None:
+                raise ValueError(
+                    "Replayed bridge delivery command has no stored outbox delivery: "
+                    f"{delivery_submission.command.payload.get('delivery_id')!r}"
+                )
+            return existing, imported, delivery_submission, import_submission
+
+        await self.backend.put_outbox_delivery(delivered)
+        return delivered, imported, delivery_submission, import_submission
+
     async def list_observations(
         self,
         *,
@@ -816,6 +1283,76 @@ class RuntimeBackendService:
 
     async def list_projections(self, *, run_id: str) -> list[Projection]:
         return await self.backend.list_projections(run_id=run_id)
+
+    async def list_outbox_deliveries(
+        self,
+        *,
+        run_id: str,
+        status: BridgeDeliveryStatus | None = None,
+    ) -> list[BridgeDelivery]:
+        return await self.backend.list_outbox_deliveries(
+            run_id=run_id,
+            status=status,
+        )
+
+    async def list_inbox_deliveries(
+        self,
+        *,
+        run_id: str,
+        status: BridgeDeliveryStatus | None = None,
+    ) -> list[BridgeDelivery]:
+        return await self.backend.list_inbox_deliveries(
+            run_id=run_id,
+            status=status,
+        )
+
+
+def _require_bridge_table(table: str) -> None:
+    if table not in _BRIDGE_TABLES:
+        raise ValueError(f"Unsupported bridge table: {table!r}")
+
+
+def _bridge_delivery_args(delivery: BridgeDelivery) -> tuple[Any, ...]:
+    return (
+        delivery.run_id,
+        delivery.id,
+        delivery.idempotency_key,
+        _dumps(delivery.source.model_dump(mode="json")),
+        _dumps(delivery.target.model_dump(mode="json")),
+        _dumps(delivery.carrier.model_dump(mode="json")),
+        _dumps(delivery.event_ref.model_dump(mode="json"))
+        if delivery.event_ref is not None
+        else None,
+        delivery.pool_id,
+        _dumps(delivery.budget.model_dump(mode="json")),
+        delivery.status.value,
+        delivery.attempts,
+        _dumps(delivery.metadata),
+        delivery.created_at.isoformat(),
+        delivery.updated_at.isoformat(),
+    )
+
+
+def _bridge_command_payload(delivery: BridgeDelivery) -> dict[str, Any]:
+    payload = {
+        "delivery_id": delivery.id,
+        "carrier_id": delivery.carrier.id,
+        "source": delivery.source.model_dump(mode="json"),
+        "target": delivery.target.model_dump(mode="json"),
+        "pool_id": delivery.pool_id,
+        "budget": delivery.budget.model_dump(mode="json"),
+    }
+    if delivery.event_ref is not None:
+        payload["event_ref"] = delivery.event_ref.model_dump(mode="json")
+    return payload
+
+
+def _bridge_event_payload(delivery: BridgeDelivery) -> dict[str, Any]:
+    return {
+        **_bridge_command_payload(delivery),
+        "status": delivery.status.value,
+        "attempts": delivery.attempts,
+    }
 
 
 def _carrier_from_row(row: sqlite3.Row) -> Carrier:
@@ -898,16 +1435,45 @@ def _projection_from_row(row: sqlite3.Row) -> Projection:
     )
 
 
+def _bridge_delivery_from_row(row: sqlite3.Row) -> BridgeDelivery:
+    return BridgeDelivery(
+        id=row["id"],
+        run_id=row["run_id"],
+        idempotency_key=row["idempotency_key"],
+        source=RunRef.model_validate(_loads(row["source_ref"])),
+        target=RunRef.model_validate(_loads(row["target_ref"])),
+        carrier=Carrier.model_validate(_loads(row["carrier_json"])),
+        event_ref=EventRef.model_validate(_loads(row["event_ref"]))
+        if row["event_ref"] is not None
+        else None,
+        pool_id=row["pool_id"],
+        budget=RuntimeBudget.model_validate(_loads(row["budget"])),
+        status=BridgeDeliveryStatus(row["status"]),
+        attempts=row["attempts"],
+        metadata=_loads(row["metadata"]),
+        created_at=_dt(row["created_at"]),
+        updated_at=_dt(row["updated_at"]),
+    )
+
+
 __all__ = [
+    "BridgeDelivery",
+    "BridgeDeliveryStatus",
     "Carrier",
     "CommandSubmission",
+    "DelegationPolicy",
+    "EventRef",
     "Gate",
     "GateStatus",
     "Observation",
     "Projection",
     "RuntimeBackend",
     "RuntimeBackendService",
+    "RuntimeBudget",
     "RuntimeCommand",
     "RuntimeEvent",
+    "RuntimePool",
+    "RuntimeRef",
+    "RunRef",
     "SQLiteRuntimeBackend",
 ]
