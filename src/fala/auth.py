@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Mapping
 
+from fala.errors import FalaPolicyBlocked
+
 if TYPE_CHECKING:
     from fastapi import Request
 
@@ -71,9 +73,9 @@ class RuntimeApiKey:
         )
 
 
-class RuntimeAuthError(Exception):
+class RuntimeAuthError(FalaPolicyBlocked):
     def __init__(self, status_code: int, detail: str) -> None:
-        super().__init__(detail)
+        super().__init__(detail, details={"status_code": status_code})
         self.status_code = status_code
         self.detail = detail
 

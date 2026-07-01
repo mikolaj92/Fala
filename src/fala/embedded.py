@@ -9,14 +9,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, TypeVar
 
+from fala.errors import FalaConfigurationError, FalaRuntimeError
+
 T = TypeVar("T")
 
 
-class EmbeddedRuntimeConfigError(ValueError):
+class EmbeddedRuntimeConfigError(FalaConfigurationError, ValueError):
     """Raised when embedded-runtime path configuration is unsafe."""
 
 
-class RuntimeServiceConcurrencyError(RuntimeError):
+class RuntimeServiceConcurrencyError(FalaRuntimeError):
     """Raised when one sync runtime driver is used concurrently."""
 
 

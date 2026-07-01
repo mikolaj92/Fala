@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from fala.adapters import AdapterRegistry
+from fala.errors import FalaRuntimeError
 from fala.lineage import output_with_lineage
 from fala.models import (
     CombinedProjection,
@@ -19,7 +20,7 @@ from fala.models import (
 from fala.store import InMemoryStateStore, StateStore
 
 
-class PipelineRunError(RuntimeError):
+class PipelineRunError(FalaRuntimeError):
     pass
 
 

@@ -6,6 +6,7 @@ from typing import Any
 
 import yaml
 
+from fala.errors import FalaConfigurationError
 from fala.models import (
     PipelineSpec,
     WorkflowPackageSpec,
@@ -24,7 +25,7 @@ PACKAGE_MANIFEST_NAMES = {
 }
 
 
-class PipelineRegistryError(RuntimeError):
+class PipelineRegistryError(FalaConfigurationError):
     pass
 
 

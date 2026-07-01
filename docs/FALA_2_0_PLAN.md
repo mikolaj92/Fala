@@ -300,7 +300,7 @@ not complete enough to close the requirement.
 | 21 | Replay | PARTIAL | Define history replay, projection rebuild, deterministic execution replay, and trace export boundaries. |
 | 22 | Versioning and digests | PARTIAL | Store runtime/backend/package/flow/adapter/schema versions and digests per run. |
 | 23 | Migrations | PARTIAL | Cover SQLite, package, event payload, artifact kind, domain pack, and report/profile migrations. |
-| 24 | Error taxonomy | MISSING | Add canonical Fala error classes and wire them into retry/fail/gate behavior. |
+| 24 | Error taxonomy | PARTIAL | Wire canonical Fala errors into retry/fail/gate behavior and CLI rendering. |
 | 25 | Security and trust boundaries | PARTIAL | Audit subprocess/YAML/web/operator/secrets boundaries and prevent direct adapter DB mutation. |
 | 26 | Secrets and redaction | PARTIAL | Resolve env secrets safely and redact them from events, reports, traces, metadata, and exports. |
 | 27 | Retention and garbage collection | PARTIAL | Finish run archive, SQLite compact/vacuum, dry-run GC, artifact GC, and shared artifact safeguards. |

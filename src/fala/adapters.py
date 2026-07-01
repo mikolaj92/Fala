@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from fala.errors import FalaAdapterError
 from fala.sdk import PROCESS_RUNTIME_EVENT_PREFIX
 
 from fala.models import (
@@ -25,7 +26,7 @@ SUBPROCESS_EVENT_PREFIX = PROCESS_RUNTIME_EVENT_PREFIX
 EventSink = Callable[[ProcessEvent], Any]
 
 
-class ProcessAdapterError(RuntimeError):
+class ProcessAdapterError(FalaAdapterError):
     pass
 
 

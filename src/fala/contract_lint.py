@@ -8,11 +8,12 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
+from fala.errors import FalaValidationError
 from fala.registry import PipelineRegistry
 from fala.sdk import StepContract
 
 
-class ContractLintError(RuntimeError):
+class ContractLintError(FalaValidationError):
     pass
 
 
