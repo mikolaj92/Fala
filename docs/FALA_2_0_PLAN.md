@@ -70,7 +70,7 @@ workflow API.
 | Step adapters | PARTIAL | `python_function`, `subprocess`, `manual_gate`, and `fala_runtime` adapters exist. Subprocess uses manifests and argument-list commands. Fala-runtime processes enqueue bridge outbox deliveries and can resolve local runtime pools. |
 | Commands and idempotency | PARTIAL | Runtime service mutations submit commands with idempotency keys. Some low-level backend put methods remain for backend implementation and tests. |
 | Event log | PARTIAL | Events are ordered and command-linked. Event schema/version migration needs continued hardening. |
-| State machines | PARTIAL | Run/process/gate statuses exist with transition checks for key paths. More illegal-transition tests are needed. |
+| State machines | PARTIAL | Run/process/gate statuses exist with transition checks for key paths, including terminal process retry/complete and wait-from-running guards. More exhaustive transition matrix tests can still be added. |
 | Multi-Fala composition | PARTIAL | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, file handoff, and `manual`/`least_busy`/`round_robin` pool policies exist. Network transports remain optional future work. |
 | CLI | PARTIAL | Local SQLite inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor, wait diagnostics, trace, exports, GC, `fala_runtime` delegation, pool-backed delegation, local bridge delivery, and bridge file export/import exist. Optional network transport commands remain incomplete. |
 | Package schema | DONE | v2 YAML uses `carrier_types`, `carrier_relations`, capabilities, flows, and runtime config. Old package keys are rejected. |

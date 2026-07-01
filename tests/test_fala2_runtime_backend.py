@@ -2190,6 +2190,62 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_runtime_backend_service_wait_process_requires_running_status(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala2.sqlite")
+                await service.schedule_process(
+                    Process(
+                        id="process_wait",
+                        run_id="run_wait_service",
+                        process_type="manual_gate",
+                        status=CarrierProcessStatus.ready,
+                    ),
+                    idempotency_key="run_wait_service:process.schedule:process_wait",
+                )
+
+                with self.assertRaisesRegex(ValueError, "cannot wait from status"):
+                    await service.wait_process(
+                        run_id="run_wait_service",
+                        process_id="process_wait",
+                        idempotency_key="run_wait_service:process.wait:process_wait",
+                    )
+
+                claimed = await service.claim_next_ready_process(
+                    worker_id="worker:test",
+                    run_id="run_wait_service",
+                )
+                assert claimed is not None
+                waiting, submission = await service.wait_process(
+                    run_id="run_wait_service",
+                    process_id="process_wait",
+                    output={"status": "waiting"},
+                    idempotency_key="run_wait_service:process.wait:process_wait",
+                )
+                replayed, replay = await service.wait_process(
+                    run_id="run_wait_service",
+                    process_id="process_wait",
+                    output={"status": "changed"},
+                    idempotency_key="run_wait_service:process.wait:process_wait",
+                )
+
+                self.assertEqual(waiting.status, CarrierProcessStatus.waiting)
+                self.assertEqual(waiting.output["status"], "waiting")
+                self.assertFalse(submission.replayed)
+                self.assertEqual(replayed, waiting)
+                self.assertTrue(replay.replayed)
+                self.assertEqual(
+                    [
+                        event.event_type
+                        for event in await service.backend.list_events(
+                            run_id="run_wait_service"
+                        )
+                    ],
+                    ["process.scheduled", "process.waiting"],
+                )
+
+        asyncio.run(scenario())
+
     def test_runtime_backend_service_completes_gate_idempotently(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:

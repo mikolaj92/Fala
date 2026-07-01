@@ -2764,6 +2764,17 @@ class RuntimeBackendService:
         existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
         if existing is None:
             raise ValueError(f"Unknown process: {process_id!r}")
+        replay = await self._replayed_submission(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            return existing, replay
+        if existing.status != CarrierProcessStatus.running:
+            raise ValueError(
+                f"Process {process_id!r} cannot wait from status: "
+                f"{existing.status.value}"
+            )
         command = RuntimeCommand(
             run_id=run_id,
             command_type="process.wait",
