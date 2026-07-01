@@ -29,8 +29,17 @@ The Fala architecture is built around these modules:
 
 ## Install
 
-The PyPI distribution is `fala-runtime`. The import package and CLI command are
-both `fala`.
+Install the released wheel with `uv`:
+
+```bash
+uv add https://github.com/mikolaj92/Fala/releases/download/0.1.0/fala_runtime-0.1.0-py3-none-any.whl
+uv run fala --help
+```
+
+The package installs the `fala` import package and the `fala` CLI command.
+The PyPI distribution name is `fala-runtime`, because `fala` is already used by
+an unrelated project on PyPI. Once the PyPI release is published, installation
+can use:
 
 ```bash
 uv add fala-runtime
