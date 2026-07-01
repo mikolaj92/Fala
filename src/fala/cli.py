@@ -333,6 +333,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "queue-metrics",
             "capability-demands",
             "contract-lint",
+            "diagnose-waits",
             "step-bundle",
             "step-bundle-verify",
             "stream-append",
@@ -2233,7 +2234,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     diagnose_waits.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     diagnose_waits.add_argument("--run-id", required=True)
-    diagnose_waits.add_argument("--document-id", required=True)
+    diagnose_waits.add_argument(
+        "--carrier-runtime",
+        action="store_true",
+        help="Diagnose Carrier-first runtime waits instead of legacy document waits.",
+    )
+    diagnose_waits.add_argument("--carrier-id", default=None)
+    diagnose_waits.add_argument("--document-id", default=None)
     diagnose_waits.add_argument("--pipeline", default=None)
 
     stream_lag = subparsers.add_parser(
@@ -3732,6 +3739,18 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         }
 
     if args.command == "diagnose-waits":
+        if args.carrier_runtime or args.document_id is None:
+            service = RuntimeBackendService(
+                SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+            )
+            diagnostic = await service.diagnose_waits(
+                run_id=args.run_id,
+                carrier_id=args.carrier_id,
+            )
+            return {
+                "ok": True,
+                "wait_diagnostics": diagnostic.model_dump(mode="json"),
+            }
         service = RuntimeService(registry=registry, store=create_state_store(args.db))
         diagnostic = await service.diagnose_waits(
             run_id=args.run_id,

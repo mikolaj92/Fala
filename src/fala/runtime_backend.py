@@ -245,6 +245,39 @@ class Gate(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class CarrierWaitDiagnosticIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    process_id: str
+    status: CarrierProcessStatus | None = None
+    reason: str
+    blocked_by: list[str] = Field(default_factory=list)
+    dependency_statuses: dict[str, str | None] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class CarrierWaitGraphDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    carrier_id: str | None = None
+    deadlocked: bool = False
+    deadlocks: list[list[str]] = Field(default_factory=list)
+    wait_edges: dict[str, list[str]] = Field(default_factory=dict)
+    blocked: list[CarrierWaitDiagnosticIssue] = Field(default_factory=list)
+    open_gates: list[str] = Field(default_factory=list)
+    pending: list[str] = Field(default_factory=list)
+    ready: list[str] = Field(default_factory=list)
+    running: list[str] = Field(default_factory=list)
+    waiting: list[str] = Field(default_factory=list)
+    retry_wait: list[str] = Field(default_factory=list)
+    succeeded: list[str] = Field(default_factory=list)
+    failed: list[str] = Field(default_factory=list)
+    cancel_requested: list[str] = Field(default_factory=list)
+    cancelled: list[str] = Field(default_factory=list)
+    timed_out: list[str] = Field(default_factory=list)
+
+
 class Projection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -3097,6 +3130,24 @@ class RuntimeBackendService:
             status=status,
         )
 
+    async def diagnose_waits(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+    ) -> CarrierWaitGraphDiagnostic:
+        processes = await self.backend.list_processes(
+            run_id=run_id,
+            carrier_id=carrier_id,
+        )
+        gates = await self.backend.list_gates(run_id=run_id, carrier_id=carrier_id)
+        return _diagnose_carrier_waits(
+            run_id=run_id,
+            carrier_id=carrier_id,
+            processes=processes,
+            gates=gates,
+        )
+
     async def list_projections(self, *, run_id: str) -> list[Projection]:
         return await self.backend.list_projections(run_id=run_id)
 
@@ -3361,6 +3412,155 @@ def _build_run_summary_projection(
         data=data,
         source_event_sequence=source_event_sequence,
     )
+
+
+def _diagnose_carrier_waits(
+    *,
+    run_id: str,
+    carrier_id: str | None,
+    processes: Sequence[Process],
+    gates: Sequence[Gate],
+) -> CarrierWaitGraphDiagnostic:
+    processes_by_id = {process.id: process for process in processes}
+    gates_by_id = {gate.id: gate for gate in gates}
+    buckets: dict[str, list[str]] = {
+        status.value: [] for status in CarrierProcessStatus
+    }
+    for process in sorted(processes, key=lambda item: item.id):
+        buckets[process.status.value].append(process.id)
+
+    open_gates = sorted(
+        gate.id for gate in gates if gate.status == GateStatus.open
+    )
+    wait_edges: dict[str, list[str]] = {}
+    blocked: list[CarrierWaitDiagnosticIssue] = []
+
+    for process in sorted(processes, key=lambda item: item.id):
+        if process.status == CarrierProcessStatus.retry_wait:
+            blocked.append(
+                CarrierWaitDiagnosticIssue(
+                    process_id=process.id,
+                    status=process.status,
+                    reason="retry_wait",
+                    data={"available_at": process.available_at.isoformat()},
+                )
+            )
+            continue
+        if process.status != CarrierProcessStatus.waiting:
+            continue
+
+        process_dependencies = _carrier_wait_refs(
+            process,
+            "wait_for_processes",
+            "wait_for_process_ids",
+            "blocked_by_processes",
+        )
+        gate_dependencies = _carrier_wait_refs(
+            process,
+            "wait_for_gates",
+            "wait_for_gate_ids",
+            "blocked_by_gates",
+        )
+        blocked_by: list[str] = []
+        dependency_statuses: dict[str, str | None] = {}
+        process_edges: list[str] = []
+
+        for dependency_id in process_dependencies:
+            dependency = processes_by_id.get(dependency_id)
+            dependency_status = (
+                dependency.status.value if dependency is not None else None
+            )
+            dependency_statuses[dependency_id] = dependency_status
+            if dependency is None or dependency.status != CarrierProcessStatus.succeeded:
+                blocked_by.append(dependency_id)
+                process_edges.append(dependency_id)
+
+        for gate_id in gate_dependencies:
+            gate = gates_by_id.get(gate_id)
+            gate_status = gate.status.value if gate is not None else None
+            key = f"gate:{gate_id}"
+            dependency_statuses[key] = gate_status
+            if gate is None or gate.status != GateStatus.completed:
+                blocked_by.append(key)
+
+        if process_edges:
+            wait_edges[process.id] = process_edges
+        blocked.append(
+            CarrierWaitDiagnosticIssue(
+                process_id=process.id,
+                status=process.status,
+                reason="waiting"
+                if blocked_by
+                else "waiting_without_known_blocker",
+                blocked_by=blocked_by,
+                dependency_statuses=dependency_statuses,
+            )
+        )
+
+    deadlocks = _carrier_wait_cycles(wait_edges)
+    return CarrierWaitGraphDiagnostic(
+        run_id=run_id,
+        carrier_id=carrier_id,
+        deadlocked=bool(deadlocks),
+        deadlocks=deadlocks,
+        wait_edges=wait_edges,
+        blocked=blocked,
+        open_gates=open_gates,
+        pending=buckets[CarrierProcessStatus.pending.value],
+        ready=buckets[CarrierProcessStatus.ready.value],
+        running=buckets[CarrierProcessStatus.running.value],
+        waiting=buckets[CarrierProcessStatus.waiting.value],
+        retry_wait=buckets[CarrierProcessStatus.retry_wait.value],
+        succeeded=buckets[CarrierProcessStatus.succeeded.value],
+        failed=buckets[CarrierProcessStatus.failed.value],
+        cancel_requested=buckets[CarrierProcessStatus.cancel_requested.value],
+        cancelled=buckets[CarrierProcessStatus.cancelled.value],
+        timed_out=buckets[CarrierProcessStatus.timed_out.value],
+    )
+
+
+def _carrier_wait_refs(process: Process, *keys: str) -> list[str]:
+    values: list[str] = []
+    for source in (process.input, process.metadata):
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, str):
+                values.append(value)
+            elif isinstance(value, list):
+                values.extend(item for item in value if isinstance(item, str))
+    return list(dict.fromkeys(values))
+
+
+def _carrier_wait_cycles(edges: dict[str, list[str]]) -> list[list[str]]:
+    cycles: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    path: list[str] = []
+    visiting: dict[str, int] = {}
+    visited: set[str] = set()
+
+    def visit(node: str) -> None:
+        if node in visiting:
+            cycle = path[visiting[node] :]
+            key = tuple(sorted(cycle))
+            if key not in seen:
+                seen.add(key)
+                cycles.append(cycle)
+            return
+        if node in visited:
+            return
+
+        visiting[node] = len(path)
+        path.append(node)
+        for dependency in edges.get(node, []):
+            if dependency in edges:
+                visit(dependency)
+        path.pop()
+        visiting.pop(node, None)
+        visited.add(node)
+
+    for node in sorted(edges):
+        visit(node)
+    return cycles
 
 
 def _run_args(run: Run) -> tuple[Any, ...]:
@@ -3650,6 +3850,8 @@ __all__ = [
     "CarrierRunStatus",
     "CarrierRelation",
     "CarrierType",
+    "CarrierWaitDiagnosticIssue",
+    "CarrierWaitGraphDiagnostic",
     "CommandSubmission",
     "DelegationPolicy",
     "EventRef",

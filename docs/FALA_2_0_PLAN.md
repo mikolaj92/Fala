@@ -292,9 +292,9 @@ not complete enough to close the requirement.
 | 12 | Multi-Fala composition | PARTIAL | Local SQLite bridge deliver and persisted runtime pools exist; add wait graph, routing execution, and no-global-transaction guidance. |
 | 13 | Runtime pools | PARTIAL | Runtime pool/delegation policy persistence and CLI inspection exist; add routing policy execution. |
 | 14 | Budgets and safety limits | PARTIAL | Bridge delegation enforces hop/carrier/attempt budgets; add retry, gate, artifact byte, pending process, and spawned-run limits. |
-| 15 | Cycles and deadlock detection | PARTIAL | Add wait graph diagnostics and distinguish valid feedback cycles from deadlocks. |
+| 15 | Cycles and deadlock detection | PARTIAL | Carrier wait diagnostics detect explicit process wait cycles; add richer wait refs, valid feedback-cycle semantics, and operator guidance. |
 | 16 | Web/UI | PARTIAL | Keep web optional, read-only by default, localhost-bound, and mutation-through-command only; add static export. |
-| 17 | CLI | PARTIAL | Carrier inspect/mutate, runtimes inspect/list, doctor, trace, export, and bridge deliver exist; finish waits diagnosis and compatibility aliases. |
+| 17 | CLI | PARTIAL | Carrier inspect/mutate, runtimes inspect/list, diagnose-waits, doctor, trace, export, and bridge deliver exist; finish compatibility aliases. |
 | 18 | Package schema | PARTIAL | Finish carrier-first YAML, runtime config, flows, validation, and backward compatibility. |
 | 19 | Domain packs | PARTIAL | Move document-specific runtime logic into `fala.domains.documents` or equivalent compatibility package. |
 | 20 | Splot integration | PARTIAL | Keep Splot as a domain pack/adapter and add an end-to-end carrier/artifact/gate example. |

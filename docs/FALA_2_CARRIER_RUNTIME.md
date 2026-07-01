@@ -70,6 +70,9 @@ Splot arbitration workflows live in `fala.domain_packs.splot`; see
 - Process: a scheduled execution unit. Current statuses are `pending`, `ready`,
   `running`, `waiting`, `retry_wait`, `succeeded`, `failed`,
   `cancel_requested`, `cancelled`, and `timed_out`.
+- CarrierWaitGraphDiagnostic: a computed local SQLite wait report from process
+  `input`/`metadata` wait refs and gates. `fala diagnose-waits --db ... --run-id
+  ...` uses it when no legacy `--document-id` is provided.
 - Gate: a first-class decision point such as human review, approval, expiry, or
   cancellation.
 - Projection: a rebuildable read model keyed by run and projection name.

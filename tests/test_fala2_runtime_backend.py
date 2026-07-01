@@ -1348,6 +1348,62 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 1,
             )
 
+    def test_cli_diagnoses_carrier_runtime_waits_and_deadlocks(self) -> None:
+        async def scenario(db_path: Path) -> None:
+            runtime = FalaRuntime.sqlite(db_path)
+            await runtime.create_run(
+                Run(id="run_waits", title="Wait diagnostics"),
+                idempotency_key="run_waits:create",
+            )
+            await runtime.service.backend.put_process(
+                Process(
+                    id="process_a",
+                    run_id="run_waits",
+                    process_type="join",
+                    status=CarrierProcessStatus.waiting,
+                    input={"wait_for_processes": ["process_b"]},
+                )
+            )
+            await runtime.service.backend.put_process(
+                Process(
+                    id="process_b",
+                    run_id="run_waits",
+                    process_type="review",
+                    status=CarrierProcessStatus.waiting,
+                    input={
+                        "wait_for_processes": ["process_a"],
+                        "wait_for_gates": ["gate_review"],
+                    },
+                )
+            )
+            await runtime.service.backend.put_gate(
+                Gate(
+                    id="gate_review",
+                    run_id="run_waits",
+                    kind="manual_review",
+                    status=GateStatus.open,
+                )
+            )
+            return await runtime.diagnose_waits(run_id="run_waits")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "fala2.sqlite"
+            direct = asyncio.run(scenario(db_path))
+            self.assertTrue(direct.deadlocked)
+            self.assertEqual(
+                {frozenset(cycle) for cycle in direct.deadlocks},
+                {frozenset({"process_a", "process_b"})},
+            )
+
+            cli = _run_cli_json("diagnose-waits", "--db", str(db_path), "--run-id", "run_waits")
+            diagnostics = cli["wait_diagnostics"]
+            self.assertTrue(diagnostics["deadlocked"])
+            self.assertEqual(diagnostics["open_gates"], ["gate_review"])
+            blocked = {
+                item["process_id"]: item for item in diagnostics["blocked"]
+            }
+            self.assertIn("gate:gate_review", blocked["process_b"]["blocked_by"])
+
     def test_carrier_runtime_doctor_checks_sqlite_schema(self) -> None:
         async def scenario(db_path: Path) -> None:
             runtime = FalaRuntime.sqlite(db_path)

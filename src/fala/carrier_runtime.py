@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fala.runtime_backend import (
     Artifact,
+    CarrierWaitGraphDiagnostic,
     CarrierProcessStatus,
     CarrierRunStatus,
     Carrier,
@@ -440,6 +441,17 @@ class FalaRuntime:
             run_id=run_id,
             carrier_id=carrier_id,
             status=status,
+        )
+
+    async def diagnose_waits(
+        self,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+    ) -> CarrierWaitGraphDiagnostic:
+        return await self.service.diagnose_waits(
+            run_id=run_id,
+            carrier_id=carrier_id,
         )
 
 
