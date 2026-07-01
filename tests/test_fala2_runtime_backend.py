@@ -557,6 +557,83 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_fala_runtime_validates_run_status_transition_matrix(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala2.sqlite")
+
+                async def create_run(run_id: str) -> None:
+                    await runtime.create_run(
+                        Run(id=run_id),
+                        idempotency_key=f"{run_id}:create",
+                    )
+
+                await create_run("run_waiting_active")
+                waiting, _ = await runtime.set_run_status(
+                    run_id="run_waiting_active",
+                    status=CarrierRunStatus.waiting,
+                    idempotency_key="run_waiting_active:waiting",
+                )
+                active, _ = await runtime.set_run_status(
+                    run_id="run_waiting_active",
+                    status=CarrierRunStatus.active,
+                    idempotency_key="run_waiting_active:active",
+                )
+                failed, _ = await runtime.set_run_status(
+                    run_id="run_waiting_active",
+                    status=CarrierRunStatus.failed,
+                    idempotency_key="run_waiting_active:failed",
+                )
+
+                await create_run("run_cancel")
+                cancel_requested, _ = await runtime.set_run_status(
+                    run_id="run_cancel",
+                    status=CarrierRunStatus.cancel_requested,
+                    idempotency_key="run_cancel:cancel_requested",
+                )
+                cancelled, _ = await runtime.set_run_status(
+                    run_id="run_cancel",
+                    status=CarrierRunStatus.cancelled,
+                    idempotency_key="run_cancel:cancelled",
+                )
+
+                await create_run("run_invalid")
+                await runtime.set_run_status(
+                    run_id="run_invalid",
+                    status=CarrierRunStatus.cancel_requested,
+                    idempotency_key="run_invalid:cancel_requested",
+                )
+                with self.assertRaisesRegex(ValueError, "Invalid run status transition"):
+                    await runtime.set_run_status(
+                        run_id="run_invalid",
+                        status=CarrierRunStatus.active,
+                        idempotency_key="run_invalid:active",
+                    )
+
+                await create_run("run_terminal")
+                await runtime.set_run_status(
+                    run_id="run_terminal",
+                    status=CarrierRunStatus.completed,
+                    idempotency_key="run_terminal:completed",
+                )
+                with self.assertRaisesRegex(ValueError, "terminal"):
+                    await runtime.set_run_status(
+                        run_id="run_terminal",
+                        status=CarrierRunStatus.failed,
+                        idempotency_key="run_terminal:failed",
+                    )
+
+                self.assertEqual(waiting.status, CarrierRunStatus.waiting)
+                self.assertEqual(active.status, CarrierRunStatus.active)
+                self.assertEqual(failed.status, CarrierRunStatus.failed)
+                self.assertEqual(
+                    cancel_requested.status,
+                    CarrierRunStatus.cancel_requested,
+                )
+                self.assertEqual(cancelled.status, CarrierRunStatus.cancelled)
+
+        asyncio.run(scenario())
+
     def test_fala_runtime_schedules_claims_and_completes_processes(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
