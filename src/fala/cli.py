@@ -5,6 +5,7 @@ import asyncio
 import csv
 import fnmatch
 import hashlib
+from html import escape as html_escape
 import io
 import json
 import mimetypes
@@ -302,6 +303,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "list-processes",
             "dead-letter",
             "events",
+            "export-html",
             "gate",
             "gates",
             "observations",
@@ -2476,6 +2478,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Trace Carrier-first SQLite runtime state instead of document process attempts.",
     )
+    export_html = subparsers.add_parser(
+        "export-html",
+        help="Export a static Carrier runtime HTML report.",
+    )
+    export_html.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    export_html.add_argument("--run-id", required=True)
+    export_html.add_argument("--out", required=True, help="Output HTML path.")
 
     lineage = subparsers.add_parser(
         "document-lineage",
@@ -4108,6 +4117,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             ).model_dump(mode="json"),
         }
 
+    if args.command == "export-html":
+        return await _carrier_runtime_export_html(args)
+
     raise ValueError(f"Unknown command: {args.command}")
 
 
@@ -4416,6 +4428,91 @@ async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
         ],
     }
     return {"ok": True, "trace": trace}
+
+
+async def _carrier_runtime_export_html(args: argparse.Namespace) -> dict[str, Any]:
+    result = await _carrier_runtime_trace(args)
+    trace = result["trace"]
+    out = Path(args.out).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(_render_carrier_runtime_html(trace), encoding="utf-8")
+    return {"ok": True, "run_id": args.run_id, "out": str(out)}
+
+
+def _render_carrier_runtime_html(trace: dict[str, Any]) -> str:
+    counts = trace["counts"]
+    count_items = "\n".join(
+        f"<li><span>{_html(key)}</span><strong>{_html(value)}</strong></li>"
+        for key, value in sorted(counts.items())
+    )
+    event_rows = "\n".join(
+        "<tr>"
+        f"<td>{_html(item['sequence'])}</td>"
+        f"<td>{_html(item['type'])}</td>"
+        f"<td>{_html(item['carrier_id'] or '')}</td>"
+        f"<td>{_html(item['actor'] or '')}</td>"
+        f"<td>{_html(item['created_at'])}</td>"
+        "</tr>"
+        for item in trace["timeline"]
+    )
+    if not event_rows:
+        event_rows = '<tr><td colspan="5">No events recorded.</td></tr>'
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fala Carrier Runtime Report - {_html(trace["run_id"])}</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 32px; color: #172026; }}
+    h1, h2 {{ margin: 0 0 12px; }}
+    section {{ margin-top: 28px; }}
+    ul.counts {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; padding: 0; }}
+    ul.counts li {{ list-style: none; border: 1px solid #d8dee4; padding: 10px; }}
+    ul.counts span {{ display: block; color: #57606a; font-size: 12px; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border: 1px solid #d8dee4; padding: 8px; text-align: left; vertical-align: top; }}
+    th {{ background: #f6f8fa; }}
+    pre {{ background: #f6f8fa; border: 1px solid #d8dee4; overflow: auto; padding: 12px; }}
+  </style>
+</head>
+<body>
+  <h1>Fala Carrier Runtime Report</h1>
+  <p>Run: <strong>{_html(trace["run_id"])}</strong></p>
+
+  <section>
+    <h2>Counts</h2>
+    <ul class="counts">
+      {count_items}
+    </ul>
+  </section>
+
+  <section>
+    <h2>Timeline</h2>
+    <table>
+      <thead>
+        <tr><th>Seq</th><th>Type</th><th>Carrier</th><th>Actor</th><th>Created</th></tr>
+      </thead>
+      <tbody>
+        {event_rows}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Trace JSON</h2>
+    <pre>{_json_html(trace)}</pre>
+  </section>
+</body>
+</html>
+"""
+
+
+def _html(value: Any) -> str:
+    return html_escape(str(value), quote=True)
+
+
+def _json_html(value: Any) -> str:
+    return html_escape(json.dumps(value, indent=2, sort_keys=True), quote=True)
 
 
 def _carrier_runtime_db_path(target: str) -> str:

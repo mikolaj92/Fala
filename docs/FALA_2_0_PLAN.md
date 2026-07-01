@@ -307,7 +307,7 @@ not complete enough to close the requirement.
 | 27 | Retention and garbage collection | PARTIAL | Finish run archive, SQLite compact/vacuum, dry-run GC, artifact GC, and shared artifact safeguards. |
 | 28 | Projections | PARTIAL | Built-in `run_summary` can be rebuilt; add stale detection and broader projection schemas. |
 | 29 | Doctor / validation | PARTIAL | Expand `fala doctor`-style checks for carrier schema, adapters, graph, SQLite status, artifact store, and bridge config. |
-| 30 | Trace / debug / export | PARTIAL | Carrier trace JSON exists; add graph.dot, report.html, and portable bundle export. |
+| 30 | Trace / debug / export | PARTIAL | Carrier trace JSON and report.html exist; add graph.dot and portable bundle export. |
 | 31 | Step SDK | PARTIAL | Standardize subprocess input/output manifests and transactional runtime commit. |
 | 32 | Actor model | PARTIAL | Use actor fields consistently for CLI, worker, web, adapter, bridge, and human actions. |
 | 33 | Resource accounting | PARTIAL | Surface runtime, attempts, sizes, artifact count, event count, subprocess count, spawned runs, and bridge metrics. |

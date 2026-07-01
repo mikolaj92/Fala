@@ -123,6 +123,7 @@ uv run fala gate complete --db /tmp/fala-carrier.sqlite --run-id run_case --gate
 uv run fala projections list --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala projections rebuild --db /tmp/fala-carrier.sqlite --run-id run_case
 uv run fala trace --db /tmp/fala-carrier.sqlite --run-id run_case --carrier-runtime
+uv run fala export-html --db /tmp/fala-carrier.sqlite --run-id run_case --out report.html
 ```
 
 ## Local Examples

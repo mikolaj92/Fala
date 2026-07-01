@@ -933,6 +933,22 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
             self.assertEqual(payload["timeline"][-1]["type"], "projection.rebuilt")
             self.assertEqual(payload["gates"][0]["status"], "completed")
 
+            report_path = Path(tmp_dir) / "report.html"
+            exported = _run_cli_json(
+                "export-html",
+                "--db",
+                str(db_path),
+                "--run-id",
+                "run_cli",
+                "--out",
+                str(report_path),
+            )
+            self.assertTrue(exported["ok"])
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("Fala Carrier Runtime Report", report)
+            self.assertIn("projection.rebuilt", report)
+            self.assertIn("decision", report)
+
     def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
