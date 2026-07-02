@@ -4,6 +4,14 @@ from datetime import datetime
 from pathlib import Path
 
 from fala.artifacts import ArtifactStore, create_artifact_store
+from fala.driver import RunUntilIdleResult, run_until_idle
+from fala.flows import (
+    FlowAdvance,
+    FlowInstance,
+    advance_flow,
+    instantiate_flow,
+)
+from fala.models import CarrierFlowSpec
 from fala.runtime_backend import (
     Artifact,
     CarrierWaitGraphDiagnostic,
@@ -24,6 +32,7 @@ from fala.runtime_backend import (
     RuntimeEvent,
     DelegationPolicy,
     RuntimePool,
+    SQLiteRuntimeBackend,
 )
 
 
@@ -254,6 +263,27 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
+    async def ready_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        input: dict | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self.service.ready_process(
+            run_id=run_id,
+            process_id=process_id,
+            input=input,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
     async def claim_next_ready_process(
         self,
         *,
@@ -265,6 +295,91 @@ class FalaRuntime:
             worker_id=worker_id,
             run_id=run_id,
             lease_seconds=lease_seconds,
+        )
+
+    async def wait_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        output: dict | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        return await self.service.wait_process(
+            run_id=run_id,
+            process_id=process_id,
+            output=output,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def instantiate_flow(
+        self,
+        *,
+        run_id: str,
+        flow: CarrierFlowSpec,
+        flow_id: str | None = None,
+        carrier_id: str | None = None,
+        step_inputs: dict[str, dict] | None = None,
+        step_configs: dict[str, dict] | None = None,
+        max_attempts: int = 1,
+        priority: int = 0,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> FlowInstance:
+        return await instantiate_flow(
+            self.service,
+            run_id=run_id,
+            flow=flow,
+            flow_id=flow_id,
+            carrier_id=carrier_id,
+            step_inputs=step_inputs,
+            step_configs=step_configs,
+            max_attempts=max_attempts,
+            priority=priority,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def advance_flow(
+        self,
+        *,
+        run_id: str,
+        flow_id: str,
+        actor: str | None = None,
+    ) -> FlowAdvance:
+        return await advance_flow(
+            self.service,
+            run_id=run_id,
+            flow_id=flow_id,
+            actor=actor,
+        )
+
+    async def run_until_idle(
+        self,
+        *,
+        worker_id: str,
+        run_id: str | None = None,
+        lease_seconds: float = 300.0,
+        max_ticks: int = 100,
+        work_dir: str | Path | None = None,
+        advance_flows: bool = True,
+    ) -> RunUntilIdleResult:
+        return await run_until_idle(
+            self.service,
+            worker_id=worker_id,
+            run_id=run_id,
+            lease_seconds=lease_seconds,
+            max_ticks=max_ticks,
+            work_dir=work_dir,
+            advance_flows=advance_flows,
         )
 
     async def complete_process(

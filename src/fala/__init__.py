@@ -12,6 +12,7 @@ from fala.adapters import (
 )
 from fala.artifacts import ArtifactStore, FileArtifactStore, MemoryArtifactStore
 from fala.carrier_runtime import FalaRuntime
+from fala.driver import RunUntilIdleResult, run_until_idle
 from fala.errors import (
     FalaAdapterError,
     FalaBackendError,
@@ -25,6 +26,14 @@ from fala.errors import (
     FalaRetryableStepError,
     FalaRuntimeError,
     FalaValidationError,
+)
+from fala.flows import (
+    FlowAdvance,
+    FlowBlockedStep,
+    FlowInstance,
+    advance_flow,
+    advance_flow_for_process,
+    instantiate_flow,
 )
 from fala.models import (
     ArtifactKindSpec,
@@ -119,6 +128,9 @@ __all__ = [
     "FalaRuntimeError",
     "FalaValidationError",
     "FileArtifactStore",
+    "FlowAdvance",
+    "FlowBlockedStep",
+    "FlowInstance",
     "Gate",
     "GateStatus",
     "ManualGateStepAdapter",
@@ -130,6 +142,7 @@ __all__ = [
     "PythonFunctionStepAdapter",
     "Run",
     "RunRef",
+    "RunUntilIdleResult",
     "RuntimeBackend",
     "RuntimeBackendService",
     "RuntimeBudget",
@@ -143,7 +156,11 @@ __all__ = [
     "StepRunRequest",
     "StepRunResult",
     "SubprocessStepAdapter",
+    "advance_flow",
+    "advance_flow_for_process",
     "carrier_workflow_package_from_mapping",
     "create_step_adapter",
+    "instantiate_flow",
     "load_carrier_workflow_package_yaml",
+    "run_until_idle",
 ]

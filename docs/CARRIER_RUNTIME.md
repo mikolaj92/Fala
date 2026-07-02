@@ -134,6 +134,67 @@ runtime:
     root: .fala/artifacts
 ```
 
+## Embedded Driver
+
+The claim/execute/complete loop behind `fala run-until-idle` is a library API
+in `fala.driver`, so embedded consumers drive a run in-process instead of
+shelling out to the CLI:
+
+```python
+from fala import RuntimeBackendService, run_until_idle
+
+service = RuntimeBackendService.sqlite(".fala/state.sqlite")
+result = await run_until_idle(
+    service,
+    worker_id="embedded",
+    run_id="run_case",
+    lease_seconds=300.0,
+    max_ticks=100,
+)
+assert result.stopped_reason in {"idle", "max_ticks"}
+```
+
+`run_until_idle` returns a `RunUntilIdleResult` with the typed `completed`,
+`failed`, and `waiting` process lists. The CLI `run-until-idle` command is a
+thin wrapper over this function; both share the same adapter dispatch,
+gate-wait handling, retry/fail transitions, and `fala_runtime` bridge
+enqueueing. The same entrypoint is exposed as `FalaRuntime.run_until_idle`.
+
+## Flow Orchestration
+
+`fala.flows` executes a `CarrierFlowSpec` dependency graph over the process
+store:
+
+- `instantiate_flow(service, run_id=..., flow=..., step_inputs=..., ...)`
+  schedules one process per flow step. Steps with no `needs` start `ready`;
+  steps with `needs` start `pending`, which is invisible to claim.
+- After each successful step, the driver readies dependent steps whose needs
+  have all succeeded, injecting each need's output into the dependent step's
+  input under `"needs"` (readable via `fala.sdk.needs`). Explicit re-evaluation
+  is available through `advance_flow(service, run_id=..., flow_id=...)`.
+- A step whose needs can no longer succeed (a need was cancelled, timed out,
+  or failed with no attempts left) is never readied and never auto-cancelled:
+  `pending` is unclaimable, so blocked steps fail closed by inaction and are
+  reported in `FlowAdvance.blocked`.
+
+```python
+from fala import instantiate_flow, run_until_idle
+
+instance = await instantiate_flow(
+    service,
+    run_id="run_case",
+    flow=package.flows[0],
+    step_inputs={"normalize": {"value": "raw text"}},
+)
+result = await run_until_idle(service, worker_id="embedded", run_id="run_case")
+```
+
+Flow membership is recorded in each process's `metadata["flow"]` marker
+(`flow_id`, `flow_spec_id`, `step_id`, `needs`); instantiation and readying
+are idempotent through deterministic command idempotency keys. The same
+entrypoints are exposed as `FalaRuntime.instantiate_flow` and
+`FalaRuntime.advance_flow`.
+
 ## Conformance
 
 Reusable backend conformance checks live in
