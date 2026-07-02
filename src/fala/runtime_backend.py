@@ -616,6 +616,7 @@ class RuntimeBackend(Protocol):
         output: dict[str, Any] | None = None,
         error: dict[str, Any] | None = None,
         available_at: datetime | None = None,
+        input: dict[str, Any] | None = None,
     ) -> tuple[Process, CommandSubmission]: ...
 
     async def cancel_process(
@@ -788,6 +789,7 @@ _TERMINAL_PROCESS_STATUSES = {
     CarrierProcessStatus.timed_out,
 }
 _PROCESS_TRANSITION_COMMANDS = {
+    CarrierProcessStatus.ready: "process.ready",
     CarrierProcessStatus.succeeded: "process.complete",
     CarrierProcessStatus.failed: "process.fail",
     CarrierProcessStatus.retry_wait: "process.retry",
@@ -2524,6 +2526,7 @@ class SQLiteRuntimeBackend:
         output: dict[str, Any] | None = None,
         error: dict[str, Any] | None = None,
         available_at: datetime | None = None,
+        input: dict[str, Any] | None = None,
     ) -> tuple[Process, CommandSubmission]:
         expected_command_type = _PROCESS_TRANSITION_COMMANDS.get(status)
         if expected_command_type is None:
@@ -2676,6 +2679,28 @@ class SQLiteRuntimeBackend:
                         (
                             CarrierProcessStatus.waiting.value,
                             _dumps(output or process.output),
+                            now.isoformat(),
+                            run_id,
+                            process_id,
+                        ),
+                    )
+                elif status == CarrierProcessStatus.ready:
+                    if process.status != CarrierProcessStatus.pending:
+                        raise ValueError(
+                            f"Process {process_id!r} cannot become ready from "
+                            f"status: {process.status.value}"
+                        )
+                    connection.execute(
+                        """
+                        UPDATE processes
+                        SET status = ?,
+                            input_json = ?,
+                            updated_at = ?
+                        WHERE run_id = ? AND id = ?
+                        """,
+                        (
+                            CarrierProcessStatus.ready.value,
+                            _dumps(input if input is not None else process.input),
                             now.isoformat(),
                             run_id,
                             process_id,
@@ -4035,6 +4060,56 @@ class RuntimeBackendService:
             return existing, submission
 
         return process, submission
+
+    async def ready_process(
+        self,
+        *,
+        run_id: str,
+        process_id: str,
+        input: dict[str, Any] | None = None,
+        idempotency_key: str,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> tuple[Process, CommandSubmission]:
+        existing = await self.backend.get_process(run_id=run_id, process_id=process_id)
+        if existing is None:
+            raise ValueError(f"Unknown process: {process_id!r}")
+        replay = await self._replayed_submission(
+            run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            return existing, replay
+        if existing.status != CarrierProcessStatus.pending:
+            raise ValueError(
+                f"Process {process_id!r} cannot become ready from status: "
+                f"{existing.status.value}"
+            )
+        command = RuntimeCommand(
+            run_id=run_id,
+            command_type="process.ready",
+            idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            payload={"process_id": process_id},
+        )
+        event = RuntimeEvent(
+            run_id=run_id,
+            carrier_id=existing.carrier_id,
+            process_id=process_id,
+            event_type="process.readied",
+            payload={"process_id": process_id},
+        )
+        return await self.backend.transition_process(
+            run_id=run_id,
+            process_id=process_id,
+            status=CarrierProcessStatus.ready,
+            command=command,
+            events=[event],
+            input=input,
+        )
 
     async def claim_next_ready_process(
         self,
