@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fala.artifacts import ArtifactStore, create_artifact_store
+from fala.models import CarrierWorkflowPackageSpec
 from fala.runtime_backend import (
     Artifact,
     CarrierWaitGraphDiagnostic,
@@ -249,6 +250,29 @@ class FalaRuntime:
         return await self.service.schedule_process(
             process,
             idempotency_key=idempotency_key,
+            actor=actor,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    async def instantiate_flow(
+        self,
+        package: CarrierWorkflowPackageSpec,
+        flow_id: str,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        values: dict | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> list[Process]:
+        return await self.service.instantiate_flow(
+            package,
+            flow_id,
+            run_id=run_id,
+            carrier_id=carrier_id,
+            values=values,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,

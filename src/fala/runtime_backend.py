@@ -13,6 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from fala.errors import FalaBudgetExceeded
+from fala.models import CarrierWorkflowPackageSpec
 
 
 def _new_id(prefix: str) -> str:
@@ -4036,6 +4037,59 @@ class RuntimeBackendService:
 
         return process, submission
 
+    async def instantiate_flow(
+        self,
+        package: CarrierWorkflowPackageSpec,
+        flow_id: str,
+        *,
+        run_id: str,
+        carrier_id: str | None = None,
+        values: dict[str, Any] | None = None,
+        actor: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> list[Process]:
+        flow = next((item for item in package.flows if item.id == flow_id), None)
+        if flow is None:
+            raise ValueError(f"Unknown flow: {flow_id!r}")
+        if flow.allow_feedback_cycles:
+            raise ValueError(
+                f"Flow {flow_id!r} allows feedback cycles; "
+                "instantiate_flow only supports acyclic flows"
+            )
+        processes: list[Process] = []
+        for step in flow.steps:
+            process = Process(
+                id=f"process_{flow.id}_{step.id}",
+                run_id=run_id,
+                process_type=step.capability,
+                carrier_id=carrier_id,
+                status=(
+                    CarrierProcessStatus.pending
+                    if step.needs
+                    else CarrierProcessStatus.ready
+                ),
+                input={
+                    "adapter": step.adapter.model_dump(mode="json"),
+                    "config": dict(step.config),
+                    **(values or {}),
+                },
+                metadata={
+                    "flow_id": flow.id,
+                    "flow_step_id": step.id,
+                    "flow_needs": list(step.needs),
+                },
+            )
+            stored, _ = await self.schedule_process(
+                process,
+                idempotency_key=f"{run_id}:process.schedule:{flow.id}:{step.id}",
+                actor=actor,
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+            )
+            processes.append(stored)
+        return processes
+
     async def claim_next_ready_process(
         self,
         *,
@@ -4089,7 +4143,7 @@ class RuntimeBackendService:
             event_type="process.completed",
             payload={"process_id": process_id},
         )
-        return await self.backend.transition_process(
+        completed, submission = await self.backend.transition_process(
             run_id=run_id,
             process_id=process_id,
             status=CarrierProcessStatus.succeeded,
@@ -4097,6 +4151,42 @@ class RuntimeBackendService:
             events=[event],
             output=output,
         )
+        if not submission.replayed:
+            await self._ready_flow_dependents(completed)
+        return completed, submission
+
+    async def _ready_flow_dependents(self, completed: Process) -> None:
+        flow_id = completed.metadata.get("flow_id")
+        step_id = completed.metadata.get("flow_step_id")
+        if not isinstance(flow_id, str) or not isinstance(step_id, str):
+            return
+        siblings = await self.backend.list_processes(run_id=completed.run_id)
+        flow_processes = [
+            process
+            for process in siblings
+            if process.metadata.get("flow_id") == flow_id
+        ]
+        succeeded_steps = {
+            process.metadata.get("flow_step_id")
+            for process in flow_processes
+            if process.status == CarrierProcessStatus.succeeded
+        }
+        for dependent in flow_processes:
+            needs = dependent.metadata.get("flow_needs")
+            if (
+                dependent.status != CarrierProcessStatus.pending
+                or not isinstance(needs, list)
+                or step_id not in needs
+            ):
+                continue
+            updated_input = dict(dependent.input)
+            needs_channel = dict(updated_input.get("needs") or {})
+            needs_channel[step_id] = completed.output.get("values", {})
+            updated_input["needs"] = needs_channel
+            update: dict[str, Any] = {"input": updated_input, "updated_at": _now()}
+            if all(need in succeeded_steps for need in needs):
+                update["status"] = CarrierProcessStatus.ready
+            await self.backend.put_process(dependent.model_copy(update=update))
 
     async def fail_process(
         self,
