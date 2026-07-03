@@ -54,6 +54,8 @@ from fala.runtime_backend import Projection
 from fala.runtime_backend import Run as CarrierRun
 from fala.runtime_backend import RunRef
 from fala.runtime_backend import RuntimeBackendService
+from fala.runtime_backend import RuntimeArtifactBlob
+from fala.runtime_backend import RuntimeArtifactStore
 from fala.runtime_backend import RuntimeBudget
 from fala.runtime_backend import RuntimeCommand
 from fala.runtime_backend import RuntimeEvent
@@ -139,6 +141,7 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "init",
             "gates",
             "gc",
+            "maintain-journal",
             "observations",
             "processes",
             "projections",
@@ -184,6 +187,14 @@ def _build_parser() -> argparse.ArgumentParser:
     gc.add_argument("--run-id", default=None)
     gc.add_argument("--older-than", default=None, help="Only collect blobs older than duration like 30d, 12h, 20m.")
     gc.add_argument("--dry-run", action="store_true")
+
+    maintain_journal = subparsers.add_parser("maintain-journal", help="Run retention, artifact GC, and optional VACUUM in one operation.")
+    maintain_journal.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    maintain_journal.add_argument("--artifact-root", default=".fala/artifacts", help="Filesystem artifact store root.")
+    maintain_journal.add_argument("--older-than-days", type=float, required=True)
+    maintain_journal.add_argument("--keep-last", type=int, default=None)
+    maintain_journal.add_argument("--no-vacuum", action="store_true")
+    maintain_journal.add_argument("--delete", action="store_true", help="Apply deletions. Defaults to dry-run.")
 
     archive_run = subparsers.add_parser("archive-run", help="Write a portable run archive bundle.")
     archive_run.add_argument("run_id")
@@ -561,6 +572,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "gate",
         "gates",
         "gc",
+        "maintain-journal",
         "observations",
         "processes",
         "projections",
@@ -619,6 +631,8 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         return await _carrier_runtime_export_bundle(args)
     if args.command == "gc":
         return await _carrier_runtime_gc(args)
+    if args.command == "maintain-journal":
+        return await _carrier_runtime_maintain_journal(args)
     if args.command == "run-until-idle":
         return await _carrier_runtime_run_until_idle(args)
     if args.command == "replay-execution":
@@ -1675,6 +1689,38 @@ async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
         ],
     }
     return {"ok": True, "trace": trace}
+
+
+async def _carrier_runtime_maintain_journal(args: argparse.Namespace) -> dict[str, Any]:
+    service = RuntimeBackendService(SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db)))
+    artifact_store = _runtime_artifact_store_from_root(Path(args.artifact_root))
+    plan = await service.maintain_journal(
+        older_than_days=args.older_than_days,
+        keep_last=args.keep_last,
+        vacuum=not args.no_vacuum,
+        dry_run=not args.delete,
+        artifact_store=artifact_store,
+    )
+    return {"ok": True, "maintenance": plan.model_dump(mode="json")}
+
+
+def _runtime_artifact_store_from_root(root: Path) -> RuntimeArtifactStore:
+    resolved = root.expanduser().resolve()
+    blobs: dict[str, RuntimeArtifactBlob] = {}
+    blob_root = resolved / "blobs" / "sha256"
+    if blob_root.exists():
+        for path in sorted(blob_root.glob("*/*")):
+            if not path.is_file():
+                continue
+            digest = path.name.lower()
+            if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+                continue
+            blobs[digest] = RuntimeArtifactBlob(
+                digest=digest,
+                size_bytes=path.stat().st_size,
+                location=str(path),
+            )
+    return RuntimeArtifactStore(root=resolved, blobs=blobs)
 
 
 async def _carrier_runtime_export_html(args: argparse.Namespace) -> dict[str, Any]:

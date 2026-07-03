@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -95,6 +96,75 @@ class Run(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class RuntimeRunRetentionItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    status: CarrierRunStatus
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+    deleted: bool = False
+    row_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class RuntimeRunRetentionPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = True
+    before: datetime
+    statuses: list[CarrierRunStatus] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=_now)
+    candidate_count: int = Field(default=0, ge=0)
+    deleted_run_count: int = Field(default=0, ge=0)
+    row_counts: dict[str, int] = Field(default_factory=dict)
+    runs: list[RuntimeRunRetentionItem] = Field(default_factory=list)
+
+
+class RuntimeArtifactGcPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = True
+    artifact_root: str | None = None
+    generated_at: datetime = Field(default_factory=_now)
+    referenced_count: int = Field(default=0, ge=0)
+    blob_count: int = Field(default=0, ge=0)
+    candidate_count: int = Field(default=0, ge=0)
+    deleted_count: int = Field(default=0, ge=0)
+    bytes_reclaimable: int = Field(default=0, ge=0)
+    bytes_reclaimed: int = Field(default=0, ge=0)
+    candidates: list[str] = Field(default_factory=list)
+    deleted: list[str] = Field(default_factory=list)
+
+
+class RuntimeJournalMaintenancePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dry_run: bool = True
+    older_than_days: float
+    keep_last: int | None = None
+    vacuum: bool = True
+    generated_at: datetime = Field(default_factory=_now)
+    retention: RuntimeRunRetentionPlan | None = None
+    artifact_gc: RuntimeArtifactGcPlan | None = None
+    vacuum_result: dict[str, Any] | None = None
+    runs_archived: int = Field(default=0, ge=0)
+    bytes_reclaimed: int = Field(default=0, ge=0)
+
+
+@dataclass(frozen=True)
+class RuntimeArtifactBlob:
+    digest: str
+    size_bytes: int
+    location: str | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeArtifactStore:
+    root: Path | None = None
+    blobs: dict[str, RuntimeArtifactBlob] = field(default_factory=dict)
 
 
 class Carrier(BaseModel):
@@ -413,6 +483,10 @@ class RuntimeBackend(Protocol):
         status: CarrierRunStatus | None = None,
         limit: int | None = None,
     ) -> list[Run]: ...
+
+    async def delete_run(self, *, run_id: str) -> dict[str, int]: ...
+
+    async def vacuum(self) -> dict[str, Any]: ...
 
     async def put_runtime_pool(self, pool: RuntimePool) -> None: ...
 
@@ -1390,6 +1464,63 @@ class SQLiteRuntimeBackend:
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()
         return [_run_from_row(row) for row in rows]
+
+    async def delete_run(self, *, run_id: str) -> dict[str, int]:
+        tables = [
+            "bridge_inbox",
+            "bridge_outbox",
+            "projections",
+            "gates",
+            "processes",
+            "artifacts",
+            "observations",
+            "carrier_relations",
+            "carrier_types",
+            "carriers",
+            "runtime_events",
+            "runtime_commands",
+            "runs",
+        ]
+        counts: dict[str, int] = {}
+        async with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute("DROP TRIGGER IF EXISTS runtime_events_no_delete")
+                connection.execute("DROP TRIGGER IF EXISTS runtime_commands_no_delete")
+                for table in tables:
+                    column = "id" if table == "runs" else "run_id"
+                    cursor = connection.execute(f"DELETE FROM {table} WHERE {column} = ?", (run_id,))
+                    counts[table] = int(cursor.rowcount if cursor.rowcount is not None else 0)
+                connection.commit()
+                return counts
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+                self._init_schema()
+
+    async def vacuum(self) -> dict[str, Any]:
+        before_size = self.path.stat().st_size if self.path.exists() else 0
+        async with self._lock:
+            with self._connect() as connection:
+                before_pages = int(connection.execute("PRAGMA page_count").fetchone()[0])
+                before_free = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+                connection.execute("VACUUM")
+                after_pages = int(connection.execute("PRAGMA page_count").fetchone()[0])
+                after_free = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+        after_size = self.path.stat().st_size if self.path.exists() else 0
+        return {
+            "store_type": "sqlite",
+            "vacuumed": True,
+            "path": str(self.path),
+            "bytes_before": before_size,
+            "bytes_after": after_size,
+            "bytes_reclaimed": max(0, before_size - after_size),
+            "before": {"page_count": before_pages, "freelist_count": before_free},
+            "after": {"page_count": after_pages, "freelist_count": after_free},
+        }
 
     async def put_runtime_pool(self, pool: RuntimePool) -> None:
         async with self._lock:
@@ -4980,6 +5111,148 @@ class RuntimeBackendService:
     ) -> list[Run]:
         return await self.backend.list_runs(status=status, limit=limit)
 
+    async def run_retention(
+        self,
+        *,
+        before: datetime,
+        statuses: Sequence[CarrierRunStatus] | None = None,
+        dry_run: bool = True,
+        keep_run_ids: set[str] | None = None,
+    ) -> RuntimeRunRetentionPlan:
+        selected_statuses = list(statuses or _TERMINAL_RUN_STATUSES)
+        keep_run_ids = keep_run_ids or set()
+        rows: list[Run] = []
+        for status in selected_statuses:
+            rows.extend(await self.backend.list_runs(status=status))
+        rows = [
+            run
+            for run in rows
+            if run.id not in keep_run_ids
+            and (run.finished_at or run.updated_at or run.created_at) < before
+        ]
+        rows.sort(key=lambda run: (run.created_at, run.id))
+
+        items: list[RuntimeRunRetentionItem] = []
+        row_counts: dict[str, int] = {}
+        deleted_run_count = 0
+        for run in rows:
+            counts: dict[str, int] = {}
+            deleted = False
+            if not dry_run:
+                counts = await self.backend.delete_run(run_id=run.id)
+                for table, count in counts.items():
+                    row_counts[table] = row_counts.get(table, 0) + count
+                deleted = bool(counts.get("runs"))
+                if deleted:
+                    deleted_run_count += 1
+            items.append(
+                RuntimeRunRetentionItem(
+                    run_id=run.id,
+                    status=run.status,
+                    created_at=run.created_at,
+                    updated_at=run.updated_at,
+                    finished_at=run.finished_at,
+                    deleted=deleted,
+                    row_counts=counts,
+                )
+            )
+        return RuntimeRunRetentionPlan(
+            dry_run=dry_run,
+            before=before,
+            statuses=selected_statuses,
+            candidate_count=len(items),
+            deleted_run_count=deleted_run_count,
+            row_counts=dict(sorted(row_counts.items())),
+            runs=items,
+        )
+
+    async def run_artifact_gc(
+        self,
+        *,
+        artifact_store: RuntimeArtifactStore | None = None,
+        dry_run: bool = True,
+    ) -> RuntimeArtifactGcPlan:
+        if artifact_store is None:
+            return RuntimeArtifactGcPlan(dry_run=dry_run)
+        referenced = await _referenced_artifact_digests(self.backend)
+        candidates = [
+            blob
+            for digest, blob in sorted(artifact_store.blobs.items())
+            if digest not in referenced
+        ]
+        deleted: list[str] = []
+        if not dry_run and artifact_store.root is not None:
+            for blob in candidates:
+                if blob.location is None:
+                    continue
+                path = Path(blob.location)
+                if path.exists() and path.is_file():
+                    path.unlink()
+                    deleted.append(blob.digest)
+        return RuntimeArtifactGcPlan(
+            dry_run=dry_run,
+            artifact_root=str(artifact_store.root) if artifact_store.root is not None else None,
+            referenced_count=len(referenced),
+            blob_count=len(artifact_store.blobs),
+            candidate_count=len(candidates),
+            deleted_count=len(deleted),
+            bytes_reclaimable=sum(blob.size_bytes for blob in candidates),
+            bytes_reclaimed=sum(blob.size_bytes for blob in candidates if blob.digest in deleted),
+            candidates=[blob.digest for blob in candidates],
+            deleted=deleted,
+        )
+
+    async def maintain_journal(
+        self,
+        *,
+        older_than_days: float,
+        keep_last: int | None = None,
+        vacuum: bool = True,
+        dry_run: bool = True,
+        artifact_store: RuntimeArtifactStore | None = None,
+    ) -> RuntimeJournalMaintenancePlan:
+        if older_than_days < 0:
+            raise ValueError("older_than_days must be non-negative")
+        if keep_last is not None and keep_last < 0:
+            raise ValueError("keep_last must be non-negative")
+        before = _now() - timedelta(days=older_than_days)
+        keep_run_ids: set[str] = set()
+        if keep_last:
+            terminal_runs: list[Run] = []
+            for status in _TERMINAL_RUN_STATUSES:
+                terminal_runs.extend(await self.backend.list_runs(status=status))
+            terminal_runs.sort(
+                key=lambda run: (run.finished_at or run.updated_at or run.created_at, run.id),
+                reverse=True,
+            )
+            keep_run_ids = {run.id for run in terminal_runs[:keep_last]}
+
+        retention = await self.run_retention(
+            before=before,
+            dry_run=dry_run,
+            keep_run_ids=keep_run_ids,
+        )
+        artifact_gc = await self.run_artifact_gc(
+            artifact_store=artifact_store,
+            dry_run=dry_run,
+        )
+        vacuum_result = None
+        if vacuum and not dry_run:
+            vacuum_result = await self.backend.vacuum()
+
+        return RuntimeJournalMaintenancePlan(
+            dry_run=dry_run,
+            older_than_days=older_than_days,
+            keep_last=keep_last,
+            vacuum=vacuum,
+            retention=retention,
+            artifact_gc=artifact_gc,
+            vacuum_result=vacuum_result,
+            runs_archived=retention.deleted_run_count,
+            bytes_reclaimed=artifact_gc.bytes_reclaimed
+            + int((vacuum_result or {}).get("bytes_reclaimed", 0)),
+        )
+
     async def save_runtime_pool(self, pool: RuntimePool) -> RuntimePool:
         await self.backend.put_runtime_pool(pool)
         return pool
@@ -6117,6 +6390,28 @@ def _bridge_delivery_from_row(row: sqlite3.Row) -> BridgeDelivery:
         created_at=_dt(row["created_at"]),
         updated_at=_dt(row["updated_at"]),
     )
+
+
+_TERMINAL_RUN_STATUSES = (
+    CarrierRunStatus.completed,
+    CarrierRunStatus.failed,
+    CarrierRunStatus.cancelled,
+    CarrierRunStatus.timed_out,
+)
+
+
+async def _referenced_artifact_digests(backend: RuntimeBackend) -> set[str]:
+    digests: set[str] = set()
+    for run in await backend.list_runs():
+        for artifact in await backend.list_artifacts(run_id=run.id):
+            digest = artifact.content_hash
+            if digest and digest.startswith("sha256:"):
+                digest = digest.removeprefix("sha256:")
+            if not digest and artifact.uri.startswith("fala-artifact://sha256/"):
+                digest = artifact.uri.rsplit("/", 1)[-1]
+            if digest:
+                digests.add(digest.lower())
+    return digests
 
 
 __all__ = [
