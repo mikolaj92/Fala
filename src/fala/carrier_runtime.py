@@ -13,6 +13,8 @@ from fala.flows import (
 )
 from fala.models import CarrierFlowSpec
 from fala.runtime_backend import (
+    RuntimeArtifactStore,
+    RuntimeJournalMaintenancePlan,
     Artifact,
     CarrierWaitGraphDiagnostic,
     CarrierProcessStatus,
@@ -644,6 +646,23 @@ class FalaRuntime:
         limit: int | None = None,
     ) -> list[Run]:
         return await self.service.list_runs(status=status, limit=limit)
+
+    async def maintain_journal(
+        self,
+        *,
+        older_than_days: float,
+        keep_last: int | None = None,
+        vacuum: bool = True,
+        dry_run: bool = True,
+        artifact_store: RuntimeArtifactStore | None = None,
+    ) -> RuntimeJournalMaintenancePlan:
+        return await self.service.maintain_journal(
+            older_than_days=older_than_days,
+            keep_last=keep_last,
+            vacuum=vacuum,
+            dry_run=dry_run,
+            artifact_store=artifact_store,
+        )
 
     async def save_runtime_pool(self, pool: RuntimePool) -> RuntimePool:
         return await self.service.save_runtime_pool(pool)
