@@ -252,6 +252,58 @@ class FalaDriverTests(unittest.TestCase):
         self.assertEqual(result.ticks, 1)
         self.assertEqual(len(result.completed), 1)
 
+    def test_run_until_idle_stops_between_ticks_after_completing_step(self) -> None:
+        async def scenario(root: Path) -> tuple[RunUntilIdleResult, Process | None]:
+            service = await _service(root, "run_stop")
+            for index in range(2):
+                await service.schedule_process(
+                    Process(
+                        id=f"process_{index}",
+                        run_id="run_stop",
+                        process_type="python_function",
+                        status=CarrierProcessStatus.ready,
+                        input={
+                            "adapter": {
+                                "kind": "python_function",
+                                "ref": "tests.test_fala_driver._driver_double",
+                            },
+                            "value": index,
+                        },
+                    ),
+                    idempotency_key=f"run_stop:process.schedule:process_{index}",
+                )
+
+            checks = 0
+
+            def should_stop() -> bool:
+                nonlocal checks
+                checks += 1
+                return checks > 1
+
+            result = await run_until_idle(
+                service,
+                worker_id="tester",
+                run_id="run_stop",
+                should_stop=should_stop,
+            )
+            remaining = await service.backend.get_process(
+                run_id="run_stop",
+                process_id="process_1",
+            )
+            return result, remaining
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result, remaining = asyncio.run(scenario(Path(tmp_dir)))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.stopped_reason, "stopped")
+        self.assertEqual(result.ticks, 1)
+        self.assertEqual(len(result.completed), 1)
+        self.assertEqual(result.completed[0].status, CarrierProcessStatus.succeeded)
+        self.assertIsNotNone(remaining)
+        assert remaining is not None
+        self.assertEqual(remaining.status, CarrierProcessStatus.ready)
+
     def test_run_until_idle_writes_step_work_dirs(self) -> None:
         async def scenario(root: Path) -> RunUntilIdleResult:
             service = await _service(root, "run_work")

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 
 from fala.adapters import StepRunRequest, StepRunResult, create_step_adapter
@@ -53,6 +53,7 @@ async def run_until_idle(
     max_ticks: int = 100,
     work_dir: str | Path | None = None,
     advance_flows: bool = True,
+    should_stop: Callable[[], bool] | None = None,
 ) -> RunUntilIdleResult:
     if max_ticks < 1:
         raise ValueError("max_ticks must be greater than zero")
@@ -62,11 +63,15 @@ async def run_until_idle(
     failed: list[Process] = []
     waiting: list[Process] = []
     ticks = 0
+    stopped = False
     work_root = Path(work_dir).expanduser() if work_dir else None
     if work_root is not None:
         work_root.mkdir(parents=True, exist_ok=True)
 
     while ticks < max_ticks:
+        if should_stop is not None and should_stop():
+            stopped = True
+            break
         process = await service.claim_next_ready_process(
             worker_id=worker_id,
             run_id=run_id,
@@ -163,7 +168,7 @@ async def run_until_idle(
     return RunUntilIdleResult(
         ok=ticks < max_ticks,
         ticks=ticks,
-        stopped_reason="max_ticks" if ticks >= max_ticks else "idle",
+        stopped_reason="stopped" if stopped else "max_ticks" if ticks >= max_ticks else "idle",
         completed=completed,
         failed=failed,
         waiting=waiting,
