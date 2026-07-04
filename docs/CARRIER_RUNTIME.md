@@ -141,24 +141,30 @@ in `fala.driver`, so embedded consumers drive a run in-process instead of
 shelling out to the CLI:
 
 ```python
+from threading import Event
+
 from fala import RuntimeBackendService, run_until_idle
 
 service = RuntimeBackendService.sqlite(".fala/state.sqlite")
+stop_event = Event()
 result = await run_until_idle(
     service,
     worker_id="embedded",
     run_id="run_case",
     lease_seconds=300.0,
     max_ticks=100,
+    should_stop=stop_event.is_set,
 )
-assert result.stopped_reason in {"idle", "max_ticks"}
+assert result.stopped_reason in {"idle", "max_ticks", "stopped"}
 ```
 
 `run_until_idle` returns a `RunUntilIdleResult` with the typed `completed`,
-`failed`, and `waiting` process lists. The CLI `run-until-idle` command is a
-thin wrapper over this function; both share the same adapter dispatch,
-gate-wait handling, retry/fail transitions, and `fala_runtime` bridge
-enqueueing. The same entrypoint is exposed as `FalaRuntime.run_until_idle`.
+`failed`, and `waiting` process lists. Pass `should_stop` to stop claiming new
+processes between ticks; the in-flight step completes, then the result uses
+`stopped_reason="stopped"`. The CLI `run-until-idle` command is a thin wrapper
+over this function; both share the same adapter dispatch, gate-wait handling,
+retry/fail transitions, and `fala_runtime` bridge enqueueing. The same
+entrypoint is exposed as `FalaRuntime.run_until_idle`.
 
 ## Flow Orchestration
 

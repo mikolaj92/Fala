@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from fala.artifacts import ArtifactStore, create_artifact_store
 from fala.driver import RunUntilIdleResult, run_until_idle
@@ -373,6 +374,7 @@ class FalaRuntime:
         max_ticks: int = 100,
         work_dir: str | Path | None = None,
         advance_flows: bool = True,
+        should_stop: Callable[[], bool] | None = None,
     ) -> RunUntilIdleResult:
         return await run_until_idle(
             self.service,
@@ -382,6 +384,7 @@ class FalaRuntime:
             max_ticks=max_ticks,
             work_dir=work_dir,
             advance_flows=advance_flows,
+            should_stop=should_stop,
         )
 
     async def complete_process(
