@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from fala.artifacts import ArtifactStore, create_artifact_store
-from fala.driver import RunUntilIdleResult, run_until_idle
+from fala.driver import RunFlowResult, RunUntilIdleResult, run_flow, run_until_idle
 from fala.flows import (
     FlowAdvance,
     FlowInstance,
@@ -385,6 +385,34 @@ class FalaRuntime:
             work_dir=work_dir,
             advance_flows=advance_flows,
             should_stop=should_stop,
+        )
+
+    async def run_flow(
+        self,
+        *,
+        run: Run,
+        flow: CarrierFlowSpec,
+        worker_id: str,
+        flow_id: str | None = None,
+        step_inputs: dict[str, dict] | None = None,
+        step_configs: dict[str, dict] | None = None,
+        work_dir: str | Path | None = None,
+        max_ticks: int = 100,
+        lease_seconds: float = 300.0,
+        actor: str | None = None,
+    ) -> RunFlowResult:
+        return await run_flow(
+            self.service,
+            run=run,
+            flow=flow,
+            worker_id=worker_id,
+            flow_id=flow_id,
+            step_inputs=step_inputs,
+            step_configs=step_configs,
+            work_dir=work_dir,
+            max_ticks=max_ticks,
+            lease_seconds=lease_seconds,
+            actor=actor,
         )
 
     async def complete_process(

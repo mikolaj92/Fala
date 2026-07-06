@@ -16,14 +16,17 @@ from urllib.parse import unquote, urlparse
 
 from fala.adapters import StepRunRequest, StepRunResult, create_step_adapter
 from fala.errors import FalaConfigurationError
-from fala.flows import advance_flow_for_process
-from fala.models import CarrierAdapterSpec
+from fala.flows import FlowInstance, advance_flow_for_process, instantiate_flow
+from fala.models import CarrierAdapterSpec, CarrierFlowSpec
 from fala.runtime_backend import (
     BridgeDelivery,
     Carrier,
+    CarrierProcessStatus,
+    CarrierRunStatus,
     EventRef,
     Gate,
     Process,
+    Run,
     RunRef,
     RuntimeBackend,
     RuntimeBackendService,
@@ -42,6 +45,14 @@ class RunUntilIdleResult:
     completed: list[Process]
     failed: list[Process]
     waiting: list[Process]
+
+
+@dataclass(frozen=True)
+class RunFlowResult:
+    run: Run
+    flow: FlowInstance
+    outcome: RunUntilIdleResult
+    status: CarrierRunStatus
 
 
 async def run_until_idle(
@@ -173,6 +184,137 @@ async def run_until_idle(
         failed=failed,
         waiting=waiting,
     )
+
+
+_PROCESS_FAILURE_STATUSES = {
+    CarrierProcessStatus.failed,
+    CarrierProcessStatus.cancelled,
+    CarrierProcessStatus.timed_out,
+}
+
+# Mirrors runtime_backend._TERMINAL_RUN_STATUSES: statuses from which the run
+# state machine allows no further transition. Kept local so run_flow can tell a
+# finished run from a resumable one without reaching into a private symbol.
+_TERMINAL_RUN_STATUSES = {
+    CarrierRunStatus.completed,
+    CarrierRunStatus.failed,
+    CarrierRunStatus.cancelled,
+    CarrierRunStatus.timed_out,
+}
+
+
+def _run_flow_status(
+    processes: list[Process], *, stopped_reason: str, max_ticks: int
+) -> tuple[CarrierRunStatus, str | None]:
+    """Derive the run status from the flow's own step processes.
+
+    Owning this mapping is what keeps the run's state machine inside Fala. The
+    authoritative signal is the post-drive status of every step process, not the
+    per-drive tallies in :class:`RunUntilIdleResult`: a flow can drain on the
+    exact tick the budget runs out, so ``stopped_reason`` alone cannot tell
+    completion from a timeout. A failed, cancelled, or timed-out step fails the
+    run; every step succeeding completes it; a spent tick budget with steps
+    still incomplete times the run out. Otherwise the flow drained to idle with
+    no failure and budget to spare -- it is parked on a waiting/gated step, so
+    the run is *suspended* (``waiting``), not terminal: marking it ``failed``
+    here would be irreversible and would strand a resumable run.
+    """
+    failures = [p for p in processes if p.status in _PROCESS_FAILURE_STATUSES]
+    if failures:
+        return (CarrierRunStatus.failed, f"{len(failures)} step(s) did not succeed")
+    if processes and all(p.status == CarrierProcessStatus.succeeded for p in processes):
+        return (CarrierRunStatus.completed, None)
+    incomplete = [p for p in processes if p.status != CarrierProcessStatus.succeeded]
+    if stopped_reason == "max_ticks":
+        return (
+            CarrierRunStatus.timed_out,
+            f"flow did not finish within {max_ticks} ticks; "
+            f"{len(incomplete)} step(s) still incomplete",
+        )
+    return (
+        CarrierRunStatus.waiting,
+        f"flow parked with {len(incomplete)} step(s) awaiting external progress",
+    )
+
+
+async def run_flow(
+    service: RuntimeBackendService,
+    *,
+    run: Run,
+    flow: CarrierFlowSpec,
+    worker_id: str,
+    flow_id: str | None = None,
+    step_inputs: dict[str, dict[str, Any]] | None = None,
+    step_configs: dict[str, dict[str, Any]] | None = None,
+    work_dir: str | Path | None = None,
+    max_ticks: int = 100,
+    lease_seconds: float = 300.0,
+    actor: str | None = None,
+) -> RunFlowResult:
+    """Create a run, instantiate one flow on it, drive it to idle, finalize status.
+
+    The single-call run lifecycle for the common embedded case: the caller
+    supplies the run record and the flow to execute, and Fala owns the whole
+    run -- creating it, scheduling the flow's steps, running the
+    claim/execute/advance loop until no work remains, and recording the terminal
+    run status derived from the outcome (see :func:`_run_flow_terminal_status`).
+    Per-step, per-run values reach the steps through ``step_inputs`` and
+    ``step_configs`` exactly as with :func:`instantiate_flow`.
+
+    Returns the finalized run, the instantiated flow (whose resolved
+    ``flow_id`` addresses its step processes), the raw
+    :class:`RunUntilIdleResult`, and the terminal status that was set.
+    """
+    stored_run, _ = await service.create_run(
+        run, idempotency_key=f"{run.id}:run.create", actor=actor
+    )
+    instance = await instantiate_flow(
+        service,
+        run_id=run.id,
+        flow=flow,
+        flow_id=flow_id,
+        step_inputs=step_inputs,
+        step_configs=step_configs,
+        actor=actor,
+    )
+    if stored_run.status in _TERMINAL_RUN_STATUSES:
+        # Re-invoked on a run that already reached a terminal state (create_run
+        # replayed rather than created it). Driving it again would re-run any
+        # leftover-ready step and then try an illegal terminal-to-terminal
+        # transition; return the finished run untouched instead.
+        return RunFlowResult(
+            run=stored_run,
+            flow=instance,
+            outcome=RunUntilIdleResult(
+                ok=True,
+                ticks=0,
+                stopped_reason="already_terminal",
+                completed=[],
+                failed=[],
+                waiting=[],
+            ),
+            status=stored_run.status,
+        )
+    outcome = await run_until_idle(
+        service,
+        worker_id=worker_id,
+        run_id=run.id,
+        lease_seconds=lease_seconds,
+        max_ticks=max_ticks,
+        work_dir=work_dir,
+    )
+    processes = await service.list_processes(run_id=run.id)
+    status, reason = _run_flow_status(
+        processes, stopped_reason=outcome.stopped_reason, max_ticks=max_ticks
+    )
+    finalized, _ = await service.set_run_status(
+        run_id=run.id,
+        status=status,
+        idempotency_key=f"{run.id}:run.{status.value}",
+        reason=reason,
+        actor=actor,
+    )
+    return RunFlowResult(run=finalized, flow=instance, outcome=outcome, status=status)
 
 
 async def enqueue_fala_runtime_process(

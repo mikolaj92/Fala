@@ -12,7 +12,7 @@ from fala.adapters import (
 )
 from fala.artifacts import ArtifactStore, FileArtifactStore, MemoryArtifactStore
 from fala.carrier_runtime import FalaRuntime
-from fala.driver import RunUntilIdleResult, run_until_idle
+from fala.driver import RunFlowResult, RunUntilIdleResult, run_flow, run_until_idle
 from fala.errors import (
     FalaAdapterError,
     FalaBackendError,
@@ -147,6 +147,7 @@ __all__ = [
     "Projection",
     "PythonFunctionStepAdapter",
     "Run",
+    "RunFlowResult",
     "RunRef",
     "RunUntilIdleResult",
     "RuntimeBackend",
@@ -174,5 +175,6 @@ __all__ = [
     "create_step_adapter",
     "instantiate_flow",
     "load_carrier_workflow_package_yaml",
+    "run_flow",
     "run_until_idle",
 ]
