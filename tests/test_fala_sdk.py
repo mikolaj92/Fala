@@ -5,7 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fala.sdk import input_values, load_manifest, needs, output, run_manifest_step
+from fala.sdk import (
+    input_values,
+    load_manifest,
+    needs,
+    output,
+    run_manifest_step,
+    upstream_artifacts,
+)
 
 
 class FalaSdkTests(unittest.TestCase):
@@ -28,6 +35,24 @@ class FalaSdkTests(unittest.TestCase):
                 "metadata": {},
             },
         )
+
+    def test_upstream_artifacts_reads_list_or_defaults_empty(self) -> None:
+        manifest = {
+            "input": {
+                "upstream_artifacts": [
+                    {"kind": "a"},
+                    "not-a-mapping",
+                    {"kind": "b"},
+                ]
+            }
+        }
+        self.assertEqual(
+            upstream_artifacts(manifest),
+            [{"kind": "a"}, {"kind": "b"}],
+        )
+        # Absent / opted-out flows and root steps see an empty list, never a KeyError.
+        self.assertEqual(upstream_artifacts({"input": {}}), [])
+        self.assertEqual(upstream_artifacts({}), [])
 
     def test_run_manifest_step_writes_result_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

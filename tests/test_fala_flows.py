@@ -49,6 +49,21 @@ def _two_step_flow() -> CarrierFlowSpec:
     )
 
 
+def _diamond_flow() -> CarrierFlowSpec:
+    # a -> {b, c} -> d. ``d`` directly needs only b and c; ``a`` reaches it purely
+    # transitively, which is exactly what ``accumulate_upstream_artifacts`` exposes.
+    return CarrierFlowSpec(
+        id="flow_diamond",
+        accumulate_upstream_artifacts=True,
+        steps=[
+            _python_step("a"),
+            _python_step("b", needs=["a"]),
+            _python_step("c", needs=["a"]),
+            _python_step("d", needs=["b", "c"]),
+        ],
+    )
+
+
 async def _service(root: Path, run_id: str) -> RuntimeBackendService:
     service = RuntimeBackendService.sqlite(root / "state.sqlite")
     await service.create_run(Run(id=run_id), idempotency_key=f"{run_id}:create")
@@ -110,6 +125,7 @@ class FalaFlowInstantiationTests(unittest.TestCase):
                 "flow_spec_id": "flow_main",
                 "step_id": "root",
                 "needs": [],
+                "accumulate_upstream_artifacts": False,
             },
         )
 
@@ -166,7 +182,7 @@ class FalaFlowInstantiationTests(unittest.TestCase):
             with self.assertRaises(ValueError) as unknown_config:
                 asyncio.run(scenario(root / "b", step_configs={"missing": {"flag": True}}))
             self.assertIn("unknown flow steps", str(unknown_config.exception))
-            for reserved_key in ("adapter", "config", "needs"):
+            for reserved_key in ("adapter", "config", "needs", "upstream_artifacts"):
                 with self.assertRaises(ValueError) as reserved:
                     asyncio.run(
                         scenario(
@@ -276,6 +292,95 @@ class FalaAdvanceFlowTests(unittest.TestCase):
         self.assertEqual(advance.blocked, [])
         self.assertEqual(second.status, CarrierProcessStatus.ready)
         self.assertEqual(second.input["needs"]["first"]["value"], 8)
+
+    def test_advance_flow_injects_transitive_upstream_artifacts(self) -> None:
+        async def scenario(root: Path) -> Process:
+            service = await _service(root, "run_diamond")
+            instance = await instantiate_flow(
+                service,
+                run_id="run_diamond",
+                flow=_diamond_flow(),
+            )
+            flow_id = instance.flow_id
+
+            async def claim_and_complete() -> None:
+                claimed = await service.claim_next_ready_process(worker_id="tester")
+                assert claimed is not None
+                step_id = claimed.metadata["flow"]["step_id"]
+                await service.complete_process(
+                    run_id="run_diamond",
+                    process_id=claimed.id,
+                    output={
+                        "value": 1,
+                        "artifacts": [{"kind": f"{step_id}-art"}],
+                    },
+                    idempotency_key=(
+                        f"run_diamond:process.complete:{claimed.id}:1"
+                    ),
+                )
+
+            # a runs, then advancing readies b and c, then d.
+            await claim_and_complete()  # a
+            await advance_flow(service, run_id="run_diamond", flow_id=flow_id)
+            await claim_and_complete()  # b or c
+            await claim_and_complete()  # the other of b/c
+            await advance_flow(service, run_id="run_diamond", flow_id=flow_id)
+
+            processed = await service.backend.get_process(
+                run_id="run_diamond",
+                process_id="run_diamond:flow_diamond:d",
+            )
+            assert processed is not None
+            return processed
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            d = asyncio.run(scenario(Path(tmp_dir)))
+
+        self.assertEqual(d.status, CarrierProcessStatus.ready)
+        # a is NOT a direct need of d -- yet its artifact is visible transitively,
+        # in topological order (deepest ancestor first).
+        self.assertEqual(
+            d.input["upstream_artifacts"],
+            [{"kind": "a-art"}, {"kind": "b-art"}, {"kind": "c-art"}],
+        )
+        # Direct-needs injection is untouched: d sees b and c fully, but not a.
+        self.assertEqual(set(d.input["needs"]), {"b", "c"})
+
+    def test_advance_flow_omits_upstream_artifacts_when_flag_off(self) -> None:
+        async def scenario(root: Path) -> Process:
+            service = await _service(root, "run_no_accum")
+            instance = await instantiate_flow(
+                service,
+                run_id="run_no_accum",
+                flow=_two_step_flow(),
+                step_inputs={"first": {"value": 4}},
+            )
+            first = instance.processes[0]
+            claimed = await service.claim_next_ready_process(worker_id="tester")
+            assert claimed is not None and claimed.id == first.id
+            await service.complete_process(
+                run_id="run_no_accum",
+                process_id=first.id,
+                output={"value": 8, "artifacts": [{"kind": "first-art"}]},
+                idempotency_key=f"run_no_accum:process.complete:{first.id}:1",
+            )
+            await advance_flow(
+                service,
+                run_id="run_no_accum",
+                flow_id=instance.flow_id,
+            )
+            second = await service.backend.get_process(
+                run_id="run_no_accum",
+                process_id="run_no_accum:flow_pair:second",
+            )
+            assert second is not None
+            return second
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            second = asyncio.run(scenario(Path(tmp_dir)))
+
+        self.assertEqual(second.status, CarrierProcessStatus.ready)
+        self.assertNotIn("upstream_artifacts", second.input)
 
     def test_advance_flow_reports_unmet_and_dead_needs_without_readying(self) -> None:
         async def scenario(root: Path) -> tuple[FlowAdvance, FlowAdvance, Process]:

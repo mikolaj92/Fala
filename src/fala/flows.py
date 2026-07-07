@@ -23,7 +23,7 @@ from fala.runtime_backend import (
     RuntimeBackendService,
 )
 
-_RESERVED_STEP_INPUT_KEYS = ("adapter", "config", "needs")
+_RESERVED_STEP_INPUT_KEYS = ("adapter", "config", "needs", "upstream_artifacts")
 _DEAD_NEED_STATUSES = {
     CarrierProcessStatus.cancelled,
     CarrierProcessStatus.timed_out,
@@ -121,6 +121,9 @@ async def instantiate_flow(
                     "flow_spec_id": flow.id,
                     "step_id": step.id,
                     "needs": list(step.needs),
+                    "accumulate_upstream_artifacts": (
+                        flow.accumulate_upstream_artifacts
+                    ),
                 }
             },
         )
@@ -193,6 +196,17 @@ async def advance_flow(
                     need_id: dict(item.output) for need_id, item in met.items()
                 },
             }
+            if marker.get("accumulate_upstream_artifacts"):
+                # Every direct need has succeeded, so by induction the whole
+                # transitive ancestor closure has too -- each ancestor's output is
+                # real. Flatten their ``artifacts`` in topological order (deepest
+                # ancestor first) so a later producer of the same artifact wins for
+                # consumers that scan latest-first.
+                new_input["upstream_artifacts"] = [
+                    artifact
+                    for ancestor_id in _ancestor_steps_topo(step_id, members)
+                    for artifact in (members[ancestor_id].output.get("artifacts") or [])
+                ]
             stored, _ = await service.ready_process(
                 run_id=run_id,
                 process_id=process.id,
@@ -231,6 +245,29 @@ async def advance_flow_for_process(
         flow_id=flow_id,
         actor=actor,
     )
+
+
+def _ancestor_steps_topo(step_id: str, members: dict[str, Process]) -> list[str]:
+    """Transitive-need step ids of ``step_id`` in topological order.
+
+    Post-order DFS over the ``needs`` graph: each ancestor is emitted after its own
+    needs, so the result is a valid topological order (deepest ancestor first) with
+    every ancestor appearing exactly once. ``step_id`` itself is never emitted, and
+    the ``seen`` set makes the walk terminate even if feedback cycles are allowed.
+    """
+    order: list[str] = []
+    seen: set[str] = {step_id}
+
+    def visit(current: str) -> None:
+        marker = _flow_marker(members[current]) or {}
+        for need_id in (str(item) for item in marker.get("needs") or []):
+            if need_id in members and need_id not in seen:
+                seen.add(need_id)
+                visit(need_id)
+                order.append(need_id)
+
+    visit(step_id)
+    return order
 
 
 def _flow_marker(process: Process) -> dict[str, Any] | None:

@@ -206,6 +206,11 @@ class CarrierFlowSpec(BaseModel):
     tags: list[str] = Field(default_factory=list)
     steps: list[CarrierFlowStepSpec] = Field(min_length=1)
     allow_feedback_cycles: bool = False
+    # Opt-in transitive artifact visibility: when True, each step is readied with an
+    # ``upstream_artifacts`` input holding the ``artifacts`` of *every* transitive
+    # ancestor (not just direct needs), in topological order. Off by default so the
+    # deliberate direct-needs-only dataflow stays the norm.
+    accumulate_upstream_artifacts: bool = False
 
     @model_validator(mode="after")
     def validate_steps(self) -> "CarrierFlowSpec":
