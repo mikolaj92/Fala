@@ -4,10 +4,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from io import BytesIO
+
 from fala.artifacts import (
     FileArtifactStore,
+    MemoryArtifactStore,
+    content_address_file,
+    digest_from_fala_artifact_uri,
     local_path_from_uri,
     resolve_artifact_local_path,
+    sha256_digest,
 )
 from fala.models import ArtifactRef
 
@@ -59,6 +65,48 @@ class ResolveArtifactLocalPathTests(unittest.TestCase):
             # A well-formed ref with a non-local scheme has no local path.
             remote = ArtifactRef(id="a", kind="report", uri="https://example.test/x")
             self.assertIsNone(resolve_artifact_local_path(remote, store_root))
+
+
+class ContentAddressTests(unittest.TestCase):
+    """Public content-address helpers stay byte-identical to what the stores stamp.
+
+    A caller that must hash a payload *before* it enters an artifact store -- and
+    so has no ref to read ``metadata['sha256']`` from -- gets the exact digest
+    Fala would stamp, so a hand-hashed value and a stored ref never diverge.
+    """
+
+    def test_content_address_file_matches_stored_blob_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            source = root / "payload.bin"
+            source.write_bytes(b"attestation payload \x00\xff")
+            ref = FileArtifactStore(root / "artifacts").put_file(
+                kind="report", path=source
+            )
+            address = content_address_file(source)
+            self.assertEqual(address, ref.metadata["sha256"])
+            self.assertEqual(address, digest_from_fala_artifact_uri(ref.uri))
+
+    def test_sha256_digest_matches_memory_store_digest(self) -> None:
+        data = b"canonical bytes \x00\x01\x02"
+        ref = MemoryArtifactStore().put_fileobj(
+            kind="report", fileobj=BytesIO(data), filename="payload.bin"
+        )
+        self.assertEqual(sha256_digest(data), ref.metadata["sha256"])
+
+    def test_file_and_bytes_helpers_agree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            data = b"same bytes, two doors"
+            source = Path(tmp_dir) / "payload.bin"
+            source.write_bytes(data)
+            self.assertEqual(content_address_file(source), sha256_digest(data))
+
+    def test_sha256_digest_is_known_vector(self) -> None:
+        # sha256("abc") -- a fixed vector so a refactor can't silently swap the algorithm.
+        self.assertEqual(
+            sha256_digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        )
 
 
 if __name__ == "__main__":

@@ -326,7 +326,7 @@ class MemoryArtifactStore:
         artifact_id: str | None,
         metadata: dict | None,
     ) -> ArtifactRef:
-        digest = hashlib.sha256(data).hexdigest()
+        digest = sha256_digest(data)
         self._blobs.setdefault(digest, data)
         merged_metadata = dict(metadata or {})
         merged_metadata.update(
@@ -433,6 +433,29 @@ def _sha256_file(path: Path) -> tuple[str, int]:
             size += len(chunk)
             digest.update(chunk)
     return digest.hexdigest(), size
+
+
+def content_address_file(path: Path) -> str:
+    """Return the sha256 hex content address of a file's bytes.
+
+    This is the same digest Fala stamps on every stored artifact
+    (``ArtifactRef.metadata['sha256']`` and the ``fala-artifact://sha256/<digest>``
+    URI). A caller that must content-address a file *before* it enters an artifact
+    store -- and so has no ref to read the digest from -- should use this instead
+    of re-implementing the hash, keeping its value byte-identical to the store's.
+    Stream the file so arbitrarily large inputs stay bounded in memory.
+    """
+    return _sha256_file(path)[0]
+
+
+def sha256_digest(data: bytes) -> str:
+    """Return the sha256 hex content address of in-memory bytes.
+
+    In-memory counterpart to :func:`content_address_file`; the single source of
+    truth for the digest :class:`MemoryArtifactStore` (and, for a fully-buffered
+    blob, :class:`FileArtifactStore`) compute over the same bytes.
+    """
+    return hashlib.sha256(data).hexdigest()
 
 
 def _ensure_blob_digest(path: Path, expected_digest: str) -> None:
