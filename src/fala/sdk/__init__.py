@@ -41,6 +41,18 @@ def upstream_artifacts(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [dict(item) for item in raw if isinstance(item, Mapping)]
 
 
+def find_artifact(manifest: Mapping[str, Any], kind: str) -> dict[str, Any] | None:
+    """Most recent upstream artifact of ``kind``, or ``None`` if absent.
+
+    Scans :func:`upstream_artifacts` newest-first, so when several ancestors
+    emit the same ``kind`` the most-downstream (latest) producer wins.
+    """
+    for artifact in reversed(upstream_artifacts(manifest)):
+        if artifact.get("kind") == kind:
+            return artifact
+    return None
+
+
 def config(manifest: Mapping[str, Any]) -> dict[str, Any]:
     return _dict(manifest.get("config"))
 
@@ -95,6 +107,7 @@ def _dict(value: Any) -> dict[str, Any]:
 __all__ = [
     "StepHandler",
     "config",
+    "find_artifact",
     "input_values",
     "load_manifest",
     "needs",

@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from fala.sdk import (
+    find_artifact,
     input_values,
     load_manifest,
     needs,
@@ -53,6 +54,23 @@ class FalaSdkTests(unittest.TestCase):
         # Absent / opted-out flows and root steps see an empty list, never a KeyError.
         self.assertEqual(upstream_artifacts({"input": {}}), [])
         self.assertEqual(upstream_artifacts({}), [])
+
+    def test_find_artifact_returns_latest_match_or_none(self) -> None:
+        manifest = {
+            "input": {
+                "upstream_artifacts": [
+                    {"kind": "draft", "path": "a"},
+                    {"kind": "draft", "path": "b"},
+                    {"kind": "final", "path": "c"},
+                ]
+            }
+        }
+        # Newest-first scan: the later "draft" (b) shadows the earlier one (a).
+        self.assertEqual(find_artifact(manifest, "draft"), {"kind": "draft", "path": "b"})
+        self.assertEqual(find_artifact(manifest, "final"), {"kind": "final", "path": "c"})
+        # Missing kind and an absent / opted-out artifact list both yield None.
+        self.assertIsNone(find_artifact(manifest, "missing"))
+        self.assertIsNone(find_artifact({}, "draft"))
 
     def test_run_manifest_step_writes_result_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
