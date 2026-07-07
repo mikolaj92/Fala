@@ -9,6 +9,7 @@ completion the driver advances any flow the step belongs to (see
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -53,6 +54,7 @@ class RunFlowResult:
     flow: FlowInstance
     outcome: RunUntilIdleResult
     status: CarrierRunStatus
+    processes: list[Process]
 
 
 async def run_until_idle(
@@ -186,6 +188,27 @@ async def run_until_idle(
     )
 
 
+def process_error_text(process: Process) -> str:
+    """Render a failed process's structured ``error`` into one human line.
+
+    ``run_until_idle`` records a step failure as ``{"type": ..., "message":
+    ...}`` (see the exception handler above). This turns that envelope back into
+    a string -- ``"Type: message"`` when both are present, the message or a JSON
+    dump as fallbacks, and a fixed sentinel when there is no error at all -- so a
+    caller surfacing the failure never has to know the error dict's shape.
+    """
+    error = process.error if isinstance(process.error, dict) else {}
+    message = error.get("message")
+    error_type = error.get("type")
+    if isinstance(message, str) and message:
+        if isinstance(error_type, str) and error_type:
+            return f"{error_type}: {message}"
+        return message
+    if error:
+        return json.dumps(error, ensure_ascii=False, sort_keys=True)
+    return "unknown step failure"
+
+
 _PROCESS_FAILURE_STATUSES = {
     CarrierProcessStatus.failed,
     CarrierProcessStatus.cancelled,
@@ -294,6 +317,7 @@ async def run_flow(
                 waiting=[],
             ),
             status=stored_run.status,
+            processes=await service.list_processes(run_id=run.id),
         )
     outcome = await run_until_idle(
         service,
@@ -314,7 +338,13 @@ async def run_flow(
         reason=reason,
         actor=actor,
     )
-    return RunFlowResult(run=finalized, flow=instance, outcome=outcome, status=status)
+    return RunFlowResult(
+        run=finalized,
+        flow=instance,
+        outcome=outcome,
+        status=status,
+        processes=processes,
+    )
 
 
 async def enqueue_fala_runtime_process(
@@ -526,6 +556,7 @@ def sqlite_db_path(target: str) -> str:
 __all__ = [
     "RunUntilIdleResult",
     "enqueue_fala_runtime_process",
+    "process_error_text",
     "process_step_request_parts",
     "resolve_fala_runtime_target",
     "run_until_idle",

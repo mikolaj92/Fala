@@ -4,10 +4,11 @@ import hashlib
 import os
 import shutil
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import BinaryIO, Iterable, Protocol
+from typing import Any, BinaryIO, Iterable, Protocol
 from urllib.parse import unquote, urlparse
 
 from fala.models import ArtifactRef
@@ -395,6 +396,33 @@ def local_path_from_uri(uri: str) -> Path | None:
     if not parsed.scheme:
         return Path(uri).expanduser().resolve()
     return None
+
+
+def resolve_artifact_local_path(
+    ref: ArtifactRef | Mapping[str, Any], store_root: str | Path
+) -> Path | None:
+    """Resolve an artifact ref to a local file path, or ``None`` if unresolvable.
+
+    Tries the content-addressed store rooted at ``store_root`` first; a ref that
+    is not a stored blob -- a bare ``file:`` URI or filesystem path -- falls back
+    to the URI's own local path via :func:`local_path_from_uri`. Returns ``None``
+    for a structurally invalid ref or any non-local URI scheme, so a host-side
+    reader can treat "unresolvable" uniformly without re-deriving the blob layout
+    (:meth:`FileArtifactStore.resolve`) or the artifact URI grammar. ``ref`` may
+    be an :class:`ArtifactRef` or the raw mapping a step emitted.
+    """
+    if isinstance(ref, ArtifactRef):
+        artifact = ref
+    else:
+        try:
+            artifact = ArtifactRef.model_validate(dict(ref))
+        except ValueError:
+            return None
+    try:
+        return FileArtifactStore(store_root).resolve(artifact)
+    except (ValueError, FileNotFoundError, PermissionError):
+        pass
+    return local_path_from_uri(artifact.uri)
 
 
 def _sha256_file(path: Path) -> tuple[str, int]:

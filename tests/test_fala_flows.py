@@ -5,7 +5,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fala.flows import FlowAdvance, FlowInstance, advance_flow, advance_flow_for_process, instantiate_flow
+from fala.flows import (
+    FlowAdvance,
+    FlowInstance,
+    advance_flow,
+    advance_flow_for_process,
+    find_flow_step_process,
+    flow_step_processes,
+    instantiate_flow,
+)
 from fala.models import CarrierAdapterSpec, CarrierFlowSpec, CarrierFlowStepSpec
 from fala.runtime_backend import (
     CarrierProcessStatus,
@@ -520,6 +528,69 @@ class FalaAdvanceFlowTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             self.assertIsNone(asyncio.run(scenario(Path(tmp_dir))))
+
+
+class FalaFlowStepProcessLookupTests(unittest.TestCase):
+    """Pure host-side selectors over a run's process list -- no service needed.
+
+    These are the primitives a finished-run reader uses instead of re-deriving
+    the ``{flow_id}:{step_id}`` process-id format: they read the same
+    ``metadata['flow']`` marker :func:`advance_flow` uses to assemble members.
+    """
+
+    def _member(self, flow_id: str, step_id: str) -> Process:
+        return Process(
+            id=f"{flow_id}:{step_id}",
+            run_id="run_lookup",
+            process_type="python_function",
+            status=CarrierProcessStatus.succeeded,
+            metadata={"flow": {"flow_id": flow_id, "step_id": step_id}},
+        )
+
+    def test_flow_step_processes_keys_by_step_and_filters_foreign(self) -> None:
+        wanted_first = self._member("flow_a", "first")
+        wanted_second = self._member("flow_a", "second")
+        other_flow = self._member("flow_b", "first")
+        no_marker = Process(
+            id="plain",
+            run_id="run_lookup",
+            process_type="python_function",
+            status=CarrierProcessStatus.ready,
+        )
+        no_step_id = Process(
+            id="bad",
+            run_id="run_lookup",
+            process_type="python_function",
+            status=CarrierProcessStatus.ready,
+            metadata={"flow": {"flow_id": "flow_a"}},
+        )
+        members = flow_step_processes(
+            [wanted_first, other_flow, no_marker, no_step_id, wanted_second],
+            "flow_a",
+        )
+        # Only flow_a's marked, step-identified members survive, keyed by step id.
+        self.assertEqual(set(members), {"first", "second"})
+        self.assertEqual(members["first"].id, "flow_a:first")
+        self.assertEqual(members["second"].id, "flow_a:second")
+
+    def test_flow_step_processes_last_of_a_kind_wins(self) -> None:
+        first = self._member("flow_a", "dup")
+        second = self._member("flow_a", "dup")
+        members = flow_step_processes([first, second], "flow_a")
+        self.assertIs(members["dup"], second)
+
+    def test_find_flow_step_process_returns_match_or_none(self) -> None:
+        member = self._member("flow_a", "report")
+        self.assertIs(
+            find_flow_step_process([member], flow_id="flow_a", step_id="report"),
+            member,
+        )
+        self.assertIsNone(
+            find_flow_step_process([member], flow_id="flow_a", step_id="missing")
+        )
+        self.assertIsNone(
+            find_flow_step_process([member], flow_id="other_flow", step_id="report")
+        )
 
 
 if __name__ == "__main__":

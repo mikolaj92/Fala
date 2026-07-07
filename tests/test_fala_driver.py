@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fala.driver import RunUntilIdleResult, run_until_idle
+from fala.driver import RunUntilIdleResult, process_error_text, run_until_idle
 from fala.flows import instantiate_flow
 from fala.models import CarrierAdapterSpec, CarrierFlowSpec, CarrierFlowStepSpec
 from fala.runtime_backend import (
@@ -336,6 +336,45 @@ class FalaDriverTests(unittest.TestCase):
             self.assertTrue((root / "work" / "process_work").is_dir())
 
         self.assertEqual(len(result.completed), 1)
+
+
+class ProcessErrorTextTests(unittest.TestCase):
+    """The {type, message} envelope run_until_idle records, rendered to one line."""
+
+    def _failed(self, error: dict) -> Process:
+        return Process(
+            id="p",
+            run_id="r",
+            process_type="python_function",
+            status=CarrierProcessStatus.failed,
+            error=error,
+        )
+
+    def test_renders_type_and_message(self) -> None:
+        self.assertEqual(
+            process_error_text(
+                self._failed({"type": "RuntimeError", "message": "boom"})
+            ),
+            "RuntimeError: boom",
+        )
+
+    def test_falls_back_to_bare_message_then_json_dump(self) -> None:
+        # Message without a type: just the message.
+        self.assertEqual(
+            process_error_text(self._failed({"message": "boom"})),
+            "boom",
+        )
+        # No message at all: a deterministic, sorted JSON dump of the envelope.
+        self.assertEqual(
+            process_error_text(self._failed({"code": 7, "at": "step"})),
+            '{"at": "step", "code": 7}',
+        )
+
+    def test_sentinel_when_error_envelope_is_empty(self) -> None:
+        self.assertEqual(
+            process_error_text(self._failed({})),
+            "unknown step failure",
+        )
 
 
 if __name__ == "__main__":

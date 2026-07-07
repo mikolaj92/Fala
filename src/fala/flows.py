@@ -12,7 +12,7 @@ unclaimable, so blocked steps fail closed by inaction and are reported in
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -152,14 +152,7 @@ async def advance_flow(
     actor: str | None = None,
 ) -> FlowAdvance:
     processes = await service.list_processes(run_id=run_id)
-    members: dict[str, Process] = {}
-    for process in processes:
-        marker = _flow_marker(process)
-        if marker is None or marker.get("flow_id") != flow_id:
-            continue
-        step_id = marker.get("step_id")
-        if isinstance(step_id, str) and step_id:
-            members[step_id] = process
+    members = flow_step_processes(processes, flow_id)
 
     readied: list[Process] = []
     blocked: list[FlowBlockedStep] = []
@@ -270,6 +263,40 @@ def _ancestor_steps_topo(step_id: str, members: dict[str, Process]) -> list[str]
     return order
 
 
+def flow_step_processes(
+    processes: Iterable[Process], flow_id: str
+) -> dict[str, Process]:
+    """The processes of flow ``flow_id``, keyed by step id.
+
+    Reads each process's ``metadata['flow']`` marker -- the same channel
+    :func:`advance_flow` uses to assemble a flow's members -- so a host-side
+    caller never reconstructs the ``{flow_id}:{step_id}`` process-id format to
+    find a flow's steps. A process without a matching marker is skipped; if two
+    carry the same step id (never in a normal flow) the last wins.
+    """
+    members: dict[str, Process] = {}
+    for process in processes:
+        marker = _flow_marker(process)
+        if marker is None or marker.get("flow_id") != flow_id:
+            continue
+        step_id = marker.get("step_id")
+        if isinstance(step_id, str) and step_id:
+            members[step_id] = process
+    return members
+
+
+def find_flow_step_process(
+    processes: Iterable[Process], *, flow_id: str, step_id: str
+) -> Process | None:
+    """The process for ``step_id`` within flow ``flow_id``, or ``None``.
+
+    A convenience over :func:`flow_step_processes` for the common single-step
+    lookup a host-side reader needs (e.g. locating a flow's report step in a
+    finished run's process list).
+    """
+    return flow_step_processes(processes, flow_id).get(step_id)
+
+
 def _flow_marker(process: Process) -> dict[str, Any] | None:
     marker = process.metadata.get("flow")
     if isinstance(marker, dict):
@@ -283,5 +310,7 @@ __all__ = [
     "FlowInstance",
     "advance_flow",
     "advance_flow_for_process",
+    "find_flow_step_process",
+    "flow_step_processes",
     "instantiate_flow",
 ]

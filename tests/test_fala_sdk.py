@@ -7,10 +7,13 @@ from pathlib import Path
 
 from fala.sdk import (
     find_artifact,
+    find_output_artifact,
     input_values,
     load_manifest,
     needs,
     output,
+    output_artifacts,
+    output_metadata,
     run_manifest_step,
     upstream_artifacts,
 )
@@ -71,6 +74,54 @@ class FalaSdkTests(unittest.TestCase):
         # Missing kind and an absent / opted-out artifact list both yield None.
         self.assertIsNone(find_artifact(manifest, "missing"))
         self.assertIsNone(find_artifact({}, "draft"))
+
+    def test_output_artifacts_reads_envelope_list_or_defaults_empty(self) -> None:
+        # The host-side twin of upstream_artifacts: it reads a step's own output
+        # envelope (as produced by output()), not a downstream step's input.
+        step_output = {
+            "artifacts": [
+                {"kind": "report"},
+                "not-a-mapping",
+                {"kind": "manifest"},
+            ]
+        }
+        self.assertEqual(
+            output_artifacts(step_output),
+            [{"kind": "report"}, {"kind": "manifest"}],
+        )
+        # A step that emitted nothing, or an absent / malformed envelope, is empty.
+        self.assertEqual(output_artifacts(output()), [])
+        self.assertEqual(output_artifacts({}), [])
+        self.assertEqual(output_artifacts({"artifacts": "nope"}), [])
+
+    def test_find_output_artifact_returns_latest_match_or_none(self) -> None:
+        step_output = output(
+            artifacts=[
+                {"kind": "draft", "path": "a"},
+                {"kind": "draft", "path": "b"},
+                {"kind": "final", "path": "c"},
+            ]
+        )
+        # Same newest-first rule as find_artifact: the later draft (b) wins.
+        self.assertEqual(
+            find_output_artifact(step_output, "draft"),
+            {"kind": "draft", "path": "b"},
+        )
+        self.assertEqual(
+            find_output_artifact(step_output, "final"),
+            {"kind": "final", "path": "c"},
+        )
+        self.assertIsNone(find_output_artifact(step_output, "missing"))
+        self.assertIsNone(find_output_artifact({}, "draft"))
+
+    def test_output_metadata_reads_envelope_metadata_or_defaults_empty(self) -> None:
+        self.assertEqual(
+            output_metadata(output(metadata={"telemetry": {"ms": 12}})),
+            {"telemetry": {"ms": 12}},
+        )
+        # Absent / malformed metadata round-trips to {}, never a KeyError.
+        self.assertEqual(output_metadata({}), {})
+        self.assertEqual(output_metadata({"metadata": "nope"}), {})
 
     def test_run_manifest_step_writes_result_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

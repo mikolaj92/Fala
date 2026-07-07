@@ -12,7 +12,13 @@ from fala.adapters import (
 )
 from fala.artifacts import ArtifactStore, FileArtifactStore, MemoryArtifactStore
 from fala.carrier_runtime import FalaRuntime
-from fala.driver import RunFlowResult, RunUntilIdleResult, run_flow, run_until_idle
+from fala.driver import (
+    RunFlowResult,
+    RunUntilIdleResult,
+    process_error_text,
+    run_flow,
+    run_until_idle,
+)
 from fala.errors import (
     FalaAdapterError,
     FalaBackendError,
@@ -33,6 +39,8 @@ from fala.flows import (
     FlowInstance,
     advance_flow,
     advance_flow_for_process,
+    find_flow_step_process,
+    flow_step_processes,
     instantiate_flow,
 )
 from fala.models import (
@@ -173,8 +181,11 @@ __all__ = [
     "advance_flow_for_process",
     "carrier_workflow_package_from_mapping",
     "create_step_adapter",
+    "find_flow_step_process",
+    "flow_step_processes",
     "instantiate_flow",
     "load_carrier_workflow_package_yaml",
+    "process_error_text",
     "run_flow",
     "run_until_idle",
 ]

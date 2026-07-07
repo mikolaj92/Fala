@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fala import RunFlowResult, run_flow
+from fala import (
+    RunFlowResult,
+    find_flow_step_process,
+    flow_step_processes,
+    run_flow,
+)
 from fala.models import CarrierAdapterSpec, CarrierFlowSpec, CarrierFlowStepSpec
 from fala.runtime_backend import (
     CarrierProcessStatus,
@@ -92,6 +97,38 @@ class RunFlowTests(unittest.TestCase):
         self.assertIsNotNone(join)
         self.assertEqual(join.status, CarrierProcessStatus.succeeded)
         self.assertEqual(join.output["total"], 10)
+
+    def test_run_flow_result_carries_flow_step_processes(self) -> None:
+        async def scenario(root: Path):
+            service = _bare_service(root)
+            result = await run_flow(
+                service,
+                run=Run(id="rf_procs"),
+                flow=_diamond(),
+                worker_id="tester",
+                step_inputs={"left": {"value": 2}, "right": {"value": 3}},
+            )
+            listed = await service.list_processes(run_id="rf_procs")
+            return result, listed
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result, listed = asyncio.run(scenario(Path(tmp_dir)))
+
+        # The result exposes the run's processes directly, so a host-side reader
+        # never re-lists them to reach a step's output.
+        self.assertEqual(
+            {p.id for p in result.processes},
+            {p.id for p in listed},
+        )
+        # And they are addressable by flow marker, not by reconstructing ids.
+        members = flow_step_processes(result.processes, result.flow.flow_id)
+        self.assertEqual(set(members), {"left", "right", "join"})
+        self.assertEqual(members["join"].output["total"], 10)
+        join = find_flow_step_process(
+            result.processes, flow_id=result.flow.flow_id, step_id="join"
+        )
+        self.assertIsNotNone(join)
+        self.assertEqual(join.status, CarrierProcessStatus.succeeded)
 
     def test_run_flow_propagates_step_configs(self) -> None:
         flow = CarrierFlowSpec(
@@ -255,6 +292,13 @@ class RunFlowTests(unittest.TestCase):
         self.assertEqual(second.run.status, CarrierRunStatus.timed_out)
         self.assertEqual(second.outcome.stopped_reason, "already_terminal")
         self.assertEqual(second.outcome.ticks, 0)
+        # The early-terminal branch still exposes the run's processes, so a reader
+        # of a replayed terminal run sees the same steps as the first pass.
+        self.assertTrue(second.processes)
+        self.assertEqual(
+            {p.id for p in second.processes},
+            {p.id for p in first.processes},
+        )
         # `b` was left untouched -- never claimed or completed on the terminal run.
         self.assertEqual(step_b.status, CarrierProcessStatus.ready)
 
