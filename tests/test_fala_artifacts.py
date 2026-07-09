@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +12,7 @@ from fala.artifacts import (
     FileArtifactStore,
     MemoryArtifactStore,
     content_address_file,
+    content_address_json,
     digest_from_fala_artifact_uri,
     local_path_from_uri,
     resolve_artifact_local_path,
@@ -107,6 +110,58 @@ class ContentAddressTests(unittest.TestCase):
             sha256_digest(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         )
+
+    def test_content_address_json_is_known_vector(self) -> None:
+        # Canonical rendering: sorted keys, no whitespace, non-ASCII kept raw.
+        expected = hashlib.sha256('{"a":["ż",2],"b":1}'.encode("utf-8")).hexdigest()
+        self.assertEqual(content_address_json({"b": 1, "a": ["ż", 2]}), expected)
+
+    def test_content_address_json_ignores_key_order(self) -> None:
+        self.assertEqual(
+            content_address_json({"a": 1, "b": 2}),
+            content_address_json({"b": 2, "a": 1}),
+        )
+
+    def test_content_address_json_agrees_with_bytes_helper(self) -> None:
+        payload = {"b": 1, "a": ["ż", 2]}
+        canonical = json.dumps(
+            payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+        )
+        self.assertEqual(
+            content_address_json(payload),
+            sha256_digest(canonical.encode("utf-8")),
+        )
+
+    def test_content_address_json_independent_of_rendered_form(self) -> None:
+        payload = {"b": 1, "a": ["ż", 2]}
+        # A pre-rendered / indented string is a *different* payload (a string),
+        # so its digest never collides with the structured payload's.
+        indented = json.dumps(payload, sort_keys=True, ensure_ascii=False, indent=2)
+        self.assertNotEqual(
+            content_address_json(payload),
+            sha256_digest(indented.encode("utf-8")),
+        )
+        self.assertNotEqual(
+            content_address_json(payload), content_address_json(indented)
+        )
+
+    def test_content_address_json_keeps_non_ascii_raw(self) -> None:
+        payload = {"name": "ż"}
+        escaped = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        self.assertNotEqual(
+            content_address_json(payload),
+            sha256_digest(escaped.encode("utf-8")),
+        )
+
+    def test_content_address_json_fails_closed_on_non_serializable(self) -> None:
+        with self.assertRaises(TypeError):
+            content_address_json(object())
+
+    def test_content_address_json_handles_trivial_payloads(self) -> None:
+        for payload in (None, [], {}, 0, "x", True):
+            first = content_address_json(payload)
+            self.assertEqual(first, content_address_json(payload))
+            self.assertEqual(len(first), 64)
 
 
 if __name__ == "__main__":

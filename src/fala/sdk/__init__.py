@@ -25,6 +25,30 @@ def input_values(manifest: Mapping[str, Any]) -> dict[str, Any]:
     return _dict(manifest.get("input"))
 
 
+INJECTED_INPUT_KEYS: frozenset[str] = frozenset({"needs", "upstream_artifacts"})
+"""The ``input`` keys Fala injects when readying a flow step.
+
+``needs`` carries the direct-needs outputs; ``upstream_artifacts`` carries the
+transitive-ancestor artifacts when the flow opts in via
+``accumulate_upstream_artifacts``. Everything else in ``input`` is authored.
+"""
+
+
+def declared_inputs(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """The step inputs the flow author declared: ``input`` minus Fala's keys.
+
+    Fala merges the flow's ``step_inputs`` with :data:`INJECTED_INPUT_KEYS`
+    into one ``input`` mapping when it readies a step; this recovers the
+    authored values. Missing or malformed ``input`` yields ``{}``, matching
+    :func:`input_values`.
+    """
+    return {
+        key: value
+        for key, value in input_values(manifest).items()
+        if key not in INJECTED_INPUT_KEYS
+    }
+
+
 def needs(manifest: Mapping[str, Any]) -> dict[str, Any]:
     return _dict(input_values(manifest).get("needs"))
 
@@ -145,8 +169,10 @@ def _find_latest(
 
 
 __all__ = [
+    "INJECTED_INPUT_KEYS",
     "StepHandler",
     "config",
+    "declared_inputs",
     "find_artifact",
     "find_output_artifact",
     "input_values",

@@ -7,11 +7,13 @@ has succeeded, with each need's output injected into the dependent step's
 input under ``"needs"`` (readable via ``fala.sdk.needs``). A step whose needs
 can no longer succeed is never readied and never auto-cancelled — pending is
 unclaimable, so blocked steps fail closed by inaction and are reported in
-``FlowAdvance.blocked``.
+``FlowAdvance.blocked``. Subprocess adapter commands may name the driving
+interpreter portably via :data:`PYTHON_COMMAND_PLACEHOLDER`.
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -22,8 +24,18 @@ from fala.runtime_backend import (
     Process,
     RuntimeBackendService,
 )
+from fala.sdk import INJECTED_INPUT_KEYS
 
-_RESERVED_STEP_INPUT_KEYS = ("adapter", "config", "needs", "upstream_artifacts")
+_RESERVED_STEP_INPUT_KEYS = ("adapter", "config", *sorted(INJECTED_INPUT_KEYS))
+
+PYTHON_COMMAND_PLACEHOLDER = "${python}"
+"""Portable interpreter token for subprocess adapter commands.
+
+Resolved by :func:`instantiate_flow` to the driving interpreter
+(``sys.executable``), so a flow spec never hard-codes a host's Python path.
+Bare ``python``/``python3`` tokens are left untouched -- only this explicit
+placeholder is resolved.
+"""
 _DEAD_NEED_STATUSES = {
     CarrierProcessStatus.cancelled,
     CarrierProcessStatus.timed_out,
@@ -66,6 +78,12 @@ async def instantiate_flow(
     correlation_id: str | None = None,
     causation_id: str | None = None,
 ) -> FlowInstance:
+    """Schedule one process per flow step, binding adapters to this host.
+
+    Per-step binding includes inheriting ``timeout_seconds`` and resolving
+    :data:`PYTHON_COMMAND_PLACEHOLDER` tokens in subprocess adapter commands
+    to the driving interpreter (``sys.executable``).
+    """
     resolved_flow_id = flow_id or f"{run_id}:{flow.id}"
     known_steps = {step.id for step in flow.steps}
     inputs = {key: dict(value) for key, value in (step_inputs or {}).items()}
@@ -97,6 +115,19 @@ async def instantiate_flow(
         ):
             adapter = adapter.model_copy(
                 update={"timeout_seconds": step.timeout_seconds}
+            )
+        if (
+            adapter.kind == "subprocess"
+            and adapter.command
+            and PYTHON_COMMAND_PLACEHOLDER in adapter.command
+        ):
+            adapter = adapter.model_copy(
+                update={
+                    "command": [
+                        sys.executable if token == PYTHON_COMMAND_PLACEHOLDER else token
+                        for token in adapter.command
+                    ]
+                }
             )
         process = Process(
             id=f"{resolved_flow_id}:{step.id}",
@@ -308,6 +339,7 @@ __all__ = [
     "FlowAdvance",
     "FlowBlockedStep",
     "FlowInstance",
+    "PYTHON_COMMAND_PLACEHOLDER",
     "advance_flow",
     "advance_flow_for_process",
     "find_flow_step_process",

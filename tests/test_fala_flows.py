@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import fala.flows as flows
 from fala.flows import (
+    PYTHON_COMMAND_PLACEHOLDER,
     FlowAdvance,
     FlowInstance,
     advance_flow,
@@ -14,6 +17,7 @@ from fala.flows import (
     flow_step_processes,
     instantiate_flow,
 )
+from fala.sdk import INJECTED_INPUT_KEYS
 from fala.models import CarrierAdapterSpec, CarrierFlowSpec, CarrierFlowStepSpec
 from fala.runtime_backend import (
     CarrierProcessStatus,
@@ -144,6 +148,60 @@ class FalaFlowInstantiationTests(unittest.TestCase):
         approval = by_step["approval"]
         self.assertEqual(approval.status, CarrierProcessStatus.pending)
         self.assertIsNone(approval.input["adapter"]["timeout_seconds"])
+
+    def test_instantiate_flow_resolves_python_placeholder(self) -> None:
+        def _subprocess_step(step_id: str, command: list[str]) -> CarrierFlowStepSpec:
+            return CarrierFlowStepSpec(
+                id=step_id,
+                capability="subprocess",
+                adapter=CarrierAdapterSpec(kind="subprocess", command=command),
+            )
+
+        flow = CarrierFlowSpec(
+            id="flow_python",
+            steps=[
+                _subprocess_step(
+                    "portable",
+                    [PYTHON_COMMAND_PLACEHOLDER, "-m", "pkg.mod", PYTHON_COMMAND_PLACEHOLDER],
+                ),
+                _subprocess_step("bare", ["python", "-m", "pkg.mod"]),
+            ],
+        )
+
+        async def scenario(root: Path) -> FlowInstance:
+            service = await _service(root, "run_python")
+            return await instantiate_flow(
+                service,
+                run_id="run_python",
+                flow=flow,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            instance = asyncio.run(scenario(Path(tmp_dir)))
+
+        by_step = {
+            process.metadata["flow"]["step_id"]: process
+            for process in instance.processes
+        }
+        # Every explicit placeholder token resolves to the driving interpreter.
+        self.assertEqual(
+            by_step["portable"].input["adapter"]["command"],
+            [sys.executable, "-m", "pkg.mod", sys.executable],
+        )
+        # Bare python tokens are not placeholders and stay untouched.
+        self.assertEqual(
+            by_step["bare"].input["adapter"]["command"],
+            ["python", "-m", "pkg.mod"],
+        )
+
+    def test_reserved_step_input_keys_cover_injected_keys(self) -> None:
+        # The reserved set is derived from the SDK's injected-key constant, so
+        # the two can never drift apart.
+        self.assertLessEqual(
+            set(INJECTED_INPUT_KEYS), set(flows._RESERVED_STEP_INPUT_KEYS)
+        )
+        self.assertIn("adapter", flows._RESERVED_STEP_INPUT_KEYS)
+        self.assertIn("config", flows._RESERVED_STEP_INPUT_KEYS)
 
     def test_instantiate_flow_replays_idempotently(self) -> None:
         async def scenario(root: Path) -> tuple[FlowInstance, FlowInstance, int]:

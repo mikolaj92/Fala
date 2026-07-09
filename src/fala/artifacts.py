@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -456,6 +457,20 @@ def sha256_digest(data: bytes) -> str:
     blob, :class:`FileArtifactStore`) compute over the same bytes.
     """
     return hashlib.sha256(data).hexdigest()
+
+
+def content_address_json(payload: Any) -> str:
+    """sha256 hex content address of a JSON-able payload.
+
+    Canonical form: ``json.dumps(payload, sort_keys=True, ensure_ascii=False,
+    separators=(",", ":"))`` encoded UTF-8 — key order and whitespace never
+    affect the digest. Non-serializable payloads raise ``TypeError`` (fail
+    closed). Completes the content-address family: :func:`content_address_file`
+    (file), :func:`sha256_digest` (bytes), :func:`content_address_json`
+    (structured payload).
+    """
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return sha256_digest(canonical.encode("utf-8"))
 
 
 def _ensure_blob_digest(path: Path, expected_digest: str) -> None:

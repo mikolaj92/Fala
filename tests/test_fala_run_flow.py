@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from fala import (
     flow_step_processes,
     run_flow,
 )
+from fala.flows import PYTHON_COMMAND_PLACEHOLDER
 from fala.models import CarrierAdapterSpec, CarrierFlowSpec, CarrierFlowStepSpec
 from fala.runtime_backend import (
     CarrierProcessStatus,
@@ -159,6 +161,55 @@ class RunFlowTests(unittest.TestCase):
         self.assertIsNotNone(solo)
         # config (per-run, per-step) reached the step alongside its input.
         self.assertEqual(solo.output["scaled"], 15)
+
+    def test_run_flow_resolves_python_placeholder_in_subprocess_step(self) -> None:
+        script = (
+            "import json, os\n"
+            "from pathlib import Path\n"
+            "output = Path(os.environ['FALA_STEP_OUTPUT_DIR'])\n"
+            "output.mkdir(parents=True, exist_ok=True)\n"
+            "(output / 'result.json').write_text(json.dumps({'ok': True}))\n"
+        )
+        flow = CarrierFlowSpec(
+            id="flow_portable",
+            steps=[
+                CarrierFlowStepSpec(
+                    id="portable",
+                    capability="subprocess",
+                    adapter=CarrierAdapterSpec(
+                        kind="subprocess",
+                        command=[PYTHON_COMMAND_PLACEHOLDER, "-c", script],
+                        timeout_seconds=30,
+                    ),
+                    needs=[],
+                )
+            ],
+        )
+
+        async def scenario(root: Path):
+            service = _bare_service(root)
+            result = await run_flow(
+                service,
+                run=Run(id="rf_portable"),
+                flow=flow,
+                worker_id="tester",
+                work_dir=root / "work",
+            )
+            stored = await service.backend.get_process(
+                run_id="rf_portable",
+                process_id=f"{result.flow.flow_id}:portable",
+            )
+            return result, stored
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result, stored = asyncio.run(scenario(Path(tmp_dir)))
+
+        # The placeholder resolved to the driving interpreter and the step ran.
+        self.assertEqual(result.status, CarrierRunStatus.completed)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.status, CarrierProcessStatus.succeeded)
+        self.assertEqual(stored.input["adapter"]["command"][0], sys.executable)
+        self.assertEqual(stored.output["ok"], True)
 
     def test_run_flow_fails_run_when_a_step_fails(self) -> None:
         flow = CarrierFlowSpec(

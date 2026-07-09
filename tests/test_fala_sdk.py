@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 from fala.sdk import (
+    INJECTED_INPUT_KEYS,
+    declared_inputs,
     find_artifact,
     find_output_artifact,
     input_values,
@@ -39,6 +41,38 @@ class FalaSdkTests(unittest.TestCase):
                 "metadata": {},
             },
         )
+
+    def test_declared_inputs_strips_injected_keys(self) -> None:
+        manifest = {
+            "input": {
+                "source": "hello",
+                "needs": {"a": {}},
+                "upstream_artifacts": [{"kind": "x"}],
+            }
+        }
+        # Only the authored value survives; Fala's injected keys are stripped.
+        self.assertEqual(declared_inputs(manifest), {"source": "hello"})
+        # The manifest itself is left untouched.
+        self.assertEqual(
+            manifest["input"],
+            {
+                "source": "hello",
+                "needs": {"a": {}},
+                "upstream_artifacts": [{"kind": "x"}],
+            },
+        )
+
+    def test_declared_inputs_defaults_empty(self) -> None:
+        # Missing / malformed input yields {}, matching input_values.
+        self.assertEqual(declared_inputs({}), {})
+        self.assertEqual(declared_inputs({"input": None}), {})
+        self.assertEqual(declared_inputs({"input": ["not-a-mapping"]}), {})
+
+    def test_injected_input_keys_constant(self) -> None:
+        self.assertEqual(
+            INJECTED_INPUT_KEYS, frozenset({"needs", "upstream_artifacts"})
+        )
+        self.assertIsInstance(INJECTED_INPUT_KEYS, frozenset)
 
     def test_upstream_artifacts_reads_list_or_defaults_empty(self) -> None:
         manifest = {
