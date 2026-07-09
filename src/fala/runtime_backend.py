@@ -309,21 +309,21 @@ class Process(BaseModel):
     finished_at: datetime | None = None
 
 
-class GateStatus(StrEnum):
+class HomeostatStatus(StrEnum):
     open = "open"
     completed = "completed"
     cancelled = "cancelled"
     expired = "expired"
 
 
-class Gate(BaseModel):
+class Homeostat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: _new_id("gate"))
+    id: str = Field(default_factory=lambda: _new_id("homeostat"))
     run_id: str
     kind: str
     carrier_id: str | None = None
-    status: GateStatus = GateStatus.open
+    status: HomeostatStatus = HomeostatStatus.open
     values: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
