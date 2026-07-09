@@ -20,7 +20,7 @@ from fala.runtime_backend import (
     CarrierWaitGraphDiagnostic,
     CarrierProcessStatus,
     CarrierRunStatus,
-    Carrier,
+    Impulse,
     CarrierRelation,
     CarrierType,
     CommandSubmission,
@@ -35,11 +35,11 @@ from fala.runtime_backend import (
     RuntimeEvent,
     DelegationPolicy,
     RuntimePool,
-    SQLiteRuntimeBackend,
+    Correlator,
 )
 
 
-class FalaRuntime:
+class AutonomousCorrelator:
     """Carrier-first embedded runtime facade.
 
     This module is intentionally independent from HTTP, CLI, and web UI modules.
@@ -50,7 +50,7 @@ class FalaRuntime:
         self.backend = backend
 
     @classmethod
-    def sqlite(cls, path: str | Path) -> "FalaRuntime":
+    def sqlite(cls, path: str | Path) -> "AutonomousCorrelator":
         service = RuntimeBackendService.sqlite(path)
         runtime = cls.__new__(cls)
         runtime.service = service
@@ -114,17 +114,17 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
-    async def accept_carrier(
+    async def accept_impulse(
         self,
-        carrier: Carrier,
+        impulse: Impulse,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Carrier, CommandSubmission]:
-        return await self.service.accept_carrier(
-            carrier,
+    ) -> tuple[Impulse, CommandSubmission]:
+        return await self.service.accept_impulse(
+            impulse,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
@@ -167,7 +167,7 @@ class FalaRuntime:
 
     async def record_observation(
         self,
-        observation: Observation,
+        association: Association,
         *,
         idempotency_key: str,
         actor: str | None = None,
@@ -792,9 +792,9 @@ class FalaRuntime:
 
 
 def _default_carrier_artifact_root(backend: RuntimeBackend) -> Path:
-    if isinstance(backend, SQLiteRuntimeBackend):
+    if isinstance(backend, Correlator):
         return backend.path.parent / "artifacts"
     return Path(".fala") / "artifacts"
 
 
-__all__ = ["FalaRuntime"]
+__all__ = ["AutonomousCorrelator"]

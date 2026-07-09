@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fala.adapters import (
-    FalaRuntimeStepAdapter,
+    AutonomousCorrelatorStepAdapter,
     ManualGateStepAdapter,
     PythonFunctionStepAdapter,
     StepAdapter,
@@ -11,7 +11,7 @@ from fala.adapters import (
     create_step_adapter,
 )
 from fala.artifacts import ArtifactStore, FileArtifactStore, MemoryArtifactStore
-from fala.carrier_runtime import FalaRuntime
+from fala.carrier_runtime import AutonomousCorrelator
 from fala.driver import (
     RunFlowResult,
     RunUntilIdleResult,
@@ -30,7 +30,7 @@ from fala.errors import (
     FalaPermanentStepError,
     FalaPolicyBlocked,
     FalaRetryableStepError,
-    FalaRuntimeError,
+    AutonomousCorrelatorError,
     FalaValidationError,
 )
 from fala.flows import (
@@ -68,7 +68,7 @@ from fala.runtime_backend import (
     Artifact,
     BridgeDelivery,
     BridgeDeliveryStatus,
-    Carrier,
+    Impulse,
     CarrierProcessStatus,
     CarrierRelation,
     CarrierRunStatus,
@@ -93,7 +93,7 @@ from fala.runtime_backend import (
     RuntimePool,
     RuntimeRef,
     SQLITE_RUNTIME_SCHEMA_VERSION,
-    SQLiteRuntimeBackend,
+    Correlator,
 )
 from fala.yaml_loader import (
     carrier_workflow_package_from_mapping,
@@ -127,7 +127,7 @@ __all__ = [
     "CommandSubmission",
     "DelegationPolicy",
     "EventRef",
-    "FalaRuntimeStepAdapter",
+    "AutonomousCorrelatorStepAdapter",
     "FalaAdapterError",
     "FalaBackendError",
     "FalaBudgetExceeded",
@@ -138,8 +138,8 @@ __all__ = [
     "FalaPermanentStepError",
     "FalaPolicyBlocked",
     "FalaRetryableStepError",
-    "FalaRuntime",
-    "FalaRuntimeError",
+    "AutonomousCorrelator",
+    "AutonomousCorrelatorError",
     "FalaValidationError",
     "FileArtifactStore",
     "FlowAdvance",
@@ -172,7 +172,7 @@ __all__ = [
     "RuntimePool",
     "RuntimeRef",
     "SQLITE_RUNTIME_SCHEMA_VERSION",
-    "SQLiteRuntimeBackend",
+    "Correlator",
     "StepAdapter",
     "StepRunRequest",
     "StepRunResult",

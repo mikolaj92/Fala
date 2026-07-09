@@ -167,12 +167,12 @@ class RuntimeArtifactStore:
     blobs: dict[str, RuntimeArtifactBlob] = field(default_factory=dict)
 
 
-class Carrier(BaseModel):
+class Impulse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: _new_id("carrier"))
+    id: str = Field(default_factory=lambda: _new_id("impulse"))
     run_id: str
-    carrier_type: str
+    impulse_type: str
     payload: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
@@ -245,10 +245,10 @@ class CommandSubmission(BaseModel):
     replayed: bool = False
 
 
-class Observation(BaseModel):
+class Association(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: _new_id("observation"))
+    id: str = Field(default_factory=lambda: _new_id("association"))
     run_id: str
     kind: str
     carrier_id: str | None = None
@@ -257,7 +257,7 @@ class Observation(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
-class Artifact(BaseModel):
+class Reaction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: _new_id("artifact"))
@@ -309,21 +309,21 @@ class Process(BaseModel):
     finished_at: datetime | None = None
 
 
-class GateStatus(StrEnum):
+class HomeostatStatus(StrEnum):
     open = "open"
     completed = "completed"
     cancelled = "cancelled"
     expired = "expired"
 
 
-class Gate(BaseModel):
+class Homeostat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: _new_id("gate"))
+    id: str = Field(default_factory=lambda: _new_id("homeostat"))
     run_id: str
     kind: str
     carrier_id: str | None = None
-    status: GateStatus = GateStatus.open
+    status: HomeostatStatus = HomeostatStatus.open
     values: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
@@ -520,17 +520,17 @@ class RuntimeBackend(Protocol):
 
     async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]: ...
 
-    async def put_carrier(self, carrier: Carrier) -> None: ...
+    async def put_impulse(self, impulse: Impulse) -> None: ...
 
-    async def accept_carrier(
+    async def accept_impulse(
         self,
-        carrier: Carrier,
+        impulse: Impulse,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None: ...
+    async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None: ...
 
     async def list_carriers(
         self,
@@ -592,19 +592,19 @@ class RuntimeBackend(Protocol):
         limit: int | None = None,
     ) -> list[RuntimeEvent]: ...
 
-    async def put_observation(self, observation: Observation) -> None: ...
+    async def put_association(self, association: Association) -> None: ...
 
-    async def record_observation(
+    async def record_association(
         self,
-        observation: Observation,
+        association: Association,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def list_observations(
+    async def list_associations(
         self, *, run_id: str, carrier_id: str | None = None
-    ) -> list[Observation]: ...
+    ) -> list[Association]: ...
 
     async def put_artifact(self, artifact: Artifact) -> None: ...
 
@@ -709,44 +709,44 @@ class RuntimeBackend(Protocol):
         error: dict[str, Any] | None = None,
     ) -> Process: ...
 
-    async def put_gate(self, gate: Gate) -> None: ...
+    async def put_homeostat(self, homeostat: Homeostat) -> None: ...
 
-    async def save_gate(
+    async def save_homeostat(
         self,
-        gate: Gate,
+        homeostat: Homeostat,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None: ...
+    async def get_homeostat(self, *, run_id: str, homeostat_id: str) -> Homeostat | None: ...
 
-    async def transition_gate(
+    async def transition_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
-        status: GateStatus,
+        homeostat_id: str,
+        status: HomeostatStatus,
         command: RuntimeCommand,
         events: Sequence[RuntimeEvent] = (),
         values: dict[str, Any] | None = None,
-    ) -> tuple[Gate, CommandSubmission]: ...
+    ) -> tuple[Homeostat, CommandSubmission]: ...
 
-    async def complete_gate(
+    async def complete_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
-    ) -> Gate: ...
+    ) -> Homeostat: ...
 
-    async def cancel_gate(
+    async def cancel_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
-    ) -> Gate: ...
+    ) -> Homeostat: ...
 
     async def expire_gate(
         self,
@@ -910,7 +910,7 @@ _RUN_STATUS_TRANSITIONS = {
 }
 
 
-class SQLiteRuntimeBackend:
+class Correlator:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -1721,10 +1721,10 @@ class SQLiteRuntimeBackend:
             ).fetchall()
         return [_carrier_type_from_row(row) for row in rows]
 
-    async def put_carrier(self, carrier: Carrier) -> None:
+    async def put_impulse(self, impulse: Impulse) -> None:
         async with self._lock:
             with self._connect() as connection:
-                _require_run_row(connection, carrier.run_id)
+                _require_run_row(connection, impulse.run_id)
                 connection.execute(
                     """
                     INSERT INTO carriers (
@@ -1739,9 +1739,9 @@ class SQLiteRuntimeBackend:
                         updated_at = excluded.updated_at
                     """,
                     (
-                        carrier.run_id,
-                        carrier.id,
-                        carrier.carrier_type,
+                        impulse.run_id,
+                        impulse.id,
+                        impulse.impulse_type,
                         _dumps(carrier.payload),
                         _dumps(carrier.metadata),
                         carrier.created_at.isoformat(),
@@ -1750,17 +1750,17 @@ class SQLiteRuntimeBackend:
                 )
                 connection.commit()
 
-    async def accept_carrier(
+    async def accept_impulse(
         self,
-        carrier: Carrier,
+        impulse: Impulse,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission:
-        if command.run_id != carrier.run_id:
-            raise ValueError("carrier.accept command run_id must match carrier run_id")
-        if command.command_type != "carrier.accept":
-            raise ValueError("accept_carrier requires command_type 'carrier.accept'")
+        if command.run_id != impulse.run_id:
+            raise ValueError("impulse.accept command run_id must match impulse run_id")
+        if command.command_type != "impulse.accept":
+            raise ValueError("accept_impulse requires command_type 'impulse.accept'")
         async with self._lock:
             connection = self._connect()
             try:
@@ -1779,18 +1779,18 @@ class SQLiteRuntimeBackend:
                         events=[],
                         replayed=True,
                     )
-                _require_run_row(connection, carrier.run_id)
+                _require_run_row(connection, impulse.run_id)
                 if (
                     connection.execute(
                         "SELECT 1 FROM carriers WHERE run_id = ? AND id = ?",
-                        (carrier.run_id, carrier.id),
+                        (impulse.run_id, impulse.id),
                     ).fetchone()
                     is not None
                 ):
-                    raise ValueError(f"Carrier already exists: {carrier.id!r}")
+                    raise ValueError(f"Impulse already exists: {impulse.id!r}")
 
                 _insert_runtime_command_row(connection, command)
-                _insert_carrier_row(connection, carrier)
+                _insert_carrier_row(connection, impulse)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return CommandSubmission(
@@ -1804,13 +1804,13 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
-    async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None:
+    async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM carriers WHERE run_id = ? AND id = ?",
-                (run_id, carrier_id),
+                (run_id, impulse_id),
             ).fetchone()
-        return _carrier_from_row(row) if row is not None else None
+        return _impulse_from_row(row) if row is not None else None
 
     async def list_carriers(
         self,
@@ -2089,7 +2089,7 @@ class SQLiteRuntimeBackend:
             rows = connection.execute(sql, params).fetchall()
         return [_event_from_row(row) for row in rows]
 
-    async def put_observation(self, observation: Observation) -> None:
+    async def put_association(self, association: Association) -> None:
         async with self._lock:
             with self._connect() as connection:
                 _require_run_row(connection, observation.run_id)
@@ -2118,7 +2118,7 @@ class SQLiteRuntimeBackend:
                 )
                 connection.commit()
 
-    async def record_observation(
+    async def record_association(
         self,
         observation: Observation,
         command: RuntimeCommand,
@@ -2131,7 +2131,7 @@ class SQLiteRuntimeBackend:
             )
         if command.command_type != "observation.record":
             raise ValueError(
-                "record_observation requires command_type 'observation.record'"
+                "record_association requires command_type 'association.record'"
             )
         async with self._lock:
             connection = self._connect()
@@ -2176,7 +2176,7 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
-    async def list_observations(
+    async def list_associations(
         self, *, run_id: str, carrier_id: str | None = None
     ) -> list[Observation]:
         clauses = ["run_id = ?"]
@@ -3000,10 +3000,10 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
-    async def put_gate(self, gate: Gate) -> None:
+    async def put_homeostat(self, homeostat: Homeostat) -> None:
         async with self._lock:
             with self._connect() as connection:
-                _require_run_row(connection, gate.run_id)
+                _require_run_row(connection, homeostat.run_id)
                 connection.execute(
                     """
                     INSERT INTO gates (
@@ -3020,22 +3020,22 @@ class SQLiteRuntimeBackend:
                         updated_at = excluded.updated_at
                     """,
                     (
-                        gate.run_id,
-                        gate.id,
-                        gate.kind,
-                        gate.carrier_id,
-                        gate.status.value,
-                        _dumps(gate.values),
-                        _dumps(gate.metadata),
-                        gate.created_at.isoformat(),
-                        gate.updated_at.isoformat(),
+                        homeostat.run_id,
+                        homeostat.id,
+                        homeostat.kind,
+                        homeostat.carrier_id,
+                        homeostat.status.value,
+                        _dumps(homeostat.values),
+                        _dumps(homeostat.metadata),
+                        homeostat.created_at.isoformat(),
+                        homeostat.updated_at.isoformat(),
                     ),
                 )
                 connection.commit()
 
-    async def save_gate(
+    async def save_homeostat(
         self,
-        gate: Gate,
+        homeostat: Homeostat,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
@@ -3089,13 +3089,13 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
-    async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None:
+    async def get_homeostat(self, *, run_id: str, homeostat_id: str) -> Homeostat | None:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM gates WHERE run_id = ? AND id = ?",
-                (run_id, gate_id),
+                (run_id, homeostat_id),
             ).fetchone()
-        return _gate_from_row(row) if row is not None else None
+        return _homeostat_from_row(row) if row is not None else None
 
     async def transition_gate(
         self,
@@ -3720,7 +3720,7 @@ class RuntimeBackendService:
 
     @classmethod
     def sqlite(cls, path: str | Path) -> "RuntimeBackendService":
-        return cls(SQLiteRuntimeBackend(path))
+        return cls(Correlator(path))
 
     async def _replayed_submission(
         self,
@@ -3916,49 +3916,49 @@ class RuntimeBackendService:
 
         return carrier_type, submission
 
-    async def accept_carrier(
+    async def accept_impulse(
         self,
-        carrier: Carrier,
+        impulse: Impulse,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Carrier, CommandSubmission]:
+    ) -> tuple[Impulse, CommandSubmission]:
         command = RuntimeCommand(
-            run_id=carrier.run_id,
-            command_type="carrier.accept",
+            run_id=impulse.run_id,
+            command_type="impulse.accept",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
-            payload={"carrier_id": carrier.id, "carrier_type": carrier.carrier_type},
+            payload={"impulse_id": impulse.id, "impulse_type": impulse.impulse_type},
         )
         event = RuntimeEvent(
-            run_id=carrier.run_id,
-            carrier_id=carrier.id,
-            event_type="carrier.accepted",
-            payload={"carrier_type": carrier.carrier_type},
+            run_id=impulse.run_id,
+            carrier_id=impulse.id,  # note: event field carrier_id kept for now as FK name
+            event_type="impulse.accepted",
+            payload={"impulse_type": impulse.impulse_type},
         )
-        submission = await self.backend.accept_carrier(
-            carrier,
+        submission = await self.backend.accept_impulse(
+            impulse,
             command,
             events=[event],
         )
         if submission.replayed:
-            existing_carrier_id = submission.command.payload.get("carrier_id", carrier.id)
-            existing = await self.backend.get_carrier(
-                run_id=carrier.run_id,
-                carrier_id=str(existing_carrier_id),
+            existing_impulse_id = submission.command.payload.get("impulse_id", impulse.id)
+            existing = await self.backend.get_impulse(
+                run_id=impulse.run_id,
+                impulse_id=str(existing_impulse_id),
             )
             if existing is None:
                 raise ValueError(
-                    "Replayed carrier acceptance command has no stored carrier: "
-                    f"{existing_carrier_id!r}"
+                    "Replayed impulse acceptance command has no stored impulse: "
+                    f"{existing_impulse_id!r}"
                 )
             return existing, submission
 
-        return carrier, submission
+        return impulse, submission
 
     async def record_carrier_relation(
         self,
@@ -4016,7 +4016,7 @@ class RuntimeBackendService:
 
         return relation, submission
 
-    async def record_observation(
+    async def record_association(
         self,
         observation: Observation,
         *,
@@ -4040,13 +4040,13 @@ class RuntimeBackendService:
             event_type="observation.recorded",
             payload={"observation_id": observation.id, "kind": observation.kind},
         )
-        submission = await self.backend.record_observation(
+        submission = await self.backend.record_association(
             observation,
             command,
             events=[event],
         )
         if submission.replayed:
-            observations = await self.backend.list_observations(
+            associations = await self.backend.list_associations(
                 run_id=observation.run_id,
                 carrier_id=observation.carrier_id,
             )
@@ -5079,13 +5079,13 @@ class RuntimeBackendService:
 
         return delivered, imported, delivery_submission, import_submission
 
-    async def list_observations(
+    async def list_associations(
         self,
         *,
         run_id: str,
         carrier_id: str | None = None,
     ) -> list[Observation]:
-        return await self.backend.list_observations(
+        return await self.backend.list_associations(
             run_id=run_id,
             carrier_id=carrier_id,
         )
@@ -6248,11 +6248,11 @@ def _process_from_row(row: sqlite3.Row) -> Process:
     )
 
 
-def _carrier_from_row(row: sqlite3.Row) -> Carrier:
-    return Carrier(
+def _impulse_from_row(row: sqlite3.Row) -> Impulse:
+    return Impulse(
         id=row["id"],
         run_id=row["run_id"],
-        carrier_type=row["carrier_type"],
+        impulse_type=row["carrier_type"],
         payload=_loads(row["payload"]),
         metadata=_loads(row["metadata"]),
         created_at=_dt(row["created_at"]),
@@ -6345,13 +6345,13 @@ def _artifact_from_row(row: sqlite3.Row) -> Artifact:
     )
 
 
-def _gate_from_row(row: sqlite3.Row) -> Gate:
-    return Gate(
+def _homeostat_from_row(row: sqlite3.Row) -> Homeostat:
+    return Homeostat(
         id=row["id"],
         run_id=row["run_id"],
         kind=row["kind"],
         carrier_id=row["carrier_id"],
-        status=GateStatus(row["status"]),
+        status=HomeostatStatus(row["status"]),
         values=_loads(row["values_json"]),
         metadata=_loads(row["metadata"]),
         created_at=_dt(row["created_at"]),
@@ -6419,7 +6419,7 @@ __all__ = [
     "BridgeDelivery",
     "BridgeDeliveryStatus",
     "CarrierProcessStatus",
-    "Carrier",
+    "Impulse",
     "CarrierRunStatus",
     "CarrierRelation",
     "CarrierType",
@@ -6443,5 +6443,8 @@ __all__ = [
     "Run",
     "RunRef",
     "SQLITE_RUNTIME_SCHEMA_VERSION",
-    "SQLiteRuntimeBackend",
+    "Correlator",
 ]
+
+
+

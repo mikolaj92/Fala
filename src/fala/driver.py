@@ -21,9 +21,9 @@ from fala.flows import FlowInstance, advance_flow_for_process, instantiate_flow
 from fala.models import CarrierAdapterSpec, CarrierFlowSpec
 from fala.runtime_backend import (
     BridgeDelivery,
-    Carrier,
     CarrierProcessStatus,
     CarrierRunStatus,
+    Impulse,
     EventRef,
     Gate,
     Process,
@@ -34,7 +34,7 @@ from fala.runtime_backend import (
     RuntimeBudget,
     RuntimePool,
     RuntimeRef,
-    SQLiteRuntimeBackend,
+    Correlator,
 )
 
 
@@ -360,17 +360,17 @@ async def enqueue_fala_runtime_process(
         raise ValueError("fala_runtime process requires carrier_id")
 
     backend = service.backend
-    if not isinstance(backend, SQLiteRuntimeBackend):
+    if not isinstance(backend, Correlator):
         raise FalaConfigurationError(
             "fala_runtime steps require a SQLite-backed runtime service"
         )
 
-    carrier = await backend.get_carrier(
+    impulse = await backend.get_impulse(
         run_id=process.run_id,
-        carrier_id=process.carrier_id,
+        impulse_id=process.carrier_id,
     )
-    if carrier is None:
-        raise ValueError(f"Unknown carrier for fala_runtime process: {process.carrier_id!r}")
+    if impulse is None:
+        raise ValueError(f"Unknown impulse for fala_runtime process: {process.carrier_id!r}")
 
     events = await backend.list_events(
         run_id=process.run_id,
@@ -382,7 +382,7 @@ async def enqueue_fala_runtime_process(
     )
     target_runtime, pool_id, budget = await resolve_fala_runtime_target(
         backend=backend,
-        carrier=carrier,
+        impulse=impulse,
         request=request,
     )
     target_run_id = str(request.config.get("target_run_id") or process.run_id)
@@ -430,7 +430,7 @@ async def enqueue_fala_runtime_process(
 async def resolve_fala_runtime_target(
     *,
     backend: RuntimeBackend,
-    carrier: Carrier,
+    impulse: Impulse,
     request: StepRunRequest,
 ) -> tuple[RuntimeRef, str | None, RuntimeBudget]:
     assert request.adapter.runtime_ref is not None
@@ -449,9 +449,9 @@ async def resolve_fala_runtime_target(
             RuntimeBudget.model_validate(configured_budget or {}),
         )
 
-    if pool.carrier_types and carrier.carrier_type not in pool.carrier_types:
+    if pool.carrier_types and impulse.impulse_type not in pool.carrier_types:
         raise ValueError(
-            f"Runtime pool {pool.id!r} does not accept carrier type {carrier.carrier_type!r}"
+            f"Runtime pool {pool.id!r} does not accept carrier type {impulse.impulse_type!r}"
         )
     if not pool.runtimes:
         raise ValueError(f"Runtime pool {pool.id!r} has no runtimes")
@@ -461,7 +461,7 @@ async def resolve_fala_runtime_target(
         (
             item
             for item in policies
-            if not item.carrier_types or carrier.carrier_type in item.carrier_types
+            if not item.carrier_types or impulse.impulse_type in item.carrier_types
         ),
         None,
     )
