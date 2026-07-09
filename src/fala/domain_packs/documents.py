@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fala.runtime_backend import Carrier, Observation, Projection
+from fala.runtime_backend import Impulse, Observation, Projection
 
 DOCUMENT_DOMAIN_PACK_ID = "documents"
 
@@ -27,8 +27,8 @@ def carrier_from_document(
     document: DocumentCarrierInput,
     *,
     run_id: str,
-) -> Carrier:
-    return Carrier(
+) -> Impulse:
+    return Impulse(
         id=document.id,
         run_id=run_id,
         carrier_type=f"document.{document.document_type}",
