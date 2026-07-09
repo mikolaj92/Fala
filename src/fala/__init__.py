@@ -60,7 +60,8 @@ from fala.runtime_backend import (
     Artifact,
     BridgeDelivery,
     BridgeDeliveryStatus,
-    Carrier,
+    Impulse,
+    Carrier,  # deprecated
     CarrierProcessStatus,
     CarrierRelation,
     CarrierRunStatus,

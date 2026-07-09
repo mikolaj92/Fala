@@ -167,12 +167,12 @@ class RuntimeArtifactStore:
     blobs: dict[str, RuntimeArtifactBlob] = field(default_factory=dict)
 
 
-class Carrier(BaseModel):
+class Impulse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: _new_id("carrier"))
+    id: str = Field(default_factory=lambda: _new_id("impulse"))
     run_id: str
-    carrier_type: str
+    impulse_type: str
     payload: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
@@ -520,17 +520,17 @@ class RuntimeBackend(Protocol):
 
     async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]: ...
 
-    async def put_carrier(self, carrier: Carrier) -> None: ...
+    async def put_impulse(self, impulse: Impulse) -> None: ...
 
-    async def accept_carrier(
+    async def accept_impulse(
         self,
-        carrier: Carrier,
+        impulse: Impulse,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None: ...
+    async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None: ...
 
     async def list_carriers(
         self,
@@ -1721,10 +1721,10 @@ class SQLiteRuntimeBackend:
             ).fetchall()
         return [_carrier_type_from_row(row) for row in rows]
 
-    async def put_carrier(self, carrier: Carrier) -> None:
+    async def put_impulse(self, impulse: Impulse) -> None:
         async with self._lock:
             with self._connect() as connection:
-                _require_run_row(connection, carrier.run_id)
+                _require_run_row(connection, impulse.run_id)
                 connection.execute(
                     """
                     INSERT INTO carriers (
@@ -1739,9 +1739,9 @@ class SQLiteRuntimeBackend:
                         updated_at = excluded.updated_at
                     """,
                     (
-                        carrier.run_id,
-                        carrier.id,
-                        carrier.carrier_type,
+                        impulse.run_id,
+                        impulse.id,
+                        impulse.impulse_type,
                         _dumps(carrier.payload),
                         _dumps(carrier.metadata),
                         carrier.created_at.isoformat(),
@@ -1804,13 +1804,13 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
-    async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None:
+    async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM carriers WHERE run_id = ? AND id = ?",
-                (run_id, carrier_id),
+                (run_id, impulse_id),
             ).fetchone()
-        return _carrier_from_row(row) if row is not None else None
+        return _impulse_from_row(row) if row is not None else None
 
     async def list_carriers(
         self,
@@ -6248,11 +6248,11 @@ def _process_from_row(row: sqlite3.Row) -> Process:
     )
 
 
-def _carrier_from_row(row: sqlite3.Row) -> Carrier:
-    return Carrier(
+def _impulse_from_row(row: sqlite3.Row) -> Impulse:
+    return Impulse(
         id=row["id"],
         run_id=row["run_id"],
-        carrier_type=row["carrier_type"],
+        impulse_type=row["carrier_type"],
         payload=_loads(row["payload"]),
         metadata=_loads(row["metadata"]),
         created_at=_dt(row["created_at"]),
@@ -6419,7 +6419,8 @@ __all__ = [
     "BridgeDelivery",
     "BridgeDeliveryStatus",
     "CarrierProcessStatus",
-    "Carrier",
+    "Impulse",  # renamed from Carrier (packet) per Mazur
+    "Carrier",  # deprecated alias
     "CarrierRunStatus",
     "CarrierRelation",
     "CarrierType",
@@ -6445,3 +6446,15 @@ __all__ = [
     "SQLITE_RUNTIME_SCHEMA_VERSION",
     "SQLiteRuntimeBackend",
 ]
+
+# Backwards compat alias (temporary)
+# Carrier (the packet) renamed to Impulse per cybernetic mapping
+class _CarrierCompat(Impulse):
+    """Deprecated alias. Accepts carrier_type for compat."""
+    def __init__(self, **data):
+        if "carrier_type" in data:
+            data["impulse_type"] = data.pop("carrier_type")
+        super().__init__(**data)
+
+Carrier = _CarrierCompat
+
