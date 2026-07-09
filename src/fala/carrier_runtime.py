@@ -39,7 +39,7 @@ from fala.runtime_backend import (
 )
 
 
-class FalaRuntime:
+class AutonomousCorrelator:
     """Carrier-first embedded runtime facade.
 
     This module is intentionally independent from HTTP, CLI, and web UI modules.
@@ -50,7 +50,7 @@ class FalaRuntime:
         self.backend = backend
 
     @classmethod
-    def sqlite(cls, path: str | Path) -> "FalaRuntime":
+    def sqlite(cls, path: str | Path) -> "AutonomousCorrelator":
         service = RuntimeBackendService.sqlite(path)
         runtime = cls.__new__(cls)
         runtime.service = service
@@ -769,4 +769,4 @@ def _default_carrier_artifact_root(backend: RuntimeBackend) -> Path:
     return Path(".fala") / "artifacts"
 
 
-__all__ = ["FalaRuntime"]
+__all__ = ["AutonomousCorrelator"]
