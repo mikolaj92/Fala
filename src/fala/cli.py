@@ -800,13 +800,13 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 limit=args.limit,
             )
             return _carrier_runtime_list_result("carriers", carriers, jsonl=args.jsonl)
-        carrier = await backend.get_carrier(
+        impulse = await backend.get_impulse(
             run_id=args.run_id,
-            carrier_id=args.carrier_id,
+            impulse_id=args.carrier_id,
         )
         return {
-            "ok": carrier is not None,
-            "carrier": carrier.model_dump(mode="json") if carrier is not None else None,
+            "ok": impulse is not None,
+            "impulse": impulse.model_dump(mode="json") if impulse is not None else None,
         }
     if args.command == "carrier-types":
         if args.carrier_type_command == "list":
