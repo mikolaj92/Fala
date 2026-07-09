@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fala.adapters import (
-    FalaRuntimeStepAdapter,
+    AutonomousCorrelatorStepAdapter,
     ManualGateStepAdapter,
     PythonFunctionStepAdapter,
     StepAdapter,
@@ -11,7 +11,7 @@ from fala.adapters import (
     create_step_adapter,
 )
 from fala.artifacts import ArtifactStore, FileArtifactStore, MemoryArtifactStore
-from fala.carrier_runtime import FalaRuntime
+from fala.carrier_runtime import AutonomousCorrelator
 from fala.driver import RunUntilIdleResult, run_until_idle
 from fala.errors import (
     FalaAdapterError,
@@ -24,7 +24,7 @@ from fala.errors import (
     FalaPermanentStepError,
     FalaPolicyBlocked,
     FalaRetryableStepError,
-    FalaRuntimeError,
+    AutonomousCorrelatorError,
     FalaValidationError,
 )
 from fala.flows import (
@@ -119,7 +119,7 @@ __all__ = [
     "CommandSubmission",
     "DelegationPolicy",
     "EventRef",
-    "FalaRuntimeStepAdapter",
+    "AutonomousCorrelatorStepAdapter",
     "FalaAdapterError",
     "FalaBackendError",
     "FalaBudgetExceeded",
@@ -130,8 +130,8 @@ __all__ = [
     "FalaPermanentStepError",
     "FalaPolicyBlocked",
     "FalaRetryableStepError",
-    "FalaRuntime",
-    "FalaRuntimeError",
+    "AutonomousCorrelator",
+    "AutonomousCorrelatorError",
     "FalaValidationError",
     "FileArtifactStore",
     "FlowAdvance",
