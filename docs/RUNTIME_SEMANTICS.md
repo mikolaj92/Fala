@@ -1,0 +1,47 @@
+# Runtime Semantics
+
+Runtime mutations go through `RuntimeBackendService` command paths where
+available. Commands carry idempotency keys and append runtime events for durable
+audit.
+
+Run cancellation is a first-class `run.cancel` command and emits
+`run.cancel_requested`.
+
+Run creation is committed by the backend as one transaction that stores the run,
+`run.create` command, and `run.created` event together. Direct
+`submit_command(run.create)` is rejected.
+Run status transitions are also committed as one transaction with their command
+and event.
+
+Other command submission requires the target run to already exist.
+
+Run-scoped backend writes also require an existing run.
+
+Carrier acceptance is committed by the backend as one transaction that stores
+the carrier, `carrier.accept` command, and `carrier.accepted` event together.
+Carrier type registration, carrier relation recording, observation recording,
+artifact recording, process scheduling, and process status transitions follow
+the same command/event/state transaction pattern.
+Gate creation and terminal gate transitions use the same pattern.
+Projection save and rebuild commands also commit their read-model writes in the
+same backend transaction.
+Bridge outbox enqueue/deliver and inbox import commit their local delivery
+record, command, and event in one backend transaction. Cross-runtime delivery
+still uses no global transaction.
+
+Process execution:
+
+- `ready` processes can be atomically claimed.
+- claimed processes become `running` under a worker lease.
+- adapters return completed output or a waiting state.
+- waiting processes are persisted as `waiting`.
+- failed attempts retry while attempts remain, otherwise they become `failed`.
+- cancellation and timeout move non-terminal processes to `cancelled` or
+  `timed_out` and clear worker leases.
+
+Run, process, and gate status transitions are validated in the runtime backend.
+Illegal terminal-state rewrites are rejected unless the same idempotent command
+is replayed.
+
+Gates move from `open` to one terminal status: `completed`, `cancelled`, or
+`expired`.

@@ -1,0 +1,81 @@
+version: "2"
+id: basic_examples
+title: Basic Fala examples
+description: Neutral Carrier flow examples for Fala.
+tags: ["example"]
+
+carrier_types:
+  - id: source_payload
+    title: Source payload
+    media_types: ["text/plain", "application/json"]
+    value_schema:
+      type: object
+      properties:
+        source:
+          type: string
+      additionalProperties: true
+
+observation_kinds:
+  - id: process_progress
+    title: Process progress
+
+artifact_kinds:
+  - id: source_payload
+    title: Source payload artifact
+    media_types: ["text/plain", "application/json"]
+  - id: enriched_payload
+    title: Enriched payload
+    media_types: ["application/json"]
+  - id: exported_payload
+    title: Exported payload
+    media_types: ["application/json"]
+
+capabilities:
+  - id: ingest_source
+    title: Ingest source
+    accepts_carrier_types: [source_payload]
+    emits_artifact_kinds: [source_payload]
+    emits_observation_kinds: [process_progress]
+  - id: enrich_source
+    title: Enrich source
+    accepts_artifact_kinds: [source_payload]
+    emits_artifact_kinds: [enriched_payload]
+    emits_observation_kinds: [process_progress]
+  - id: export_source
+    title: Export source
+    accepts_artifact_kinds: [enriched_payload]
+    emits_artifact_kinds: [exported_payload]
+    emits_observation_kinds: [process_progress]
+
+flows:
+  - id: basic_enrichment
+    title: Basic enrichment
+    steps:
+      - id: ingest
+        capability: ingest_source
+        adapter:
+          kind: subprocess
+          command: ["python", "steps/ingest.py"]
+          cwd: "."
+      - id: enrich
+        capability: enrich_source
+        needs: [ingest]
+        adapter:
+          kind: subprocess
+          command: ["python", "steps/enrich.py"]
+          cwd: "."
+      - id: export
+        capability: export_source
+        needs: [enrich]
+        adapter:
+          kind: subprocess
+          command: ["python", "steps/export.py"]
+          cwd: "."
+
+runtime:
+  backend:
+    kind: sqlite
+    path: .fala/state.sqlite
+  artifact_store:
+    kind: filesystem
+    root: .fala/artifacts

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from fala.sdk import emit_event, needs, output, run_stdio
+from fala.sdk import needs, output, run_manifest_step
 
 
-def run(context):
-    emit_event("process.progress", status="running", data={"stage": "enrich"})
-    ingest = needs(context).get("ingest", {})
+def run(manifest):
+    ingest = needs(manifest).get("ingest", {})
     source = str(ingest.get("source", "unknown"))
     return output(values={"source": source, "label": source.upper()})
 
 
 if __name__ == "__main__":
-    raise SystemExit(run_stdio(run))
+    raise SystemExit(run_manifest_step(run))
