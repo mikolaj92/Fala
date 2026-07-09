@@ -257,7 +257,7 @@ class Association(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
-class Artifact(BaseModel):
+class Reaction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: _new_id("artifact"))
