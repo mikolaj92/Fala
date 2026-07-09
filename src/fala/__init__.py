@@ -51,10 +51,6 @@ from fala.models import (
     ObservationKindSpec,
 )
 from fala.runtime_backend import (
-<<<<<<< HEAD
-    Impulse,
-    Carrier,  # deprecated alias (see runtime_backend)
-=======
     RuntimeArtifactBlob,
     RuntimeArtifactGcPlan,
     RuntimeArtifactStore,
@@ -64,14 +60,14 @@ from fala.runtime_backend import (
     Artifact,
     BridgeDelivery,
     BridgeDeliveryStatus,
-    Carrier,
+    Impulse,
+    Carrier,  # deprecated
     CarrierProcessStatus,
     CarrierRelation,
     CarrierRunStatus,
     CarrierType,
     CarrierWaitDiagnosticIssue,
     CarrierWaitGraphDiagnostic,
->>>>>>> origin/main
     CommandSubmission,
     DelegationPolicy,
     EventRef,
@@ -101,18 +97,6 @@ __all__ = [
     "Artifact",
     "ArtifactKindSpec",
     "ArtifactRef",
-<<<<<<< HEAD
-    "apply_auto_document_routes",
-    "apply_document_routes",
-    "auto_document_routes_from_registry",
-    "CapabilitySpec",
-    "Carrier",  # deprecated
-    "ChildDocumentWaitSpec",
-    "Impulse",
-    "CombinedProjection",
-    "ClaimedProcess",
-    "CombineSpec",
-=======
     "ArtifactStore",
     "BridgeDelivery",
     "BridgeDeliveryStatus",
@@ -133,7 +117,6 @@ __all__ = [
     "CarrierWaitDiagnosticIssue",
     "CarrierWaitGraphDiagnostic",
     "CarrierWorkflowPackageSpec",
->>>>>>> origin/main
     "CommandSubmission",
     "DelegationPolicy",
     "EventRef",
