@@ -20,7 +20,7 @@ from fala.runtime_backend import (
     CarrierWaitGraphDiagnostic,
     CarrierProcessStatus,
     CarrierRunStatus,
-    Carrier,
+    Impulse,
     CarrierRelation,
     CarrierType,
     CommandSubmission,
@@ -114,17 +114,17 @@ class FalaRuntime:
             causation_id=causation_id,
         )
 
-    async def accept_carrier(
+    async def accept_impulse(
         self,
-        carrier: Carrier,
+        impulse: Impulse,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Carrier, CommandSubmission]:
-        return await self.service.accept_carrier(
-            carrier,
+    ) -> tuple[Impulse, CommandSubmission]:
+        return await self.service.accept_impulse(
+            impulse,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
