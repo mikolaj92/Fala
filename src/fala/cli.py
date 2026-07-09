@@ -38,7 +38,7 @@ from fala.models import (
 from fala.runtime_backend import Artifact as CarrierArtifact
 from fala.runtime_backend import BridgeDelivery
 from fala.runtime_backend import BridgeDeliveryStatus
-from fala.runtime_backend import Carrier
+from fala.runtime_backend import Impulse
 from fala.runtime_backend import CarrierProcessStatus
 from fala.runtime_backend import CarrierRelation
 from fala.runtime_backend import CarrierRunStatus
@@ -771,25 +771,25 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         }
     if args.command == "carriers":
         if args.carrier_command == "create":
-            carrier_data = {
+            impulse_data = {
                 "run_id": args.run_id,
-                "carrier_type": args.carrier_type,
+                "impulse_type": args.carrier_type,
                 "payload": _parse_json_object(args.payload_json, "--payload-json"),
                 "metadata": _parse_json_object(args.metadata_json, "--metadata-json"),
             }
             if args.carrier_id is not None:
-                carrier_data["id"] = args.carrier_id
-            carrier = Carrier.model_validate(carrier_data)
+                impulse_data["id"] = args.carrier_id
+            impulse = Impulse.model_validate(impulse_data)
             service = RuntimeBackendService(backend)
-            stored, submission = await service.accept_carrier(
-                carrier,
+            stored, submission = await service.accept_impulse(
+                impulse,
                 idempotency_key=args.idempotency_key
-                or f"{carrier.run_id}:carrier.accept:{carrier.id}",
+                or f"{impulse.run_id}:impulse.accept:{impulse.id}",
                 actor="cli:user",
             )
             return {
                 "ok": True,
-                "carrier": stored.model_dump(mode="json"),
+                "impulse": stored.model_dump(mode="json"),
                 "command": submission.command.model_dump(mode="json"),
                 "replayed": submission.replayed,
             }

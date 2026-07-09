@@ -61,7 +61,6 @@ from fala.runtime_backend import (
     BridgeDelivery,
     BridgeDeliveryStatus,
     Impulse,
-    Carrier,  # deprecated
     CarrierProcessStatus,
     CarrierRelation,
     CarrierRunStatus,

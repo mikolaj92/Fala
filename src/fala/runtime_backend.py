@@ -1750,17 +1750,17 @@ class SQLiteRuntimeBackend:
                 )
                 connection.commit()
 
-    async def accept_carrier(
+    async def accept_impulse(
         self,
-        carrier: Carrier,
+        impulse: Impulse,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission:
-        if command.run_id != carrier.run_id:
-            raise ValueError("carrier.accept command run_id must match carrier run_id")
-        if command.command_type != "carrier.accept":
-            raise ValueError("accept_carrier requires command_type 'carrier.accept'")
+        if command.run_id != impulse.run_id:
+            raise ValueError("impulse.accept command run_id must match impulse run_id")
+        if command.command_type != "impulse.accept":
+            raise ValueError("accept_impulse requires command_type 'impulse.accept'")
         async with self._lock:
             connection = self._connect()
             try:
@@ -1779,18 +1779,18 @@ class SQLiteRuntimeBackend:
                         events=[],
                         replayed=True,
                     )
-                _require_run_row(connection, carrier.run_id)
+                _require_run_row(connection, impulse.run_id)
                 if (
                     connection.execute(
                         "SELECT 1 FROM carriers WHERE run_id = ? AND id = ?",
-                        (carrier.run_id, carrier.id),
+                        (impulse.run_id, impulse.id),
                     ).fetchone()
                     is not None
                 ):
-                    raise ValueError(f"Carrier already exists: {carrier.id!r}")
+                    raise ValueError(f"Impulse already exists: {impulse.id!r}")
 
                 _insert_runtime_command_row(connection, command)
-                _insert_carrier_row(connection, carrier)
+                _insert_carrier_row(connection, impulse)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return CommandSubmission(
@@ -3916,49 +3916,49 @@ class RuntimeBackendService:
 
         return carrier_type, submission
 
-    async def accept_carrier(
+    async def accept_impulse(
         self,
-        carrier: Carrier,
+        impulse: Impulse,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Carrier, CommandSubmission]:
+    ) -> tuple[Impulse, CommandSubmission]:
         command = RuntimeCommand(
-            run_id=carrier.run_id,
-            command_type="carrier.accept",
+            run_id=impulse.run_id,
+            command_type="impulse.accept",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
-            payload={"carrier_id": carrier.id, "carrier_type": carrier.carrier_type},
+            payload={"impulse_id": impulse.id, "impulse_type": impulse.impulse_type},
         )
         event = RuntimeEvent(
-            run_id=carrier.run_id,
-            carrier_id=carrier.id,
-            event_type="carrier.accepted",
-            payload={"carrier_type": carrier.carrier_type},
+            run_id=impulse.run_id,
+            carrier_id=impulse.id,  # note: event field carrier_id kept for now as FK name
+            event_type="impulse.accepted",
+            payload={"impulse_type": impulse.impulse_type},
         )
-        submission = await self.backend.accept_carrier(
-            carrier,
+        submission = await self.backend.accept_impulse(
+            impulse,
             command,
             events=[event],
         )
         if submission.replayed:
-            existing_carrier_id = submission.command.payload.get("carrier_id", carrier.id)
-            existing = await self.backend.get_carrier(
-                run_id=carrier.run_id,
-                carrier_id=str(existing_carrier_id),
+            existing_impulse_id = submission.command.payload.get("impulse_id", impulse.id)
+            existing = await self.backend.get_impulse(
+                run_id=impulse.run_id,
+                impulse_id=str(existing_impulse_id),
             )
             if existing is None:
                 raise ValueError(
-                    "Replayed carrier acceptance command has no stored carrier: "
-                    f"{existing_carrier_id!r}"
+                    "Replayed impulse acceptance command has no stored impulse: "
+                    f"{existing_impulse_id!r}"
                 )
             return existing, submission
 
-        return carrier, submission
+        return impulse, submission
 
     async def record_carrier_relation(
         self,
@@ -6419,8 +6419,7 @@ __all__ = [
     "BridgeDelivery",
     "BridgeDeliveryStatus",
     "CarrierProcessStatus",
-    "Impulse",  # renamed from Carrier (packet) per Mazur
-    "Carrier",  # deprecated alias
+    "Impulse",
     "CarrierRunStatus",
     "CarrierRelation",
     "CarrierType",
@@ -6447,14 +6446,5 @@ __all__ = [
     "SQLiteRuntimeBackend",
 ]
 
-# Backwards compat alias (temporary)
-# Carrier (the packet) renamed to Impulse per cybernetic mapping
-class _CarrierCompat(Impulse):
-    """Deprecated alias. Accepts carrier_type for compat."""
-    def __init__(self, **data):
-        if "carrier_type" in data:
-            data["impulse_type"] = data.pop("carrier_type")
-        super().__init__(**data)
 
-Carrier = _CarrierCompat
 
