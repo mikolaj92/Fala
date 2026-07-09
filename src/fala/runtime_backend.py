@@ -910,7 +910,7 @@ _RUN_STATUS_TRANSITIONS = {
 }
 
 
-class SQLiteRuntimeBackend:
+class Correlator:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -3720,7 +3720,7 @@ class RuntimeBackendService:
 
     @classmethod
     def sqlite(cls, path: str | Path) -> "RuntimeBackendService":
-        return cls(SQLiteRuntimeBackend(path))
+        return cls(Correlator(path))
 
     async def _replayed_submission(
         self,
@@ -6443,7 +6443,7 @@ __all__ = [
     "Run",
     "RunRef",
     "SQLITE_RUNTIME_SCHEMA_VERSION",
-    "SQLiteRuntimeBackend",
+    "Correlator",
 ]
 
 

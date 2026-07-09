@@ -85,7 +85,7 @@ from fala.runtime_backend import (
     RuntimePool,
     RuntimeRef,
     SQLITE_RUNTIME_SCHEMA_VERSION,
-    SQLiteRuntimeBackend,
+    Correlator,
 )
 from fala.yaml_loader import (
     carrier_workflow_package_from_mapping,
@@ -163,7 +163,7 @@ __all__ = [
     "RuntimePool",
     "RuntimeRef",
     "SQLITE_RUNTIME_SCHEMA_VERSION",
-    "SQLiteRuntimeBackend",
+    "Correlator",
     "StepAdapter",
     "StepRunRequest",
     "StepRunResult",
