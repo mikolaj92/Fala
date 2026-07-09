@@ -176,7 +176,7 @@ class CarrierAdapterSpec(BaseModel):
         return self
 
 
-class CarrierFlowStepSpec(BaseModel):
+class EffectorSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: RuntimeId
