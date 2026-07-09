@@ -2118,7 +2118,7 @@ class SQLiteRuntimeBackend:
                 )
                 connection.commit()
 
-    async def record_observation(
+    async def record_association(
         self,
         observation: Observation,
         command: RuntimeCommand,
@@ -2131,7 +2131,7 @@ class SQLiteRuntimeBackend:
             )
         if command.command_type != "observation.record":
             raise ValueError(
-                "record_observation requires command_type 'observation.record'"
+                "record_association requires command_type 'association.record'"
             )
         async with self._lock:
             connection = self._connect()
@@ -4016,7 +4016,7 @@ class RuntimeBackendService:
 
         return relation, submission
 
-    async def record_observation(
+    async def record_association(
         self,
         observation: Observation,
         *,
@@ -4040,13 +4040,13 @@ class RuntimeBackendService:
             event_type="observation.recorded",
             payload={"observation_id": observation.id, "kind": observation.kind},
         )
-        submission = await self.backend.record_observation(
+        submission = await self.backend.record_association(
             observation,
             command,
             events=[event],
         )
         if submission.replayed:
-            observations = await self.backend.list_observations(
+            associations = await self.backend.list_associations(
                 run_id=observation.run_id,
                 carrier_id=observation.carrier_id,
             )
@@ -5085,7 +5085,7 @@ class RuntimeBackendService:
         run_id: str,
         carrier_id: str | None = None,
     ) -> list[Observation]:
-        return await self.backend.list_observations(
+        return await self.backend.list_associations(
             run_id=run_id,
             carrier_id=carrier_id,
         )

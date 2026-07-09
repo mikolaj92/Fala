@@ -167,7 +167,7 @@ class FalaRuntime:
 
     async def record_observation(
         self,
-        observation: Observation,
+        association: Association,
         *,
         idempotency_key: str,
         actor: str | None = None,
