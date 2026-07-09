@@ -230,7 +230,8 @@ from fala.queue_bridge import (
     write_jsonl,
 )
 from fala.runtime_backend import (
-    Carrier,
+    Impulse,
+    Carrier,  # deprecated alias (see runtime_backend)
     CommandSubmission,
     Gate,
     GateStatus,
@@ -304,8 +305,9 @@ __all__ = [
     "apply_document_routes",
     "auto_document_routes_from_registry",
     "CapabilitySpec",
-    "Carrier",
+    "Carrier",  # deprecated
     "ChildDocumentWaitSpec",
+    "Impulse",
     "CombinedProjection",
     "ClaimedProcess",
     "CombineSpec",

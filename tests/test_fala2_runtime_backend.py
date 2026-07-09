@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 
 from fala.runtime_backend import (
-    Carrier,
+    Impulse,
+    Carrier,  # deprecated alias for compat test
     Gate,
     GateStatus,
     Observation,
@@ -22,32 +23,32 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala2.sqlite")
-                carrier = Carrier(
+                impulse = Impulse(
                     run_id="run_alpha",
-                    carrier_type="invoice",
+                    impulse_type="invoice",
                     payload={"amount": 120},
                     metadata={"tenant": "acme"},
                 )
 
-                await backend.put_carrier(carrier)
-                stored = await backend.get_carrier(
-                    run_id="run_alpha", carrier_id=carrier.id
+                await backend.put_impulse(impulse)
+                stored = await backend.get_impulse(
+                    run_id="run_alpha", impulse_id=impulse.id
                 )
 
-                self.assertEqual(stored, carrier)
+                self.assertEqual(stored, impulse)
 
                 command = RuntimeCommand(
                     run_id="run_alpha",
-                    command_type="carrier.accept",
-                    idempotency_key="run_alpha:carrier.accept:invoice",
+                    command_type="impulse.accept",
+                    idempotency_key="run_alpha:impulse.accept:invoice",
                     actor="operator:mika",
                     correlation_id="corr_1",
-                    payload={"carrier_id": carrier.id},
+                    payload={"impulse_id": impulse.id},
                 )
                 event = RuntimeEvent(
                     run_id="run_alpha",
-                    carrier_id=carrier.id,
-                    event_type="carrier.accepted",
+                    carrier_id=impulse.id,  # FK kept as carrier_id for now
+                    event_type="impulse.accepted",
                     actor="operator:mika",
                     correlation_id="corr_1",
                     payload={"accepted": True},
@@ -70,7 +71,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(len(events), 1)
                 self.assertEqual(events[0].sequence, 1)
                 self.assertEqual(events[0].command_id, first.command.id)
-                self.assertEqual(events[0].carrier_id, carrier.id)
+                self.assertEqual(events[0].carrier_id, impulse.id)
                 self.assertEqual(events[0].actor, "operator:mika")
                 self.assertEqual(events[0].correlation_id, "corr_1")
 
@@ -80,16 +81,16 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala2.sqlite")
-                carrier = Carrier(
+                impulse = Impulse(
                     run_id="run_beta",
-                    carrier_type="message",
+                    impulse_type="message",
                     payload={"text": "hello"},
                 )
-                await backend.put_carrier(carrier)
+                await backend.put_impulse(impulse)
 
                 observation = Observation(
                     run_id="run_beta",
-                    carrier_id=carrier.id,
+                    carrier_id=impulse.id,  # FK name kept
                     kind="classifier.score",
                     values={"score": 0.98},
                     metadata={"model": "local"},
@@ -98,7 +99,7 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
 
                 gate = Gate(
                     run_id="run_beta",
-                    carrier_id=carrier.id,
+                    carrier_id=impulse.id,
                     kind="human.approval",
                     status=GateStatus.open,
                     values={"reason": "needs review"},
@@ -126,6 +127,15 @@ class Fala2RuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(observations, [observation])
                 self.assertEqual(stored_gate.status, GateStatus.completed)
                 self.assertEqual(stored_projection, projection)
+
+                # Also verify legacy Carrier alias still works
+                legacy = Carrier(
+                    run_id="run_beta",
+                    carrier_type="legacy-test",
+                    payload={},
+                )
+                await backend.put_impulse(legacy)  # alias should delegate to Impulse
+
 
         asyncio.run(scenario())
 

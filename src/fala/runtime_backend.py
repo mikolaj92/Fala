@@ -36,12 +36,12 @@ def _dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-class Carrier(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class Impulse(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    id: str = Field(default_factory=lambda: _new_id("carrier"))
+    id: str = Field(default_factory=lambda: _new_id("impulse"))
     run_id: str
-    carrier_type: str
+    impulse_type: str = Field(alias="carrier_type", validation_alias="carrier_type", serialization_alias="impulse_type")
     payload: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
@@ -132,9 +132,9 @@ class Projection(BaseModel):
 
 
 class RuntimeBackend(Protocol):
-    async def put_carrier(self, carrier: Carrier) -> None: ...
+    async def put_impulse(self, impulse: Impulse) -> None: ...
 
-    async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None: ...
+    async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None: ...
 
     async def submit_command(
         self, command: RuntimeCommand, *, events: Sequence[RuntimeEvent] = ()
@@ -275,7 +275,7 @@ class SQLiteRuntimeBackend:
             )
             connection.commit()
 
-    async def put_carrier(self, carrier: Carrier) -> None:
+    async def put_impulse(self, impulse: Impulse) -> None:
         async with self._lock:
             with self._connect() as connection:
                 connection.execute(
@@ -292,24 +292,24 @@ class SQLiteRuntimeBackend:
                         updated_at = excluded.updated_at
                     """,
                     (
-                        carrier.run_id,
-                        carrier.id,
-                        carrier.carrier_type,
-                        _dumps(carrier.payload),
-                        _dumps(carrier.metadata),
-                        carrier.created_at.isoformat(),
-                        carrier.updated_at.isoformat(),
+                        impulse.run_id,
+                        impulse.id,
+                        impulse.impulse_type,
+                        _dumps(impulse.payload),
+                        _dumps(impulse.metadata),
+                        impulse.created_at.isoformat(),
+                        impulse.updated_at.isoformat(),
                     ),
                 )
                 connection.commit()
 
-    async def get_carrier(self, *, run_id: str, carrier_id: str) -> Carrier | None:
+    async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM carriers WHERE run_id = ? AND id = ?",
-                (run_id, carrier_id),
+                (run_id, impulse_id),
             ).fetchone()
-        return _carrier_from_row(row) if row is not None else None
+        return _impulse_from_row(row) if row is not None else None
 
     async def submit_command(
         self,
@@ -568,11 +568,11 @@ class SQLiteRuntimeBackend:
         return _projection_from_row(row) if row is not None else None
 
 
-def _carrier_from_row(row: sqlite3.Row) -> Carrier:
-    return Carrier(
+def _impulse_from_row(row: sqlite3.Row) -> Impulse:
+    return Impulse(
         id=row["id"],
         run_id=row["run_id"],
-        carrier_type=row["carrier_type"],
+        impulse_type=row["carrier_type"],
         payload=_loads(row["payload"]),
         metadata=_loads(row["metadata"]),
         created_at=_dt(row["created_at"]),
@@ -649,7 +649,7 @@ def _projection_from_row(row: sqlite3.Row) -> Projection:
 
 
 __all__ = [
-    "Carrier",
+    "Impulse",
     "CommandSubmission",
     "Gate",
     "GateStatus",
@@ -660,3 +660,7 @@ __all__ = [
     "RuntimeEvent",
     "SQLiteRuntimeBackend",
 ]
+
+# --- Backwards compatibility aliases (temporary, remove in future release) ---
+# Per Mazur cybernetic mapping (see issue #39)
+Carrier = Impulse
