@@ -709,44 +709,44 @@ class RuntimeBackend(Protocol):
         error: dict[str, Any] | None = None,
     ) -> Process: ...
 
-    async def put_gate(self, gate: Gate) -> None: ...
+    async def put_homeostat(self, homeostat: Homeostat) -> None: ...
 
-    async def save_gate(
+    async def save_homeostat(
         self,
-        gate: Gate,
+        homeostat: Homeostat,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None: ...
+    async def get_homeostat(self, *, run_id: str, homeostat_id: str) -> Homeostat | None: ...
 
-    async def transition_gate(
+    async def transition_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
-        status: GateStatus,
+        homeostat_id: str,
+        status: HomeostatStatus,
         command: RuntimeCommand,
         events: Sequence[RuntimeEvent] = (),
         values: dict[str, Any] | None = None,
-    ) -> tuple[Gate, CommandSubmission]: ...
+    ) -> tuple[Homeostat, CommandSubmission]: ...
 
-    async def complete_gate(
+    async def complete_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
-    ) -> Gate: ...
+    ) -> Homeostat: ...
 
-    async def cancel_gate(
+    async def cancel_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
-    ) -> Gate: ...
+    ) -> Homeostat: ...
 
     async def expire_gate(
         self,
@@ -3000,10 +3000,10 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
-    async def put_gate(self, gate: Gate) -> None:
+    async def put_homeostat(self, homeostat: Homeostat) -> None:
         async with self._lock:
             with self._connect() as connection:
-                _require_run_row(connection, gate.run_id)
+                _require_run_row(connection, homeostat.run_id)
                 connection.execute(
                     """
                     INSERT INTO gates (
@@ -3020,22 +3020,22 @@ class SQLiteRuntimeBackend:
                         updated_at = excluded.updated_at
                     """,
                     (
-                        gate.run_id,
-                        gate.id,
-                        gate.kind,
-                        gate.carrier_id,
-                        gate.status.value,
-                        _dumps(gate.values),
-                        _dumps(gate.metadata),
-                        gate.created_at.isoformat(),
-                        gate.updated_at.isoformat(),
+                        homeostat.run_id,
+                        homeostat.id,
+                        homeostat.kind,
+                        homeostat.carrier_id,
+                        homeostat.status.value,
+                        _dumps(homeostat.values),
+                        _dumps(homeostat.metadata),
+                        homeostat.created_at.isoformat(),
+                        homeostat.updated_at.isoformat(),
                     ),
                 )
                 connection.commit()
 
-    async def save_gate(
+    async def save_homeostat(
         self,
-        gate: Gate,
+        homeostat: Homeostat,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
@@ -3089,13 +3089,13 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
-    async def get_gate(self, *, run_id: str, gate_id: str) -> Gate | None:
+    async def get_homeostat(self, *, run_id: str, homeostat_id: str) -> Homeostat | None:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM gates WHERE run_id = ? AND id = ?",
-                (run_id, gate_id),
+                (run_id, homeostat_id),
             ).fetchone()
-        return _gate_from_row(row) if row is not None else None
+        return _homeostat_from_row(row) if row is not None else None
 
     async def transition_gate(
         self,
@@ -6345,13 +6345,13 @@ def _artifact_from_row(row: sqlite3.Row) -> Artifact:
     )
 
 
-def _gate_from_row(row: sqlite3.Row) -> Gate:
-    return Gate(
+def _homeostat_from_row(row: sqlite3.Row) -> Homeostat:
+    return Homeostat(
         id=row["id"],
         run_id=row["run_id"],
         kind=row["kind"],
         carrier_id=row["carrier_id"],
-        status=GateStatus(row["status"]),
+        status=HomeostatStatus(row["status"]),
         values=_loads(row["values_json"]),
         metadata=_loads(row["metadata"]),
         created_at=_dt(row["created_at"]),
