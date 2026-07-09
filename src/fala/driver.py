@@ -30,7 +30,7 @@ from fala.runtime_backend import (
     RuntimeBudget,
     RuntimePool,
     RuntimeRef,
-    SQLiteRuntimeBackend,
+    Correlator,
 )
 
 
@@ -188,7 +188,7 @@ async def enqueue_fala_runtime_process(
         raise ValueError("fala_runtime process requires carrier_id")
 
     backend = service.backend
-    if not isinstance(backend, SQLiteRuntimeBackend):
+    if not isinstance(backend, Correlator):
         raise FalaConfigurationError(
             "fala_runtime steps require a SQLite-backed runtime service"
         )

@@ -35,7 +35,7 @@ from fala.runtime_backend import (
     RuntimeEvent,
     DelegationPolicy,
     RuntimePool,
-    SQLiteRuntimeBackend,
+    Correlator,
 )
 
 
@@ -764,7 +764,7 @@ class FalaRuntime:
 
 
 def _default_carrier_artifact_root(backend: RuntimeBackend) -> Path:
-    if isinstance(backend, SQLiteRuntimeBackend):
+    if isinstance(backend, Correlator):
         return backend.path.parent / "artifacts"
     return Path(".fala") / "artifacts"
 

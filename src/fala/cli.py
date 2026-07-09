@@ -62,7 +62,7 @@ from fala.runtime_backend import RuntimeEvent
 from fala.runtime_backend import RuntimePool
 from fala.runtime_backend import RuntimeRef
 from fala.runtime_backend import SQLITE_RUNTIME_SCHEMA_VERSION
-from fala.runtime_backend import SQLiteRuntimeBackend
+from fala.runtime_backend import Correlator
 from fala.yaml_loader import load_carrier_workflow_package_yaml
 
 CONTRACT_MODELS: dict[str, type[BaseModel]] = {
@@ -516,7 +516,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         artifact_root = Path(args.artifact_root).expanduser()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         artifact_root.mkdir(parents=True, exist_ok=True)
-        SQLiteRuntimeBackend(db_path)
+        Correlator(db_path)
         return {
             "ok": True,
             "db": str(db_path),
@@ -534,7 +534,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
 
     if args.command == "db":
         db_path = _carrier_runtime_db_path(args.db)
-        backend = SQLiteRuntimeBackend(db_path)
+        backend = Correlator(db_path)
         if args.db_command in {"init", "migrate"}:
             return {
                 "ok": True,
@@ -609,7 +609,7 @@ _CARRIER_RUNTIME_REQUIRED_TABLES = (
 async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
     if args.command == "diagnose-waits":
         service = RuntimeBackendService(
-            SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+            Correlator(_carrier_runtime_db_path(args.db))
         )
         diagnostic = await service.diagnose_waits(
             run_id=args.run_id,
@@ -638,7 +638,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
     if args.command == "replay-execution":
         return await _carrier_runtime_replay_execution(args)
 
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    backend = Correlator(_carrier_runtime_db_path(args.db))
     if args.command == "create-run":
         run_data = {
             "title": args.title,
@@ -1261,7 +1261,7 @@ async def _carrier_runtime_run_until_idle(args: argparse.Namespace) -> dict[str,
         raise ValueError("--max-ticks must be greater than zero")
     if args.lease_seconds <= 0:
         raise ValueError("--lease-seconds must be greater than zero")
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    backend = Correlator(_carrier_runtime_db_path(args.db))
     service = RuntimeBackendService(backend)
     result = await run_until_idle(
         service,
@@ -1282,7 +1282,7 @@ async def _carrier_runtime_run_until_idle(args: argparse.Namespace) -> dict[str,
 
 
 async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[str, Any]:
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    backend = Correlator(_carrier_runtime_db_path(args.db))
     process = await backend.get_process(
         run_id=args.run_id,
         process_id=args.process_id,
@@ -1370,7 +1370,7 @@ async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[st
 
 
 async def _carrier_runtime_gc(args: argparse.Namespace) -> dict[str, Any]:
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    backend = Correlator(_carrier_runtime_db_path(args.db))
     store = FileArtifactStore(args.artifact_root)
     cutoff = (
         time.time() - _parse_duration_seconds(args.older_than)
@@ -1436,7 +1436,7 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
     packages = _carrier_runtime_package_reports(getattr(args, "packages", []))
     packages_ok = all(package["ok"] for package in packages)
     if args.ensure_schema:
-        SQLiteRuntimeBackend(db_path)
+        Correlator(db_path)
     if not db_path.exists():
         report = {
             "ok": False,
@@ -1639,7 +1639,7 @@ def _carrier_runtime_vacuum(db_path: str) -> dict[str, Any]:
 
 
 async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    backend = Correlator(_carrier_runtime_db_path(args.db))
     run = await backend.get_run(run_id=args.run_id)
     events = await backend.list_events(run_id=args.run_id)
     carriers = await backend.list_carriers(run_id=args.run_id)
@@ -1692,7 +1692,7 @@ async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _carrier_runtime_maintain_journal(args: argparse.Namespace) -> dict[str, Any]:
-    service = RuntimeBackendService(SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db)))
+    service = RuntimeBackendService(Correlator(_carrier_runtime_db_path(args.db)))
     artifact_store = _runtime_artifact_store_from_root(Path(args.artifact_root))
     plan = await service.maintain_journal(
         older_than_days=args.older_than_days,
