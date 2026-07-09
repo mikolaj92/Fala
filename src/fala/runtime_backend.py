@@ -245,10 +245,10 @@ class CommandSubmission(BaseModel):
     replayed: bool = False
 
 
-class Observation(BaseModel):
+class Association(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: _new_id("observation"))
+    id: str = Field(default_factory=lambda: _new_id("association"))
     run_id: str
     kind: str
     carrier_id: str | None = None
@@ -592,19 +592,19 @@ class RuntimeBackend(Protocol):
         limit: int | None = None,
     ) -> list[RuntimeEvent]: ...
 
-    async def put_observation(self, observation: Observation) -> None: ...
+    async def put_association(self, association: Association) -> None: ...
 
-    async def record_observation(
+    async def record_association(
         self,
-        observation: Observation,
+        association: Association,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def list_observations(
+    async def list_associations(
         self, *, run_id: str, carrier_id: str | None = None
-    ) -> list[Observation]: ...
+    ) -> list[Association]: ...
 
     async def put_artifact(self, artifact: Artifact) -> None: ...
 
@@ -2089,7 +2089,7 @@ class SQLiteRuntimeBackend:
             rows = connection.execute(sql, params).fetchall()
         return [_event_from_row(row) for row in rows]
 
-    async def put_observation(self, observation: Observation) -> None:
+    async def put_association(self, association: Association) -> None:
         async with self._lock:
             with self._connect() as connection:
                 _require_run_row(connection, observation.run_id)
@@ -2176,7 +2176,7 @@ class SQLiteRuntimeBackend:
             finally:
                 connection.close()
 
-    async def list_observations(
+    async def list_associations(
         self, *, run_id: str, carrier_id: str | None = None
     ) -> list[Observation]:
         clauses = ["run_id = ?"]
@@ -5079,7 +5079,7 @@ class RuntimeBackendService:
 
         return delivered, imported, delivery_submission, import_submission
 
-    async def list_observations(
+    async def list_associations(
         self,
         *,
         run_id: str,
