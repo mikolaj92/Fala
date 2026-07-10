@@ -2,7 +2,7 @@ version: "2"
 id: splot_arbitration_basic
 title: Splot arbitration basic
 
-carrier_types:
+impulse_types:
   - id: splot.arbitration_case
     media_types:
       - application/json
@@ -20,7 +20,7 @@ carrier_types:
         respondent:
           type: string
 
-observation_kinds:
+association_kinds:
   - id: splot.jurisdiction
     value_schema:
       type: object
@@ -32,32 +32,32 @@ observation_kinds:
         reason:
           type: string
 
-artifact_kinds:
+reaction_kinds:
   - id: splot.decision_report
     media_types:
       - application/json
 
 capabilities:
   - id: splot.review
-    accepts_carrier_types:
+    accepts_impulse_types:
       - splot.arbitration_case
-    emits_observation_kinds:
+    emits_association_kinds:
       - splot.jurisdiction
-    emits_artifact_kinds:
+    emits_reaction_kinds:
       - splot.decision_report
 
-flows:
+correlation_paths:
   - id: basic
-    steps:
+    effectors:
       - id: review
         capability: splot.review
         adapter:
-          kind: manual_gate
+          kind: manual_homeostat
 
 runtime:
   backend:
     kind: sqlite
     path: .fala/splot.sqlite
-  artifact_store:
+  reaction_store:
     kind: filesystem
-    root: .fala/artifacts
+    root: .fala/reactions

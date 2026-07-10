@@ -1,29 +1,29 @@
 id: basic_enrichment
-title: Basic carrier enrichment
+title: Basic impulse enrichment
 description: Three subprocess boundaries coordinated by Fala.
 tags: ["example"]
 version: "2"
-steps:
+effectors:
   - id: ingest
     title: Ingest
     capability: ingest_source
     adapter:
       kind: subprocess
-      command: ["python", "steps/ingest.py"]
+      command: ["python", "effectors/ingest.py"]
       cwd: "."
   - id: enrich
     title: Enrich
     capability: enrich_source
-    needs: [ingest]
+    conduction: [ingest]
     adapter:
       kind: subprocess
-      command: ["python", "steps/enrich.py"]
+      command: ["python", "effectors/enrich.py"]
       cwd: "."
   - id: export
     title: Export
     capability: export_source
-    needs: [enrich]
+    conduction: [enrich]
     adapter:
       kind: subprocess
-      command: ["python", "steps/export.py"]
+      command: ["python", "effectors/export.py"]
       cwd: "."

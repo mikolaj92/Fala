@@ -1,7 +1,7 @@
 # Domain Packs
 
 Core Fala is domain-agnostic. Domain-specific objects should live in domain
-packs that map their concepts onto Carrier runtime records.
+packs that map their concepts onto Impulse runtime records.
 
 Current packs:
 
@@ -9,14 +9,14 @@ Current packs:
 - `fala.domain_packs.signals`
 - `fala.domain_packs.splot`
 
-Carrier-first examples:
+Impulse-first examples:
 
 - `examples/domain-packs/signals`
 
 Domain packs may provide:
 
-- carrier builders and parsers
-- observation helpers
+- impulse builders and parsers
+- association helpers
 - projection helpers
 - package examples
 - migration guidance from prior domain-specific models

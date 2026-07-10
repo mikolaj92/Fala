@@ -8,36 +8,36 @@ from pathlib import Path
 from fala.sdk import (
     INJECTED_INPUT_KEYS,
     declared_inputs,
-    find_artifact,
-    find_output_artifact,
+    find_reaction,
+    find_output_reaction,
     input_values,
     load_manifest,
-    needs,
+    conduction,
     output,
-    output_artifacts,
+    output_reactions,
     output_metadata,
-    run_manifest_step,
-    upstream_artifacts,
+    run_manifest_effector,
+    upstream_reactions,
 )
 
 
 class FalaSdkTests(unittest.TestCase):
-    def test_manifest_helpers_read_input_and_needs(self) -> None:
+    def test_manifest_helpers_read_input_and_conduction(self) -> None:
         manifest = {
             "input": {
                 "source": "hello",
-                "needs": {"ingest": {"chars": 5}},
+                "conduction": {"ingest": {"chars": 5}},
             }
         }
 
         self.assertEqual(input_values(manifest)["source"], "hello")
-        self.assertEqual(needs(manifest)["ingest"]["chars"], 5)
+        self.assertEqual(conduction(manifest)["ingest"]["chars"], 5)
         self.assertEqual(
             output(values={"ok": True}),
             {
                 "values": {"ok": True},
-                "observations": [],
-                "artifacts": [],
+                "associations": [],
+                "reactions": [],
                 "metadata": {},
             },
         )
@@ -46,8 +46,8 @@ class FalaSdkTests(unittest.TestCase):
         manifest = {
             "input": {
                 "source": "hello",
-                "needs": {"a": {}},
-                "upstream_artifacts": [{"kind": "x"}],
+                "conduction": {"a": {}},
+                "upstream_reactions": [{"kind": "x"}],
             }
         }
         # Only the authored value survives; Fala's injected keys are stripped.
@@ -57,8 +57,8 @@ class FalaSdkTests(unittest.TestCase):
             manifest["input"],
             {
                 "source": "hello",
-                "needs": {"a": {}},
-                "upstream_artifacts": [{"kind": "x"}],
+                "conduction": {"a": {}},
+                "upstream_reactions": [{"kind": "x"}],
             },
         )
 
@@ -70,14 +70,14 @@ class FalaSdkTests(unittest.TestCase):
 
     def test_injected_input_keys_constant(self) -> None:
         self.assertEqual(
-            INJECTED_INPUT_KEYS, frozenset({"needs", "upstream_artifacts"})
+            INJECTED_INPUT_KEYS, frozenset({"conduction", "upstream_reactions"})
         )
         self.assertIsInstance(INJECTED_INPUT_KEYS, frozenset)
 
-    def test_upstream_artifacts_reads_list_or_defaults_empty(self) -> None:
+    def test_upstream_reactions_reads_list_or_defaults_empty(self) -> None:
         manifest = {
             "input": {
-                "upstream_artifacts": [
+                "upstream_reactions": [
                     {"kind": "a"},
                     "not-a-mapping",
                     {"kind": "b"},
@@ -85,17 +85,17 @@ class FalaSdkTests(unittest.TestCase):
             }
         }
         self.assertEqual(
-            upstream_artifacts(manifest),
+            upstream_reactions(manifest),
             [{"kind": "a"}, {"kind": "b"}],
         )
-        # Absent / opted-out flows and root steps see an empty list, never a KeyError.
-        self.assertEqual(upstream_artifacts({"input": {}}), [])
-        self.assertEqual(upstream_artifacts({}), [])
+        # Absent / opted-out correlation_paths and root effectors see an empty list, never a KeyError.
+        self.assertEqual(upstream_reactions({"input": {}}), [])
+        self.assertEqual(upstream_reactions({}), [])
 
-    def test_find_artifact_returns_latest_match_or_none(self) -> None:
+    def test_find_reaction_returns_latest_match_or_none(self) -> None:
         manifest = {
             "input": {
-                "upstream_artifacts": [
+                "upstream_reactions": [
                     {"kind": "draft", "path": "a"},
                     {"kind": "draft", "path": "b"},
                     {"kind": "final", "path": "c"},
@@ -103,50 +103,50 @@ class FalaSdkTests(unittest.TestCase):
             }
         }
         # Newest-first scan: the later "draft" (b) shadows the earlier one (a).
-        self.assertEqual(find_artifact(manifest, "draft"), {"kind": "draft", "path": "b"})
-        self.assertEqual(find_artifact(manifest, "final"), {"kind": "final", "path": "c"})
-        # Missing kind and an absent / opted-out artifact list both yield None.
-        self.assertIsNone(find_artifact(manifest, "missing"))
-        self.assertIsNone(find_artifact({}, "draft"))
+        self.assertEqual(find_reaction(manifest, "draft"), {"kind": "draft", "path": "b"})
+        self.assertEqual(find_reaction(manifest, "final"), {"kind": "final", "path": "c"})
+        # Missing kind and an absent / opted-out reaction list both yield None.
+        self.assertIsNone(find_reaction(manifest, "missing"))
+        self.assertIsNone(find_reaction({}, "draft"))
 
-    def test_output_artifacts_reads_envelope_list_or_defaults_empty(self) -> None:
-        # The host-side twin of upstream_artifacts: it reads a step's own output
-        # envelope (as produced by output()), not a downstream step's input.
-        step_output = {
-            "artifacts": [
+    def test_output_reactions_reads_envelope_list_or_defaults_empty(self) -> None:
+        # The host-side twin of upstream_reactions: it reads an effector's own output
+        # envelope (as produced by output()), not a downstream effector's input.
+        effector_output = {
+            "reactions": [
                 {"kind": "report"},
                 "not-a-mapping",
                 {"kind": "manifest"},
             ]
         }
         self.assertEqual(
-            output_artifacts(step_output),
+            output_reactions(effector_output),
             [{"kind": "report"}, {"kind": "manifest"}],
         )
-        # A step that emitted nothing, or an absent / malformed envelope, is empty.
-        self.assertEqual(output_artifacts(output()), [])
-        self.assertEqual(output_artifacts({}), [])
-        self.assertEqual(output_artifacts({"artifacts": "nope"}), [])
+        # An effector that emitted nothing, or an absent / malformed envelope, is empty.
+        self.assertEqual(output_reactions(output()), [])
+        self.assertEqual(output_reactions({}), [])
+        self.assertEqual(output_reactions({"reactions": "nope"}), [])
 
-    def test_find_output_artifact_returns_latest_match_or_none(self) -> None:
-        step_output = output(
-            artifacts=[
+    def test_find_output_reaction_returns_latest_match_or_none(self) -> None:
+        effector_output = output(
+            reactions=[
                 {"kind": "draft", "path": "a"},
                 {"kind": "draft", "path": "b"},
                 {"kind": "final", "path": "c"},
             ]
         )
-        # Same newest-first rule as find_artifact: the later draft (b) wins.
+        # Same newest-first rule as find_reaction: the later draft (b) wins.
         self.assertEqual(
-            find_output_artifact(step_output, "draft"),
+            find_output_reaction(effector_output, "draft"),
             {"kind": "draft", "path": "b"},
         )
         self.assertEqual(
-            find_output_artifact(step_output, "final"),
+            find_output_reaction(effector_output, "final"),
             {"kind": "final", "path": "c"},
         )
-        self.assertIsNone(find_output_artifact(step_output, "missing"))
-        self.assertIsNone(find_output_artifact({}, "draft"))
+        self.assertIsNone(find_output_reaction(effector_output, "missing"))
+        self.assertIsNone(find_output_reaction({}, "draft"))
 
     def test_output_metadata_reads_envelope_metadata_or_defaults_empty(self) -> None:
         self.assertEqual(
@@ -157,7 +157,7 @@ class FalaSdkTests(unittest.TestCase):
         self.assertEqual(output_metadata({}), {})
         self.assertEqual(output_metadata({"metadata": "nope"}), {})
 
-    def test_run_manifest_step_writes_result_json(self) -> None:
+    def test_run_manifest_effector_writes_result_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_dir = root / "input"
@@ -171,8 +171,8 @@ class FalaSdkTests(unittest.TestCase):
             )
 
             env = {
-                "FALA_STEP_MANIFEST": str(manifest_path),
-                "FALA_STEP_OUTPUT_DIR": str(output_dir),
+                "FALA_EFFECTOR_MANIFEST": str(manifest_path),
+                "FALA_EFFECTOR_OUTPUT_DIR": str(output_dir),
             }
 
             self.assertEqual(load_manifest(env)["input"]["value"], 2)
@@ -187,7 +187,7 @@ class FalaSdkTests(unittest.TestCase):
                 old_env[key] = os.environ.get(key)
                 os.environ[key] = value
             try:
-                self.assertEqual(run_manifest_step(handler), 0)
+                self.assertEqual(run_manifest_effector(handler), 0)
             finally:
                 for key, value in old_env.items():
                     if value is None:

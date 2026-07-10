@@ -4,12 +4,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fala.runtime_backend import Impulse, Observation, Projection
+from fala.runtime_backend import Impulse, Association, Projection
 
 DOCUMENT_DOMAIN_PACK_ID = "documents"
 
 
-class DocumentCarrierInput(BaseModel):
+class DocumentImpulseInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -20,18 +20,18 @@ class DocumentCarrierInput(BaseModel):
     source_uri: str | None = None
     values: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
-    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    reactions: list[dict[str, Any]] = Field(default_factory=list)
 
 
-def carrier_from_document(
-    document: DocumentCarrierInput,
+def impulse_from_document(
+    document: DocumentImpulseInput,
     *,
     run_id: str,
 ) -> Impulse:
     return Impulse(
         id=document.id,
         run_id=run_id,
-        carrier_type=f"document.{document.document_type}",
+        impulse_type=f"document.{document.document_type}",
         payload={
             "document_type": document.document_type,
             "title": document.title,
@@ -39,7 +39,7 @@ def carrier_from_document(
             "media_type": document.media_type,
             "source_uri": document.source_uri,
             "values": document.values,
-            "artifacts": document.artifacts,
+            "reactions": document.reactions,
         },
         metadata={
             **document.metadata,
@@ -48,61 +48,61 @@ def carrier_from_document(
     )
 
 
-def document_from_carrier(carrier: Carrier) -> DocumentCarrierInput:
-    if carrier.metadata.get("domain_pack") != DOCUMENT_DOMAIN_PACK_ID:
-        raise ValueError(f"Carrier {carrier.id!r} is not a document domain carrier")
+def document_from_impulse(impulse: Impulse) -> DocumentImpulseInput:
+    if impulse.metadata.get("domain_pack") != DOCUMENT_DOMAIN_PACK_ID:
+        raise ValueError(f"Impulse {impulse.id!r} is not a document domain impulse")
     document_type = str(
-        carrier.payload.get("document_type")
-        or carrier.carrier_type.removeprefix("document.")
+        impulse.payload.get("document_type")
+        or impulse.impulse_type.removeprefix("document.")
         or "generic_document"
     )
-    return DocumentCarrierInput(
-        id=carrier.id,
+    return DocumentImpulseInput(
+        id=impulse.id,
         document_type=document_type,
-        title=_optional_str(carrier.payload.get("title")),
-        relation=_optional_str(carrier.payload.get("relation")),
-        media_type=_optional_str(carrier.payload.get("media_type")),
-        source_uri=_optional_str(carrier.payload.get("source_uri")),
-        values=_dict(carrier.payload.get("values")),
-        artifacts=_list_of_dicts(carrier.payload.get("artifacts")),
+        title=_optional_str(impulse.payload.get("title")),
+        relation=_optional_str(impulse.payload.get("relation")),
+        media_type=_optional_str(impulse.payload.get("media_type")),
+        source_uri=_optional_str(impulse.payload.get("source_uri")),
+        values=_dict(impulse.payload.get("values")),
+        reactions=_list_of_dicts(impulse.payload.get("reactions")),
         metadata={
             key: value
-            for key, value in carrier.metadata.items()
+            for key, value in impulse.metadata.items()
             if key != "domain_pack"
         },
     )
 
 
-def document_observation(carrier: Carrier) -> Observation:
-    document = document_from_carrier(carrier)
-    return Observation(
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+def document_association(impulse: Impulse) -> Association:
+    document = document_from_impulse(impulse)
+    return Association(
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="document.accepted",
         values={
             "document_type": document.document_type,
             "media_type": document.media_type,
             "source_uri": document.source_uri,
-            "artifact_count": len(document.artifacts),
+            "reaction_count": len(document.reactions),
         },
         metadata={"domain_pack": DOCUMENT_DOMAIN_PACK_ID},
     )
 
 
-def document_projection(carrier: Carrier) -> Projection:
-    document = document_from_carrier(carrier)
+def document_projection(impulse: Impulse) -> Projection:
+    document = document_from_impulse(impulse)
     return Projection(
-        run_id=carrier.run_id,
-        name=f"document:{carrier.id}",
+        run_id=impulse.run_id,
+        name=f"document:{impulse.id}",
         data={
-            "carrier_id": carrier.id,
+            "impulse_id": impulse.id,
             "document_type": document.document_type,
             "title": document.title,
             "relation": document.relation,
             "media_type": document.media_type,
             "source_uri": document.source_uri,
             "values": document.values,
-            "artifact_count": len(document.artifacts),
+            "reaction_count": len(document.reactions),
         },
         source_event_sequence=0,
     )
@@ -124,9 +124,9 @@ def _list_of_dicts(value: object) -> list[dict[str, Any]]:
 
 __all__ = [
     "DOCUMENT_DOMAIN_PACK_ID",
-    "DocumentCarrierInput",
-    "carrier_from_document",
-    "document_from_carrier",
-    "document_observation",
+    "DocumentImpulseInput",
+    "impulse_from_document",
+    "document_from_impulse",
+    "document_association",
     "document_projection",
 ]

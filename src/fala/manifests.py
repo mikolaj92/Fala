@@ -13,7 +13,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from fala.runtime_backend import CarrierRunStatus, Run, RuntimeBackendService
+from fala.runtime_backend import RunStatus, Run, RuntimeBackendService
 
 
 async def get_run_manifest(
@@ -86,7 +86,7 @@ async def put_run_manifest(
     key: str,
     manifest: dict[str, Any],
     title: str | None = None,
-    status: CarrierRunStatus = CarrierRunStatus.completed,
+    status: RunStatus = RunStatus.completed,
 ) -> None:
     """Persist a manifest as a synthetic run record.
 
@@ -107,7 +107,7 @@ async def upsert_run_manifest(
     key: str,
     manifest: dict[str, Any],
     title: str | None = None,
-    create_status: CarrierRunStatus = CarrierRunStatus.created,
+    create_status: RunStatus = RunStatus.created,
 ) -> None:
     """Write a manifest onto a run record, creating the record if missing.
 

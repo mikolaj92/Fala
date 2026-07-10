@@ -91,7 +91,7 @@ def render_cache_stats_json(cache_dir: str | Path) -> str:
 
 def warm_cache_summary(processed: int, cache_dir: str | Path) -> dict[str, Any]:
     payload = export_cache_stats(cache_dir)
-    payload["processed_documents"] = processed
+    payload["processed_impulses"] = processed
     return payload
 
 

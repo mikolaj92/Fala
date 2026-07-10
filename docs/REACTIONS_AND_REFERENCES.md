@@ -1,13 +1,13 @@
-# Artifacts And References
+# Reactions And References
 
-The default artifact store is filesystem-backed and content-addressed by SHA-256.
-SQLite stores artifact metadata, URI, media type, size, and content hash.
+The default reaction store is filesystem-backed and content-addressed by SHA-256.
+SQLite stores reaction metadata, URI, media type, size, and content hash.
 Existing filesystem blobs are verified against their digest before reuse.
 
-Artifact URIs use:
+Reaction URIs use:
 
 ```text
-fala-artifact://sha256/<digest>
+fala-reaction://sha256/<digest>
 ```
 
 `fala gc` removes only blobs not referenced by any run in the SQLite runtime.
@@ -22,5 +22,5 @@ Cross-runtime references use:
 
 - `RuntimeRef`
 - `RunRef`
-- `ArtifactRef`
+- `ReactionRef`
 - `EventRef`

@@ -1,10 +1,10 @@
-"""Embedded run-until-idle driver for the Carrier runtime.
+"""Embedded run-until-idle driver for the Impulse runtime.
 
-The claim/execute/complete loop behind ``fala carrier-runtime
+The claim/execute/complete loop behind ``fala runtime
 run-until-idle``, exposed as a library API so embedded consumers can drive a
-run in-process without shelling out to the CLI. After each successful step
-completion the driver advances any flow the step belongs to (see
-``fala.flows``), readying dependent steps with their needs injected.
+run in-process without shelling out to the CLI. After each successful effector
+completion the driver advances any correlation_path the effector belongs to (see
+``fala.correlation_paths``), readying dependent effectors with their conduction injected.
 """
 
 from __future__ import annotations
@@ -15,17 +15,17 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 
-from fala.adapters import StepRunRequest, StepRunResult, create_step_adapter
+from fala.adapters import EffectorRunRequest, EffectorRunResult, create_effector_adapter
 from fala.errors import FalaConfigurationError
-from fala.flows import FlowInstance, advance_flow_for_process, instantiate_flow
-from fala.models import CarrierAdapterSpec, CarrierFlowSpec
+from fala.correlation_paths import CorrelationPathInstance, advance_correlation_path_for_process, instantiate_correlation_path
+from fala.models import EffectorAdapterSpec, CorrelationPathSpec, new_id
 from fala.runtime_backend import (
     BridgeDelivery,
-    CarrierProcessStatus,
-    CarrierRunStatus,
+    ProcessStatus,
+    RunStatus,
     Impulse,
     EventRef,
-    Gate,
+    Homeostat,
     Process,
     Run,
     RunRef,
@@ -49,11 +49,11 @@ class RunUntilIdleResult:
 
 
 @dataclass(frozen=True)
-class RunFlowResult:
+class RunCorrelationPathResult:
     run: Run
-    flow: FlowInstance
+    correlation_path: CorrelationPathInstance
     outcome: RunUntilIdleResult
-    status: CarrierRunStatus
+    status: RunStatus
     processes: list[Process]
 
 
@@ -65,8 +65,9 @@ async def run_until_idle(
     lease_seconds: float = 300.0,
     max_ticks: int = 100,
     work_dir: str | Path | None = None,
-    advance_flows: bool = True,
+    advance_correlation_paths: bool = True,
     should_stop: Callable[[], bool] | None = None,
+    all_runs: bool = False,
 ) -> RunUntilIdleResult:
     if max_ticks < 1:
         raise ValueError("max_ticks must be greater than zero")
@@ -89,23 +90,23 @@ async def run_until_idle(
             worker_id=worker_id,
             run_id=run_id,
             lease_seconds=lease_seconds,
+            all_runs=all_runs,
         )
         if process is None:
             break
         ticks += 1
         try:
-            adapter, step_input, config = process_step_request_parts(process)
-            step_work_dir = work_root / process.id if work_root is not None else None
-            if step_work_dir is not None:
-                step_work_dir.mkdir(parents=True, exist_ok=True)
-            request = StepRunRequest(
-                run_id=process.run_id,
+            adapter, effector_input, config = process_effector_request_parts(process)
+            effector_work_dir = work_root / process.id if work_root is not None else None
+            if effector_work_dir is not None:
+                effector_work_dir.mkdir(parents=True, exist_ok=True)
+            request = EffectorRunRequest(
                 process_id=process.id,
-                carrier_id=process.carrier_id,
+                impulse_id=process.impulse_id,
                 adapter=adapter,
-                input=step_input,
+                input=effector_input,
                 config=config,
-                work_dir=step_work_dir,
+                work_dir=effector_work_dir,
             )
             if adapter.kind == "fala_runtime":
                 result = await enqueue_fala_runtime_process(
@@ -115,26 +116,26 @@ async def run_until_idle(
                     actor=worker_id,
                 )
             else:
-                result = await create_step_adapter(adapter.kind).run(request)
+                result = await create_effector_adapter(adapter.kind).run(request)
             if result.waiting:
-                if result.gate_id is not None:
-                    await service.save_gate(
-                        Gate(
-                            id=result.gate_id,
+                if result.homeostat_id is not None:
+                    await service.save_homeostat(
+                        Homeostat(
+                            id=result.homeostat_id,
                             run_id=process.run_id,
-                            carrier_id=process.carrier_id,
+                            impulse_id=process.impulse_id,
                             kind=adapter.kind,
                             values=result.output,
                             metadata=result.metadata,
                         ),
-                        idempotency_key=f"{process.run_id}:gate.open:{result.gate_id}",
+                        idempotency_key=f"homeostat.open:{result.homeostat_id}",
                         actor=worker_id,
                     )
                 stored, _ = await service.wait_process(
                     run_id=process.run_id,
                     process_id=process.id,
                     output=result.output,
-                    idempotency_key=f"{process.run_id}:process.wait:{process.id}:{process.attempt}",
+                    idempotency_key=f"process.wait:{process.id}:{process.attempt}",
                     actor=worker_id,
                 )
                 waiting.append(stored)
@@ -151,7 +152,7 @@ async def run_until_idle(
                         "stderr": result.stderr,
                     },
                 },
-                idempotency_key=f"{process.run_id}:process.complete:{process.id}:{process.attempt}",
+                idempotency_key=f"process.complete:{process.id}:{process.attempt}",
                 actor=worker_id,
             )
             completed.append(stored)
@@ -162,7 +163,7 @@ async def run_until_idle(
                     run_id=process.run_id,
                     process_id=process.id,
                     error=error,
-                    idempotency_key=f"{process.run_id}:process.retry:{process.id}:{process.attempt}",
+                    idempotency_key=f"process.retry:{process.id}:{process.attempt}",
                     actor=worker_id,
                 )
             else:
@@ -170,13 +171,13 @@ async def run_until_idle(
                     run_id=process.run_id,
                     process_id=process.id,
                     error=error,
-                    idempotency_key=f"{process.run_id}:process.fail:{process.id}:{process.attempt}",
+                    idempotency_key=f"process.fail:{process.id}:{process.attempt}",
                     actor=worker_id,
                 )
             failed.append(stored)
             continue
-        if advance_flows:
-            await advance_flow_for_process(service, process=stored, actor=worker_id)
+        if advance_correlation_paths:
+            await advance_correlation_path_for_process(service, process=stored, actor=worker_id)
 
     return RunUntilIdleResult(
         ok=ticks < max_ticks,
@@ -191,7 +192,7 @@ async def run_until_idle(
 def process_error_text(process: Process) -> str:
     """Render a failed process's structured ``error`` into one human line.
 
-    ``run_until_idle`` records a step failure as ``{"type": ..., "message":
+    ``run_until_idle`` records an effector failure as ``{"type": ..., "message":
     ...}`` (see the exception handler above). This turns that envelope back into
     a string -- ``"Type: message"`` when both are present, the message or a JSON
     dump as fallbacks, and a fixed sentinel when there is no error at all -- so a
@@ -206,108 +207,108 @@ def process_error_text(process: Process) -> str:
         return message
     if error:
         return json.dumps(error, ensure_ascii=False, sort_keys=True)
-    return "unknown step failure"
+    return "unknown effector failure"
 
 
 _PROCESS_FAILURE_STATUSES = {
-    CarrierProcessStatus.failed,
-    CarrierProcessStatus.cancelled,
-    CarrierProcessStatus.timed_out,
+    ProcessStatus.failed,
+    ProcessStatus.cancelled,
+    ProcessStatus.timed_out,
 }
 
 # Mirrors runtime_backend._TERMINAL_RUN_STATUSES: statuses from which the run
-# state machine allows no further transition. Kept local so run_flow can tell a
+# state machine allows no further transition. Kept local so run_correlation_path can tell a
 # finished run from a resumable one without reaching into a private symbol.
 _TERMINAL_RUN_STATUSES = {
-    CarrierRunStatus.completed,
-    CarrierRunStatus.failed,
-    CarrierRunStatus.cancelled,
-    CarrierRunStatus.timed_out,
+    RunStatus.completed,
+    RunStatus.failed,
+    RunStatus.cancelled,
+    RunStatus.timed_out,
 }
 
 
-def _run_flow_status(
+def _run_correlation_path_status(
     processes: list[Process], *, stopped_reason: str, max_ticks: int
-) -> tuple[CarrierRunStatus, str | None]:
-    """Derive the run status from the flow's own step processes.
+) -> tuple[RunStatus, str | None]:
+    """Derive the run status from the correlation_path's own effector processes.
 
     Owning this mapping is what keeps the run's state machine inside Fala. The
-    authoritative signal is the post-drive status of every step process, not the
-    per-drive tallies in :class:`RunUntilIdleResult`: a flow can drain on the
+    authoritative signal is the post-drive status of every effector process, not the
+    per-drive tallies in :class:`RunUntilIdleResult`: a correlation_path can drain on the
     exact tick the budget runs out, so ``stopped_reason`` alone cannot tell
-    completion from a timeout. A failed, cancelled, or timed-out step fails the
-    run; every step succeeding completes it; a spent tick budget with steps
-    still incomplete times the run out. Otherwise the flow drained to idle with
-    no failure and budget to spare -- it is parked on a waiting/gated step, so
+    completion from a timeout. A failed, cancelled, or timed-out effector fails the
+    run; every effector succeeding completes it; a spent tick budget with effectors
+    still incomplete times the run out. Otherwise the correlation_path drained to idle with
+    no failure and budget to spare -- it is parked on a waiting or homeostat-blocked effector, so
     the run is *suspended* (``waiting``), not terminal: marking it ``failed``
     here would be irreversible and would strand a resumable run.
     """
     failures = [p for p in processes if p.status in _PROCESS_FAILURE_STATUSES]
     if failures:
-        return (CarrierRunStatus.failed, f"{len(failures)} step(s) did not succeed")
-    if processes and all(p.status == CarrierProcessStatus.succeeded for p in processes):
-        return (CarrierRunStatus.completed, None)
-    incomplete = [p for p in processes if p.status != CarrierProcessStatus.succeeded]
+        return (RunStatus.failed, f"{len(failures)} effector(s) did not succeed")
+    if processes and all(p.status == ProcessStatus.succeeded for p in processes):
+        return (RunStatus.completed, None)
+    incomplete = [p for p in processes if p.status != ProcessStatus.succeeded]
     if stopped_reason == "max_ticks":
         return (
-            CarrierRunStatus.timed_out,
-            f"flow did not finish within {max_ticks} ticks; "
-            f"{len(incomplete)} step(s) still incomplete",
+            RunStatus.timed_out,
+            f"correlation_path did not finish within {max_ticks} ticks; "
+            f"{len(incomplete)} effector(s) still incomplete",
         )
     return (
-        CarrierRunStatus.waiting,
-        f"flow parked with {len(incomplete)} step(s) awaiting external progress",
+        RunStatus.waiting,
+        f"correlation_path parked with {len(incomplete)} effector(s) awaiting external progress",
     )
 
 
-async def run_flow(
+async def run_correlation_path(
     service: RuntimeBackendService,
     *,
     run: Run,
-    flow: CarrierFlowSpec,
+    correlation_path: CorrelationPathSpec,
     worker_id: str,
-    flow_id: str | None = None,
-    step_inputs: dict[str, dict[str, Any]] | None = None,
-    step_configs: dict[str, dict[str, Any]] | None = None,
+    correlation_path_id: str | None = None,
+    effector_inputs: dict[str, dict[str, Any]] | None = None,
+    effector_configs: dict[str, dict[str, Any]] | None = None,
     work_dir: str | Path | None = None,
     max_ticks: int = 100,
     lease_seconds: float = 300.0,
     actor: str | None = None,
-) -> RunFlowResult:
-    """Create a run, instantiate one flow on it, drive it to idle, finalize status.
+) -> RunCorrelationPathResult:
+    """Create a run, instantiate one correlation_path on it, drive it to idle, finalize status.
 
     The single-call run lifecycle for the common embedded case: the caller
-    supplies the run record and the flow to execute, and Fala owns the whole
-    run -- creating it, scheduling the flow's steps, running the
+    supplies the run record and the correlation_path to execute, and Fala owns the whole
+    run -- creating it, scheduling the correlation_path's effectors, running the
     claim/execute/advance loop until no work remains, and recording the terminal
-    run status derived from the outcome (see :func:`_run_flow_terminal_status`).
-    Per-step, per-run values reach the steps through ``step_inputs`` and
-    ``step_configs`` exactly as with :func:`instantiate_flow`.
+    run status derived from the outcome (see :func:`_run_correlation_path_status`).
+    Per-effector, per-run values reach the effectors through ``effector_inputs`` and
+    ``effector_configs`` exactly as with :func:`instantiate_correlation_path`.
 
-    Returns the finalized run, the instantiated flow (whose resolved
-    ``flow_id`` addresses its step processes), the raw
+    Returns the finalized run, the instantiated correlation_path (whose resolved
+    ``correlation_path_id`` addresses its effector processes), the raw
     :class:`RunUntilIdleResult`, and the terminal status that was set.
     """
     stored_run, _ = await service.create_run(
-        run, idempotency_key=f"{run.id}:run.create", actor=actor
+        run, idempotency_key="run.create", actor=actor
     )
-    instance = await instantiate_flow(
+    instance = await instantiate_correlation_path(
         service,
         run_id=run.id,
-        flow=flow,
-        flow_id=flow_id,
-        step_inputs=step_inputs,
-        step_configs=step_configs,
+        correlation_path=correlation_path,
+        correlation_path_id=correlation_path_id,
+        effector_inputs=effector_inputs,
+        effector_configs=effector_configs,
         actor=actor,
     )
     if stored_run.status in _TERMINAL_RUN_STATUSES:
         # Re-invoked on a run that already reached a terminal state (create_run
         # replayed rather than created it). Driving it again would re-run any
-        # leftover-ready step and then try an illegal terminal-to-terminal
+        # leftover-ready effector and then try an illegal terminal-to-terminal
         # transition; return the finished run untouched instead.
-        return RunFlowResult(
+        return RunCorrelationPathResult(
             run=stored_run,
-            flow=instance,
+            correlation_path=instance,
             outcome=RunUntilIdleResult(
                 ok=True,
                 ticks=0,
@@ -328,19 +329,19 @@ async def run_flow(
         work_dir=work_dir,
     )
     processes = await service.list_processes(run_id=run.id)
-    status, reason = _run_flow_status(
+    status, reason = _run_correlation_path_status(
         processes, stopped_reason=outcome.stopped_reason, max_ticks=max_ticks
     )
     finalized, _ = await service.set_run_status(
         run_id=run.id,
         status=status,
-        idempotency_key=f"{run.id}:run.{status.value}",
+        idempotency_key=f"run.{status.value}",
         reason=reason,
         actor=actor,
     )
-    return RunFlowResult(
+    return RunCorrelationPathResult(
         run=finalized,
-        flow=instance,
+        correlation_path=instance,
         outcome=outcome,
         status=status,
         processes=processes,
@@ -351,30 +352,30 @@ async def enqueue_fala_runtime_process(
     *,
     service: RuntimeBackendService,
     process: Process,
-    request: StepRunRequest,
+    request: EffectorRunRequest,
     actor: str,
-) -> StepRunResult:
+) -> EffectorRunResult:
     if request.adapter.runtime_ref is None:
         raise ValueError("fala_runtime adapter requires runtime_ref")
-    if process.carrier_id is None:
-        raise ValueError("fala_runtime process requires carrier_id")
+    if process.impulse_id is None:
+        raise ValueError("fala_runtime process requires impulse_id")
 
     backend = service.backend
     if not isinstance(backend, Correlator):
         raise FalaConfigurationError(
-            "fala_runtime steps require a SQLite-backed runtime service"
+            "fala_runtime effectors require a SQLite-backed runtime service"
         )
 
     impulse = await backend.get_impulse(
         run_id=process.run_id,
-        impulse_id=process.carrier_id,
+        impulse_id=process.impulse_id,
     )
     if impulse is None:
-        raise ValueError(f"Unknown impulse for fala_runtime process: {process.carrier_id!r}")
+        raise ValueError(f"Unknown impulse for fala_runtime process: {process.impulse_id!r}")
 
     events = await backend.list_events(
         run_id=process.run_id,
-        carrier_id=process.carrier_id,
+        impulse_id=process.impulse_id,
     )
     source_runtime = RuntimeRef(
         id=str(request.config.get("source_runtime_id") or "local"),
@@ -385,18 +386,37 @@ async def enqueue_fala_runtime_process(
         impulse=impulse,
         request=request,
     )
-    target_run_id = str(request.config.get("target_run_id") or process.run_id)
     delivery_id = str(
         request.config.get("delivery_id")
         or f"bridge:{process.run_id}:{process.id}"
     )
+    # A retry must re-target the run already spawned by an earlier attempt;
+    # a fresh random id would orphan the child run behind the same delivery id.
+    # The spawned_runs budget is enforced inside the enqueue transaction by the
+    # backend (see _submit_bridge_delivery).
+    existing_delivery = next(
+        (
+            item
+            for item in await service.list_outbox_deliveries(run_id=process.run_id)
+            if item.id == delivery_id
+        ),
+        None,
+    )
+    target_run_id = str(
+        request.config.get("target_run_id")
+        or (
+            existing_delivery.target.run_id
+            if existing_delivery is not None
+            else new_id("run")
+        )
+    )
     delivery = BridgeDelivery(
         id=delivery_id,
         run_id=process.run_id,
-        idempotency_key=f"{process.run_id}:bridge.enqueue:{process.id}:{process.attempt}",
+        idempotency_key=f"bridge.enqueue:{process.id}:{process.attempt}",
         source=RunRef(runtime=source_runtime, run_id=process.run_id),
         target=RunRef(runtime=target_runtime, run_id=target_run_id),
-        carrier=carrier,
+        impulse=impulse,
         event_ref=EventRef(
             runtime=source_runtime,
             run_id=process.run_id,
@@ -414,12 +434,12 @@ async def enqueue_fala_runtime_process(
         delivery,
         actor=actor,
     )
-    return StepRunResult(
+    return EffectorRunResult(
         waiting=True,
         output={
             "status": "submitted",
             "runtime_ref": request.adapter.runtime_ref,
-            "target_run_id": target_run_id,
+            "target_run_id": outbox.target.run_id,
             "delivery_id": outbox.id,
             "command_id": submission.command.id,
             "replayed": submission.replayed,
@@ -427,11 +447,76 @@ async def enqueue_fala_runtime_process(
     )
 
 
+async def close_delegations(
+    service: RuntimeBackendService,
+    *,
+    run_id: str,
+    target_service: RuntimeBackendService,
+    actor: str,
+    advance_correlation_paths: bool = True,
+) -> list[Process]:
+    """Close delegation loops: finish waiting effectors whose child run ended.
+
+    For every waiting effector in ``run_id`` that recorded a bridge delivery (see
+    :func:`enqueue_fala_runtime_process`), observe the child run's
+    :class:`RunBoundary` in ``target_service``. When the child's derived status
+    is terminal, the delegating effector is completed (child completed) or failed
+    (any other terminal status) with the ``run.boundary`` association embedded
+    in its output or error, and its correlation_path is advanced so dependent effectors ready
+    up. Effectors whose child run is still in flight are left waiting.
+    """
+    closed: list[Process] = []
+    waiting = await service.list_processes(
+        run_id=run_id,
+        status=ProcessStatus.waiting,
+    )
+    for process in waiting:
+        output = process.output if isinstance(process.output, dict) else {}
+        target_run_id = output.get("target_run_id")
+        if not output.get("delivery_id") or not isinstance(target_run_id, str):
+            continue
+        try:
+            boundary = await target_service.observe_run(run_id=target_run_id)
+        except ValueError:
+            # Child run not delivered/imported yet: nothing to observe.
+            continue
+        if boundary.derived_status not in _TERMINAL_RUN_STATUSES:
+            continue
+        boundary_payload = boundary.model_dump(mode="json")
+        if boundary.derived_status == RunStatus.completed:
+            stored, _ = await service.complete_process(
+                run_id=run_id,
+                process_id=process.id,
+                output={**output, "run.boundary": boundary_payload},
+                idempotency_key=f"process.complete:{process.id}:{process.attempt}",
+                actor=actor,
+            )
+        else:
+            stored, _ = await service.fail_process(
+                run_id=run_id,
+                process_id=process.id,
+                error={
+                    "type": "DelegatedRunNotCompleted",
+                    "message": (
+                        f"delegated run {target_run_id!r} ended "
+                        f"{boundary.derived_status.value}"
+                    ),
+                    "run.boundary": boundary_payload,
+                },
+                idempotency_key=f"process.fail:{process.id}:{process.attempt}",
+                actor=actor,
+            )
+        closed.append(stored)
+        if advance_correlation_paths:
+            await advance_correlation_path_for_process(service, process=stored, actor=actor)
+    return closed
+
+
 async def resolve_fala_runtime_target(
     *,
     backend: RuntimeBackend,
     impulse: Impulse,
-    request: StepRunRequest,
+    request: EffectorRunRequest,
 ) -> tuple[RuntimeRef, str | None, RuntimeBudget]:
     assert request.adapter.runtime_ref is not None
     configured_budget = request.config.get("budget")
@@ -449,9 +534,9 @@ async def resolve_fala_runtime_target(
             RuntimeBudget.model_validate(configured_budget or {}),
         )
 
-    if pool.carrier_types and impulse.impulse_type not in pool.carrier_types:
+    if pool.impulse_types and impulse.impulse_type not in pool.impulse_types:
         raise ValueError(
-            f"Runtime pool {pool.id!r} does not accept carrier type {impulse.impulse_type!r}"
+            f"Runtime pool {pool.id!r} does not accept impulse type {impulse.impulse_type!r}"
         )
     if not pool.runtimes:
         raise ValueError(f"Runtime pool {pool.id!r} has no runtimes")
@@ -461,7 +546,7 @@ async def resolve_fala_runtime_target(
         (
             item
             for item in policies
-            if not item.carrier_types or impulse.impulse_type in item.carrier_types
+            if not item.impulse_types or impulse.impulse_type in item.impulse_types
         ),
         None,
     )
@@ -522,16 +607,16 @@ def runtime_ref_id(value: str) -> str:
     return value
 
 
-def process_step_request_parts(
+def process_effector_request_parts(
     process: Process,
-) -> tuple[CarrierAdapterSpec, dict[str, Any], dict[str, Any]]:
+) -> tuple[EffectorAdapterSpec, dict[str, Any], dict[str, Any]]:
     raw_input = dict(process.input)
     raw_adapter = raw_input.pop("adapter", None)
     if not isinstance(raw_adapter, dict):
         raise ValueError(f"Process {process.id!r} input requires adapter object")
     raw_config = raw_input.pop("config", {})
     config = raw_config if isinstance(raw_config, dict) else {}
-    return CarrierAdapterSpec.model_validate(raw_adapter), raw_input, dict(config)
+    return EffectorAdapterSpec.model_validate(raw_adapter), raw_input, dict(config)
 
 
 def sqlite_db_path(target: str) -> str:
@@ -549,16 +634,19 @@ def sqlite_db_path(target: str) -> str:
             raise ValueError("SQLite URL must include a database path")
         return unquote(path)
     if parsed.scheme:
-        raise ValueError(f"Unsupported Carrier runtime DB URL scheme: {parsed.scheme!r}")
+        raise ValueError(f"Unsupported Impulse runtime DB URL scheme: {parsed.scheme!r}")
     return target
 
 
 __all__ = [
+    "RunCorrelationPathResult",
     "RunUntilIdleResult",
+    "close_delegations",
     "enqueue_fala_runtime_process",
     "process_error_text",
-    "process_step_request_parts",
+    "process_effector_request_parts",
     "resolve_fala_runtime_target",
+    "run_correlation_path",
     "run_until_idle",
     "runtime_ref_id",
     "select_runtime_from_pool",

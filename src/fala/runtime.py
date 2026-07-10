@@ -1,35 +1,38 @@
 from __future__ import annotations
 
+import functools
+import inspect
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from fala.artifacts import ArtifactStore, create_artifact_store
-from fala.driver import RunFlowResult, RunUntilIdleResult, run_flow, run_until_idle
-from fala.flows import (
-    FlowAdvance,
-    FlowInstance,
-    advance_flow,
-    instantiate_flow,
+from fala.reactions import ReactionStore, create_reaction_store
+from fala.driver import RunCorrelationPathResult, RunUntilIdleResult, run_correlation_path, run_until_idle
+from fala.correlation_paths import (
+    CorrelationPathAdvance,
+    CorrelationPathInstance,
+    advance_correlation_path,
+    instantiate_correlation_path,
 )
-from fala.models import CarrierFlowSpec
+from fala.models import CorrelationPathSpec
 from fala.runtime_backend import (
-    RuntimeArtifactStore,
+    RuntimeReactionStore,
     RuntimeJournalMaintenancePlan,
-    Artifact,
-    CarrierWaitGraphDiagnostic,
-    CarrierProcessStatus,
-    CarrierRunStatus,
+    Reaction,
+    WaitGraphDiagnostic,
+    ProcessStatus,
+    RunStatus,
     Impulse,
-    CarrierRelation,
-    CarrierType,
+    ImpulseRelation,
+    ImpulseType,
     CommandSubmission,
-    Gate,
-    GateStatus,
-    Observation,
+    Homeostat,
+    HomeostatStatus,
+    Association,
     Process,
     Projection,
     Run,
+    RunBoundary,
     RuntimeBackend,
     RuntimeBackendService,
     RuntimeEvent,
@@ -40,7 +43,7 @@ from fala.runtime_backend import (
 
 
 class AutonomousCorrelator:
-    """Carrier-first embedded runtime facade.
+    """Impulse-first embedded runtime facade.
 
     This module is intentionally independent from HTTP, CLI, and web UI modules.
     """
@@ -56,6 +59,9 @@ class AutonomousCorrelator:
         runtime.service = service
         runtime.backend = service.backend
         return runtime
+
+    def scope(self, run_id: str) -> "RunScope":
+        return RunScope(self, run_id)
 
     async def create_run(
         self,
@@ -78,7 +84,7 @@ class AutonomousCorrelator:
         self,
         *,
         run_id: str,
-        status: CarrierRunStatus,
+        status: RunStatus,
         idempotency_key: str,
         reason: str | None = None,
         actor: str | None = None,
@@ -131,33 +137,33 @@ class AutonomousCorrelator:
             causation_id=causation_id,
         )
 
-    async def register_carrier_type(
+    async def register_impulse_type(
         self,
-        carrier_type: CarrierType,
+        impulse_type: ImpulseType,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[CarrierType, CommandSubmission]:
-        return await self.service.register_carrier_type(
-            carrier_type,
+    ) -> tuple[ImpulseType, CommandSubmission]:
+        return await self.service.register_impulse_type(
+            impulse_type,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
         )
 
-    async def record_carrier_relation(
+    async def record_impulse_relation(
         self,
-        relation: CarrierRelation,
+        relation: ImpulseRelation,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[CarrierRelation, CommandSubmission]:
-        return await self.service.record_carrier_relation(
+    ) -> tuple[ImpulseRelation, CommandSubmission]:
+        return await self.service.record_impulse_relation(
             relation,
             idempotency_key=idempotency_key,
             actor=actor,
@@ -165,7 +171,7 @@ class AutonomousCorrelator:
             causation_id=causation_id,
         )
 
-    async def record_observation(
+    async def record_association(
         self,
         association: Association,
         *,
@@ -173,77 +179,77 @@ class AutonomousCorrelator:
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Observation, CommandSubmission]:
-        return await self.service.record_observation(
-            observation,
+    ) -> tuple[Association, CommandSubmission]:
+        return await self.service.record_association(
+            association,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
         )
 
-    async def record_artifact(
+    async def record_reaction(
         self,
-        artifact: Artifact,
+        reaction: Reaction,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Artifact, CommandSubmission]:
-        return await self.service.record_artifact(
-            artifact,
+    ) -> tuple[Reaction, CommandSubmission]:
+        return await self.service.record_reaction(
+            reaction,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
         )
 
-    async def record_file_artifact(
+    async def record_file_reaction(
         self,
         *,
         run_id: str,
         kind: str,
         path: str | Path,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         media_type: str | None = None,
-        artifact_id: str | None = None,
-        artifact_store: ArtifactStore | str | Path | None = None,
+        reaction_id: str | None = None,
+        reaction_store: ReactionStore | str | Path | None = None,
         metadata: dict | None = None,
         idempotency_key: str | None = None,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Artifact, CommandSubmission]:
+    ) -> tuple[Reaction, CommandSubmission]:
         store = (
-            artifact_store
-            if hasattr(artifact_store, "put_file")
-            else create_artifact_store(
-                artifact_store or _default_carrier_artifact_root(self.backend)
+            reaction_store
+            if hasattr(reaction_store, "put_file")
+            else create_reaction_store(
+                reaction_store or _default_impulse_reaction_root(self.backend)
             )
         )
         ref = store.put_file(
             kind=kind,
             path=path,
-            artifact_id=artifact_id,
+            reaction_id=reaction_id,
             metadata=metadata,
         )
         ref_metadata = dict(ref.metadata)
         digest = ref_metadata.get("sha256")
-        artifact = Artifact(
+        reaction = Reaction(
             id=ref.id,
             run_id=run_id,
             kind=kind,
             uri=ref.uri,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             media_type=media_type,
             size_bytes=ref_metadata.get("size_bytes"),
             content_hash=f"sha256:{digest}" if isinstance(digest, str) else None,
-            metadata={**ref_metadata, "artifact_store": store.location},
+            metadata={**ref_metadata, "reaction_store": store.location},
         )
-        return await self.record_artifact(
-            artifact,
-            idempotency_key=idempotency_key or f"{run_id}:artifact.record:{ref.id}",
+        return await self.record_reaction(
+            reaction,
+            idempotency_key=idempotency_key or f"reaction.record:{ref.id}",
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
@@ -293,11 +299,13 @@ class AutonomousCorrelator:
         worker_id: str,
         run_id: str | None = None,
         lease_seconds: float = 300.0,
+        all_runs: bool = False,
     ) -> Process | None:
         return await self.service.claim_next_ready_process(
             worker_id=worker_id,
             run_id=run_id,
             lease_seconds=lease_seconds,
+            all_runs=all_runs,
         )
 
     async def wait_process(
@@ -321,29 +329,29 @@ class AutonomousCorrelator:
             causation_id=causation_id,
         )
 
-    async def instantiate_flow(
+    async def instantiate_correlation_path(
         self,
         *,
         run_id: str,
-        flow: CarrierFlowSpec,
-        flow_id: str | None = None,
-        carrier_id: str | None = None,
-        step_inputs: dict[str, dict] | None = None,
-        step_configs: dict[str, dict] | None = None,
+        correlation_path: CorrelationPathSpec,
+        correlation_path_id: str | None = None,
+        impulse_id: str | None = None,
+        effector_inputs: dict[str, dict] | None = None,
+        effector_configs: dict[str, dict] | None = None,
         max_attempts: int = 1,
         priority: int = 0,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> FlowInstance:
-        return await instantiate_flow(
+    ) -> CorrelationPathInstance:
+        return await instantiate_correlation_path(
             self.service,
             run_id=run_id,
-            flow=flow,
-            flow_id=flow_id,
-            carrier_id=carrier_id,
-            step_inputs=step_inputs,
-            step_configs=step_configs,
+            correlation_path=correlation_path,
+            correlation_path_id=correlation_path_id,
+            impulse_id=impulse_id,
+            effector_inputs=effector_inputs,
+            effector_configs=effector_configs,
             max_attempts=max_attempts,
             priority=priority,
             actor=actor,
@@ -351,17 +359,17 @@ class AutonomousCorrelator:
             causation_id=causation_id,
         )
 
-    async def advance_flow(
+    async def advance_correlation_path(
         self,
         *,
         run_id: str,
-        flow_id: str,
+        correlation_path_id: str,
         actor: str | None = None,
-    ) -> FlowAdvance:
-        return await advance_flow(
+    ) -> CorrelationPathAdvance:
+        return await advance_correlation_path(
             self.service,
             run_id=run_id,
-            flow_id=flow_id,
+            correlation_path_id=correlation_path_id,
             actor=actor,
         )
 
@@ -373,8 +381,9 @@ class AutonomousCorrelator:
         lease_seconds: float = 300.0,
         max_ticks: int = 100,
         work_dir: str | Path | None = None,
-        advance_flows: bool = True,
+        advance_correlation_paths: bool = True,
         should_stop: Callable[[], bool] | None = None,
+        all_runs: bool = False,
     ) -> RunUntilIdleResult:
         return await run_until_idle(
             self.service,
@@ -383,32 +392,33 @@ class AutonomousCorrelator:
             lease_seconds=lease_seconds,
             max_ticks=max_ticks,
             work_dir=work_dir,
-            advance_flows=advance_flows,
+            advance_correlation_paths=advance_correlation_paths,
             should_stop=should_stop,
+            all_runs=all_runs,
         )
 
-    async def run_flow(
+    async def run_correlation_path(
         self,
         *,
         run: Run,
-        flow: CarrierFlowSpec,
+        correlation_path: CorrelationPathSpec,
         worker_id: str,
-        flow_id: str | None = None,
-        step_inputs: dict[str, dict] | None = None,
-        step_configs: dict[str, dict] | None = None,
+        correlation_path_id: str | None = None,
+        effector_inputs: dict[str, dict] | None = None,
+        effector_configs: dict[str, dict] | None = None,
         work_dir: str | Path | None = None,
         max_ticks: int = 100,
         lease_seconds: float = 300.0,
         actor: str | None = None,
-    ) -> RunFlowResult:
-        return await run_flow(
+    ) -> RunCorrelationPathResult:
+        return await run_correlation_path(
             self.service,
             run=run,
-            flow=flow,
+            correlation_path=correlation_path,
             worker_id=worker_id,
-            flow_id=flow_id,
-            step_inputs=step_inputs,
-            step_configs=step_configs,
+            correlation_path_id=correlation_path_id,
+            effector_inputs=effector_inputs,
+            effector_configs=effector_configs,
             work_dir=work_dir,
             max_ticks=max_ticks,
             lease_seconds=lease_seconds,
@@ -522,54 +532,54 @@ class AutonomousCorrelator:
             causation_id=causation_id,
         )
 
-    async def save_gate(
+    async def save_homeostat(
         self,
-        gate: Gate,
+        homeostat: Homeostat,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        return await self.service.save_gate(
-            gate,
+    ) -> tuple[Homeostat, CommandSubmission]:
+        return await self.service.save_homeostat(
+            homeostat,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
         )
 
-    async def open_gate(
+    async def open_homeostat(
         self,
-        gate: Gate,
+        homeostat: Homeostat,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        return await self.service.open_gate(
-            gate,
+    ) -> tuple[Homeostat, CommandSubmission]:
+        return await self.service.open_homeostat(
+            homeostat,
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
         )
 
-    async def complete_gate(
+    async def complete_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict | None = None,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        return await self.service.complete_gate(
+    ) -> tuple[Homeostat, CommandSubmission]:
+        return await self.service.complete_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
+            homeostat_id=homeostat_id,
             values=values,
             idempotency_key=idempotency_key,
             actor=actor,
@@ -577,20 +587,20 @@ class AutonomousCorrelator:
             causation_id=causation_id,
         )
 
-    async def cancel_gate(
+    async def cancel_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict | None = None,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        return await self.service.cancel_gate(
+    ) -> tuple[Homeostat, CommandSubmission]:
+        return await self.service.cancel_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
+            homeostat_id=homeostat_id,
             values=values,
             idempotency_key=idempotency_key,
             actor=actor,
@@ -598,20 +608,20 @@ class AutonomousCorrelator:
             causation_id=causation_id,
         )
 
-    async def expire_gate(
+    async def expire_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict | None = None,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        return await self.service.expire_gate(
+    ) -> tuple[Homeostat, CommandSubmission]:
+        return await self.service.expire_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
+            homeostat_id=homeostat_id,
             values=values,
             idempotency_key=idempotency_key,
             actor=actor,
@@ -655,17 +665,23 @@ class AutonomousCorrelator:
             causation_id=causation_id,
         )
 
+    async def get_projection(self, *, run_id: str, name: str) -> Projection | None:
+        return await self.service.get_projection(run_id=run_id, name=name)
+
+    async def observe_run(self, *, run_id: str) -> RunBoundary:
+        return await self.service.observe_run(run_id=run_id)
+
     async def list_events(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         after_sequence: int | None = None,
         limit: int | None = None,
     ) -> list[RuntimeEvent]:
         return await self.backend.list_events(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             after_sequence=after_sequence,
             limit=limit,
         )
@@ -673,7 +689,7 @@ class AutonomousCorrelator:
     async def list_runs(
         self,
         *,
-        status: CarrierRunStatus | None = None,
+        status: RunStatus | None = None,
         limit: int | None = None,
     ) -> list[Run]:
         return await self.service.list_runs(status=status, limit=limit)
@@ -685,14 +701,14 @@ class AutonomousCorrelator:
         keep_last: int | None = None,
         vacuum: bool = True,
         dry_run: bool = True,
-        artifact_store: RuntimeArtifactStore | None = None,
+        reaction_store: RuntimeReactionStore | None = None,
     ) -> RuntimeJournalMaintenancePlan:
         return await self.service.maintain_journal(
             older_than_days=older_than_days,
             keep_last=keep_last,
             vacuum=vacuum,
             dry_run=dry_run,
-            artifact_store=artifact_store,
+            reaction_store=reaction_store,
         )
 
     async def save_runtime_pool(self, pool: RuntimePool) -> RuntimePool:
@@ -724,32 +740,32 @@ class AutonomousCorrelator:
     ) -> list[DelegationPolicy]:
         return await self.service.list_delegation_policies(pool_id=pool_id)
 
-    async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]:
-        return await self.service.list_carrier_types(run_id=run_id)
+    async def list_impulse_types(self, *, run_id: str) -> list[ImpulseType]:
+        return await self.service.list_impulse_types(run_id=run_id)
 
-    async def list_carrier_relations(
+    async def list_impulse_relations(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         relation_type: str | None = None,
-    ) -> list[CarrierRelation]:
-        return await self.service.list_carrier_relations(
+    ) -> list[ImpulseRelation]:
+        return await self.service.list_impulse_relations(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             relation_type=relation_type,
         )
 
-    async def list_artifacts(
+    async def list_reactions(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         kind: str | None = None,
-    ) -> list[Artifact]:
-        return await self.service.list_artifacts(
+    ) -> list[Reaction]:
+        return await self.service.list_reactions(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             kind=kind,
         )
 
@@ -757,25 +773,25 @@ class AutonomousCorrelator:
         self,
         *,
         run_id: str,
-        status: CarrierProcessStatus | None = None,
-        carrier_id: str | None = None,
+        status: ProcessStatus | None = None,
+        impulse_id: str | None = None,
     ) -> list[Process]:
         return await self.service.list_processes(
             run_id=run_id,
             status=status,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
         )
 
-    async def list_gates(
+    async def list_homeostats(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
-        status: GateStatus | None = None,
-    ) -> list[Gate]:
-        return await self.service.list_gates(
+        impulse_id: str | None = None,
+        status: HomeostatStatus | None = None,
+    ) -> list[Homeostat]:
+        return await self.service.list_homeostats(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             status=status,
         )
 
@@ -783,18 +799,58 @@ class AutonomousCorrelator:
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
-    ) -> CarrierWaitGraphDiagnostic:
+        impulse_id: str | None = None,
+    ) -> WaitGraphDiagnostic:
         return await self.service.diagnose_waits(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
         )
 
 
-def _default_carrier_artifact_root(backend: RuntimeBackend) -> Path:
+class RunScope:
+    """An :class:`AutonomousCorrelator` view bound to a single run.
+
+    Methods whose signature takes ``run_id`` get the scope's run injected;
+    methods that take a model (``accept_impulse``, ``record_association``,
+    ...) are checked so a payload addressed at another run cannot leak
+    through the boundary.
+    """
+
+    def __init__(self, runtime: AutonomousCorrelator, run_id: str) -> None:
+        self.runtime = runtime
+        self.run_id = run_id
+
+    def __getattr__(self, name: str):
+        attr = getattr(self.runtime, name)
+        if not callable(attr):
+            return attr
+        parameters = inspect.signature(attr).parameters
+
+        @functools.wraps(attr)
+        def bound(*args, **kwargs):
+            if "run_id" in parameters:
+                kwargs.setdefault("run_id", self.run_id)
+            for value in args:
+                value_run_id = getattr(value, "run_id", None)
+                if value_run_id is not None and value_run_id != self.run_id:
+                    raise ValueError(
+                        f"{name} payload is addressed to run {value_run_id!r}, "
+                        f"but this scope is bound to run {self.run_id!r}"
+                    )
+            if kwargs.get("run_id") != self.run_id and "run_id" in parameters:
+                raise ValueError(
+                    f"{name} run_id {kwargs.get('run_id')!r} does not match "
+                    f"scope run {self.run_id!r}"
+                )
+            return attr(*args, **kwargs)
+
+        return bound
+
+
+def _default_impulse_reaction_root(backend: RuntimeBackend) -> Path:
     if isinstance(backend, Correlator):
-        return backend.path.parent / "artifacts"
-    return Path(".fala") / "artifacts"
+        return backend.path.parent / "reactions"
+    return Path(".fala") / "reactions"
 
 
-__all__ = ["AutonomousCorrelator"]
+__all__ = ["AutonomousCorrelator", "RunScope"]

@@ -1,6 +1,6 @@
 # Events And Replay
 
-Runtime events are ordered runtime facts. They include run, carrier, process,
+Runtime events are ordered runtime facts. They include run, impulse, process,
 actor, causation, correlation, schema version, payload, and sequence data.
 The SQLite backend enforces append-only event storage with triggers that reject
 direct event updates and deletes.

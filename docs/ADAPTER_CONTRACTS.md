@@ -1,13 +1,13 @@
 # Adapter Contracts
 
-Supported step adapters:
+Supported effector adapters:
 
 - `python_function`: imports and calls a Python callable.
 - `subprocess`: runs a local command as an argument list.
-- `manual_gate`: opens a durable manual gate and waits.
+- `manual_homeostat`: opens a durable manual homeostat and waits.
 - `fala_runtime`: enqueues bridge delivery to another Fala runtime or pool.
 
-Subprocess steps receive:
+Subprocess effectors receive:
 
 ```text
 input/
@@ -18,7 +18,7 @@ output/
 
 The runtime writes the input manifest, captures stdout/stderr, redacts configured
 secret values from captured streams and `output/result.json`, validates that the
-result is a JSON object, and commits runtime state itself. Steps must not mutate
+result is a JSON object, and commits runtime state itself. Effectors must not mutate
 SQLite directly.
 
 `fala doctor --package` validates package adapter references where the runtime

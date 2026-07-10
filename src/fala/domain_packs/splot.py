@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fala.runtime_backend import Carrier, Gate, GateStatus, Observation, Projection
+from fala.runtime_backend import Impulse, Homeostat, HomeostatStatus, Association, Projection
 
 SPLOT_DOMAIN_PACK_ID = "splot"
 SPLOT_ARBITRATION_CASE = "splot.arbitration_case"
@@ -22,22 +22,22 @@ class SplotArbitrationCase(BaseModel):
     rules: str | None = None
     values: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
-    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    reactions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 SPLOT_PROCESS_SEMANTICS = {
-    "intake": "accept arbitration case carrier and source artifacts",
-    "jurisdiction": "record jurisdiction and admissibility observations",
-    "triage": "open or complete human review gates",
+    "intake": "accept arbitration case impulse and source reactions",
+    "jurisdiction": "record jurisdiction and admissibility associations",
+    "triage": "open or complete human review homeostats",
     "award_projection": "maintain case summary projection for operators",
 }
 
 
-def carrier_from_case(case: SplotArbitrationCase, *, run_id: str) -> Carrier:
-    return Carrier(
+def impulse_from_case(case: SplotArbitrationCase, *, run_id: str) -> Impulse:
+    return Impulse(
         id=case.id,
         run_id=run_id,
-        carrier_type=SPLOT_ARBITRATION_CASE,
+        impulse_type=SPLOT_ARBITRATION_CASE,
         payload={
             "claim_id": case.claim_id,
             "claimant": case.claimant,
@@ -46,7 +46,7 @@ def carrier_from_case(case: SplotArbitrationCase, *, run_id: str) -> Carrier:
             "currency": case.currency,
             "rules": case.rules,
             "values": case.values,
-            "artifacts": case.artifacts,
+            "reactions": case.reactions,
         },
         metadata={
             **case.metadata,
@@ -55,37 +55,37 @@ def carrier_from_case(case: SplotArbitrationCase, *, run_id: str) -> Carrier:
     )
 
 
-def case_from_carrier(carrier: Carrier) -> SplotArbitrationCase:
-    if carrier.carrier_type != SPLOT_ARBITRATION_CASE:
-        raise ValueError(f"Carrier {carrier.id!r} is not a Splot arbitration case")
+def case_from_impulse(impulse: Impulse) -> SplotArbitrationCase:
+    if impulse.impulse_type != SPLOT_ARBITRATION_CASE:
+        raise ValueError(f"Impulse {impulse.id!r} is not a Splot arbitration case")
     return SplotArbitrationCase(
-        id=carrier.id,
-        claim_id=str(carrier.payload["claim_id"]),
-        claimant=str(carrier.payload["claimant"]),
-        respondent=str(carrier.payload["respondent"]),
-        amount=_optional_float(carrier.payload.get("amount")),
-        currency=_optional_str(carrier.payload.get("currency")),
-        rules=_optional_str(carrier.payload.get("rules")),
-        values=_dict(carrier.payload.get("values")),
-        artifacts=_list_of_dicts(carrier.payload.get("artifacts")),
+        id=impulse.id,
+        claim_id=str(impulse.payload["claim_id"]),
+        claimant=str(impulse.payload["claimant"]),
+        respondent=str(impulse.payload["respondent"]),
+        amount=_optional_float(impulse.payload.get("amount")),
+        currency=_optional_str(impulse.payload.get("currency")),
+        rules=_optional_str(impulse.payload.get("rules")),
+        values=_dict(impulse.payload.get("values")),
+        reactions=_list_of_dicts(impulse.payload.get("reactions")),
         metadata={
             key: value
-            for key, value in carrier.metadata.items()
+            for key, value in impulse.metadata.items()
             if key != "domain_pack"
         },
     )
 
 
-def jurisdiction_observation(
-    carrier: Carrier,
+def jurisdiction_association(
+    impulse: Impulse,
     *,
     admissible: bool,
     reason: str | None = None,
-) -> Observation:
-    case = case_from_carrier(carrier)
-    return Observation(
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+) -> Association:
+    case = case_from_impulse(impulse)
+    return Association(
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="splot.jurisdiction",
         values={
             "claim_id": case.claim_id,
@@ -96,16 +96,16 @@ def jurisdiction_observation(
     )
 
 
-def review_gate(
-    carrier: Carrier,
+def review_homeostat(
+    impulse: Impulse,
     *,
-    status: GateStatus = GateStatus.open,
-) -> Gate:
-    case = case_from_carrier(carrier)
-    return Gate(
+    status: HomeostatStatus = HomeostatStatus.open,
+) -> Homeostat:
+    case = case_from_impulse(impulse)
+    return Homeostat(
         id=f"splot_review:{case.claim_id}",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="splot.review",
         status=status,
         values={"claim_id": case.claim_id},
@@ -113,20 +113,20 @@ def review_gate(
     )
 
 
-def case_projection(carrier: Carrier) -> Projection:
-    case = case_from_carrier(carrier)
+def case_projection(impulse: Impulse) -> Projection:
+    case = case_from_impulse(impulse)
     return Projection(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         name=f"splot.case:{case.claim_id}",
         data={
-            "carrier_id": carrier.id,
+            "impulse_id": impulse.id,
             "claim_id": case.claim_id,
             "claimant": case.claimant,
             "respondent": case.respondent,
             "amount": case.amount,
             "currency": case.currency,
             "rules": case.rules,
-            "artifact_count": len(case.artifacts),
+            "reaction_count": len(case.reactions),
         },
         source_event_sequence=0,
     )
@@ -155,9 +155,9 @@ __all__ = [
     "SPLOT_DOMAIN_PACK_ID",
     "SPLOT_PROCESS_SEMANTICS",
     "SplotArbitrationCase",
-    "carrier_from_case",
-    "case_from_carrier",
+    "impulse_from_case",
+    "case_from_impulse",
     "case_projection",
-    "jurisdiction_observation",
-    "review_gate",
+    "jurisdiction_association",
+    "review_homeostat",
 ]

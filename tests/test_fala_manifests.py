@@ -13,7 +13,7 @@ from fala.manifests import (
     put_run_manifest,
     upsert_run_manifest,
 )
-from fala.runtime_backend import CarrierRunStatus, Run, RuntimeBackendService
+from fala.runtime_backend import RunStatus, Run, RuntimeBackendService
 
 
 class RunManifestTests(unittest.TestCase):
@@ -48,7 +48,7 @@ class RunManifestTests(unittest.TestCase):
         )
         stored = asyncio.run(self.service.backend.get_run(run_id="run-2"))
         assert stored is not None
-        self.assertIs(stored.status, CarrierRunStatus.completed)
+        self.assertIs(stored.status, RunStatus.completed)
         self.assertEqual(stored.title, "Synthetic")
         self.assertEqual(stored.metadata["k"], {"a": 2})
 
@@ -58,7 +58,7 @@ class RunManifestTests(unittest.TestCase):
         )
         created = asyncio.run(self.service.backend.get_run(run_id="run-3"))
         assert created is not None
-        self.assertIs(created.status, CarrierRunStatus.created)
+        self.assertIs(created.status, RunStatus.created)
 
         metadata = dict(created.metadata)
         metadata["other"] = {"keep": 1}

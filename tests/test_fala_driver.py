@@ -6,10 +6,10 @@ import unittest
 from pathlib import Path
 
 from fala.driver import RunUntilIdleResult, process_error_text, run_until_idle
-from fala.flows import instantiate_flow
-from fala.models import CarrierAdapterSpec, CarrierFlowSpec, CarrierFlowStepSpec
+from fala.correlation_paths import instantiate_correlation_path
+from fala.models import EffectorAdapterSpec, CorrelationPathSpec, EffectorSpec
 from fala.runtime_backend import (
-    CarrierProcessStatus,
+    ProcessStatus,
     Process,
     Run,
     RuntimeBackendService,
@@ -20,26 +20,26 @@ def _driver_double(request) -> dict:
     return {"value": request.input["value"] * 2}
 
 
-def _driver_sum_needs(request) -> dict:
-    needs = request.input["needs"]
-    return {"total": sum(item["value"] for item in needs.values())}
+def _driver_sum_conduction(request) -> dict:
+    conduction = request.input["conduction"]
+    return {"total": sum(item["value"] for item in conduction.values())}
 
 
 def _driver_boom(request) -> dict:
     raise RuntimeError("boom")
 
 
-def _python_step(
-    step_id: str,
+def _python_effector(
+    effector_id: str,
     ref: str,
     *,
-    needs: list[str] | None = None,
-) -> CarrierFlowStepSpec:
-    return CarrierFlowStepSpec(
-        id=step_id,
+    conduction: list[str] | None = None,
+) -> EffectorSpec:
+    return EffectorSpec(
+        id=effector_id,
         capability="python_function",
-        adapter=CarrierAdapterSpec(kind="python_function", ref=ref),
-        needs=needs or [],
+        adapter=EffectorAdapterSpec(kind="python_function", ref=ref),
+        conduction=conduction or [],
     )
 
 
@@ -64,32 +64,32 @@ class FalaDriverTests(unittest.TestCase):
                 asyncio.run(scenario(root / "b", lease_seconds=0))
             self.assertIn("lease_seconds", str(lease.exception))
 
-    def test_run_until_idle_executes_flow_end_to_end_with_needs(self) -> None:
-        flow = CarrierFlowSpec(
-            id="flow_diamond",
-            steps=[
-                _python_step("left", "tests.test_fala_driver._driver_double"),
-                _python_step("right", "tests.test_fala_driver._driver_double"),
-                _python_step(
+    def test_run_until_idle_executes_correlation_path_end_to_end_with_conduction(self) -> None:
+        correlation_path = CorrelationPathSpec(
+            id="correlation_path_diamond",
+            effectors=[
+                _python_effector("left", "tests.test_fala_driver._driver_double"),
+                _python_effector("right", "tests.test_fala_driver._driver_double"),
+                _python_effector(
                     "join",
-                    "tests.test_fala_driver._driver_sum_needs",
-                    needs=["left", "right"],
+                    "tests.test_fala_driver._driver_sum_conduction",
+                    conduction=["left", "right"],
                 ),
             ],
         )
 
         async def scenario(root: Path) -> tuple[RunUntilIdleResult, Process]:
-            service = await _service(root, "run_flow")
-            await instantiate_flow(
+            service = await _service(root, "run_correlation_path")
+            await instantiate_correlation_path(
                 service,
-                run_id="run_flow",
-                flow=flow,
-                step_inputs={"left": {"value": 2}, "right": {"value": 3}},
+                run_id="run_correlation_path",
+                correlation_path=correlation_path,
+                effector_inputs={"left": {"value": 2}, "right": {"value": 3}},
             )
-            result = await run_until_idle(service, worker_id="tester", run_id="run_flow")
+            result = await run_until_idle(service, worker_id="tester", run_id="run_correlation_path")
             join = await service.backend.get_process(
-                run_id="run_flow",
-                process_id="run_flow:flow_diamond:join",
+                run_id="run_correlation_path",
+                process_id="run_correlation_path:correlation_path_diamond:join",
             )
             assert join is not None
             return result, join
@@ -103,37 +103,37 @@ class FalaDriverTests(unittest.TestCase):
         self.assertEqual(len(result.completed), 3)
         self.assertEqual(result.failed, [])
         self.assertEqual(result.waiting, [])
-        self.assertEqual(join.status, CarrierProcessStatus.succeeded)
+        self.assertEqual(join.status, ProcessStatus.succeeded)
         self.assertEqual(join.output["total"], 10)
 
-    def test_run_until_idle_leaves_flow_pending_when_advance_disabled(self) -> None:
+    def test_run_until_idle_leaves_correlation_path_pending_when_advance_disabled(self) -> None:
         async def scenario(root: Path) -> tuple[RunUntilIdleResult, Process]:
             service = await _service(root, "run_manual")
-            await instantiate_flow(
+            await instantiate_correlation_path(
                 service,
                 run_id="run_manual",
-                flow=CarrierFlowSpec(
-                    id="flow_pair",
-                    steps=[
-                        _python_step("first", "tests.test_fala_driver._driver_double"),
-                        _python_step(
+                correlation_path=CorrelationPathSpec(
+                    id="correlation_path_pair",
+                    effectors=[
+                        _python_effector("first", "tests.test_fala_driver._driver_double"),
+                        _python_effector(
                             "second",
-                            "tests.test_fala_driver._driver_sum_needs",
-                            needs=["first"],
+                            "tests.test_fala_driver._driver_sum_conduction",
+                            conduction=["first"],
                         ),
                     ],
                 ),
-                step_inputs={"first": {"value": 2}},
+                effector_inputs={"first": {"value": 2}},
             )
             result = await run_until_idle(
                 service,
                 worker_id="tester",
                 run_id="run_manual",
-                advance_flows=False,
+                advance_correlation_paths=False,
             )
             second = await service.backend.get_process(
                 run_id="run_manual",
-                process_id="run_manual:flow_pair:second",
+                process_id="run_manual:correlation_path_pair:second",
             )
             assert second is not None
             return result, second
@@ -143,7 +143,7 @@ class FalaDriverTests(unittest.TestCase):
 
         self.assertEqual(result.stopped_reason, "idle")
         self.assertEqual(len(result.completed), 1)
-        self.assertEqual(second.status, CarrierProcessStatus.pending)
+        self.assertEqual(second.status, ProcessStatus.pending)
 
     def test_run_until_idle_retries_then_fails_exhausted_process(self) -> None:
         async def scenario(root: Path) -> tuple[RunUntilIdleResult, Process]:
@@ -153,7 +153,7 @@ class FalaDriverTests(unittest.TestCase):
                     id="process_boom",
                     run_id="run_boom",
                     process_type="python_function",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     max_attempts=2,
                     input={
                         "adapter": {
@@ -179,43 +179,43 @@ class FalaDriverTests(unittest.TestCase):
         self.assertEqual(result.ticks, 2)
         self.assertEqual(
             [item.status for item in result.failed],
-            [CarrierProcessStatus.retry_wait, CarrierProcessStatus.failed],
+            [ProcessStatus.retry_wait, ProcessStatus.failed],
         )
-        self.assertEqual(process.status, CarrierProcessStatus.failed)
+        self.assertEqual(process.status, ProcessStatus.failed)
         self.assertEqual(process.error["message"], "boom")
 
-    def test_run_until_idle_manual_gate_waits_and_opens_gate(self) -> None:
+    def test_run_until_idle_manual_homeostat_waits_and_opens_homeostat(self) -> None:
         async def scenario(root: Path) -> tuple[RunUntilIdleResult, Process, object]:
-            service = await _service(root, "run_gate")
+            service = await _service(root, "run_homeostat")
             await service.schedule_process(
                 Process(
-                    id="process_gate",
-                    run_id="run_gate",
-                    process_type="manual_gate",
-                    status=CarrierProcessStatus.ready,
-                    input={"adapter": {"kind": "manual_gate"}},
+                    id="process_homeostat",
+                    run_id="run_homeostat",
+                    process_type="manual_homeostat",
+                    status=ProcessStatus.ready,
+                    input={"adapter": {"kind": "manual_homeostat"}},
                 ),
-                idempotency_key="run_gate:process.schedule:process_gate",
+                idempotency_key="run_homeostat:process.schedule:process_homeostat",
             )
-            result = await run_until_idle(service, worker_id="tester", run_id="run_gate")
+            result = await run_until_idle(service, worker_id="tester", run_id="run_homeostat")
             process = await service.backend.get_process(
-                run_id="run_gate",
-                process_id="process_gate",
+                run_id="run_homeostat",
+                process_id="process_homeostat",
             )
             assert process is not None
-            gate = await service.backend.get_gate(
-                run_id="run_gate",
-                gate_id="gate:run_gate:process_gate",
+            homeostat = await service.backend.get_homeostat(
+                run_id="run_homeostat",
+                homeostat_id="homeostat:process_homeostat",
             )
-            return result, process, gate
+            return result, process, homeostat
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            result, process, gate = asyncio.run(scenario(Path(tmp_dir)))
+            result, process, homeostat = asyncio.run(scenario(Path(tmp_dir)))
 
         self.assertEqual(result.stopped_reason, "idle")
         self.assertEqual(len(result.waiting), 1)
-        self.assertEqual(process.status, CarrierProcessStatus.waiting)
-        self.assertIsNotNone(gate)
+        self.assertEqual(process.status, ProcessStatus.waiting)
+        self.assertIsNotNone(homeostat)
 
     def test_run_until_idle_stops_at_max_ticks(self) -> None:
         async def scenario(root: Path) -> RunUntilIdleResult:
@@ -226,7 +226,7 @@ class FalaDriverTests(unittest.TestCase):
                         id=f"process_{index}",
                         run_id="run_ticks",
                         process_type="python_function",
-                        status=CarrierProcessStatus.ready,
+                        status=ProcessStatus.ready,
                         input={
                             "adapter": {
                                 "kind": "python_function",
@@ -252,7 +252,7 @@ class FalaDriverTests(unittest.TestCase):
         self.assertEqual(result.ticks, 1)
         self.assertEqual(len(result.completed), 1)
 
-    def test_run_until_idle_stops_between_ticks_after_completing_step(self) -> None:
+    def test_run_until_idle_stops_between_ticks_after_completing_effector(self) -> None:
         async def scenario(root: Path) -> tuple[RunUntilIdleResult, Process | None]:
             service = await _service(root, "run_stop")
             for index in range(2):
@@ -261,7 +261,7 @@ class FalaDriverTests(unittest.TestCase):
                         id=f"process_{index}",
                         run_id="run_stop",
                         process_type="python_function",
-                        status=CarrierProcessStatus.ready,
+                        status=ProcessStatus.ready,
                         input={
                             "adapter": {
                                 "kind": "python_function",
@@ -299,12 +299,12 @@ class FalaDriverTests(unittest.TestCase):
         self.assertEqual(result.stopped_reason, "stopped")
         self.assertEqual(result.ticks, 1)
         self.assertEqual(len(result.completed), 1)
-        self.assertEqual(result.completed[0].status, CarrierProcessStatus.succeeded)
+        self.assertEqual(result.completed[0].status, ProcessStatus.succeeded)
         self.assertIsNotNone(remaining)
         assert remaining is not None
-        self.assertEqual(remaining.status, CarrierProcessStatus.ready)
+        self.assertEqual(remaining.status, ProcessStatus.ready)
 
-    def test_run_until_idle_writes_step_work_dirs(self) -> None:
+    def test_run_until_idle_writes_effector_work_dirs(self) -> None:
         async def scenario(root: Path) -> RunUntilIdleResult:
             service = await _service(root, "run_work")
             await service.schedule_process(
@@ -312,7 +312,7 @@ class FalaDriverTests(unittest.TestCase):
                     id="process_work",
                     run_id="run_work",
                     process_type="python_function",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     input={
                         "adapter": {
                             "kind": "python_function",
@@ -346,7 +346,7 @@ class ProcessErrorTextTests(unittest.TestCase):
             id="p",
             run_id="r",
             process_type="python_function",
-            status=CarrierProcessStatus.failed,
+            status=ProcessStatus.failed,
             error=error,
         )
 
@@ -366,14 +366,14 @@ class ProcessErrorTextTests(unittest.TestCase):
         )
         # No message at all: a deterministic, sorted JSON dump of the envelope.
         self.assertEqual(
-            process_error_text(self._failed({"code": 7, "at": "step"})),
-            '{"at": "step", "code": 7}',
+            process_error_text(self._failed({"code": 7, "at": "effector"})),
+            '{"at": "effector", "code": 7}',
         )
 
     def test_sentinel_when_error_envelope_is_empty(self) -> None:
         self.assertEqual(
             process_error_text(self._failed({})),
-            "unknown step failure",
+            "unknown effector failure",
         )
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fala.jobs import BaseJob, JobStatus, enqueue_job, load_job, retry_job, run_job
 from fala.manifests import load_run_manifests
-from fala.runtime_backend import CarrierRunStatus, RuntimeBackendService
+from fala.runtime_backend import RunStatus, RuntimeBackendService
 
 import asyncio
 
@@ -65,7 +65,7 @@ class JobTests(unittest.TestCase):
             RuntimeBackendService.sqlite(self.db_path).backend.get_run(run_id="test-job-job-1")
         )
         assert run is not None
-        self.assertIs(run.status, CarrierRunStatus.created)
+        self.assertIs(run.status, RunStatus.created)
         self.assertEqual(run.title, "Demo job job-1")
         self.assertEqual(len(load_run_manifests(self.db_path, KEY)), 1)
 

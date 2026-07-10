@@ -4,13 +4,13 @@ from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from jsonschema import Draft202012Validator, SchemaError
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 RUNTIME_ID_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 RuntimeId = Annotated[str, Field(pattern=RUNTIME_ID_PATTERN)]
-CarrierAdapterKind = Literal[
+EffectorAdapterKind = Literal[
     "fala_runtime",
-    "manual_gate",
+    "manual_homeostat",
     "python_function",
     "subprocess",
 ]
@@ -29,16 +29,16 @@ def validate_json_schema(schema: dict[str, Any], *, label: str) -> None:
         raise ValueError(f"{label} is not a valid JSON Schema: {exc.message}") from exc
 
 
-class ArtifactRef(BaseModel):
+class ReactionRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: RuntimeId = Field(default_factory=lambda: new_id("artifact"))
+    id: RuntimeId = Field(default_factory=lambda: new_id("reaction"))
     kind: str
     uri: str
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ArtifactKindSpec(BaseModel):
+class ReactionKindSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: RuntimeId
@@ -50,7 +50,7 @@ class ArtifactKindSpec(BaseModel):
     metadata_schema: dict[str, Any] = Field(default_factory=dict)
 
 
-class CarrierTypeSpec(BaseModel):
+class ImpulseTypeSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: RuntimeId
@@ -62,30 +62,30 @@ class CarrierTypeSpec(BaseModel):
     metadata_schema: dict[str, Any] = Field(default_factory=dict)
 
 
-class CarrierRelationSpec(BaseModel):
+class ImpulseRelationSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: RuntimeId
     title: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
-    source_carrier_types: list[RuntimeId] = Field(default_factory=list)
-    target_carrier_types: list[RuntimeId] = Field(default_factory=list)
+    source_impulse_types: list[RuntimeId] = Field(default_factory=list)
+    target_impulse_types: list[RuntimeId] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_carrier_types(self) -> "CarrierRelationSpec":
+    def validate_impulse_types(self) -> "ImpulseRelationSpec":
         _validate_unique_values(
-            f"Carrier relation {self.id!r} source_carrier_types",
-            self.source_carrier_types,
+            f"Impulse relation {self.id!r} source_impulse_types",
+            self.source_impulse_types,
         )
         _validate_unique_values(
-            f"Carrier relation {self.id!r} target_carrier_types",
-            self.target_carrier_types,
+            f"Impulse relation {self.id!r} target_impulse_types",
+            self.target_impulse_types,
         )
         return self
 
 
-class ObservationKindSpec(BaseModel):
+class AssociationKindSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: RuntimeId
@@ -96,35 +96,39 @@ class ObservationKindSpec(BaseModel):
     metadata_schema: dict[str, Any] = Field(default_factory=dict)
 
 
-class CarrierCapabilitySpec(BaseModel):
+class CapabilitySpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: RuntimeId
     title: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
-    accepts_carrier_types: list[RuntimeId] = Field(default_factory=list)
-    accepts_artifact_kinds: list[RuntimeId] = Field(default_factory=list)
-    emits_carrier_types: list[RuntimeId] = Field(default_factory=list)
-    emits_artifact_kinds: list[RuntimeId] = Field(default_factory=list)
-    emits_observation_kinds: list[RuntimeId] = Field(default_factory=list)
+    accepts_impulse_types: list[RuntimeId] = Field(default_factory=list)
+    accepts_reaction_kinds: list[RuntimeId] = Field(default_factory=list)
+    emits_impulse_types: list[RuntimeId] = Field(default_factory=list)
+    emits_reaction_kinds: list[RuntimeId] = Field(default_factory=list)
+    emits_association_kinds: list[RuntimeId] = Field(default_factory=list)
     config_schema: dict[str, Any] = Field(default_factory=dict)
     output_schema: dict[str, Any] = Field(default_factory=dict)
 
 
-class CarrierAdapterSpec(BaseModel):
+class EffectorAdapterSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: CarrierAdapterKind
+    kind: EffectorAdapterKind
     command: list[str] | None = None
     ref: str | None = None
     runtime_ref: str | None = None
     cwd: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    # Names of caller environment variables passed through to subprocess
+    # effectors. Everything else (beyond a minimal base like PATH/HOME) is
+    # withheld, so an effector's environment is an explicit, replayable contract.
+    inherit_env: list[str] = Field(default_factory=list)
     timeout_seconds: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
-    def validate_adapter_boundary(self) -> "CarrierAdapterSpec":
+    def validate_adapter_boundary(self) -> "EffectorAdapterSpec":
         if self.kind == "subprocess":
             if not self.command:
                 raise ValueError("subprocess adapter requires non-empty command")
@@ -133,6 +137,9 @@ class CarrierAdapterSpec(BaseModel):
             if self.runtime_ref is not None:
                 raise ValueError("subprocess adapter cannot define runtime_ref")
             return self
+
+        if self.inherit_env:
+            raise ValueError(f"{self.kind} adapter cannot define inherit_env")
 
         if self.kind == "python_function":
             if not self.ref:
@@ -143,21 +150,23 @@ class CarrierAdapterSpec(BaseModel):
                 raise ValueError("python_function adapter cannot define runtime_ref")
             if self.cwd is not None:
                 raise ValueError("python_function adapter cannot define cwd")
+            if self.env:
+                raise ValueError("python_function adapter cannot define env")
             return self
 
-        if self.kind == "manual_gate":
+        if self.kind == "manual_homeostat":
             if self.command is not None:
-                raise ValueError("manual_gate adapter cannot define command")
+                raise ValueError("manual_homeostat adapter cannot define command")
             if self.ref is not None:
-                raise ValueError("manual_gate adapter cannot define ref")
+                raise ValueError("manual_homeostat adapter cannot define ref")
             if self.runtime_ref is not None:
-                raise ValueError("manual_gate adapter cannot define runtime_ref")
+                raise ValueError("manual_homeostat adapter cannot define runtime_ref")
             if self.cwd is not None:
-                raise ValueError("manual_gate adapter cannot define cwd")
+                raise ValueError("manual_homeostat adapter cannot define cwd")
             if self.env:
-                raise ValueError("manual_gate adapter cannot define env")
+                raise ValueError("manual_homeostat adapter cannot define env")
             if self.timeout_seconds is not None:
-                raise ValueError("manual_gate adapter cannot define timeout_seconds")
+                raise ValueError("manual_homeostat adapter cannot define timeout_seconds")
             return self
 
         if self.kind == "fala_runtime":
@@ -184,71 +193,71 @@ class EffectorSpec(BaseModel):
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     capability: RuntimeId
-    adapter: CarrierAdapterSpec
-    needs: list[RuntimeId] = Field(default_factory=list)
+    adapter: EffectorAdapterSpec
+    conduction: list[RuntimeId] = Field(default_factory=list)
     timeout_seconds: float | None = Field(default=None, gt=0)
     config: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_needs(self) -> "CarrierFlowStepSpec":
-        _validate_unique_values(f"Carrier flow step {self.id!r} needs", self.needs)
-        if self.id in self.needs:
-            raise ValueError(f"Carrier flow step {self.id!r} cannot depend on itself")
+    def validate_conduction(self) -> "EffectorSpec":
+        _validate_unique_values(f"Impulse correlation_path effector {self.id!r} conduction", self.conduction)
+        if self.id in self.conduction:
+            raise ValueError(f"Impulse correlation_path effector {self.id!r} cannot depend on itself")
         return self
 
 
-class CarrierFlowSpec(BaseModel):
+class CorrelationPathSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: RuntimeId
     title: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
-    steps: list[CarrierFlowStepSpec] = Field(min_length=1)
+    effectors: list[EffectorSpec] = Field(min_length=1)
     allow_feedback_cycles: bool = False
-    # Opt-in transitive artifact visibility: when True, each step is readied with an
-    # ``upstream_artifacts`` input holding the ``artifacts`` of *every* transitive
-    # ancestor (not just direct needs), in topological order. Off by default so the
-    # deliberate direct-needs-only dataflow stays the norm.
-    accumulate_upstream_artifacts: bool = False
+    # Opt-in transitive reaction visibility: when True, each effector is readied with an
+    # ``upstream_reactions`` input holding the ``reactions`` of *every* transitive
+    # ancestor (not just direct conduction), in topological order. Off by default so the
+    # deliberate direct-conduction-only dataflow stays the norm.
+    accumulate_upstream_reactions: bool = False
 
     @model_validator(mode="after")
-    def validate_steps(self) -> "CarrierFlowSpec":
-        _validate_unique_ids(f"Carrier flow {self.id!r} step", self.steps)
-        known = {step.id for step in self.steps}
-        for step in self.steps:
+    def validate_effectors(self) -> "CorrelationPathSpec":
+        _validate_unique_ids(f"Impulse correlation_path {self.id!r} effector", self.effectors)
+        known = {effector.id for effector in self.effectors}
+        for effector in self.effectors:
             _validate_known_refs(
-                f"Carrier flow {self.id!r} step {step.id!r} needs",
-                step.needs,
+                f"Impulse correlation_path {self.id!r} effector {effector.id!r} conduction",
+                effector.conduction,
                 known,
             )
         if not self.allow_feedback_cycles:
-            _validate_acyclic(self.steps)
+            _validate_acyclic(self.effectors)
         return self
 
 
-class CarrierRuntimeBackendConfig(BaseModel):
+class RuntimeBackendConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["sqlite"] = "sqlite"
     path: str
 
 
-class CarrierArtifactStoreConfig(BaseModel):
+class ReactionStoreConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["filesystem"] = "filesystem"
     root: str
 
 
-class CarrierRuntimeConfigSpec(BaseModel):
+class RuntimeConfigSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    backend: CarrierRuntimeBackendConfig
-    artifact_store: CarrierArtifactStoreConfig
+    backend: RuntimeBackendConfig
+    reaction_store: ReactionStoreConfig
 
 
-class CarrierWorkflowPackageSpec(BaseModel):
+class FalaPackageSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: RuntimeId
@@ -256,118 +265,125 @@ class CarrierWorkflowPackageSpec(BaseModel):
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     version: str = "2"
-    carrier_types: list[CarrierTypeSpec] = Field(default_factory=list)
-    carrier_relations: list[CarrierRelationSpec] = Field(default_factory=list)
-    observation_kinds: list[ObservationKindSpec] = Field(default_factory=list)
-    artifact_kinds: list[ArtifactKindSpec] = Field(default_factory=list)
-    capabilities: list[CarrierCapabilitySpec] = Field(default_factory=list)
-    flows: list[CarrierFlowSpec] = Field(min_length=1)
-    runtime: CarrierRuntimeConfigSpec | None = None
+    impulse_types: list[ImpulseTypeSpec] = Field(default_factory=list)
+    impulse_relations: list[ImpulseRelationSpec] = Field(default_factory=list)
+    association_kinds: list[AssociationKindSpec] = Field(default_factory=list)
+    reaction_kinds: list[ReactionKindSpec] = Field(default_factory=list)
+    capabilities: list[CapabilitySpec] = Field(default_factory=list)
+    correlation_paths: list[CorrelationPathSpec] = Field(min_length=1)
+    runtime: RuntimeConfigSpec | None = None
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def coerce_version(cls, value: object) -> object:
+        if isinstance(value, int):
+            return str(value)
+        return value
 
     @model_validator(mode="after")
-    def validate_carrier_package(self) -> "CarrierWorkflowPackageSpec":
-        _validate_unique_ids("carrier package carrier type", self.carrier_types)
-        _validate_unique_ids("carrier package carrier relation", self.carrier_relations)
-        _validate_unique_ids("carrier package observation kind", self.observation_kinds)
-        _validate_unique_ids("carrier package artifact kind", self.artifact_kinds)
-        _validate_unique_ids("carrier package capability", self.capabilities)
-        _validate_unique_ids("carrier package flow", self.flows)
+    def validate_fala_package(self) -> "FalaPackageSpec":
+        _validate_unique_ids("fala package impulse type", self.impulse_types)
+        _validate_unique_ids("fala package impulse relation", self.impulse_relations)
+        _validate_unique_ids("fala package association kind", self.association_kinds)
+        _validate_unique_ids("fala package reaction kind", self.reaction_kinds)
+        _validate_unique_ids("fala package capability", self.capabilities)
+        _validate_unique_ids("fala package correlation_path", self.correlation_paths)
 
-        carrier_type_ids = {item.id for item in self.carrier_types}
-        artifact_kind_ids = {item.id for item in self.artifact_kinds}
-        observation_kind_ids = {item.id for item in self.observation_kinds}
+        impulse_type_ids = {item.id for item in self.impulse_types}
+        reaction_kind_ids = {item.id for item in self.reaction_kinds}
+        association_kind_ids = {item.id for item in self.association_kinds}
         capability_ids = {item.id for item in self.capabilities}
 
-        for carrier_type in self.carrier_types:
+        for impulse_type in self.impulse_types:
             validate_json_schema(
-                carrier_type.value_schema,
-                label=f"Carrier type {carrier_type.id!r} value_schema",
+                impulse_type.value_schema,
+                label=f"Impulse type {impulse_type.id!r} value_schema",
             )
             validate_json_schema(
-                carrier_type.metadata_schema,
-                label=f"Carrier type {carrier_type.id!r} metadata_schema",
-            )
-
-        for observation_kind in self.observation_kinds:
-            validate_json_schema(
-                observation_kind.value_schema,
-                label=f"Observation kind {observation_kind.id!r} value_schema",
-            )
-            validate_json_schema(
-                observation_kind.metadata_schema,
-                label=f"Observation kind {observation_kind.id!r} metadata_schema",
+                impulse_type.metadata_schema,
+                label=f"Impulse type {impulse_type.id!r} metadata_schema",
             )
 
-        for artifact_kind in self.artifact_kinds:
+        for association_kind in self.association_kinds:
             validate_json_schema(
-                artifact_kind.value_schema,
-                label=f"Artifact kind {artifact_kind.id!r} value_schema",
+                association_kind.value_schema,
+                label=f"Association kind {association_kind.id!r} value_schema",
             )
             validate_json_schema(
-                artifact_kind.metadata_schema,
-                label=f"Artifact kind {artifact_kind.id!r} metadata_schema",
+                association_kind.metadata_schema,
+                label=f"Association kind {association_kind.id!r} metadata_schema",
             )
 
-        for relation in self.carrier_relations:
+        for reaction_kind in self.reaction_kinds:
+            validate_json_schema(
+                reaction_kind.value_schema,
+                label=f"Reaction kind {reaction_kind.id!r} value_schema",
+            )
+            validate_json_schema(
+                reaction_kind.metadata_schema,
+                label=f"Reaction kind {reaction_kind.id!r} metadata_schema",
+            )
+
+        for relation in self.impulse_relations:
             _validate_known_refs(
-                f"Carrier relation {relation.id!r} source_carrier_types",
-                relation.source_carrier_types,
-                carrier_type_ids,
+                f"Impulse relation {relation.id!r} source_impulse_types",
+                relation.source_impulse_types,
+                impulse_type_ids,
             )
             _validate_known_refs(
-                f"Carrier relation {relation.id!r} target_carrier_types",
-                relation.target_carrier_types,
-                carrier_type_ids,
+                f"Impulse relation {relation.id!r} target_impulse_types",
+                relation.target_impulse_types,
+                impulse_type_ids,
             )
 
         for capability in self.capabilities:
             validate_json_schema(
                 capability.config_schema,
-                label=f"Carrier capability {capability.id!r} config_schema",
+                label=f"Impulse capability {capability.id!r} config_schema",
             )
             validate_json_schema(
                 capability.output_schema,
-                label=f"Carrier capability {capability.id!r} output_schema",
+                label=f"Impulse capability {capability.id!r} output_schema",
             )
             _validate_known_refs(
-                f"Carrier capability {capability.id!r} accepts_carrier_types",
-                capability.accepts_carrier_types,
-                carrier_type_ids,
+                f"Impulse capability {capability.id!r} accepts_impulse_types",
+                capability.accepts_impulse_types,
+                impulse_type_ids,
             )
             _validate_known_refs(
-                f"Carrier capability {capability.id!r} accepts_artifact_kinds",
-                capability.accepts_artifact_kinds,
-                artifact_kind_ids,
+                f"Impulse capability {capability.id!r} accepts_reaction_kinds",
+                capability.accepts_reaction_kinds,
+                reaction_kind_ids,
             )
             _validate_known_refs(
-                f"Carrier capability {capability.id!r} emits_carrier_types",
-                capability.emits_carrier_types,
-                carrier_type_ids,
+                f"Impulse capability {capability.id!r} emits_impulse_types",
+                capability.emits_impulse_types,
+                impulse_type_ids,
             )
             _validate_known_refs(
-                f"Carrier capability {capability.id!r} emits_artifact_kinds",
-                capability.emits_artifact_kinds,
-                artifact_kind_ids,
+                f"Impulse capability {capability.id!r} emits_reaction_kinds",
+                capability.emits_reaction_kinds,
+                reaction_kind_ids,
             )
             _validate_known_refs(
-                f"Carrier capability {capability.id!r} emits_observation_kinds",
-                capability.emits_observation_kinds,
-                observation_kind_ids,
+                f"Impulse capability {capability.id!r} emits_association_kinds",
+                capability.emits_association_kinds,
+                association_kind_ids,
             )
 
-        for flow in self.flows:
-            for step in flow.steps:
+        for correlation_path in self.correlation_paths:
+            for effector in correlation_path.effectors:
                 _validate_known_refs(
-                    f"Carrier flow {flow.id!r} step {step.id!r} capability",
-                    [step.capability],
+                    f"Impulse correlation_path {correlation_path.id!r} effector {effector.id!r} capability",
+                    [effector.capability],
                     capability_ids,
                 )
 
         return self
 
 
-def _validate_acyclic(steps: list[CarrierFlowStepSpec]) -> None:
-    graph = {step.id: list(step.needs) for step in steps}
+def _validate_acyclic(effectors: list[EffectorSpec]) -> None:
+    graph = {effector.id: list(effector.conduction) for effector in effectors}
     visiting: set[str] = set()
     visited: set[str] = set()
 
@@ -375,15 +391,15 @@ def _validate_acyclic(steps: list[CarrierFlowStepSpec]) -> None:
         if node in visited:
             return
         if node in visiting:
-            raise ValueError(f"Carrier flow contains a cycle at step {node!r}")
+            raise ValueError(f"Impulse correlation_path contains a cycle at effector {node!r}")
         visiting.add(node)
         for dependency in graph[node]:
             visit(dependency)
         visiting.remove(node)
         visited.add(node)
 
-    for step in steps:
-        visit(step.id)
+    for effector in effectors:
+        visit(effector.id)
 
 
 def _validate_unique_ids(label: str, items: list[Any]) -> None:
@@ -406,20 +422,20 @@ def _validate_known_refs(label: str, refs: list[str], known: set[str]) -> None:
 
 
 __all__ = [
-    "ArtifactKindSpec",
-    "ArtifactRef",
-    "CarrierAdapterKind",
-    "CarrierAdapterSpec",
-    "CarrierArtifactStoreConfig",
-    "CarrierCapabilitySpec",
-    "CarrierFlowSpec",
-    "CarrierFlowStepSpec",
-    "CarrierRelationSpec",
-    "CarrierRuntimeBackendConfig",
-    "CarrierRuntimeConfigSpec",
-    "CarrierTypeSpec",
-    "CarrierWorkflowPackageSpec",
-    "ObservationKindSpec",
+    "ReactionKindSpec",
+    "ReactionRef",
+    "EffectorAdapterKind",
+    "EffectorAdapterSpec",
+    "ReactionStoreConfig",
+    "CapabilitySpec",
+    "CorrelationPathSpec",
+    "EffectorSpec",
+    "ImpulseRelationSpec",
+    "RuntimeBackendConfig",
+    "RuntimeConfigSpec",
+    "ImpulseTypeSpec",
+    "FalaPackageSpec",
+    "AssociationKindSpec",
     "RUNTIME_ID_PATTERN",
     "RuntimeId",
     "new_id",

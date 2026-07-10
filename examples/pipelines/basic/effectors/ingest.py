@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fala.sdk import input_values, output, run_manifest_step
+from fala.sdk import input_values, output, run_manifest_effector
 
 
 def run(manifest):
@@ -9,4 +9,4 @@ def run(manifest):
 
 
 if __name__ == "__main__":
-    raise SystemExit(run_manifest_step(run))
+    raise SystemExit(run_manifest_effector(run))

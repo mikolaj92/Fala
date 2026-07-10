@@ -8,36 +8,35 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fala.adapters import StepRunRequest, create_step_adapter
-from fala.models import CarrierAdapterSpec
+from fala.adapters import EffectorRunRequest, create_effector_adapter
+from fala.models import EffectorAdapterSpec
 
 
-def python_step(request: StepRunRequest) -> dict:
+def python_effector(request: EffectorRunRequest) -> dict:
     return {
-        "carrier_id": request.carrier_id,
+        "impulse_id": request.impulse_id,
         "value": request.input["value"] + 1,
     }
 
 
-class FalaStepAdapterTests(unittest.TestCase):
+class FalaEffectorAdapterTests(unittest.TestCase):
     def test_python_function_adapter_runs_ref(self) -> None:
         async def scenario() -> None:
-            adapter = create_step_adapter("python_function")
+            adapter = create_effector_adapter("python_function")
             result = await adapter.run(
-                StepRunRequest(
-                    run_id="run_step",
-                    process_id="process_step",
-                    carrier_id="carrier_step",
-                    adapter=CarrierAdapterSpec(
+                EffectorRunRequest(
+                    process_id="process_effector",
+                    impulse_id="impulse_effector",
+                    adapter=EffectorAdapterSpec(
                         kind="python_function",
-                        ref="tests.test_fala_step_adapters.python_step",
+                        ref="tests.test_fala_effector_adapters.python_effector",
                     ),
                     input={"value": 2},
                 )
             )
             self.assertEqual(
                 result.output,
-                {"carrier_id": "carrier_step", "value": 3},
+                {"impulse_id": "impulse_effector", "value": 3},
             )
 
         asyncio.run(scenario())
@@ -46,18 +45,18 @@ class FalaStepAdapterTests(unittest.TestCase):
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                script = root / "step.py"
+                script = root / "effector.py"
                 script.write_text(
                     """
 import json
 import os
 from pathlib import Path
 
-manifest = json.loads(Path(os.environ["FALA_STEP_MANIFEST"]).read_text())
-output = Path(os.environ["FALA_STEP_OUTPUT_DIR"])
+manifest = json.loads(Path(os.environ["FALA_EFFECTOR_MANIFEST"]).read_text())
+output = Path(os.environ["FALA_EFFECTOR_OUTPUT_DIR"])
 output.mkdir(parents=True, exist_ok=True)
 (output / "result.json").write_text(json.dumps({
-    "carrier_id": manifest["carrier_id"],
+    "impulse_id": manifest["impulse_id"],
     "value": manifest["input"]["value"] + 1,
 }))
 print("done")
@@ -65,13 +64,12 @@ print("done")
                     encoding="utf-8",
                 )
 
-                adapter = create_step_adapter("subprocess")
+                adapter = create_effector_adapter("subprocess")
                 result = await adapter.run(
-                    StepRunRequest(
-                        run_id="run_step",
-                        process_id="process_step",
-                        carrier_id="carrier_step",
-                        adapter=CarrierAdapterSpec(
+                    EffectorRunRequest(
+                        process_id="process_effector",
+                        impulse_id="impulse_effector",
+                        adapter=EffectorAdapterSpec(
                             kind="subprocess",
                             command=[sys.executable, str(script)],
                             timeout_seconds=5,
@@ -92,7 +90,7 @@ print("done")
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                script = root / "step.py"
+                script = root / "effector.py"
                 script.write_text(
                     """
 import json
@@ -100,7 +98,7 @@ import os
 from pathlib import Path
 
 assert os.environ["TOKEN"] == "secret-value"
-output = Path(os.environ["FALA_STEP_OUTPUT_DIR"])
+output = Path(os.environ["FALA_EFFECTOR_OUTPUT_DIR"])
 output.mkdir(parents=True, exist_ok=True)
 (output / "result.json").write_text(json.dumps({
     "ok": True,
@@ -114,12 +112,11 @@ print(os.environ["TOKEN"])
 
                 os.environ["FALA_TEST_TOKEN"] = "secret-value"
                 try:
-                    adapter = create_step_adapter("subprocess")
+                    adapter = create_effector_adapter("subprocess")
                     result = await adapter.run(
-                        StepRunRequest(
-                            run_id="run_secret",
+                        EffectorRunRequest(
                             process_id="process_secret",
-                            adapter=CarrierAdapterSpec(
+                            adapter=EffectorAdapterSpec(
                                 kind="subprocess",
                                 command=[sys.executable, str(script)],
                                 env={"TOKEN": "${env:FALA_TEST_TOKEN}"},

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fala.reactions import content_address_json
 from fala.errors import FalaBudgetExceeded
 
 
@@ -66,7 +67,7 @@ def _ensure_runtime_event_columns(connection: sqlite3.Connection) -> None:
         )
 
 
-class CarrierRunStatus(StrEnum):
+class RunStatus(StrEnum):
     created = "created"
     active = "active"
     waiting = "waiting"
@@ -81,13 +82,13 @@ class Run(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: _new_id("run"))
-    status: CarrierRunStatus = CarrierRunStatus.created
+    status: RunStatus = RunStatus.created
     title: str | None = None
     package_id: str | None = None
     package_version: str | None = None
     package_digest: str | None = None
-    flow_id: str | None = None
-    flow_digest: str | None = None
+    correlation_path_id: str | None = None
+    correlation_path_digest: str | None = None
     runtime_version: str | None = None
     backend_version: str | None = None
     schema_version: int = Field(default=1, ge=1)
@@ -102,7 +103,7 @@ class RuntimeRunRetentionItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
-    status: CarrierRunStatus
+    status: RunStatus
     created_at: datetime
     updated_at: datetime
     finished_at: datetime | None = None
@@ -115,7 +116,7 @@ class RuntimeRunRetentionPlan(BaseModel):
 
     dry_run: bool = True
     before: datetime
-    statuses: list[CarrierRunStatus] = Field(default_factory=list)
+    statuses: list[RunStatus] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=_now)
     candidate_count: int = Field(default=0, ge=0)
     deleted_run_count: int = Field(default=0, ge=0)
@@ -123,11 +124,11 @@ class RuntimeRunRetentionPlan(BaseModel):
     runs: list[RuntimeRunRetentionItem] = Field(default_factory=list)
 
 
-class RuntimeArtifactGcPlan(BaseModel):
+class RuntimeReactionGcPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dry_run: bool = True
-    artifact_root: str | None = None
+    reaction_root: str | None = None
     generated_at: datetime = Field(default_factory=_now)
     referenced_count: int = Field(default=0, ge=0)
     blob_count: int = Field(default=0, ge=0)
@@ -148,23 +149,23 @@ class RuntimeJournalMaintenancePlan(BaseModel):
     vacuum: bool = True
     generated_at: datetime = Field(default_factory=_now)
     retention: RuntimeRunRetentionPlan | None = None
-    artifact_gc: RuntimeArtifactGcPlan | None = None
+    reaction_gc: RuntimeReactionGcPlan | None = None
     vacuum_result: dict[str, Any] | None = None
     runs_archived: int = Field(default=0, ge=0)
     bytes_reclaimed: int = Field(default=0, ge=0)
 
 
 @dataclass(frozen=True)
-class RuntimeArtifactBlob:
+class RuntimeReactionBlob:
     digest: str
     size_bytes: int
     location: str | None = None
 
 
 @dataclass(frozen=True)
-class RuntimeArtifactStore:
+class RuntimeReactionStore:
     root: Path | None = None
-    blobs: dict[str, RuntimeArtifactBlob] = field(default_factory=dict)
+    blobs: dict[str, RuntimeReactionBlob] = field(default_factory=dict)
 
 
 class Impulse(BaseModel):
@@ -179,7 +180,7 @@ class Impulse(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
 
 
-class CarrierType(BaseModel):
+class ImpulseType(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -193,14 +194,14 @@ class CarrierType(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
 
 
-class CarrierRelation(BaseModel):
+class ImpulseRelation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: _new_id("carrier_relation"))
+    id: str = Field(default_factory=lambda: _new_id("impulse_relation"))
     run_id: str
     relation_type: str
-    source_carrier_id: str
-    target_carrier_id: str
+    source_impulse_id: str
+    target_impulse_id: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
 
@@ -226,7 +227,7 @@ class RuntimeEvent(BaseModel):
     run_id: str
     event_type: str
     schema_version: int = Field(default=1, ge=1)
-    carrier_id: str | None = None
+    impulse_id: str | None = None
     process_id: str | None = None
     sequence: int | None = None
     command_id: str | None = None
@@ -251,7 +252,7 @@ class Association(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("association"))
     run_id: str
     kind: str
-    carrier_id: str | None = None
+    impulse_id: str | None = None
     values: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=_now)
@@ -260,11 +261,11 @@ class Association(BaseModel):
 class Reaction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: _new_id("artifact"))
+    id: str = Field(default_factory=lambda: _new_id("reaction"))
     run_id: str
     kind: str
     uri: str
-    carrier_id: str | None = None
+    impulse_id: str | None = None
     media_type: str | None = None
     size_bytes: int | None = Field(default=None, ge=0)
     content_hash: str | None = None
@@ -272,7 +273,7 @@ class Reaction(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
-class CarrierProcessStatus(StrEnum):
+class ProcessStatus(StrEnum):
     pending = "pending"
     ready = "ready"
     running = "running"
@@ -291,8 +292,8 @@ class Process(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("process"))
     run_id: str
     process_type: str
-    carrier_id: str | None = None
-    status: CarrierProcessStatus = CarrierProcessStatus.pending
+    impulse_id: str | None = None
+    status: ProcessStatus = ProcessStatus.pending
     priority: int = 0
     attempt: int = Field(default=0, ge=0)
     max_attempts: int = Field(default=1, ge=1)
@@ -322,7 +323,7 @@ class Homeostat(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("homeostat"))
     run_id: str
     kind: str
-    carrier_id: str | None = None
+    impulse_id: str | None = None
     status: HomeostatStatus = HomeostatStatus.open
     values: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -330,27 +331,27 @@ class Homeostat(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
 
 
-class CarrierWaitDiagnosticIssue(BaseModel):
+class WaitDiagnosticIssue(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     process_id: str
-    status: CarrierProcessStatus | None = None
+    status: ProcessStatus | None = None
     reason: str
     blocked_by: list[str] = Field(default_factory=list)
     dependency_statuses: dict[str, str | None] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-class CarrierWaitGraphDiagnostic(BaseModel):
+class WaitGraphDiagnostic(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
-    carrier_id: str | None = None
+    impulse_id: str | None = None
     deadlocked: bool = False
     deadlocks: list[list[str]] = Field(default_factory=list)
     wait_edges: dict[str, list[str]] = Field(default_factory=dict)
-    blocked: list[CarrierWaitDiagnosticIssue] = Field(default_factory=list)
-    open_gates: list[str] = Field(default_factory=list)
+    blocked: list[WaitDiagnosticIssue] = Field(default_factory=list)
+    open_homeostats: list[str] = Field(default_factory=list)
     pending: list[str] = Field(default_factory=list)
     ready: list[str] = Field(default_factory=list)
     running: list[str] = Field(default_factory=list)
@@ -373,6 +374,26 @@ class Projection(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     source_event_sequence: int = 0
     updated_at: datetime = Field(default_factory=_now)
+    # Freshness watermark, stamped at read time by the service (never
+    # persisted): True when events past source_event_sequence exist.
+    stale: bool = False
+
+
+class RunBoundary(BaseModel):
+    """What one runtime may know about another run: derived status + counters.
+
+    The boundary association is computed from the run's own journal, so a
+    parent runtime closing a delegation loop reads the child's outcome without
+    trusting a manually maintained status row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    status: RunStatus
+    derived_status: RunStatus
+    process_status_counts: dict[str, int] = Field(default_factory=dict)
+    event_watermark: int = 0
 
 
 class RuntimeRef(BaseModel):
@@ -400,14 +421,16 @@ class EventRef(BaseModel):
 
 
 class RuntimeBudget(BaseModel):
+    """Delegation budget. ``None`` means unlimited; ``0`` means exhausted."""
+
     model_config = ConfigDict(extra="forbid")
 
-    runtime_hops: int = Field(default=0, ge=0)
-    spawned_runs: int = Field(default=0, ge=0)
-    carrier_count: int = Field(default=0, ge=0)
-    wall_time_seconds: float = Field(default=0.0, ge=0)
-    attempts: int = Field(default=0, ge=0)
-    artifact_bytes: int = Field(default=0, ge=0)
+    runtime_hops: int | None = Field(default=None, ge=0)
+    spawned_runs: int | None = Field(default=None, ge=0)
+    impulse_count: int | None = Field(default=None, ge=0)
+    wall_time_seconds: float | None = Field(default=None, ge=0)
+    attempts: int | None = Field(default=None, ge=0)
+    reaction_bytes: int | None = Field(default=None, ge=0)
 
 
 class RuntimePool(BaseModel):
@@ -415,7 +438,7 @@ class RuntimePool(BaseModel):
 
     id: str
     runtimes: list[RuntimeRef] = Field(default_factory=list)
-    carrier_types: list[str] = Field(default_factory=list)
+    impulse_types: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -424,7 +447,7 @@ class DelegationPolicy(BaseModel):
 
     id: str = Field(default_factory=lambda: _new_id("delegation_policy"))
     pool_id: str
-    carrier_types: list[str] = Field(default_factory=list)
+    impulse_types: list[str] = Field(default_factory=list)
     budget: RuntimeBudget = Field(default_factory=RuntimeBudget)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -444,7 +467,7 @@ class BridgeDelivery(BaseModel):
     idempotency_key: str = Field(default_factory=lambda: _new_id("bridge_key"))
     source: RunRef
     target: RunRef
-    carrier: Carrier
+    impulse: Impulse
     event_ref: EventRef | None = None
     pool_id: str | None = None
     budget: RuntimeBudget = Field(default_factory=RuntimeBudget)
@@ -470,7 +493,7 @@ class RuntimeBackend(Protocol):
         self,
         *,
         run_id: str,
-        status: CarrierRunStatus,
+        status: RunStatus,
         command: RuntimeCommand,
         events: Sequence[RuntimeEvent] = (),
     ) -> tuple[Run, CommandSubmission]: ...
@@ -480,7 +503,7 @@ class RuntimeBackend(Protocol):
     async def list_runs(
         self,
         *,
-        status: CarrierRunStatus | None = None,
+        status: RunStatus | None = None,
         limit: int | None = None,
     ) -> list[Run]: ...
 
@@ -504,21 +527,21 @@ class RuntimeBackend(Protocol):
         self, *, pool_id: str | None = None
     ) -> list[DelegationPolicy]: ...
 
-    async def put_carrier_type(self, carrier_type: CarrierType) -> None: ...
+    async def put_impulse_type(self, impulse_type: ImpulseType) -> None: ...
 
-    async def register_carrier_type(
+    async def register_impulse_type(
         self,
-        carrier_type: CarrierType,
+        impulse_type: ImpulseType,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def get_carrier_type(
-        self, *, run_id: str, carrier_type_id: str
-    ) -> CarrierType | None: ...
+    async def get_impulse_type(
+        self, *, run_id: str, impulse_type_id: str
+    ) -> ImpulseType | None: ...
 
-    async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]: ...
+    async def list_impulse_types(self, *, run_id: str) -> list[ImpulseType]: ...
 
     async def put_impulse(self, impulse: Impulse) -> None: ...
 
@@ -532,35 +555,35 @@ class RuntimeBackend(Protocol):
 
     async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None: ...
 
-    async def list_carriers(
+    async def list_impulses(
         self,
         *,
         run_id: str,
-        carrier_type: str | None = None,
+        impulse_type: str | None = None,
         limit: int | None = None,
-    ) -> list[Carrier]: ...
+    ) -> list[Impulse]: ...
 
-    async def put_carrier_relation(self, relation: CarrierRelation) -> None: ...
+    async def put_impulse_relation(self, relation: ImpulseRelation) -> None: ...
 
-    async def record_carrier_relation(
+    async def record_impulse_relation(
         self,
-        relation: CarrierRelation,
+        relation: ImpulseRelation,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def get_carrier_relation(
+    async def get_impulse_relation(
         self, *, run_id: str, relation_id: str
-    ) -> CarrierRelation | None: ...
+    ) -> ImpulseRelation | None: ...
 
-    async def list_carrier_relations(
+    async def list_impulse_relations(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         relation_type: str | None = None,
-    ) -> list[CarrierRelation]: ...
+    ) -> list[ImpulseRelation]: ...
 
     async def submit_command(
         self, command: RuntimeCommand, *, events: Sequence[RuntimeEvent] = ()
@@ -587,7 +610,7 @@ class RuntimeBackend(Protocol):
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         after_sequence: int | None = None,
         limit: int | None = None,
     ) -> list[RuntimeEvent]: ...
@@ -603,28 +626,28 @@ class RuntimeBackend(Protocol):
     ) -> CommandSubmission: ...
 
     async def list_associations(
-        self, *, run_id: str, carrier_id: str | None = None
+        self, *, run_id: str, impulse_id: str | None = None
     ) -> list[Association]: ...
 
-    async def put_artifact(self, artifact: Artifact) -> None: ...
+    async def put_reaction(self, reaction: Reaction) -> None: ...
 
-    async def record_artifact(
+    async def record_reaction(
         self,
-        artifact: Artifact,
+        reaction: Reaction,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission: ...
 
-    async def get_artifact(self, *, run_id: str, artifact_id: str) -> Artifact | None: ...
+    async def get_reaction(self, *, run_id: str, reaction_id: str) -> Reaction | None: ...
 
-    async def list_artifacts(
+    async def list_reactions(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         kind: str | None = None,
-    ) -> list[Artifact]: ...
+    ) -> list[Reaction]: ...
 
     async def put_process(self, process: Process) -> None: ...
 
@@ -642,8 +665,8 @@ class RuntimeBackend(Protocol):
         self,
         *,
         run_id: str,
-        status: CarrierProcessStatus | None = None,
-        carrier_id: str | None = None,
+        status: ProcessStatus | None = None,
+        impulse_id: str | None = None,
     ) -> list[Process]: ...
 
     async def claim_next_ready_process(
@@ -652,6 +675,7 @@ class RuntimeBackend(Protocol):
         worker_id: str,
         run_id: str | None = None,
         lease_seconds: float = 300.0,
+        all_runs: bool = False,
     ) -> Process | None: ...
 
     async def complete_process(
@@ -684,7 +708,7 @@ class RuntimeBackend(Protocol):
         *,
         run_id: str,
         process_id: str,
-        status: CarrierProcessStatus,
+        status: ProcessStatus,
         command: RuntimeCommand,
         events: Sequence[RuntimeEvent] = (),
         output: dict[str, Any] | None = None,
@@ -748,21 +772,21 @@ class RuntimeBackend(Protocol):
         values: dict[str, Any] | None = None,
     ) -> Homeostat: ...
 
-    async def expire_gate(
+    async def expire_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
-    ) -> Gate: ...
+    ) -> Homeostat: ...
 
-    async def list_gates(
+    async def list_homeostats(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
-        status: GateStatus | None = None,
-    ) -> list[Gate]: ...
+        impulse_id: str | None = None,
+        status: HomeostatStatus | None = None,
+    ) -> list[Homeostat]: ...
 
     async def put_projection(self, projection: Projection) -> None: ...
 
@@ -828,7 +852,7 @@ class RuntimeBackend(Protocol):
     async def import_inbox_delivery(
         self,
         delivery: BridgeDelivery,
-        carrier: Carrier,
+        impulse: Impulse,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
@@ -848,64 +872,91 @@ class RuntimeBackend(Protocol):
 
 _BRIDGE_TABLES = {"bridge_outbox", "bridge_inbox"}
 _BUILT_IN_PROJECTIONS = ("run_summary",)
-_SQLITE_SCHEMA_VERSION = 5
+_SQLITE_SCHEMA_VERSION = 6
 SQLITE_RUNTIME_SCHEMA_VERSION = _SQLITE_SCHEMA_VERSION
 _TERMINAL_RUN_STATUSES = {
-    CarrierRunStatus.completed,
-    CarrierRunStatus.failed,
-    CarrierRunStatus.cancelled,
-    CarrierRunStatus.timed_out,
+    RunStatus.completed,
+    RunStatus.failed,
+    RunStatus.cancelled,
+    RunStatus.timed_out,
 }
 _TERMINAL_PROCESS_STATUSES = {
-    CarrierProcessStatus.succeeded,
-    CarrierProcessStatus.failed,
-    CarrierProcessStatus.cancelled,
-    CarrierProcessStatus.timed_out,
+    ProcessStatus.succeeded,
+    ProcessStatus.failed,
+    ProcessStatus.cancelled,
+    ProcessStatus.timed_out,
 }
+def _derive_boundary_status(
+    status: RunStatus,
+    processes: Sequence[Process],
+) -> RunStatus:
+    """Derive a run's observable status from its process statuses.
+
+    The stored run row can lag reality (nobody called set_run_status); the
+    processes cannot. A terminal stored status stays authoritative, otherwise
+    any failed-like effector fails the run, all-succeeded completes it, and any
+    waiting effector suspends it.
+    """
+    if status in _TERMINAL_RUN_STATUSES:
+        return status
+    failure_statuses = _TERMINAL_PROCESS_STATUSES - {ProcessStatus.succeeded}
+    if any(process.status in failure_statuses for process in processes):
+        return RunStatus.failed
+    if processes and all(
+        process.status == ProcessStatus.succeeded for process in processes
+    ):
+        return RunStatus.completed
+    if any(
+        process.status == ProcessStatus.waiting for process in processes
+    ):
+        return RunStatus.waiting
+    return status
+
+
 _PROCESS_TRANSITION_COMMANDS = {
-    CarrierProcessStatus.ready: "process.ready",
-    CarrierProcessStatus.succeeded: "process.complete",
-    CarrierProcessStatus.failed: "process.fail",
-    CarrierProcessStatus.retry_wait: "process.retry",
-    CarrierProcessStatus.waiting: "process.wait",
-    CarrierProcessStatus.cancelled: "process.cancel",
-    CarrierProcessStatus.timed_out: "process.timeout",
+    ProcessStatus.ready: "process.ready",
+    ProcessStatus.succeeded: "process.complete",
+    ProcessStatus.failed: "process.fail",
+    ProcessStatus.retry_wait: "process.retry",
+    ProcessStatus.waiting: "process.wait",
+    ProcessStatus.cancelled: "process.cancel",
+    ProcessStatus.timed_out: "process.timeout",
 }
-_GATE_TRANSITION_COMMANDS = {
-    GateStatus.completed: "gate.complete",
-    GateStatus.cancelled: "gate.cancel",
-    GateStatus.expired: "gate.expire",
+_HOMEOSTAT_TRANSITION_COMMANDS = {
+    HomeostatStatus.completed: "homeostat.complete",
+    HomeostatStatus.cancelled: "homeostat.cancel",
+    HomeostatStatus.expired: "homeostat.expire",
 }
 _RUN_STATUS_TRANSITIONS = {
-    CarrierRunStatus.created: {
-        CarrierRunStatus.active,
-        CarrierRunStatus.waiting,
-        CarrierRunStatus.completed,
-        CarrierRunStatus.failed,
-        CarrierRunStatus.cancel_requested,
-        CarrierRunStatus.cancelled,
-        CarrierRunStatus.timed_out,
+    RunStatus.created: {
+        RunStatus.active,
+        RunStatus.waiting,
+        RunStatus.completed,
+        RunStatus.failed,
+        RunStatus.cancel_requested,
+        RunStatus.cancelled,
+        RunStatus.timed_out,
     },
-    CarrierRunStatus.active: {
-        CarrierRunStatus.waiting,
-        CarrierRunStatus.completed,
-        CarrierRunStatus.failed,
-        CarrierRunStatus.cancel_requested,
-        CarrierRunStatus.cancelled,
-        CarrierRunStatus.timed_out,
+    RunStatus.active: {
+        RunStatus.waiting,
+        RunStatus.completed,
+        RunStatus.failed,
+        RunStatus.cancel_requested,
+        RunStatus.cancelled,
+        RunStatus.timed_out,
     },
-    CarrierRunStatus.waiting: {
-        CarrierRunStatus.active,
-        CarrierRunStatus.completed,
-        CarrierRunStatus.failed,
-        CarrierRunStatus.cancel_requested,
-        CarrierRunStatus.cancelled,
-        CarrierRunStatus.timed_out,
+    RunStatus.waiting: {
+        RunStatus.active,
+        RunStatus.completed,
+        RunStatus.failed,
+        RunStatus.cancel_requested,
+        RunStatus.cancelled,
+        RunStatus.timed_out,
     },
-    CarrierRunStatus.cancel_requested: {
-        CarrierRunStatus.cancelled,
-        CarrierRunStatus.failed,
-        CarrierRunStatus.timed_out,
+    RunStatus.cancel_requested: {
+        RunStatus.cancelled,
+        RunStatus.failed,
+        RunStatus.timed_out,
     },
 }
 
@@ -940,8 +991,8 @@ class Correlator:
                     package_id TEXT,
                     package_version TEXT,
                     package_digest TEXT,
-                    flow_id TEXT,
-                    flow_digest TEXT,
+                    correlation_path_id TEXT,
+                    correlation_path_digest TEXT,
                     runtime_version TEXT,
                     backend_version TEXT,
                     schema_version INTEGER NOT NULL,
@@ -959,10 +1010,10 @@ class Correlator:
                     applied_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS carriers (
+                CREATE TABLE IF NOT EXISTS impulses (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
-                    carrier_type TEXT NOT NULL,
+                    impulse_type TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -970,7 +1021,7 @@ class Correlator:
                     PRIMARY KEY (run_id, id)
                 );
 
-                CREATE TABLE IF NOT EXISTS carrier_types (
+                CREATE TABLE IF NOT EXISTS impulse_types (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     title TEXT,
@@ -983,19 +1034,19 @@ class Correlator:
                     PRIMARY KEY (run_id, id)
                 );
 
-                CREATE TABLE IF NOT EXISTS carrier_relations (
+                CREATE TABLE IF NOT EXISTS impulse_relations (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     relation_type TEXT NOT NULL,
-                    source_carrier_id TEXT NOT NULL,
-                    target_carrier_id TEXT NOT NULL,
+                    source_impulse_id TEXT NOT NULL,
+                    target_impulse_id TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, id),
-                    FOREIGN KEY (run_id, source_carrier_id)
-                        REFERENCES carriers (run_id, id),
-                    FOREIGN KEY (run_id, target_carrier_id)
-                        REFERENCES carriers (run_id, id)
+                    FOREIGN KEY (run_id, source_impulse_id)
+                        REFERENCES impulses (run_id, id),
+                    FOREIGN KEY (run_id, target_impulse_id)
+                        REFERENCES impulses (run_id, id)
                 );
 
                 CREATE TABLE IF NOT EXISTS runtime_commands (
@@ -1018,7 +1069,7 @@ class Correlator:
                     id TEXT NOT NULL,
                     event_type TEXT NOT NULL,
                     schema_version INTEGER NOT NULL DEFAULT 1,
-                    carrier_id TEXT,
+                    impulse_id TEXT,
                     process_id TEXT,
                     command_id TEXT,
                     actor TEXT,
@@ -1032,38 +1083,38 @@ class Correlator:
                         REFERENCES runtime_commands (run_id, id)
                 );
 
-                CREATE TABLE IF NOT EXISTS observations (
+                CREATE TABLE IF NOT EXISTS associations (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     kind TEXT NOT NULL,
-                    carrier_id TEXT,
+                    impulse_id TEXT,
                     values_json TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, id)
                 );
 
-                CREATE TABLE IF NOT EXISTS artifacts (
+                CREATE TABLE IF NOT EXISTS reactions (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     kind TEXT NOT NULL,
                     uri TEXT NOT NULL,
-                    carrier_id TEXT,
+                    impulse_id TEXT,
                     media_type TEXT,
                     size_bytes INTEGER,
                     content_hash TEXT,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, id),
-                    FOREIGN KEY (run_id, carrier_id)
-                        REFERENCES carriers (run_id, id)
+                    FOREIGN KEY (run_id, impulse_id)
+                        REFERENCES impulses (run_id, id)
                 );
 
                 CREATE TABLE IF NOT EXISTS processes (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     process_type TEXT NOT NULL,
-                    carrier_id TEXT,
+                    impulse_id TEXT,
                     status TEXT NOT NULL,
                     priority INTEGER NOT NULL,
                     attempt INTEGER NOT NULL,
@@ -1080,15 +1131,15 @@ class Correlator:
                     started_at TEXT,
                     finished_at TEXT,
                     PRIMARY KEY (run_id, id),
-                    FOREIGN KEY (run_id, carrier_id)
-                        REFERENCES carriers (run_id, id)
+                    FOREIGN KEY (run_id, impulse_id)
+                        REFERENCES impulses (run_id, id)
                 );
 
-                CREATE TABLE IF NOT EXISTS gates (
+                CREATE TABLE IF NOT EXISTS homeostats (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
                     kind TEXT NOT NULL,
-                    carrier_id TEXT,
+                    impulse_id TEXT,
                     status TEXT NOT NULL,
                     values_json TEXT NOT NULL,
                     metadata TEXT NOT NULL,
@@ -1114,7 +1165,7 @@ class Correlator:
                     idempotency_key TEXT NOT NULL,
                     source_ref TEXT NOT NULL,
                     target_ref TEXT NOT NULL,
-                    carrier_json TEXT NOT NULL,
+                    impulse_json TEXT NOT NULL,
                     event_ref TEXT,
                     pool_id TEXT,
                     budget TEXT NOT NULL,
@@ -1133,7 +1184,7 @@ class Correlator:
                     idempotency_key TEXT NOT NULL,
                     source_ref TEXT NOT NULL,
                     target_ref TEXT NOT NULL,
-                    carrier_json TEXT NOT NULL,
+                    impulse_json TEXT NOT NULL,
                     event_ref TEXT,
                     pool_id TEXT,
                     budget TEXT NOT NULL,
@@ -1146,22 +1197,22 @@ class Correlator:
                     UNIQUE (run_id, idempotency_key)
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_runtime_events_carrier
-                    ON runtime_events (run_id, carrier_id, sequence);
+                CREATE INDEX IF NOT EXISTS idx_runtime_events_impulse
+                    ON runtime_events (run_id, impulse_id, sequence);
                 CREATE INDEX IF NOT EXISTS idx_runs_status
                     ON runs (status, updated_at);
 
                 CREATE TABLE IF NOT EXISTS runtime_pools (
                     id TEXT PRIMARY KEY,
                     runtimes_json TEXT NOT NULL,
-                    carrier_types TEXT NOT NULL,
+                    impulse_types TEXT NOT NULL,
                     metadata TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS delegation_policies (
                     id TEXT PRIMARY KEY,
                     pool_id TEXT NOT NULL,
-                    carrier_types TEXT NOT NULL,
+                    impulse_types TEXT NOT NULL,
                     budget TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     FOREIGN KEY (pool_id)
@@ -1171,22 +1222,22 @@ class Correlator:
                 CREATE INDEX IF NOT EXISTS idx_delegation_policies_pool
                     ON delegation_policies (pool_id, id);
 
-                CREATE INDEX IF NOT EXISTS idx_carrier_relations_source
-                    ON carrier_relations (run_id, source_carrier_id, relation_type);
-                CREATE INDEX IF NOT EXISTS idx_carrier_relations_target
-                    ON carrier_relations (run_id, target_carrier_id, relation_type);
-                CREATE INDEX IF NOT EXISTS idx_observations_carrier
-                    ON observations (run_id, carrier_id, created_at);
-                CREATE INDEX IF NOT EXISTS idx_artifacts_carrier
-                    ON artifacts (run_id, carrier_id, kind, created_at);
+                CREATE INDEX IF NOT EXISTS idx_impulse_relations_source
+                    ON impulse_relations (run_id, source_impulse_id, relation_type);
+                CREATE INDEX IF NOT EXISTS idx_impulse_relations_target
+                    ON impulse_relations (run_id, target_impulse_id, relation_type);
+                CREATE INDEX IF NOT EXISTS idx_associations_impulse
+                    ON associations (run_id, impulse_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_reactions_impulse
+                    ON reactions (run_id, impulse_id, kind, created_at);
                 CREATE INDEX IF NOT EXISTS idx_processes_ready
                     ON processes (status, available_at, priority, created_at);
                 CREATE INDEX IF NOT EXISTS idx_processes_run_status
                     ON processes (run_id, status, updated_at);
-                CREATE INDEX IF NOT EXISTS idx_processes_carrier
-                    ON processes (run_id, carrier_id, status);
-                CREATE INDEX IF NOT EXISTS idx_gates_status
-                    ON gates (run_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_processes_impulse
+                    ON processes (run_id, impulse_id, status);
+                CREATE INDEX IF NOT EXISTS idx_homeostats_status
+                    ON homeostats (run_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_bridge_outbox_status
                     ON bridge_outbox (run_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_bridge_inbox_status
@@ -1304,7 +1355,7 @@ class Correlator:
                     """
                     INSERT INTO runs (
                         id, status, title, package_id, package_version,
-                        package_digest, flow_id, flow_digest, runtime_version,
+                        package_digest, correlation_path_id, correlation_path_digest, runtime_version,
                         backend_version, schema_version, metadata, created_at,
                         updated_at, started_at, finished_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1314,8 +1365,8 @@ class Correlator:
                         package_id = excluded.package_id,
                         package_version = excluded.package_version,
                         package_digest = excluded.package_digest,
-                        flow_id = excluded.flow_id,
-                        flow_digest = excluded.flow_digest,
+                        correlation_path_id = excluded.correlation_path_id,
+                        correlation_path_digest = excluded.correlation_path_digest,
                         runtime_version = excluded.runtime_version,
                         backend_version = excluded.backend_version,
                         schema_version = excluded.schema_version,
@@ -1333,14 +1384,14 @@ class Correlator:
         self,
         *,
         run_id: str,
-        status: CarrierRunStatus,
+        status: RunStatus,
         command: RuntimeCommand,
         events: Sequence[RuntimeEvent] = (),
     ) -> tuple[Run, CommandSubmission]:
         if command.run_id != run_id:
             raise ValueError("run transition command run_id must match run_id")
         if command.command_type == "run.cancel":
-            if status != CarrierRunStatus.cancel_requested:
+            if status != RunStatus.cancel_requested:
                 raise ValueError("run.cancel requires status 'cancel_requested'")
         elif command.command_type != "run.status.set":
             raise ValueError(
@@ -1392,7 +1443,7 @@ class Correlator:
 
                 now = _now()
                 started_at = run.started_at or (
-                    now if status == CarrierRunStatus.active else None
+                    now if status == RunStatus.active else None
                 )
                 finished_at = (
                     now if status in _TERMINAL_RUN_STATUSES else run.finished_at
@@ -1446,7 +1497,7 @@ class Correlator:
     async def list_runs(
         self,
         *,
-        status: CarrierRunStatus | None = None,
+        status: RunStatus | None = None,
         limit: int | None = None,
     ) -> list[Run]:
         clauses: list[str] = []
@@ -1470,13 +1521,13 @@ class Correlator:
             "bridge_inbox",
             "bridge_outbox",
             "projections",
-            "gates",
+            "homeostats",
             "processes",
-            "artifacts",
-            "observations",
-            "carrier_relations",
-            "carrier_types",
-            "carriers",
+            "reactions",
+            "associations",
+            "impulse_relations",
+            "impulse_types",
+            "impulses",
             "runtime_events",
             "runtime_commands",
             "runs",
@@ -1528,11 +1579,11 @@ class Correlator:
                 connection.execute(
                     """
                     INSERT INTO runtime_pools (
-                        id, runtimes_json, carrier_types, metadata
+                        id, runtimes_json, impulse_types, metadata
                     ) VALUES (?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         runtimes_json = excluded.runtimes_json,
-                        carrier_types = excluded.carrier_types,
+                        impulse_types = excluded.impulse_types,
                         metadata = excluded.metadata
                     """,
                     _runtime_pool_args(pool),
@@ -1563,11 +1614,11 @@ class Correlator:
                 connection.execute(
                     """
                     INSERT INTO delegation_policies (
-                        id, pool_id, carrier_types, budget, metadata
+                        id, pool_id, impulse_types, budget, metadata
                     ) VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         pool_id = excluded.pool_id,
-                        carrier_types = excluded.carrier_types,
+                        impulse_types = excluded.impulse_types,
                         budget = excluded.budget,
                         metadata = excluded.metadata
                     """,
@@ -1605,13 +1656,13 @@ class Correlator:
             rows = connection.execute(sql, params).fetchall()
         return [_delegation_policy_from_row(row) for row in rows]
 
-    async def put_carrier_type(self, carrier_type: CarrierType) -> None:
+    async def put_impulse_type(self, impulse_type: ImpulseType) -> None:
         async with self._lock:
             with self._connect() as connection:
-                _require_run_row(connection, carrier_type.run_id)
+                _require_run_row(connection, impulse_type.run_id)
                 connection.execute(
                     """
-                    INSERT INTO carrier_types (
+                    INSERT INTO impulse_types (
                         run_id, id, title, description, media_types,
                         value_schema_json, metadata, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1625,33 +1676,33 @@ class Correlator:
                         updated_at = excluded.updated_at
                     """,
                     (
-                        carrier_type.run_id,
-                        carrier_type.id,
-                        carrier_type.title,
-                        carrier_type.description,
-                        json.dumps(carrier_type.media_types),
-                        _dumps(carrier_type.value_schema),
-                        _dumps(carrier_type.metadata),
-                        carrier_type.created_at.isoformat(),
-                        carrier_type.updated_at.isoformat(),
+                        impulse_type.run_id,
+                        impulse_type.id,
+                        impulse_type.title,
+                        impulse_type.description,
+                        json.dumps(impulse_type.media_types),
+                        _dumps(impulse_type.value_schema),
+                        _dumps(impulse_type.metadata),
+                        impulse_type.created_at.isoformat(),
+                        impulse_type.updated_at.isoformat(),
                     ),
                 )
                 connection.commit()
 
-    async def register_carrier_type(
+    async def register_impulse_type(
         self,
-        carrier_type: CarrierType,
+        impulse_type: ImpulseType,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission:
-        if command.run_id != carrier_type.run_id:
+        if command.run_id != impulse_type.run_id:
             raise ValueError(
-                "carrier_type.register command run_id must match carrier type run_id"
+                "impulse_type.register command run_id must match impulse type run_id"
             )
-        if command.command_type != "carrier_type.register":
+        if command.command_type != "impulse_type.register":
             raise ValueError(
-                "register_carrier_type requires command_type 'carrier_type.register'"
+                "register_impulse_type requires command_type 'impulse_type.register'"
             )
         async with self._lock:
             connection = self._connect()
@@ -1671,18 +1722,18 @@ class Correlator:
                         events=[],
                         replayed=True,
                     )
-                _require_run_row(connection, carrier_type.run_id)
+                _require_run_row(connection, impulse_type.run_id)
                 if (
                     connection.execute(
-                        "SELECT 1 FROM carrier_types WHERE run_id = ? AND id = ?",
-                        (carrier_type.run_id, carrier_type.id),
+                        "SELECT 1 FROM impulse_types WHERE run_id = ? AND id = ?",
+                        (impulse_type.run_id, impulse_type.id),
                     ).fetchone()
                     is not None
                 ):
-                    raise ValueError(f"Carrier type already exists: {carrier_type.id!r}")
+                    raise ValueError(f"Impulse type already exists: {impulse_type.id!r}")
 
                 _insert_runtime_command_row(connection, command)
-                _insert_carrier_type_row(connection, carrier_type)
+                _insert_impulse_type_row(connection, impulse_type)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return CommandSubmission(
@@ -1696,30 +1747,30 @@ class Correlator:
             finally:
                 connection.close()
 
-    async def get_carrier_type(
+    async def get_impulse_type(
         self,
         *,
         run_id: str,
-        carrier_type_id: str,
-    ) -> CarrierType | None:
+        impulse_type_id: str,
+    ) -> ImpulseType | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM carrier_types WHERE run_id = ? AND id = ?",
-                (run_id, carrier_type_id),
+                "SELECT * FROM impulse_types WHERE run_id = ? AND id = ?",
+                (run_id, impulse_type_id),
             ).fetchone()
-        return _carrier_type_from_row(row) if row is not None else None
+        return _impulse_type_from_row(row) if row is not None else None
 
-    async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]:
+    async def list_impulse_types(self, *, run_id: str) -> list[ImpulseType]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM carrier_types
+                SELECT * FROM impulse_types
                 WHERE run_id = ?
                 ORDER BY id ASC
                 """,
                 (run_id,),
             ).fetchall()
-        return [_carrier_type_from_row(row) for row in rows]
+        return [_impulse_type_from_row(row) for row in rows]
 
     async def put_impulse(self, impulse: Impulse) -> None:
         async with self._lock:
@@ -1727,12 +1778,12 @@ class Correlator:
                 _require_run_row(connection, impulse.run_id)
                 connection.execute(
                     """
-                    INSERT INTO carriers (
-                        run_id, id, carrier_type, payload, metadata,
+                    INSERT INTO impulses (
+                        run_id, id, impulse_type, payload, metadata,
                         created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, id) DO UPDATE SET
-                        carrier_type = excluded.carrier_type,
+                        impulse_type = excluded.impulse_type,
                         payload = excluded.payload,
                         metadata = excluded.metadata,
                         created_at = excluded.created_at,
@@ -1742,10 +1793,10 @@ class Correlator:
                         impulse.run_id,
                         impulse.id,
                         impulse.impulse_type,
-                        _dumps(carrier.payload),
-                        _dumps(carrier.metadata),
-                        carrier.created_at.isoformat(),
-                        carrier.updated_at.isoformat(),
+                        _dumps(impulse.payload),
+                        _dumps(impulse.metadata),
+                        impulse.created_at.isoformat(),
+                        impulse.updated_at.isoformat(),
                     ),
                 )
                 connection.commit()
@@ -1782,7 +1833,7 @@ class Correlator:
                 _require_run_row(connection, impulse.run_id)
                 if (
                     connection.execute(
-                        "SELECT 1 FROM carriers WHERE run_id = ? AND id = ?",
+                        "SELECT 1 FROM impulses WHERE run_id = ? AND id = ?",
                         (impulse.run_id, impulse.id),
                     ).fetchone()
                     is not None
@@ -1790,7 +1841,7 @@ class Correlator:
                     raise ValueError(f"Impulse already exists: {impulse.id!r}")
 
                 _insert_runtime_command_row(connection, command)
-                _insert_carrier_row(connection, impulse)
+                _insert_impulse_row(connection, impulse)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return CommandSubmission(
@@ -1807,25 +1858,25 @@ class Correlator:
     async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM carriers WHERE run_id = ? AND id = ?",
+                "SELECT * FROM impulses WHERE run_id = ? AND id = ?",
                 (run_id, impulse_id),
             ).fetchone()
         return _impulse_from_row(row) if row is not None else None
 
-    async def list_carriers(
+    async def list_impulses(
         self,
         *,
         run_id: str,
-        carrier_type: str | None = None,
+        impulse_type: str | None = None,
         limit: int | None = None,
-    ) -> list[Carrier]:
+    ) -> list[Impulse]:
         clauses = ["run_id = ?"]
         params: list[Any] = [run_id]
-        if carrier_type is not None:
-            clauses.append("carrier_type = ?")
-            params.append(carrier_type)
+        if impulse_type is not None:
+            clauses.append("impulse_type = ?")
+            params.append(impulse_type)
         sql = f"""
-            SELECT * FROM carriers
+            SELECT * FROM impulses
             WHERE {' AND '.join(clauses)}
             ORDER BY created_at ASC, id ASC
         """
@@ -1834,22 +1885,22 @@ class Correlator:
             params.append(limit)
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()
-        return [_carrier_from_row(row) for row in rows]
+        return [_impulse_from_row(row) for row in rows]
 
-    async def put_carrier_relation(self, relation: CarrierRelation) -> None:
+    async def put_impulse_relation(self, relation: ImpulseRelation) -> None:
         async with self._lock:
             with self._connect() as connection:
                 _require_run_row(connection, relation.run_id)
                 connection.execute(
                     """
-                    INSERT INTO carrier_relations (
-                        run_id, id, relation_type, source_carrier_id,
-                        target_carrier_id, metadata, created_at
+                    INSERT INTO impulse_relations (
+                        run_id, id, relation_type, source_impulse_id,
+                        target_impulse_id, metadata, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, id) DO UPDATE SET
                         relation_type = excluded.relation_type,
-                        source_carrier_id = excluded.source_carrier_id,
-                        target_carrier_id = excluded.target_carrier_id,
+                        source_impulse_id = excluded.source_impulse_id,
+                        target_impulse_id = excluded.target_impulse_id,
                         metadata = excluded.metadata,
                         created_at = excluded.created_at
                     """,
@@ -1857,29 +1908,29 @@ class Correlator:
                         relation.run_id,
                         relation.id,
                         relation.relation_type,
-                        relation.source_carrier_id,
-                        relation.target_carrier_id,
+                        relation.source_impulse_id,
+                        relation.target_impulse_id,
                         _dumps(relation.metadata),
                         relation.created_at.isoformat(),
                     ),
                 )
                 connection.commit()
 
-    async def record_carrier_relation(
+    async def record_impulse_relation(
         self,
-        relation: CarrierRelation,
+        relation: ImpulseRelation,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission:
         if command.run_id != relation.run_id:
             raise ValueError(
-                "carrier_relation.record command run_id must match relation run_id"
+                "impulse_relation.record command run_id must match relation run_id"
             )
-        if command.command_type != "carrier_relation.record":
+        if command.command_type != "impulse_relation.record":
             raise ValueError(
-                "record_carrier_relation requires command_type "
-                "'carrier_relation.record'"
+                "record_impulse_relation requires command_type "
+                "'impulse_relation.record'"
             )
         async with self._lock:
             connection = self._connect()
@@ -1902,17 +1953,17 @@ class Correlator:
                 _require_run_row(connection, relation.run_id)
                 if (
                     connection.execute(
-                        "SELECT 1 FROM carrier_relations WHERE run_id = ? AND id = ?",
+                        "SELECT 1 FROM impulse_relations WHERE run_id = ? AND id = ?",
                         (relation.run_id, relation.id),
                     ).fetchone()
                     is not None
                 ):
                     raise ValueError(
-                        f"Carrier relation already exists: {relation.id!r}"
+                        f"Impulse relation already exists: {relation.id!r}"
                     )
 
                 _insert_runtime_command_row(connection, command)
-                _insert_carrier_relation_row(connection, relation)
+                _insert_impulse_relation_row(connection, relation)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return CommandSubmission(
@@ -1926,44 +1977,44 @@ class Correlator:
             finally:
                 connection.close()
 
-    async def get_carrier_relation(
+    async def get_impulse_relation(
         self,
         *,
         run_id: str,
         relation_id: str,
-    ) -> CarrierRelation | None:
+    ) -> ImpulseRelation | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM carrier_relations WHERE run_id = ? AND id = ?",
+                "SELECT * FROM impulse_relations WHERE run_id = ? AND id = ?",
                 (run_id, relation_id),
             ).fetchone()
-        return _carrier_relation_from_row(row) if row is not None else None
+        return _impulse_relation_from_row(row) if row is not None else None
 
-    async def list_carrier_relations(
+    async def list_impulse_relations(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         relation_type: str | None = None,
-    ) -> list[CarrierRelation]:
+    ) -> list[ImpulseRelation]:
         clauses = ["run_id = ?"]
         params: list[Any] = [run_id]
-        if carrier_id is not None:
-            clauses.append("(source_carrier_id = ? OR target_carrier_id = ?)")
-            params.extend([carrier_id, carrier_id])
+        if impulse_id is not None:
+            clauses.append("(source_impulse_id = ? OR target_impulse_id = ?)")
+            params.extend([impulse_id, impulse_id])
         if relation_type is not None:
             clauses.append("relation_type = ?")
             params.append(relation_type)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT * FROM carrier_relations
+                SELECT * FROM impulse_relations
                 WHERE {' AND '.join(clauses)}
                 ORDER BY created_at ASC, id ASC
                 """,
                 params,
             ).fetchall()
-        return [_carrier_relation_from_row(row) for row in rows]
+        return [_impulse_relation_from_row(row) for row in rows]
 
     async def submit_command(
         self,
@@ -2065,15 +2116,15 @@ class Correlator:
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         after_sequence: int | None = None,
         limit: int | None = None,
     ) -> list[RuntimeEvent]:
         clauses = ["run_id = ?"]
         params: list[Any] = [run_id]
-        if carrier_id is not None:
-            clauses.append("carrier_id = ?")
-            params.append(carrier_id)
+        if impulse_id is not None:
+            clauses.append("impulse_id = ?")
+            params.append(impulse_id)
         if after_sequence is not None:
             clauses.append("sequence > ?")
             params.append(after_sequence)
@@ -2092,44 +2143,44 @@ class Correlator:
     async def put_association(self, association: Association) -> None:
         async with self._lock:
             with self._connect() as connection:
-                _require_run_row(connection, observation.run_id)
+                _require_run_row(connection, association.run_id)
                 connection.execute(
                     """
-                    INSERT INTO observations (
-                        run_id, id, kind, carrier_id, values_json,
+                    INSERT INTO associations (
+                        run_id, id, kind, impulse_id, values_json,
                         metadata, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, id) DO UPDATE SET
                         kind = excluded.kind,
-                        carrier_id = excluded.carrier_id,
+                        impulse_id = excluded.impulse_id,
                         values_json = excluded.values_json,
                         metadata = excluded.metadata,
                         created_at = excluded.created_at
                     """,
                     (
-                        observation.run_id,
-                        observation.id,
-                        observation.kind,
-                        observation.carrier_id,
-                        _dumps(observation.values),
-                        _dumps(observation.metadata),
-                        observation.created_at.isoformat(),
+                        association.run_id,
+                        association.id,
+                        association.kind,
+                        association.impulse_id,
+                        _dumps(association.values),
+                        _dumps(association.metadata),
+                        association.created_at.isoformat(),
                     ),
                 )
                 connection.commit()
 
     async def record_association(
         self,
-        observation: Observation,
+        association: Association,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission:
-        if command.run_id != observation.run_id:
+        if command.run_id != association.run_id:
             raise ValueError(
-                "observation.record command run_id must match observation run_id"
+                "association.record command run_id must match association run_id"
             )
-        if command.command_type != "observation.record":
+        if command.command_type != "association.record":
             raise ValueError(
                 "record_association requires command_type 'association.record'"
             )
@@ -2151,18 +2202,18 @@ class Correlator:
                         events=[],
                         replayed=True,
                     )
-                _require_run_row(connection, observation.run_id)
+                _require_run_row(connection, association.run_id)
                 if (
                     connection.execute(
-                        "SELECT 1 FROM observations WHERE run_id = ? AND id = ?",
-                        (observation.run_id, observation.id),
+                        "SELECT 1 FROM associations WHERE run_id = ? AND id = ?",
+                        (association.run_id, association.id),
                     ).fetchone()
                     is not None
                 ):
-                    raise ValueError(f"Observation already exists: {observation.id!r}")
+                    raise ValueError(f"Association already exists: {association.id!r}")
 
                 _insert_runtime_command_row(connection, command)
-                _insert_observation_row(connection, observation)
+                _insert_association_row(connection, association)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return CommandSubmission(
@@ -2177,64 +2228,64 @@ class Correlator:
                 connection.close()
 
     async def list_associations(
-        self, *, run_id: str, carrier_id: str | None = None
-    ) -> list[Observation]:
+        self, *, run_id: str, impulse_id: str | None = None
+    ) -> list[Association]:
         clauses = ["run_id = ?"]
         params: list[Any] = [run_id]
-        if carrier_id is not None:
-            clauses.append("carrier_id = ?")
-            params.append(carrier_id)
+        if impulse_id is not None:
+            clauses.append("impulse_id = ?")
+            params.append(impulse_id)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT * FROM observations
+                SELECT * FROM associations
                 WHERE {' AND '.join(clauses)}
                 ORDER BY created_at ASC, id ASC
                 """,
                 params,
             ).fetchall()
-        return [_observation_from_row(row) for row in rows]
+        return [_association_from_row(row) for row in rows]
 
-    async def put_artifact(self, artifact: Artifact) -> None:
+    async def put_reaction(self, reaction: Reaction) -> None:
         async with self._lock:
             with self._connect() as connection:
-                _require_run_row(connection, artifact.run_id)
+                _require_run_row(connection, reaction.run_id)
                 connection.execute(
                     """
-                    INSERT INTO artifacts (
-                        run_id, id, kind, uri, carrier_id, media_type,
+                    INSERT INTO reactions (
+                        run_id, id, kind, uri, impulse_id, media_type,
                         size_bytes, content_hash, metadata, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, id) DO NOTHING
                     """,
                     (
-                        artifact.run_id,
-                        artifact.id,
-                        artifact.kind,
-                        artifact.uri,
-                        artifact.carrier_id,
-                        artifact.media_type,
-                        artifact.size_bytes,
-                        artifact.content_hash,
-                        _dumps(artifact.metadata),
-                        artifact.created_at.isoformat(),
+                        reaction.run_id,
+                        reaction.id,
+                        reaction.kind,
+                        reaction.uri,
+                        reaction.impulse_id,
+                        reaction.media_type,
+                        reaction.size_bytes,
+                        reaction.content_hash,
+                        _dumps(reaction.metadata),
+                        reaction.created_at.isoformat(),
                     ),
                 )
                 connection.commit()
 
-    async def record_artifact(
+    async def record_reaction(
         self,
-        artifact: Artifact,
+        reaction: Reaction,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission:
-        if command.run_id != artifact.run_id:
+        if command.run_id != reaction.run_id:
             raise ValueError(
-                "artifact.record command run_id must match artifact run_id"
+                "reaction.record command run_id must match reaction run_id"
             )
-        if command.command_type != "artifact.record":
-            raise ValueError("record_artifact requires command_type 'artifact.record'")
+        if command.command_type != "reaction.record":
+            raise ValueError("record_reaction requires command_type 'reaction.record'")
         async with self._lock:
             connection = self._connect()
             try:
@@ -2253,18 +2304,18 @@ class Correlator:
                         events=[],
                         replayed=True,
                     )
-                _require_run_row(connection, artifact.run_id)
+                _require_run_row(connection, reaction.run_id)
                 if (
                     connection.execute(
-                        "SELECT 1 FROM artifacts WHERE run_id = ? AND id = ?",
-                        (artifact.run_id, artifact.id),
+                        "SELECT 1 FROM reactions WHERE run_id = ? AND id = ?",
+                        (reaction.run_id, reaction.id),
                     ).fetchone()
                     is not None
                 ):
-                    raise ValueError(f"Artifact already exists: {artifact.id!r}")
+                    raise ValueError(f"Reaction already exists: {reaction.id!r}")
 
                 _insert_runtime_command_row(connection, command)
-                _insert_artifact_row(connection, artifact)
+                _insert_reaction_row(connection, reaction)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return CommandSubmission(
@@ -2278,39 +2329,39 @@ class Correlator:
             finally:
                 connection.close()
 
-    async def get_artifact(self, *, run_id: str, artifact_id: str) -> Artifact | None:
+    async def get_reaction(self, *, run_id: str, reaction_id: str) -> Reaction | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM artifacts WHERE run_id = ? AND id = ?",
-                (run_id, artifact_id),
+                "SELECT * FROM reactions WHERE run_id = ? AND id = ?",
+                (run_id, reaction_id),
             ).fetchone()
-        return _artifact_from_row(row) if row is not None else None
+        return _reaction_from_row(row) if row is not None else None
 
-    async def list_artifacts(
+    async def list_reactions(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         kind: str | None = None,
-    ) -> list[Artifact]:
+    ) -> list[Reaction]:
         clauses = ["run_id = ?"]
         params: list[Any] = [run_id]
-        if carrier_id is not None:
-            clauses.append("carrier_id = ?")
-            params.append(carrier_id)
+        if impulse_id is not None:
+            clauses.append("impulse_id = ?")
+            params.append(impulse_id)
         if kind is not None:
             clauses.append("kind = ?")
             params.append(kind)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT * FROM artifacts
+                SELECT * FROM reactions
                 WHERE {' AND '.join(clauses)}
                 ORDER BY created_at ASC, id ASC
                 """,
                 params,
             ).fetchall()
-        return [_artifact_from_row(row) for row in rows]
+        return [_reaction_from_row(row) for row in rows]
 
     async def put_process(self, process: Process) -> None:
         async with self._lock:
@@ -2319,14 +2370,14 @@ class Correlator:
                 connection.execute(
                     """
                     INSERT INTO processes (
-                        run_id, id, process_type, carrier_id, status, priority,
+                        run_id, id, process_type, impulse_id, status, priority,
                         attempt, max_attempts, available_at, lease_owner,
                         lease_expires_at, input_json, output_json, error_json,
                         metadata, created_at, updated_at, started_at, finished_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, id) DO UPDATE SET
                         process_type = excluded.process_type,
-                        carrier_id = excluded.carrier_id,
+                        impulse_id = excluded.impulse_id,
                         status = excluded.status,
                         priority = excluded.priority,
                         attempt = excluded.attempt,
@@ -2379,8 +2430,8 @@ class Correlator:
                         replayed=True,
                     )
                 if process.status not in {
-                    CarrierProcessStatus.pending,
-                    CarrierProcessStatus.ready,
+                    ProcessStatus.pending,
+                    ProcessStatus.ready,
                 }:
                     raise ValueError(
                         "schedule_process requires process status 'pending' or 'ready'"
@@ -2422,17 +2473,17 @@ class Correlator:
         self,
         *,
         run_id: str,
-        status: CarrierProcessStatus | None = None,
-        carrier_id: str | None = None,
+        status: ProcessStatus | None = None,
+        impulse_id: str | None = None,
     ) -> list[Process]:
         clauses = ["run_id = ?"]
         params: list[Any] = [run_id]
         if status is not None:
             clauses.append("status = ?")
             params.append(status.value)
-        if carrier_id is not None:
-            clauses.append("carrier_id = ?")
-            params.append(carrier_id)
+        if impulse_id is not None:
+            clauses.append("impulse_id = ?")
+            params.append(impulse_id)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
@@ -2450,9 +2501,15 @@ class Correlator:
         worker_id: str,
         run_id: str | None = None,
         lease_seconds: float = 300.0,
+        all_runs: bool = False,
     ) -> Process | None:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be greater than zero")
+        if run_id is None and not all_runs:
+            raise ValueError(
+                "claim_next_ready_process requires run_id, or all_runs=True to "
+                "claim across every run"
+            )
         now = _now()
         expires_at = now + timedelta(seconds=lease_seconds)
         clauses = [
@@ -2466,10 +2523,10 @@ class Correlator:
             "attempt < max_attempts",
         ]
         params: list[Any] = [
-            CarrierProcessStatus.ready.value,
-            CarrierProcessStatus.retry_wait.value,
+            ProcessStatus.ready.value,
+            ProcessStatus.retry_wait.value,
             now.isoformat(),
-            CarrierProcessStatus.running.value,
+            ProcessStatus.running.value,
             now.isoformat(),
         ]
         if run_id is not None:
@@ -2479,6 +2536,85 @@ class Correlator:
             connection = self._connect()
             try:
                 connection.execute("BEGIN IMMEDIATE")
+                # Homeostatic closure: a crashed process (expired lease) with no
+                # attempts left can never be re-claimed; fail it here so the run
+                # settles instead of hanging forever.
+                expired_clauses = [
+                    "status = ?",
+                    "lease_expires_at IS NOT NULL",
+                    "lease_expires_at <= ?",
+                    "attempt >= max_attempts",
+                ]
+                expired_params: list[Any] = [
+                    ProcessStatus.running.value,
+                    now.isoformat(),
+                ]
+                if run_id is not None:
+                    expired_clauses.append("run_id = ?")
+                    expired_params.append(run_id)
+                expired_rows = connection.execute(
+                    f"SELECT * FROM processes WHERE {' AND '.join(expired_clauses)}",
+                    expired_params,
+                ).fetchall()
+                for expired_row in expired_rows:
+                    expired = _process_from_row(expired_row)
+                    expired_error = {
+                        "type": "lease_expired",
+                        "message": "process lease expired with no attempts left",
+                        "lease_owner": expired.lease_owner,
+                    }
+                    connection.execute(
+                        """
+                        UPDATE processes
+                        SET status = ?,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            error_json = ?,
+                            updated_at = ?,
+                            finished_at = ?
+                        WHERE run_id = ? AND id = ?
+                        """,
+                        (
+                            ProcessStatus.failed.value,
+                            _dumps(expired_error),
+                            now.isoformat(),
+                            now.isoformat(),
+                            expired.run_id,
+                            expired.id,
+                        ),
+                    )
+                    fail_command = RuntimeCommand(
+                        run_id=expired.run_id,
+                        command_type="process.fail",
+                        idempotency_key=(
+                            f"process.fail:{expired.id}:{expired.attempt}"
+                        ),
+                        actor=worker_id,
+                        payload={"process_id": expired.id},
+                    )
+                    _insert_runtime_command_row(connection, fail_command)
+                    _append_runtime_events(
+                        connection,
+                        fail_command,
+                        [
+                            RuntimeEvent(
+                                run_id=expired.run_id,
+                                impulse_id=expired.impulse_id,
+                                process_id=expired.id,
+                                event_type="process.failed",
+                                payload={
+                                    "process_id": expired.id,
+                                    "attempt": expired.attempt,
+                                    "input_digest": content_address_json(
+                                        expired.input
+                                    ),
+                                    "error_digest": content_address_json(
+                                        expired_error
+                                    ),
+                                },
+                            )
+                        ],
+                    )
                 row = connection.execute(
                     f"""
                     SELECT * FROM processes
@@ -2503,7 +2639,7 @@ class Correlator:
                     WHERE run_id = ? AND id = ?
                     """,
                     (
-                        CarrierProcessStatus.running.value,
+                        ProcessStatus.running.value,
                         worker_id,
                         expires_at.isoformat(),
                         now.isoformat(),
@@ -2516,6 +2652,39 @@ class Correlator:
                     "SELECT * FROM processes WHERE run_id = ? AND id = ?",
                     (row["run_id"], row["id"]),
                 ).fetchone()
+                claim_command = RuntimeCommand(
+                    run_id=row["run_id"],
+                    command_type="process.claim",
+                    idempotency_key=(
+                        f"process.claim:{row['id']}:{updated['attempt']}"
+                    ),
+                    actor=worker_id,
+                    payload={
+                        "process_id": row["id"],
+                        "worker_id": worker_id,
+                        "attempt": updated["attempt"],
+                        "lease_expires_at": expires_at.isoformat(),
+                    },
+                )
+                _insert_runtime_command_row(connection, claim_command)
+                _append_runtime_events(
+                    connection,
+                    claim_command,
+                    [
+                        RuntimeEvent(
+                            run_id=row["run_id"],
+                            impulse_id=row["impulse_id"],
+                            process_id=row["id"],
+                            event_type="process.claimed",
+                            payload={
+                                "process_id": row["id"],
+                                "worker_id": worker_id,
+                                "attempt": updated["attempt"],
+                                "lease_expires_at": expires_at.isoformat(),
+                            },
+                        )
+                    ],
+                )
                 connection.commit()
                 return _process_from_row(updated)
             except Exception:
@@ -2534,7 +2703,7 @@ class Correlator:
         return await self._finish_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.succeeded,
+            status=ProcessStatus.succeeded,
             output=output or {},
             error={},
         )
@@ -2549,7 +2718,7 @@ class Correlator:
         return await self._finish_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.failed,
+            status=ProcessStatus.failed,
             output={},
             error=error or {},
         )
@@ -2564,7 +2733,7 @@ class Correlator:
         return await self._stop_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.cancelled,
+            status=ProcessStatus.cancelled,
             error=error or {},
         )
 
@@ -2578,7 +2747,7 @@ class Correlator:
         return await self._stop_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.timed_out,
+            status=ProcessStatus.timed_out,
             error=error or {},
         )
 
@@ -2603,8 +2772,8 @@ class Correlator:
                     raise ValueError(f"Unknown process: {process_id!r}")
                 process = _process_from_row(row)
                 if process.status not in {
-                    CarrierProcessStatus.running,
-                    CarrierProcessStatus.failed,
+                    ProcessStatus.running,
+                    ProcessStatus.failed,
                 }:
                     raise ValueError(
                         f"Process {process_id!r} cannot be retried from status: "
@@ -2626,7 +2795,7 @@ class Correlator:
                     WHERE run_id = ? AND id = ?
                     """,
                     (
-                        CarrierProcessStatus.retry_wait.value,
+                        ProcessStatus.retry_wait.value,
                         next_available_at.isoformat(),
                         _dumps(error or process.error),
                         now.isoformat(),
@@ -2651,7 +2820,7 @@ class Correlator:
         *,
         run_id: str,
         process_id: str,
-        status: CarrierProcessStatus,
+        status: ProcessStatus,
         command: RuntimeCommand,
         events: Sequence[RuntimeEvent] = (),
         output: dict[str, Any] | None = None,
@@ -2717,22 +2886,36 @@ class Correlator:
 
                 _insert_runtime_command_row(connection, command)
                 if status in {
-                    CarrierProcessStatus.succeeded,
-                    CarrierProcessStatus.failed,
+                    ProcessStatus.succeeded,
+                    ProcessStatus.failed,
                 }:
-                    if process.status != CarrierProcessStatus.running:
+                    # waiting -> succeeded/failed closes a suspended effector from
+                    # an external outcome (homeostat resolution, child-run boundary).
+                    if process.status not in {
+                        ProcessStatus.running,
+                        ProcessStatus.waiting,
+                    }:
                         raise ValueError(
-                            f"Process {process_id!r} is not running: "
+                            f"Process {process_id!r} is not running or waiting: "
                             f"{process.status.value}"
+                        )
+                    if (
+                        process.lease_owner is not None
+                        and command.actor != process.lease_owner
+                    ):
+                        raise ValueError(
+                            f"Process {process_id!r} lease is held by "
+                            f"{process.lease_owner!r}; actor "
+                            f"{command.actor!r} cannot finish it"
                         )
                     stored_output = (
                         output or {}
-                        if status == CarrierProcessStatus.succeeded
+                        if status == ProcessStatus.succeeded
                         else {}
                     )
                     stored_error = (
                         error or {}
-                        if status == CarrierProcessStatus.failed
+                        if status == ProcessStatus.failed
                         else {}
                     )
                     connection.execute(
@@ -2757,14 +2940,23 @@ class Correlator:
                             process_id,
                         ),
                     )
-                elif status == CarrierProcessStatus.retry_wait:
+                elif status == ProcessStatus.retry_wait:
                     if process.status not in {
-                        CarrierProcessStatus.running,
-                        CarrierProcessStatus.failed,
+                        ProcessStatus.running,
+                        ProcessStatus.failed,
                     }:
                         raise ValueError(
                             f"Process {process_id!r} cannot be retried from status: "
                             f"{process.status.value}"
+                        )
+                    if (
+                        process.lease_owner is not None
+                        and command.actor != process.lease_owner
+                    ):
+                        raise ValueError(
+                            f"Process {process_id!r} lease is held by "
+                            f"{process.lease_owner!r}; actor "
+                            f"{command.actor!r} cannot retry it"
                         )
                     if process.attempt >= process.max_attempts:
                         raise ValueError(
@@ -2783,7 +2975,7 @@ class Correlator:
                         WHERE run_id = ? AND id = ?
                         """,
                         (
-                            CarrierProcessStatus.retry_wait.value,
+                            ProcessStatus.retry_wait.value,
                             (available_at or now).isoformat(),
                             _dumps(error or process.error),
                             now.isoformat(),
@@ -2791,8 +2983,8 @@ class Correlator:
                             process_id,
                         ),
                     )
-                elif status == CarrierProcessStatus.waiting:
-                    if process.status != CarrierProcessStatus.running:
+                elif status == ProcessStatus.waiting:
+                    if process.status != ProcessStatus.running:
                         raise ValueError(
                             f"Process {process_id!r} cannot wait from status: "
                             f"{process.status.value}"
@@ -2808,15 +3000,15 @@ class Correlator:
                         WHERE run_id = ? AND id = ?
                         """,
                         (
-                            CarrierProcessStatus.waiting.value,
+                            ProcessStatus.waiting.value,
                             _dumps(output or process.output),
                             now.isoformat(),
                             run_id,
                             process_id,
                         ),
                     )
-                elif status == CarrierProcessStatus.ready:
-                    if process.status != CarrierProcessStatus.pending:
+                elif status == ProcessStatus.ready:
+                    if process.status != ProcessStatus.pending:
                         raise ValueError(
                             f"Process {process_id!r} cannot become ready from "
                             f"status: {process.status.value}"
@@ -2830,7 +3022,7 @@ class Correlator:
                         WHERE run_id = ? AND id = ?
                         """,
                         (
-                            CarrierProcessStatus.ready.value,
+                            ProcessStatus.ready.value,
                             _dumps(input if input is not None else process.input),
                             now.isoformat(),
                             run_id,
@@ -2889,7 +3081,7 @@ class Correlator:
         *,
         run_id: str,
         process_id: str,
-        status: CarrierProcessStatus,
+        status: ProcessStatus,
         error: dict[str, Any],
     ) -> Process:
         async with self._lock:
@@ -2946,7 +3138,7 @@ class Correlator:
         *,
         run_id: str,
         process_id: str,
-        status: CarrierProcessStatus,
+        status: ProcessStatus,
         output: dict[str, Any],
         error: dict[str, Any],
     ) -> Process:
@@ -2961,9 +3153,13 @@ class Correlator:
                 if row is None:
                     raise ValueError(f"Unknown process: {process_id!r}")
                 process = _process_from_row(row)
-                if process.status != CarrierProcessStatus.running:
+                if process.status not in {
+                    ProcessStatus.running,
+                    ProcessStatus.waiting,
+                }:
                     raise ValueError(
-                        f"Process {process_id!r} is not running: {process.status.value}"
+                        f"Process {process_id!r} is not running or waiting: "
+                        f"{process.status.value}"
                     )
                 now = _now()
                 connection.execute(
@@ -3006,13 +3202,13 @@ class Correlator:
                 _require_run_row(connection, homeostat.run_id)
                 connection.execute(
                     """
-                    INSERT INTO gates (
-                        run_id, id, kind, carrier_id, status, values_json,
+                    INSERT INTO homeostats (
+                        run_id, id, kind, impulse_id, status, values_json,
                         metadata, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, id) DO UPDATE SET
                         kind = excluded.kind,
-                        carrier_id = excluded.carrier_id,
+                        impulse_id = excluded.impulse_id,
                         status = excluded.status,
                         values_json = excluded.values_json,
                         metadata = excluded.metadata,
@@ -3023,7 +3219,7 @@ class Correlator:
                         homeostat.run_id,
                         homeostat.id,
                         homeostat.kind,
-                        homeostat.carrier_id,
+                        homeostat.impulse_id,
                         homeostat.status.value,
                         _dumps(homeostat.values),
                         _dumps(homeostat.metadata),
@@ -3040,11 +3236,11 @@ class Correlator:
         *,
         events: Sequence[RuntimeEvent] = (),
     ) -> CommandSubmission:
-        if command.run_id != gate.run_id:
-            raise ValueError("gate command run_id must match gate run_id")
-        if command.command_type not in {"gate.save", "gate.open"}:
+        if command.run_id != homeostat.run_id:
+            raise ValueError("homeostat command run_id must match homeostat run_id")
+        if command.command_type not in {"homeostat.save", "homeostat.open"}:
             raise ValueError(
-                "save_gate requires command_type 'gate.save' or 'gate.open'"
+                "save_homeostat requires command_type 'homeostat.save' or 'homeostat.open'"
             )
         async with self._lock:
             connection = self._connect()
@@ -3064,18 +3260,18 @@ class Correlator:
                         events=[],
                         replayed=True,
                     )
-                _require_run_row(connection, gate.run_id)
+                _require_run_row(connection, homeostat.run_id)
                 if (
                     connection.execute(
-                        "SELECT 1 FROM gates WHERE run_id = ? AND id = ?",
-                        (gate.run_id, gate.id),
+                        "SELECT 1 FROM homeostats WHERE run_id = ? AND id = ?",
+                        (homeostat.run_id, homeostat.id),
                     ).fetchone()
                     is not None
                 ):
-                    raise ValueError(f"Gate already exists: {gate.id!r}")
+                    raise ValueError(f"Homeostat already exists: {homeostat.id!r}")
 
                 _insert_runtime_command_row(connection, command)
-                _insert_gate_row(connection, gate)
+                _insert_homeostat_row(connection, homeostat)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return CommandSubmission(
@@ -3092,26 +3288,26 @@ class Correlator:
     async def get_homeostat(self, *, run_id: str, homeostat_id: str) -> Homeostat | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM gates WHERE run_id = ? AND id = ?",
+                "SELECT * FROM homeostats WHERE run_id = ? AND id = ?",
                 (run_id, homeostat_id),
             ).fetchone()
         return _homeostat_from_row(row) if row is not None else None
 
-    async def transition_gate(
+    async def transition_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
-        status: GateStatus,
+        homeostat_id: str,
+        status: HomeostatStatus,
         command: RuntimeCommand,
         events: Sequence[RuntimeEvent] = (),
         values: dict[str, Any] | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        expected_command_type = _GATE_TRANSITION_COMMANDS.get(status)
+    ) -> tuple[Homeostat, CommandSubmission]:
+        expected_command_type = _HOMEOSTAT_TRANSITION_COMMANDS.get(status)
         if expected_command_type is None:
-            raise ValueError(f"Unsupported gate terminal status: {status.value}")
+            raise ValueError(f"Unsupported homeostat terminal status: {status.value}")
         if command.run_id != run_id:
-            raise ValueError("gate transition command run_id must match run_id")
+            raise ValueError("homeostat transition command run_id must match run_id")
         if command.command_type != expected_command_type:
             raise ValueError(
                 f"transition to {status.value!r} requires command_type "
@@ -3130,19 +3326,19 @@ class Correlator:
                 ).fetchone()
                 if existing_command is not None:
                     stored_command = _command_from_row(existing_command)
-                    stored_gate_id = stored_command.payload.get("gate_id", gate_id)
-                    stored_gate = connection.execute(
-                        "SELECT * FROM gates WHERE run_id = ? AND id = ?",
-                        (run_id, str(stored_gate_id)),
+                    stored_homeostat_id = stored_command.payload.get("homeostat_id", homeostat_id)
+                    stored_homeostat = connection.execute(
+                        "SELECT * FROM homeostats WHERE run_id = ? AND id = ?",
+                        (run_id, str(stored_homeostat_id)),
                     ).fetchone()
-                    if stored_gate is None:
+                    if stored_homeostat is None:
                         raise ValueError(
-                            "Replayed gate transition has no stored gate: "
-                            f"{stored_gate_id!r}"
+                            "Replayed homeostat transition has no stored homeostat: "
+                            f"{stored_homeostat_id!r}"
                         )
                     connection.commit()
                     return (
-                        _gate_from_row(stored_gate),
+                        _homeostat_from_row(stored_homeostat),
                         CommandSubmission(
                             command=stored_command,
                             events=[],
@@ -3151,22 +3347,22 @@ class Correlator:
                     )
 
                 row = connection.execute(
-                    "SELECT * FROM gates WHERE run_id = ? AND id = ?",
-                    (run_id, gate_id),
+                    "SELECT * FROM homeostats WHERE run_id = ? AND id = ?",
+                    (run_id, homeostat_id),
                 ).fetchone()
                 if row is None:
-                    raise ValueError(f"Unknown gate: {gate_id!r}")
-                gate = _gate_from_row(row)
-                if gate.status != GateStatus.open:
+                    raise ValueError(f"Unknown homeostat: {homeostat_id!r}")
+                homeostat = _homeostat_from_row(row)
+                if homeostat.status != HomeostatStatus.open:
                     raise ValueError(
-                        f"Gate {gate_id!r} is not open: {gate.status.value}"
+                        f"Homeostat {homeostat_id!r} is not open: {homeostat.status.value}"
                     )
 
                 now = _now()
                 _insert_runtime_command_row(connection, command)
                 connection.execute(
                     """
-                    UPDATE gates
+                    UPDATE homeostats
                     SET status = ?,
                         values_json = ?,
                         updated_at = ?
@@ -3177,17 +3373,17 @@ class Correlator:
                         _dumps(values or {}),
                         now.isoformat(),
                         run_id,
-                        gate_id,
+                        homeostat_id,
                     ),
                 )
                 updated = connection.execute(
-                    "SELECT * FROM gates WHERE run_id = ? AND id = ?",
-                    (run_id, gate_id),
+                    "SELECT * FROM homeostats WHERE run_id = ? AND id = ?",
+                    (run_id, homeostat_id),
                 ).fetchone()
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
                 return (
-                    _gate_from_row(updated),
+                    _homeostat_from_row(updated),
                     CommandSubmission(
                         command=command,
                         events=stored_events,
@@ -3200,75 +3396,75 @@ class Correlator:
             finally:
                 connection.close()
 
-    async def complete_gate(
+    async def complete_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
-    ) -> Gate:
-        return await self._finish_gate(
+    ) -> Homeostat:
+        return await self._finish_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
-            status=GateStatus.completed,
+            homeostat_id=homeostat_id,
+            status=HomeostatStatus.completed,
             values=values,
         )
 
-    async def cancel_gate(
+    async def cancel_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
-    ) -> Gate:
-        return await self._finish_gate(
+    ) -> Homeostat:
+        return await self._finish_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
-            status=GateStatus.cancelled,
+            homeostat_id=homeostat_id,
+            status=HomeostatStatus.cancelled,
             values=values,
         )
 
-    async def expire_gate(
+    async def expire_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
-    ) -> Gate:
-        return await self._finish_gate(
+    ) -> Homeostat:
+        return await self._finish_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
-            status=GateStatus.expired,
+            homeostat_id=homeostat_id,
+            status=HomeostatStatus.expired,
             values=values,
         )
 
-    async def _finish_gate(
+    async def _finish_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
-        status: GateStatus,
+        homeostat_id: str,
+        status: HomeostatStatus,
         values: dict[str, Any] | None,
-    ) -> Gate:
+    ) -> Homeostat:
         async with self._lock:
             connection = self._connect()
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 row = connection.execute(
-                    "SELECT * FROM gates WHERE run_id = ? AND id = ?",
-                    (run_id, gate_id),
+                    "SELECT * FROM homeostats WHERE run_id = ? AND id = ?",
+                    (run_id, homeostat_id),
                 ).fetchone()
                 if row is None:
-                    raise ValueError(f"Unknown gate: {gate_id!r}")
-                gate = _gate_from_row(row)
-                if gate.status != GateStatus.open:
+                    raise ValueError(f"Unknown homeostat: {homeostat_id!r}")
+                homeostat = _homeostat_from_row(row)
+                if homeostat.status != HomeostatStatus.open:
                     raise ValueError(
-                        f"Gate {gate_id!r} is not open: {gate.status.value}"
+                        f"Homeostat {homeostat_id!r} is not open: {homeostat.status.value}"
                     )
                 now = _now()
                 connection.execute(
                     """
-                    UPDATE gates
+                    UPDATE homeostats
                     SET status = ?,
                         values_json = ?,
                         updated_at = ?
@@ -3276,49 +3472,49 @@ class Correlator:
                     """,
                     (
                         status.value,
-                        _dumps(values if values is not None else gate.values),
+                        _dumps(values if values is not None else homeostat.values),
                         now.isoformat(),
                         run_id,
-                        gate_id,
+                        homeostat_id,
                     ),
                 )
                 updated = connection.execute(
-                    "SELECT * FROM gates WHERE run_id = ? AND id = ?",
-                    (run_id, gate_id),
+                    "SELECT * FROM homeostats WHERE run_id = ? AND id = ?",
+                    (run_id, homeostat_id),
                 ).fetchone()
                 connection.commit()
-                return _gate_from_row(updated)
+                return _homeostat_from_row(updated)
             except Exception:
                 connection.rollback()
                 raise
             finally:
                 connection.close()
 
-    async def list_gates(
+    async def list_homeostats(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
-        status: GateStatus | None = None,
-    ) -> list[Gate]:
+        impulse_id: str | None = None,
+        status: HomeostatStatus | None = None,
+    ) -> list[Homeostat]:
         clauses = ["run_id = ?"]
         params: list[Any] = [run_id]
-        if carrier_id is not None:
-            clauses.append("carrier_id = ?")
-            params.append(carrier_id)
+        if impulse_id is not None:
+            clauses.append("impulse_id = ?")
+            params.append(impulse_id)
         if status is not None:
             clauses.append("status = ?")
             params.append(status.value)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT * FROM gates
+                SELECT * FROM homeostats
                 WHERE {' AND '.join(clauses)}
                 ORDER BY updated_at ASC, id ASC
                 """,
                 params,
             ).fetchall()
-        return [_gate_from_row(row) for row in rows]
+        return [_homeostat_from_row(row) for row in rows]
 
     async def put_projection(self, projection: Projection) -> None:
         async with self._lock:
@@ -3571,7 +3767,7 @@ class Correlator:
     async def import_inbox_delivery(
         self,
         delivery: BridgeDelivery,
-        carrier: Carrier,
+        impulse: Impulse,
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent] = (),
@@ -3580,14 +3776,14 @@ class Correlator:
             raise ValueError(
                 "import_inbox_delivery requires command_type 'bridge.inbox.import'"
             )
-        if carrier.run_id != delivery.run_id:
-            raise ValueError("imported carrier run_id must match delivery run_id")
+        if impulse.run_id != delivery.run_id:
+            raise ValueError("imported impulse run_id must match delivery run_id")
         return await self._submit_bridge_delivery(
             "bridge_inbox",
             delivery,
             command,
             events=events,
-            carrier=carrier,
+            impulse=impulse,
         )
 
     async def get_inbox_delivery(
@@ -3633,7 +3829,7 @@ class Correlator:
         command: RuntimeCommand,
         *,
         events: Sequence[RuntimeEvent],
-        carrier: Carrier | None = None,
+        impulse: Impulse | None = None,
     ) -> CommandSubmission:
         _require_bridge_table(table)
         if command.run_id != delivery.run_id:
@@ -3657,9 +3853,40 @@ class Correlator:
                         replayed=True,
                     )
                 _require_run_row(connection, delivery.run_id)
+                if (
+                    command.command_type == "bridge.outbox.enqueue"
+                    and delivery.budget.spawned_runs is not None
+                ):
+                    # Enforced inside the enqueue transaction so concurrent
+                    # enqueues cannot race past the budget.
+                    spawned = {
+                        spawned_run_id
+                        for (spawned_run_id,) in connection.execute(
+                            """
+                            SELECT DISTINCT json_extract(target_ref, '$.run_id')
+                            FROM bridge_outbox
+                            WHERE run_id = ?
+                            """,
+                            (delivery.run_id,),
+                        )
+                        if spawned_run_id
+                    }
+                    if (
+                        delivery.target.run_id not in spawned
+                        and len(spawned) >= delivery.budget.spawned_runs
+                    ):
+                        raise FalaBudgetExceeded(
+                            "Bridge delivery exceeded spawned_runs budget",
+                            details={
+                                "run_id": delivery.run_id,
+                                "delivery_id": delivery.id,
+                                "spawned_runs": delivery.budget.spawned_runs,
+                                "spawned_run_ids": sorted(spawned),
+                            },
+                        )
                 _insert_runtime_command_row(connection, command)
-                if carrier is not None:
-                    _upsert_carrier_row(connection, carrier)
+                if impulse is not None:
+                    _upsert_impulse_row(connection, impulse)
                 _upsert_bridge_delivery_row(connection, table, delivery)
                 stored_events = _append_runtime_events(connection, command, events)
                 connection.commit()
@@ -3776,7 +4003,7 @@ class RuntimeBackendService:
         self,
         *,
         run_id: str,
-        status: CarrierRunStatus,
+        status: RunStatus,
         idempotency_key: str,
         reason: str | None = None,
         actor: str | None = None,
@@ -3807,7 +4034,7 @@ class RuntimeBackendService:
     ) -> tuple[Run, CommandSubmission]:
         return await self._set_run_status(
             run_id=run_id,
-            status=CarrierRunStatus.cancel_requested,
+            status=RunStatus.cancel_requested,
             command_type="run.cancel",
             event_type="run.cancel_requested",
             idempotency_key=idempotency_key,
@@ -3821,7 +4048,7 @@ class RuntimeBackendService:
         self,
         *,
         run_id: str,
-        status: CarrierRunStatus,
+        status: RunStatus,
         command_type: str,
         event_type: str,
         idempotency_key: str,
@@ -3870,51 +4097,51 @@ class RuntimeBackendService:
             events=[event],
         )
 
-    async def register_carrier_type(
+    async def register_impulse_type(
         self,
-        carrier_type: CarrierType,
+        impulse_type: ImpulseType,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[CarrierType, CommandSubmission]:
+    ) -> tuple[ImpulseType, CommandSubmission]:
         command = RuntimeCommand(
-            run_id=carrier_type.run_id,
-            command_type="carrier_type.register",
+            run_id=impulse_type.run_id,
+            command_type="impulse_type.register",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
-            payload={"carrier_type_id": carrier_type.id},
+            payload={"impulse_type_id": impulse_type.id},
         )
         event = RuntimeEvent(
-            run_id=carrier_type.run_id,
-            event_type="carrier_type.registered",
-            payload={"carrier_type_id": carrier_type.id},
+            run_id=impulse_type.run_id,
+            event_type="impulse_type.registered",
+            payload={"impulse_type_id": impulse_type.id},
         )
-        submission = await self.backend.register_carrier_type(
-            carrier_type,
+        submission = await self.backend.register_impulse_type(
+            impulse_type,
             command,
             events=[event],
         )
         if submission.replayed:
             existing_type_id = submission.command.payload.get(
-                "carrier_type_id",
-                carrier_type.id,
+                "impulse_type_id",
+                impulse_type.id,
             )
-            existing = await self.backend.get_carrier_type(
-                run_id=carrier_type.run_id,
-                carrier_type_id=str(existing_type_id),
+            existing = await self.backend.get_impulse_type(
+                run_id=impulse_type.run_id,
+                impulse_type_id=str(existing_type_id),
             )
             if existing is None:
                 raise ValueError(
-                    "Replayed carrier type command has no stored carrier type: "
+                    "Replayed impulse type command has no stored impulse type: "
                     f"{existing_type_id!r}"
             )
             return existing, submission
 
-        return carrier_type, submission
+        return impulse_type, submission
 
     async def accept_impulse(
         self,
@@ -3936,7 +4163,7 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=impulse.run_id,
-            carrier_id=impulse.id,  # note: event field carrier_id kept for now as FK name
+            impulse_id=impulse.id,  # note: event field impulse_id kept for now as FK name
             event_type="impulse.accepted",
             payload={"impulse_type": impulse.impulse_type},
         )
@@ -3960,18 +4187,18 @@ class RuntimeBackendService:
 
         return impulse, submission
 
-    async def record_carrier_relation(
+    async def record_impulse_relation(
         self,
-        relation: CarrierRelation,
+        relation: ImpulseRelation,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[CarrierRelation, CommandSubmission]:
+    ) -> tuple[ImpulseRelation, CommandSubmission]:
         command = RuntimeCommand(
             run_id=relation.run_id,
-            command_type="carrier_relation.record",
+            command_type="impulse_relation.record",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
@@ -3979,21 +4206,21 @@ class RuntimeBackendService:
             payload={
                 "relation_id": relation.id,
                 "relation_type": relation.relation_type,
-                "source_carrier_id": relation.source_carrier_id,
-                "target_carrier_id": relation.target_carrier_id,
+                "source_impulse_id": relation.source_impulse_id,
+                "target_impulse_id": relation.target_impulse_id,
             },
         )
         event = RuntimeEvent(
             run_id=relation.run_id,
-            carrier_id=relation.source_carrier_id,
-            event_type="carrier_relation.recorded",
+            impulse_id=relation.source_impulse_id,
+            event_type="impulse_relation.recorded",
             payload={
                 "relation_id": relation.id,
                 "relation_type": relation.relation_type,
-                "target_carrier_id": relation.target_carrier_id,
+                "target_impulse_id": relation.target_impulse_id,
             },
         )
-        submission = await self.backend.record_carrier_relation(
+        submission = await self.backend.record_impulse_relation(
             relation,
             command,
             events=[event],
@@ -4003,13 +4230,13 @@ class RuntimeBackendService:
                 "relation_id",
                 relation.id,
             )
-            existing = await self.backend.get_carrier_relation(
+            existing = await self.backend.get_impulse_relation(
                 run_id=relation.run_id,
                 relation_id=str(existing_relation_id),
             )
             if existing is None:
                 raise ValueError(
-                    "Replayed carrier relation command has no stored relation: "
+                    "Replayed impulse relation command has no stored relation: "
                     f"{existing_relation_id!r}"
             )
             return existing, submission
@@ -4018,102 +4245,103 @@ class RuntimeBackendService:
 
     async def record_association(
         self,
-        observation: Observation,
+        association: Association,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Observation, CommandSubmission]:
+    ) -> tuple[Association, CommandSubmission]:
         command = RuntimeCommand(
-            run_id=observation.run_id,
-            command_type="observation.record",
+            run_id=association.run_id,
+            command_type="association.record",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
-            payload={"observation_id": observation.id, "kind": observation.kind},
+            payload={"association_id": association.id, "kind": association.kind},
         )
         event = RuntimeEvent(
-            run_id=observation.run_id,
-            carrier_id=observation.carrier_id,
-            event_type="observation.recorded",
-            payload={"observation_id": observation.id, "kind": observation.kind},
+            run_id=association.run_id,
+            impulse_id=association.impulse_id,
+            event_type="association.recorded",
+            payload={"association_id": association.id, "kind": association.kind},
         )
         submission = await self.backend.record_association(
-            observation,
+            association,
             command,
             events=[event],
         )
         if submission.replayed:
             associations = await self.backend.list_associations(
-                run_id=observation.run_id,
-                carrier_id=observation.carrier_id,
+                run_id=association.run_id,
+                impulse_id=association.impulse_id,
             )
-            for existing in observations:
-                if existing.id == submission.command.payload.get("observation_id"):
+            for existing in associations:
+                if existing.id == submission.command.payload.get("association_id"):
                     return existing, submission
             raise ValueError(
-                "Replayed observation command has no stored observation: "
-                f"{submission.command.payload.get('observation_id')!r}"
+                "Replayed association command has no stored association: "
+                f"{submission.command.payload.get('association_id')!r}"
             )
 
-        return observation, submission
+        return association, submission
 
-    async def record_artifact(
+    async def record_reaction(
         self,
-        artifact: Artifact,
+        reaction: Reaction,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Artifact, CommandSubmission]:
+    ) -> tuple[Reaction, CommandSubmission]:
         command = RuntimeCommand(
-            run_id=artifact.run_id,
-            command_type="artifact.record",
+            run_id=reaction.run_id,
+            command_type="reaction.record",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
             payload={
-                "artifact_id": artifact.id,
-                "kind": artifact.kind,
-                "uri": artifact.uri,
+                "reaction_id": reaction.id,
+                "kind": reaction.kind,
+                "uri": reaction.uri,
             },
         )
         event = RuntimeEvent(
-            run_id=artifact.run_id,
-            carrier_id=artifact.carrier_id,
-            event_type="artifact.recorded",
+            run_id=reaction.run_id,
+            impulse_id=reaction.impulse_id,
+            event_type="reaction.recorded",
             payload={
-                "artifact_id": artifact.id,
-                "kind": artifact.kind,
-                "uri": artifact.uri,
+                "reaction_id": reaction.id,
+                "kind": reaction.kind,
+                "uri": reaction.uri,
+                "content_hash": reaction.content_hash,
             },
         )
-        submission = await self.backend.record_artifact(
-            artifact,
+        submission = await self.backend.record_reaction(
+            reaction,
             command,
             events=[event],
         )
         if submission.replayed:
-            existing_artifact_id = submission.command.payload.get(
-                "artifact_id",
-                artifact.id,
+            existing_reaction_id = submission.command.payload.get(
+                "reaction_id",
+                reaction.id,
             )
-            existing = await self.backend.get_artifact(
-                run_id=artifact.run_id,
-                artifact_id=str(existing_artifact_id),
+            existing = await self.backend.get_reaction(
+                run_id=reaction.run_id,
+                reaction_id=str(existing_reaction_id),
             )
             if existing is None:
                 raise ValueError(
-                    "Replayed artifact command has no stored artifact: "
-                    f"{existing_artifact_id!r}"
+                    "Replayed reaction command has no stored reaction: "
+                    f"{existing_reaction_id!r}"
                 )
             return existing, submission
 
-        return artifact, submission
+        return reaction, submission
 
     async def schedule_process(
         self,
@@ -4141,8 +4369,8 @@ class RuntimeBackendService:
                 )
             return existing, replay
         if process.status not in {
-            CarrierProcessStatus.pending,
-            CarrierProcessStatus.ready,
+            ProcessStatus.pending,
+            ProcessStatus.ready,
         }:
             raise ValueError(
                 "schedule_process requires process status 'pending' or 'ready'"
@@ -4157,13 +4385,13 @@ class RuntimeBackendService:
             payload={
                 "process_id": process.id,
                 "process_type": process.process_type,
-                "carrier_id": process.carrier_id,
+                "impulse_id": process.impulse_id,
                 "status": process.status.value,
             },
         )
         event = RuntimeEvent(
             run_id=process.run_id,
-            carrier_id=process.carrier_id,
+            impulse_id=process.impulse_id,
             process_id=process.id,
             event_type="process.scheduled",
             payload={
@@ -4212,7 +4440,7 @@ class RuntimeBackendService:
         )
         if replay is not None:
             return existing, replay
-        if existing.status != CarrierProcessStatus.pending:
+        if existing.status != ProcessStatus.pending:
             raise ValueError(
                 f"Process {process_id!r} cannot become ready from status: "
                 f"{existing.status.value}"
@@ -4228,7 +4456,7 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
-            carrier_id=existing.carrier_id,
+            impulse_id=existing.impulse_id,
             process_id=process_id,
             event_type="process.readied",
             payload={"process_id": process_id},
@@ -4236,7 +4464,7 @@ class RuntimeBackendService:
         return await self.backend.transition_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.ready,
+            status=ProcessStatus.ready,
             command=command,
             events=[event],
             input=input,
@@ -4248,11 +4476,13 @@ class RuntimeBackendService:
         worker_id: str,
         run_id: str | None = None,
         lease_seconds: float = 300.0,
+        all_runs: bool = False,
     ) -> Process | None:
         return await self.backend.claim_next_ready_process(
             worker_id=worker_id,
             run_id=run_id,
             lease_seconds=lease_seconds,
+            all_runs=all_runs,
         )
 
     async def complete_process(
@@ -4275,9 +4505,13 @@ class RuntimeBackendService:
         )
         if replay is not None:
             return existing, replay
-        if existing.status != CarrierProcessStatus.running:
+        if existing.status not in {
+            ProcessStatus.running,
+            ProcessStatus.waiting,
+        }:
             raise ValueError(
-                f"Process {process_id!r} is not running: {existing.status.value}"
+                f"Process {process_id!r} is not running or waiting: "
+                f"{existing.status.value}"
             )
         command = RuntimeCommand(
             run_id=run_id,
@@ -4290,15 +4524,23 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
-            carrier_id=existing.carrier_id,
+            impulse_id=existing.impulse_id,
             process_id=process_id,
             event_type="process.completed",
-            payload={"process_id": process_id},
+            # Attempt fingerprint: content addresses of what went in and what
+            # came out, so a replay can verify an execution without carrying
+            # the full payloads around.
+            payload={
+                "process_id": process_id,
+                "attempt": existing.attempt,
+                "input_digest": content_address_json(existing.input),
+                "output_digest": content_address_json(output or {}),
+            },
         )
         return await self.backend.transition_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.succeeded,
+            status=ProcessStatus.succeeded,
             command=command,
             events=[event],
             output=output,
@@ -4324,9 +4566,13 @@ class RuntimeBackendService:
         )
         if replay is not None:
             return existing, replay
-        if existing.status != CarrierProcessStatus.running:
+        if existing.status not in {
+            ProcessStatus.running,
+            ProcessStatus.waiting,
+        }:
             raise ValueError(
-                f"Process {process_id!r} is not running: {existing.status.value}"
+                f"Process {process_id!r} is not running or waiting: "
+                f"{existing.status.value}"
             )
         command = RuntimeCommand(
             run_id=run_id,
@@ -4339,15 +4585,20 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
-            carrier_id=existing.carrier_id,
+            impulse_id=existing.impulse_id,
             process_id=process_id,
             event_type="process.failed",
-            payload={"process_id": process_id},
+            payload={
+                "process_id": process_id,
+                "attempt": existing.attempt,
+                "input_digest": content_address_json(existing.input),
+                "error_digest": content_address_json(error or {}),
+            },
         )
         return await self.backend.transition_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.failed,
+            status=ProcessStatus.failed,
             command=command,
             events=[event],
             error=error,
@@ -4368,7 +4619,7 @@ class RuntimeBackendService:
             run_id=run_id,
             process_id=process_id,
             error=error,
-            status=CarrierProcessStatus.cancelled,
+            status=ProcessStatus.cancelled,
             command_type="process.cancel",
             event_type="process.cancelled",
             idempotency_key=idempotency_key,
@@ -4392,7 +4643,7 @@ class RuntimeBackendService:
             run_id=run_id,
             process_id=process_id,
             error=error,
-            status=CarrierProcessStatus.timed_out,
+            status=ProcessStatus.timed_out,
             command_type="process.timeout",
             event_type="process.timed_out",
             idempotency_key=idempotency_key,
@@ -4407,7 +4658,7 @@ class RuntimeBackendService:
         run_id: str,
         process_id: str,
         error: dict[str, Any] | None,
-        status: CarrierProcessStatus,
+        status: ProcessStatus,
         command_type: str,
         event_type: str,
         idempotency_key: str,
@@ -4439,25 +4690,25 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
-            carrier_id=existing.carrier_id,
+            impulse_id=existing.impulse_id,
             process_id=process_id,
             event_type=event_type,
             payload={"process_id": process_id},
         )
-        if status == CarrierProcessStatus.cancelled:
+        if status == ProcessStatus.cancelled:
             return await self.backend.transition_process(
                 run_id=run_id,
                 process_id=process_id,
-                status=CarrierProcessStatus.cancelled,
+                status=ProcessStatus.cancelled,
                 command=command,
                 events=[event],
                 error=error,
             )
-        if status == CarrierProcessStatus.timed_out:
+        if status == ProcessStatus.timed_out:
             return await self.backend.transition_process(
                 run_id=run_id,
                 process_id=process_id,
-                status=CarrierProcessStatus.timed_out,
+                status=ProcessStatus.timed_out,
                 command=command,
                 events=[event],
                 error=error,
@@ -4486,8 +4737,8 @@ class RuntimeBackendService:
         if replay is not None:
             return existing, replay
         if existing.status not in {
-            CarrierProcessStatus.running,
-            CarrierProcessStatus.failed,
+            ProcessStatus.running,
+            ProcessStatus.failed,
         }:
             raise ValueError(
                 f"Process {process_id!r} cannot be retried from status: "
@@ -4504,7 +4755,7 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
-            carrier_id=existing.carrier_id,
+            impulse_id=existing.impulse_id,
             process_id=process_id,
             event_type="process.retry_scheduled",
             payload={"process_id": process_id},
@@ -4512,7 +4763,7 @@ class RuntimeBackendService:
         return await self.backend.transition_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.retry_wait,
+            status=ProcessStatus.retry_wait,
             command=command,
             events=[event],
             available_at=available_at,
@@ -4539,7 +4790,7 @@ class RuntimeBackendService:
         )
         if replay is not None:
             return existing, replay
-        if existing.status != CarrierProcessStatus.running:
+        if existing.status != ProcessStatus.running:
             raise ValueError(
                 f"Process {process_id!r} cannot wait from status: "
                 f"{existing.status.value}"
@@ -4555,7 +4806,7 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=run_id,
-            carrier_id=existing.carrier_id,
+            impulse_id=existing.impulse_id,
             process_id=process_id,
             event_type="process.waiting",
             payload={"process_id": process_id},
@@ -4563,202 +4814,202 @@ class RuntimeBackendService:
         return await self.backend.transition_process(
             run_id=run_id,
             process_id=process_id,
-            status=CarrierProcessStatus.waiting,
+            status=ProcessStatus.waiting,
             command=command,
             events=[event],
             output=output,
         )
 
-    async def save_gate(
+    async def save_homeostat(
         self,
-        gate: Gate,
+        homeostat: Homeostat,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
+    ) -> tuple[Homeostat, CommandSubmission]:
         command = RuntimeCommand(
-            run_id=gate.run_id,
-            command_type="gate.save",
+            run_id=homeostat.run_id,
+            command_type="homeostat.save",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
-            payload={"gate_id": gate.id, "status": gate.status.value},
+            payload={"homeostat_id": homeostat.id, "status": homeostat.status.value},
         )
         event = RuntimeEvent(
-            run_id=gate.run_id,
-            carrier_id=gate.carrier_id,
-            event_type="gate.saved",
-            payload={"gate_id": gate.id, "status": gate.status.value},
+            run_id=homeostat.run_id,
+            impulse_id=homeostat.impulse_id,
+            event_type="homeostat.saved",
+            payload={"homeostat_id": homeostat.id, "status": homeostat.status.value},
         )
-        submission = await self.backend.save_gate(gate, command, events=[event])
+        submission = await self.backend.save_homeostat(homeostat, command, events=[event])
         if submission.replayed:
-            existing_gate_id = submission.command.payload.get("gate_id", gate.id)
-            existing = await self.backend.get_gate(
-                run_id=gate.run_id,
-                gate_id=str(existing_gate_id),
+            existing_homeostat_id = submission.command.payload.get("homeostat_id", homeostat.id)
+            existing = await self.backend.get_homeostat(
+                run_id=homeostat.run_id,
+                homeostat_id=str(existing_homeostat_id),
             )
             if existing is None:
                 raise ValueError(
-                    "Replayed gate command has no stored gate: "
-                    f"{existing_gate_id!r}"
+                    "Replayed homeostat command has no stored homeostat: "
+                    f"{existing_homeostat_id!r}"
                 )
             return existing, submission
 
-        return gate, submission
+        return homeostat, submission
 
-    async def open_gate(
+    async def open_homeostat(
         self,
-        gate: Gate,
+        homeostat: Homeostat,
         *,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        if gate.status != GateStatus.open:
-            raise ValueError("open_gate requires gate status 'open'")
-        existing = await self.backend.get_gate(run_id=gate.run_id, gate_id=gate.id)
+    ) -> tuple[Homeostat, CommandSubmission]:
+        if homeostat.status != HomeostatStatus.open:
+            raise ValueError("open_homeostat requires homeostat status 'open'")
+        existing = await self.backend.get_homeostat(run_id=homeostat.run_id, homeostat_id=homeostat.id)
         replay = await self._replayed_submission(
-            run_id=gate.run_id,
+            run_id=homeostat.run_id,
             idempotency_key=idempotency_key,
         )
         if replay is not None:
             if existing is None:
-                raise ValueError(f"Replayed gate open has no stored gate: {gate.id!r}")
+                raise ValueError(f"Replayed homeostat open has no stored homeostat: {homeostat.id!r}")
             return existing, replay
         if existing is not None:
-            raise ValueError(f"Gate already exists: {gate.id!r}")
+            raise ValueError(f"Homeostat already exists: {homeostat.id!r}")
         command = RuntimeCommand(
-            run_id=gate.run_id,
-            command_type="gate.open",
+            run_id=homeostat.run_id,
+            command_type="homeostat.open",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
-            payload={"gate_id": gate.id, "kind": gate.kind},
+            payload={"homeostat_id": homeostat.id, "kind": homeostat.kind},
         )
         event = RuntimeEvent(
-            run_id=gate.run_id,
-            carrier_id=gate.carrier_id,
-            event_type="gate.opened",
-            payload={"gate_id": gate.id, "kind": gate.kind},
+            run_id=homeostat.run_id,
+            impulse_id=homeostat.impulse_id,
+            event_type="homeostat.opened",
+            payload={"homeostat_id": homeostat.id, "kind": homeostat.kind},
         )
-        submission = await self.backend.save_gate(gate, command, events=[event])
+        submission = await self.backend.save_homeostat(homeostat, command, events=[event])
         if submission.replayed:
-            existing_gate_id = submission.command.payload.get("gate_id", gate.id)
-            existing = await self.backend.get_gate(
-                run_id=gate.run_id,
-                gate_id=str(existing_gate_id),
+            existing_homeostat_id = submission.command.payload.get("homeostat_id", homeostat.id)
+            existing = await self.backend.get_homeostat(
+                run_id=homeostat.run_id,
+                homeostat_id=str(existing_homeostat_id),
             )
             if existing is None:
                 raise ValueError(
-                    "Replayed gate open command has no stored gate: "
-                    f"{existing_gate_id!r}"
+                    "Replayed homeostat open command has no stored homeostat: "
+                    f"{existing_homeostat_id!r}"
                 )
             return existing, submission
 
-        return gate, submission
+        return homeostat, submission
 
-    async def complete_gate(
+    async def complete_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        return await self._finish_gate(
+    ) -> tuple[Homeostat, CommandSubmission]:
+        return await self._finish_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
+            homeostat_id=homeostat_id,
             values=values,
-            status=GateStatus.completed,
-            command_type="gate.complete",
-            event_type="gate.completed",
+            status=HomeostatStatus.completed,
+            command_type="homeostat.complete",
+            event_type="homeostat.completed",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
         )
 
-    async def cancel_gate(
+    async def cancel_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        return await self._finish_gate(
+    ) -> tuple[Homeostat, CommandSubmission]:
+        return await self._finish_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
+            homeostat_id=homeostat_id,
             values=values,
-            status=GateStatus.cancelled,
-            command_type="gate.cancel",
-            event_type="gate.cancelled",
+            status=HomeostatStatus.cancelled,
+            command_type="homeostat.cancel",
+            event_type="homeostat.cancelled",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
         )
 
-    async def expire_gate(
+    async def expire_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None = None,
         idempotency_key: str,
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
-    ) -> tuple[Gate, CommandSubmission]:
-        return await self._finish_gate(
+    ) -> tuple[Homeostat, CommandSubmission]:
+        return await self._finish_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
+            homeostat_id=homeostat_id,
             values=values,
-            status=GateStatus.expired,
-            command_type="gate.expire",
-            event_type="gate.expired",
+            status=HomeostatStatus.expired,
+            command_type="homeostat.expire",
+            event_type="homeostat.expired",
             idempotency_key=idempotency_key,
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
         )
 
-    async def _finish_gate(
+    async def _finish_homeostat(
         self,
         *,
         run_id: str,
-        gate_id: str,
+        homeostat_id: str,
         values: dict[str, Any] | None,
-        status: GateStatus,
+        status: HomeostatStatus,
         command_type: str,
         event_type: str,
         idempotency_key: str,
         actor: str | None,
         correlation_id: str | None,
         causation_id: str | None,
-    ) -> tuple[Gate, CommandSubmission]:
-        existing = await self.backend.get_gate(run_id=run_id, gate_id=gate_id)
+    ) -> tuple[Homeostat, CommandSubmission]:
+        existing = await self.backend.get_homeostat(run_id=run_id, homeostat_id=homeostat_id)
         if existing is None:
-            raise ValueError(f"Unknown gate: {gate_id!r}")
+            raise ValueError(f"Unknown homeostat: {homeostat_id!r}")
         replay = await self._replayed_submission(
             run_id=run_id,
             idempotency_key=idempotency_key,
         )
         if replay is not None:
             return existing, replay
-        if existing.status != GateStatus.open:
-            raise ValueError(f"Gate {gate_id!r} is not open: {existing.status.value}")
+        if existing.status != HomeostatStatus.open:
+            raise ValueError(f"Homeostat {homeostat_id!r} is not open: {existing.status.value}")
         command = RuntimeCommand(
             run_id=run_id,
             command_type=command_type,
@@ -4767,24 +5018,24 @@ class RuntimeBackendService:
             correlation_id=correlation_id,
             causation_id=causation_id,
             payload={
-                "gate_id": gate_id,
+                "homeostat_id": homeostat_id,
                 "status": status.value,
                 "value_keys": sorted((values or {}).keys()),
             },
         )
         event = RuntimeEvent(
             run_id=run_id,
-            carrier_id=existing.carrier_id,
+            impulse_id=existing.impulse_id,
             event_type=event_type,
             payload={
-                "gate_id": gate_id,
+                "homeostat_id": homeostat_id,
                 "status": status.value,
                 "value_keys": sorted((values or {}).keys()),
             },
         )
-        return await self.backend.transition_gate(
+        return await self.backend.transition_homeostat(
             run_id=run_id,
-            gate_id=gate_id,
+            homeostat_id=homeostat_id,
             status=status,
             command=command,
             events=[event],
@@ -4904,7 +5155,7 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=delivery.run_id,
-            carrier_id=delivery.carrier.id,
+            impulse_id=delivery.impulse.id,
             event_type="bridge.outbox.enqueued",
             payload=_bridge_event_payload(delivery),
         )
@@ -4939,14 +5190,14 @@ class RuntimeBackendService:
         delivery_key = idempotency_key or delivery.idempotency_key
         _validate_bridge_budget(delivery, next_attempt=True)
         imported_budget = _consume_bridge_budget(delivery.budget)
-        local_carrier = delivery.carrier.model_copy(
+        local_impulse = delivery.impulse.model_copy(
             update={
                 "run_id": delivery.target.run_id,
                 "metadata": {
-                    **delivery.carrier.metadata,
+                    **delivery.impulse.metadata,
                     "source_runtime_id": delivery.source.runtime.id,
                     "source_run_id": delivery.source.run_id,
-                    "source_carrier_id": delivery.carrier.id,
+                    "source_impulse_id": delivery.impulse.id,
                 },
                 "updated_at": _now(),
             }
@@ -4955,7 +5206,7 @@ class RuntimeBackendService:
             update={
                 "run_id": delivery.target.run_id,
                 "idempotency_key": delivery_key,
-                "carrier": local_carrier,
+                "impulse": local_impulse,
                 "status": BridgeDeliveryStatus.imported,
                 "attempts": delivery.attempts + 1,
                 "budget": imported_budget,
@@ -4973,13 +5224,13 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=imported.run_id,
-            carrier_id=imported.carrier.id,
+            impulse_id=imported.impulse.id,
             event_type="bridge.inbox.imported",
             payload=_bridge_event_payload(imported),
         )
         submission = await self.backend.import_inbox_delivery(
             imported,
-            local_carrier,
+            local_impulse,
             command,
             events=[event],
         )
@@ -5052,7 +5303,7 @@ class RuntimeBackendService:
         )
         event = RuntimeEvent(
             run_id=delivery.run_id,
-            carrier_id=delivery.carrier.id,
+            impulse_id=delivery.impulse.id,
             event_type="bridge.outbox.delivered",
             payload={
                 **_bridge_event_payload(delivered),
@@ -5083,30 +5334,30 @@ class RuntimeBackendService:
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
-    ) -> list[Observation]:
+        impulse_id: str | None = None,
+    ) -> list[Association]:
         return await self.backend.list_associations(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
         )
 
-    async def list_artifacts(
+    async def list_reactions(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         kind: str | None = None,
-    ) -> list[Artifact]:
-        return await self.backend.list_artifacts(
+    ) -> list[Reaction]:
+        return await self.backend.list_reactions(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             kind=kind,
         )
 
     async def list_runs(
         self,
         *,
-        status: CarrierRunStatus | None = None,
+        status: RunStatus | None = None,
         limit: int | None = None,
     ) -> list[Run]:
         return await self.backend.list_runs(status=status, limit=limit)
@@ -5115,7 +5366,7 @@ class RuntimeBackendService:
         self,
         *,
         before: datetime,
-        statuses: Sequence[CarrierRunStatus] | None = None,
+        statuses: Sequence[RunStatus] | None = None,
         dry_run: bool = True,
         keep_run_ids: set[str] | None = None,
     ) -> RuntimeRunRetentionPlan:
@@ -5166,22 +5417,22 @@ class RuntimeBackendService:
             runs=items,
         )
 
-    async def run_artifact_gc(
+    async def run_reaction_gc(
         self,
         *,
-        artifact_store: RuntimeArtifactStore | None = None,
+        reaction_store: RuntimeReactionStore | None = None,
         dry_run: bool = True,
-    ) -> RuntimeArtifactGcPlan:
-        if artifact_store is None:
-            return RuntimeArtifactGcPlan(dry_run=dry_run)
-        referenced = await _referenced_artifact_digests(self.backend)
+    ) -> RuntimeReactionGcPlan:
+        if reaction_store is None:
+            return RuntimeReactionGcPlan(dry_run=dry_run)
+        referenced = await _referenced_reaction_digests(self.backend)
         candidates = [
             blob
-            for digest, blob in sorted(artifact_store.blobs.items())
+            for digest, blob in sorted(reaction_store.blobs.items())
             if digest not in referenced
         ]
         deleted: list[str] = []
-        if not dry_run and artifact_store.root is not None:
+        if not dry_run and reaction_store.root is not None:
             for blob in candidates:
                 if blob.location is None:
                     continue
@@ -5189,11 +5440,11 @@ class RuntimeBackendService:
                 if path.exists() and path.is_file():
                     path.unlink()
                     deleted.append(blob.digest)
-        return RuntimeArtifactGcPlan(
+        return RuntimeReactionGcPlan(
             dry_run=dry_run,
-            artifact_root=str(artifact_store.root) if artifact_store.root is not None else None,
+            reaction_root=str(reaction_store.root) if reaction_store.root is not None else None,
             referenced_count=len(referenced),
-            blob_count=len(artifact_store.blobs),
+            blob_count=len(reaction_store.blobs),
             candidate_count=len(candidates),
             deleted_count=len(deleted),
             bytes_reclaimable=sum(blob.size_bytes for blob in candidates),
@@ -5209,7 +5460,7 @@ class RuntimeBackendService:
         keep_last: int | None = None,
         vacuum: bool = True,
         dry_run: bool = True,
-        artifact_store: RuntimeArtifactStore | None = None,
+        reaction_store: RuntimeReactionStore | None = None,
     ) -> RuntimeJournalMaintenancePlan:
         if older_than_days < 0:
             raise ValueError("older_than_days must be non-negative")
@@ -5232,8 +5483,8 @@ class RuntimeBackendService:
             dry_run=dry_run,
             keep_run_ids=keep_run_ids,
         )
-        artifact_gc = await self.run_artifact_gc(
-            artifact_store=artifact_store,
+        reaction_gc = await self.run_reaction_gc(
+            reaction_store=reaction_store,
             dry_run=dry_run,
         )
         vacuum_result = None
@@ -5246,10 +5497,10 @@ class RuntimeBackendService:
             keep_last=keep_last,
             vacuum=vacuum,
             retention=retention,
-            artifact_gc=artifact_gc,
+            reaction_gc=reaction_gc,
             vacuum_result=vacuum_result,
             runs_archived=retention.deleted_run_count,
-            bytes_reclaimed=artifact_gc.bytes_reclaimed
+            bytes_reclaimed=reaction_gc.bytes_reclaimed
             + int((vacuum_result or {}).get("bytes_reclaimed", 0)),
         )
 
@@ -5288,54 +5539,54 @@ class RuntimeBackendService:
         self,
         *,
         run_id: str,
-        status: CarrierProcessStatus | None = None,
-        carrier_id: str | None = None,
+        status: ProcessStatus | None = None,
+        impulse_id: str | None = None,
     ) -> list[Process]:
         return await self.backend.list_processes(
             run_id=run_id,
             status=status,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
         )
 
-    async def list_carriers(
+    async def list_impulses(
         self,
         *,
         run_id: str,
-        carrier_type: str | None = None,
+        impulse_type: str | None = None,
         limit: int | None = None,
-    ) -> list[Carrier]:
-        return await self.backend.list_carriers(
+    ) -> list[Impulse]:
+        return await self.backend.list_impulses(
             run_id=run_id,
-            carrier_type=carrier_type,
+            impulse_type=impulse_type,
             limit=limit,
         )
 
-    async def list_carrier_types(self, *, run_id: str) -> list[CarrierType]:
-        return await self.backend.list_carrier_types(run_id=run_id)
+    async def list_impulse_types(self, *, run_id: str) -> list[ImpulseType]:
+        return await self.backend.list_impulse_types(run_id=run_id)
 
-    async def list_carrier_relations(
+    async def list_impulse_relations(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
+        impulse_id: str | None = None,
         relation_type: str | None = None,
-    ) -> list[CarrierRelation]:
-        return await self.backend.list_carrier_relations(
+    ) -> list[ImpulseRelation]:
+        return await self.backend.list_impulse_relations(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             relation_type=relation_type,
         )
 
-    async def list_gates(
+    async def list_homeostats(
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
-        status: GateStatus | None = None,
-    ) -> list[Gate]:
-        return await self.backend.list_gates(
+        impulse_id: str | None = None,
+        status: HomeostatStatus | None = None,
+    ) -> list[Homeostat]:
+        return await self.backend.list_homeostats(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             status=status,
         )
 
@@ -5343,22 +5594,64 @@ class RuntimeBackendService:
         self,
         *,
         run_id: str,
-        carrier_id: str | None = None,
-    ) -> CarrierWaitGraphDiagnostic:
+        impulse_id: str | None = None,
+    ) -> WaitGraphDiagnostic:
         processes = await self.backend.list_processes(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
         )
-        gates = await self.backend.list_gates(run_id=run_id, carrier_id=carrier_id)
-        return _diagnose_carrier_waits(
+        homeostats = await self.backend.list_homeostats(run_id=run_id, impulse_id=impulse_id)
+        return _diagnose_impulse_waits(
             run_id=run_id,
-            carrier_id=carrier_id,
+            impulse_id=impulse_id,
             processes=processes,
-            gates=gates,
+            homeostats=homeostats,
         )
 
     async def list_projections(self, *, run_id: str) -> list[Projection]:
         return await self.backend.list_projections(run_id=run_id)
+
+    async def get_projection(
+        self,
+        *,
+        run_id: str,
+        name: str,
+    ) -> Projection | None:
+        projection = await self.backend.get_projection(run_id=run_id, name=name)
+        if projection is None:
+            return None
+        # Freshness is measured against domain events only: saving or
+        # rebuilding a projection journals its own projection.* event, which
+        # would otherwise mark every just-written projection stale.
+        events = await self.backend.list_events(run_id=run_id)
+        watermark = 0
+        for event in reversed(events):
+            if not event.event_type.startswith("projection."):
+                watermark = event.sequence
+                break
+        return projection.model_copy(
+            update={"stale": projection.source_event_sequence < watermark}
+        )
+
+    async def observe_run(self, *, run_id: str) -> RunBoundary:
+        run = await self.backend.get_run(run_id=run_id)
+        if run is None:
+            raise ValueError(f"Unknown run: {run_id!r}")
+        processes = await self.backend.list_processes(run_id=run_id)
+        counts: dict[str, int] = {}
+        for process in processes:
+            counts[process.status.value] = counts.get(process.status.value, 0) + 1
+        return RunBoundary(
+            run_id=run_id,
+            status=run.status,
+            derived_status=_derive_boundary_status(run.status, processes),
+            process_status_counts=dict(sorted(counts.items())),
+            event_watermark=await self._event_watermark(run_id=run_id),
+        )
+
+    async def _event_watermark(self, *, run_id: str) -> int:
+        events = await self.backend.list_events(run_id=run_id)
+        return events[-1].sequence if events else 0
 
     async def list_outbox_deliveries(
         self,
@@ -5395,7 +5688,7 @@ def _bridge_delivery_args(delivery: BridgeDelivery) -> tuple[Any, ...]:
         delivery.idempotency_key,
         _dumps(delivery.source.model_dump(mode="json")),
         _dumps(delivery.target.model_dump(mode="json")),
-        _dumps(delivery.carrier.model_dump(mode="json")),
+        _dumps(delivery.impulse.model_dump(mode="json")),
         _dumps(delivery.event_ref.model_dump(mode="json"))
         if delivery.event_ref is not None
         else None,
@@ -5412,7 +5705,7 @@ def _bridge_delivery_args(delivery: BridgeDelivery) -> tuple[Any, ...]:
 def _bridge_command_payload(delivery: BridgeDelivery) -> dict[str, Any]:
     payload = {
         "delivery_id": delivery.id,
-        "carrier_id": delivery.carrier.id,
+        "impulse_id": delivery.impulse.id,
         "source": delivery.source.model_dump(mode="json"),
         "target": delivery.target.model_dump(mode="json"),
         "pool_id": delivery.pool_id,
@@ -5439,17 +5732,21 @@ def _validate_bridge_budget(
     if delivery.status != BridgeDeliveryStatus.pending:
         return
     budget = delivery.budget
-    if budget.runtime_hops and budget.runtime_hops < 1:
+    if budget.runtime_hops is not None and budget.runtime_hops < 1:
         raise FalaBudgetExceeded(
             "Bridge delivery exceeded runtime hop budget",
             details={"delivery_id": delivery.id, "runtime_hops": budget.runtime_hops},
         )
-    if budget.carrier_count and budget.carrier_count < 1:
+    if budget.impulse_count is not None and budget.impulse_count < 1:
         raise FalaBudgetExceeded(
-            "Bridge delivery exceeded carrier budget",
-            details={"delivery_id": delivery.id, "carrier_count": budget.carrier_count},
+            "Bridge delivery exceeded impulse budget",
+            details={"delivery_id": delivery.id, "impulse_count": budget.impulse_count},
         )
-    if budget.attempts and next_attempt and delivery.attempts + 1 > budget.attempts:
+    if (
+        budget.attempts is not None
+        and next_attempt
+        and delivery.attempts + 1 > budget.attempts
+    ):
         raise FalaBudgetExceeded(
             "Bridge delivery exceeded attempt budget",
             details={
@@ -5463,19 +5760,19 @@ def _validate_bridge_budget(
 def _consume_bridge_budget(budget: RuntimeBudget) -> RuntimeBudget:
     return budget.model_copy(
         update={
-            "runtime_hops": budget.runtime_hops - 1
-            if budget.runtime_hops > 0
-            else 0,
-            "carrier_count": budget.carrier_count - 1
-            if budget.carrier_count > 0
-            else 0,
+            "runtime_hops": max(0, budget.runtime_hops - 1)
+            if budget.runtime_hops is not None
+            else None,
+            "impulse_count": max(0, budget.impulse_count - 1)
+            if budget.impulse_count is not None
+            else None,
         }
     )
 
 
 def _validate_run_status_transition(
-    current: CarrierRunStatus,
-    target: CarrierRunStatus,
+    current: RunStatus,
+    target: RunStatus,
 ) -> None:
     if current in _TERMINAL_RUN_STATUSES:
         raise ValueError(f"Run status {current.value!r} is terminal")
@@ -5497,7 +5794,7 @@ def _insert_run_row(connection: sqlite3.Connection, run: Run) -> None:
         """
         INSERT INTO runs (
             id, status, title, package_id, package_version,
-            package_digest, flow_id, flow_digest, runtime_version,
+            package_digest, correlation_path_id, correlation_path_digest, runtime_version,
             backend_version, schema_version, metadata, created_at,
             updated_at, started_at, finished_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -5531,144 +5828,144 @@ def _insert_runtime_command_row(
     )
 
 
-def _insert_carrier_type_row(
+def _insert_impulse_type_row(
     connection: sqlite3.Connection,
-    carrier_type: CarrierType,
+    impulse_type: ImpulseType,
 ) -> None:
     connection.execute(
         """
-        INSERT INTO carrier_types (
+        INSERT INTO impulse_types (
             run_id, id, title, description, media_types,
             value_schema_json, metadata, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            carrier_type.run_id,
-            carrier_type.id,
-            carrier_type.title,
-            carrier_type.description,
-            json.dumps(carrier_type.media_types),
-            _dumps(carrier_type.value_schema),
-            _dumps(carrier_type.metadata),
-            carrier_type.created_at.isoformat(),
-            carrier_type.updated_at.isoformat(),
+            impulse_type.run_id,
+            impulse_type.id,
+            impulse_type.title,
+            impulse_type.description,
+            json.dumps(impulse_type.media_types),
+            _dumps(impulse_type.value_schema),
+            _dumps(impulse_type.metadata),
+            impulse_type.created_at.isoformat(),
+            impulse_type.updated_at.isoformat(),
         ),
     )
 
 
-def _insert_carrier_row(connection: sqlite3.Connection, carrier: Carrier) -> None:
+def _insert_impulse_row(connection: sqlite3.Connection, impulse: Impulse) -> None:
     connection.execute(
         """
-        INSERT INTO carriers (
-            run_id, id, carrier_type, payload, metadata,
+        INSERT INTO impulses (
+            run_id, id, impulse_type, payload, metadata,
             created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            carrier.run_id,
-            carrier.id,
-            carrier.carrier_type,
-            _dumps(carrier.payload),
-            _dumps(carrier.metadata),
-            carrier.created_at.isoformat(),
-            carrier.updated_at.isoformat(),
+            impulse.run_id,
+            impulse.id,
+            impulse.impulse_type,
+            _dumps(impulse.payload),
+            _dumps(impulse.metadata),
+            impulse.created_at.isoformat(),
+            impulse.updated_at.isoformat(),
         ),
     )
 
 
-def _upsert_carrier_row(connection: sqlite3.Connection, carrier: Carrier) -> None:
+def _upsert_impulse_row(connection: sqlite3.Connection, impulse: Impulse) -> None:
     connection.execute(
         """
-        INSERT INTO carriers (
-            run_id, id, carrier_type, payload, metadata,
+        INSERT INTO impulses (
+            run_id, id, impulse_type, payload, metadata,
             created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id, id) DO UPDATE SET
-            carrier_type = excluded.carrier_type,
+            impulse_type = excluded.impulse_type,
             payload = excluded.payload,
             metadata = excluded.metadata,
             updated_at = excluded.updated_at
         """,
         (
-            carrier.run_id,
-            carrier.id,
-            carrier.carrier_type,
-            _dumps(carrier.payload),
-            _dumps(carrier.metadata),
-            carrier.created_at.isoformat(),
-            carrier.updated_at.isoformat(),
+            impulse.run_id,
+            impulse.id,
+            impulse.impulse_type,
+            _dumps(impulse.payload),
+            _dumps(impulse.metadata),
+            impulse.created_at.isoformat(),
+            impulse.updated_at.isoformat(),
         ),
     )
 
 
-def _insert_carrier_relation_row(
+def _insert_impulse_relation_row(
     connection: sqlite3.Connection,
-    relation: CarrierRelation,
+    relation: ImpulseRelation,
 ) -> None:
     connection.execute(
         """
-        INSERT INTO carrier_relations (
-            run_id, id, relation_type, source_carrier_id,
-            target_carrier_id, metadata, created_at
+        INSERT INTO impulse_relations (
+            run_id, id, relation_type, source_impulse_id,
+            target_impulse_id, metadata, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             relation.run_id,
             relation.id,
             relation.relation_type,
-            relation.source_carrier_id,
-            relation.target_carrier_id,
+            relation.source_impulse_id,
+            relation.target_impulse_id,
             _dumps(relation.metadata),
             relation.created_at.isoformat(),
         ),
     )
 
 
-def _insert_observation_row(
+def _insert_association_row(
     connection: sqlite3.Connection,
-    observation: Observation,
+    association: Association,
 ) -> None:
     connection.execute(
         """
-        INSERT INTO observations (
-            run_id, id, kind, carrier_id, values_json,
+        INSERT INTO associations (
+            run_id, id, kind, impulse_id, values_json,
             metadata, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            observation.run_id,
-            observation.id,
-            observation.kind,
-            observation.carrier_id,
-            _dumps(observation.values),
-            _dumps(observation.metadata),
-            observation.created_at.isoformat(),
+            association.run_id,
+            association.id,
+            association.kind,
+            association.impulse_id,
+            _dumps(association.values),
+            _dumps(association.metadata),
+            association.created_at.isoformat(),
         ),
     )
 
 
-def _insert_artifact_row(
+def _insert_reaction_row(
     connection: sqlite3.Connection,
-    artifact: Artifact,
+    reaction: Reaction,
 ) -> None:
     connection.execute(
         """
-        INSERT INTO artifacts (
-            run_id, id, kind, uri, carrier_id, media_type,
+        INSERT INTO reactions (
+            run_id, id, kind, uri, impulse_id, media_type,
             size_bytes, content_hash, metadata, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            artifact.run_id,
-            artifact.id,
-            artifact.kind,
-            artifact.uri,
-            artifact.carrier_id,
-            artifact.media_type,
-            artifact.size_bytes,
-            artifact.content_hash,
-            _dumps(artifact.metadata),
-            artifact.created_at.isoformat(),
+            reaction.run_id,
+            reaction.id,
+            reaction.kind,
+            reaction.uri,
+            reaction.impulse_id,
+            reaction.media_type,
+            reaction.size_bytes,
+            reaction.content_hash,
+            _dumps(reaction.metadata),
+            reaction.created_at.isoformat(),
         ),
     )
 
@@ -5677,7 +5974,7 @@ def _insert_process_row(connection: sqlite3.Connection, process: Process) -> Non
     connection.execute(
         """
         INSERT INTO processes (
-            run_id, id, process_type, carrier_id, status, priority,
+            run_id, id, process_type, impulse_id, status, priority,
             attempt, max_attempts, available_at, lease_owner,
             lease_expires_at, input_json, output_json, error_json,
             metadata, created_at, updated_at, started_at, finished_at
@@ -5687,24 +5984,24 @@ def _insert_process_row(connection: sqlite3.Connection, process: Process) -> Non
     )
 
 
-def _insert_gate_row(connection: sqlite3.Connection, gate: Gate) -> None:
+def _insert_homeostat_row(connection: sqlite3.Connection, homeostat: Homeostat) -> None:
     connection.execute(
         """
-        INSERT INTO gates (
-            run_id, id, kind, carrier_id, status,
+        INSERT INTO homeostats (
+            run_id, id, kind, impulse_id, status,
             values_json, metadata, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            gate.run_id,
-            gate.id,
-            gate.kind,
-            gate.carrier_id,
-            gate.status.value,
-            _dumps(gate.values),
-            _dumps(gate.metadata),
-            gate.created_at.isoformat(),
-            gate.updated_at.isoformat(),
+            homeostat.run_id,
+            homeostat.id,
+            homeostat.kind,
+            homeostat.impulse_id,
+            homeostat.status.value,
+            _dumps(homeostat.values),
+            _dumps(homeostat.metadata),
+            homeostat.created_at.isoformat(),
+            homeostat.updated_at.isoformat(),
         ),
     )
 
@@ -5719,14 +6016,14 @@ def _upsert_bridge_delivery_row(
         f"""
         INSERT INTO {table} (
             run_id, id, idempotency_key, source_ref, target_ref,
-            carrier_json, event_ref, pool_id, budget, status,
+            impulse_json, event_ref, pool_id, budget, status,
             attempts, metadata, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(run_id, id) DO UPDATE SET
             idempotency_key = excluded.idempotency_key,
             source_ref = excluded.source_ref,
             target_ref = excluded.target_ref,
-            carrier_json = excluded.carrier_json,
+            impulse_json = excluded.impulse_json,
             event_ref = excluded.event_ref,
             pool_id = excluded.pool_id,
             budget = excluded.budget,
@@ -5801,7 +6098,7 @@ def _append_runtime_events(
         connection.execute(
             """
             INSERT INTO runtime_events (
-                run_id, sequence, id, event_type, carrier_id,
+                run_id, sequence, id, event_type, impulse_id,
                 process_id, schema_version, command_id, actor,
                 correlation_id, causation_id, payload, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -5811,7 +6108,7 @@ def _append_runtime_events(
                 stored_event.sequence,
                 stored_event.id,
                 stored_event.event_type,
-                stored_event.carrier_id,
+                stored_event.impulse_id,
                 stored_event.process_id,
                 stored_event.schema_version,
                 stored_event.command_id,
@@ -5881,9 +6178,9 @@ def _build_run_summary_projection(
         ).fetchone()[0]
     )
     resource_accounting = {
-        "artifact_bytes": _int_scalar(
+        "reaction_bytes": _int_scalar(
             connection,
-            "SELECT COALESCE(SUM(size_bytes), 0) FROM artifacts WHERE run_id = ?",
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM reactions WHERE run_id = ?",
             (run_id,),
         ),
         "bridge_command_count": _int_scalar(
@@ -5912,7 +6209,15 @@ def _build_run_summary_projection(
             "SELECT COALESCE(SUM(LENGTH(output_json)), 0) FROM processes WHERE run_id = ?",
             (run_id,),
         ),
-        "spawned_run_count": 0,
+        "spawned_run_count": _int_scalar(
+            connection,
+            """
+            SELECT COUNT(DISTINCT json_extract(target_ref, '$.run_id'))
+            FROM bridge_outbox
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ),
         "subprocess_count": _int_scalar(
             connection,
             """
@@ -5924,24 +6229,24 @@ def _build_run_summary_projection(
         ),
     }
     data = {
-        "artifact_count": _count_rows(connection, "artifacts", run_id),
-        "carrier_count": _count_rows(connection, "carriers", run_id),
-        "carrier_type_counts": _group_counts(
+        "reaction_count": _count_rows(connection, "reactions", run_id),
+        "impulse_count": _count_rows(connection, "impulses", run_id),
+        "impulse_type_counts": _group_counts(
             connection,
-            table="carriers",
-            column="carrier_type",
+            table="impulses",
+            column="impulse_type",
             run_id=run_id,
         ),
         "event_count": sum(event_type_counts.values()),
         "event_type_counts": event_type_counts,
-        "gate_count": _count_rows(connection, "gates", run_id),
-        "gate_status_counts": _group_counts(
+        "homeostat_count": _count_rows(connection, "homeostats", run_id),
+        "homeostat_status_counts": _group_counts(
             connection,
-            table="gates",
+            table="homeostats",
             column="status",
             run_id=run_id,
         ),
-        "observation_count": _count_rows(connection, "observations", run_id),
+        "association_count": _count_rows(connection, "associations", run_id),
         "process_count": _count_rows(connection, "processes", run_id),
         "process_status_counts": _group_counts(
             connection,
@@ -5963,31 +6268,31 @@ def _build_run_summary_projection(
     )
 
 
-def _diagnose_carrier_waits(
+def _diagnose_impulse_waits(
     *,
     run_id: str,
-    carrier_id: str | None,
+    impulse_id: str | None,
     processes: Sequence[Process],
-    gates: Sequence[Gate],
-) -> CarrierWaitGraphDiagnostic:
+    homeostats: Sequence[Homeostat],
+) -> WaitGraphDiagnostic:
     processes_by_id = {process.id: process for process in processes}
-    gates_by_id = {gate.id: gate for gate in gates}
+    homeostats_by_id = {homeostat.id: homeostat for homeostat in homeostats}
     buckets: dict[str, list[str]] = {
-        status.value: [] for status in CarrierProcessStatus
+        status.value: [] for status in ProcessStatus
     }
     for process in sorted(processes, key=lambda item: item.id):
         buckets[process.status.value].append(process.id)
 
-    open_gates = sorted(
-        gate.id for gate in gates if gate.status == GateStatus.open
+    open_homeostats = sorted(
+        homeostat.id for homeostat in homeostats if homeostat.status == HomeostatStatus.open
     )
     wait_edges: dict[str, list[str]] = {}
-    blocked: list[CarrierWaitDiagnosticIssue] = []
+    blocked: list[WaitDiagnosticIssue] = []
 
     for process in sorted(processes, key=lambda item: item.id):
-        if process.status == CarrierProcessStatus.retry_wait:
+        if process.status == ProcessStatus.retry_wait:
             blocked.append(
-                CarrierWaitDiagnosticIssue(
+                WaitDiagnosticIssue(
                     process_id=process.id,
                     status=process.status,
                     reason="retry_wait",
@@ -5995,20 +6300,20 @@ def _diagnose_carrier_waits(
                 )
             )
             continue
-        if process.status != CarrierProcessStatus.waiting:
+        if process.status != ProcessStatus.waiting:
             continue
 
-        process_dependencies = _carrier_wait_refs(
+        process_dependencies = _impulse_wait_refs(
             process,
             "wait_for_processes",
             "wait_for_process_ids",
             "blocked_by_processes",
         )
-        gate_dependencies = _carrier_wait_refs(
+        homeostat_dependencies = _impulse_wait_refs(
             process,
-            "wait_for_gates",
-            "wait_for_gate_ids",
-            "blocked_by_gates",
+            "wait_for_homeostats",
+            "wait_for_homeostat_ids",
+            "blocked_by_homeostats",
         )
         blocked_by: list[str] = []
         dependency_statuses: dict[str, str | None] = {}
@@ -6020,22 +6325,22 @@ def _diagnose_carrier_waits(
                 dependency.status.value if dependency is not None else None
             )
             dependency_statuses[dependency_id] = dependency_status
-            if dependency is None or dependency.status != CarrierProcessStatus.succeeded:
+            if dependency is None or dependency.status != ProcessStatus.succeeded:
                 blocked_by.append(dependency_id)
                 process_edges.append(dependency_id)
 
-        for gate_id in gate_dependencies:
-            gate = gates_by_id.get(gate_id)
-            gate_status = gate.status.value if gate is not None else None
-            key = f"gate:{gate_id}"
-            dependency_statuses[key] = gate_status
-            if gate is None or gate.status != GateStatus.completed:
+        for homeostat_id in homeostat_dependencies:
+            homeostat = homeostats_by_id.get(homeostat_id)
+            homeostat_status = homeostat.status.value if homeostat is not None else None
+            key = f"homeostat:{homeostat_id}"
+            dependency_statuses[key] = homeostat_status
+            if homeostat is None or homeostat.status != HomeostatStatus.completed:
                 blocked_by.append(key)
 
         if process_edges:
             wait_edges[process.id] = process_edges
         blocked.append(
-            CarrierWaitDiagnosticIssue(
+            WaitDiagnosticIssue(
                 process_id=process.id,
                 status=process.status,
                 reason="waiting"
@@ -6046,29 +6351,29 @@ def _diagnose_carrier_waits(
             )
         )
 
-    deadlocks = _carrier_wait_cycles(wait_edges)
-    return CarrierWaitGraphDiagnostic(
+    deadlocks = _impulse_wait_cycles(wait_edges)
+    return WaitGraphDiagnostic(
         run_id=run_id,
-        carrier_id=carrier_id,
+        impulse_id=impulse_id,
         deadlocked=bool(deadlocks),
         deadlocks=deadlocks,
         wait_edges=wait_edges,
         blocked=blocked,
-        open_gates=open_gates,
-        pending=buckets[CarrierProcessStatus.pending.value],
-        ready=buckets[CarrierProcessStatus.ready.value],
-        running=buckets[CarrierProcessStatus.running.value],
-        waiting=buckets[CarrierProcessStatus.waiting.value],
-        retry_wait=buckets[CarrierProcessStatus.retry_wait.value],
-        succeeded=buckets[CarrierProcessStatus.succeeded.value],
-        failed=buckets[CarrierProcessStatus.failed.value],
-        cancel_requested=buckets[CarrierProcessStatus.cancel_requested.value],
-        cancelled=buckets[CarrierProcessStatus.cancelled.value],
-        timed_out=buckets[CarrierProcessStatus.timed_out.value],
+        open_homeostats=open_homeostats,
+        pending=buckets[ProcessStatus.pending.value],
+        ready=buckets[ProcessStatus.ready.value],
+        running=buckets[ProcessStatus.running.value],
+        waiting=buckets[ProcessStatus.waiting.value],
+        retry_wait=buckets[ProcessStatus.retry_wait.value],
+        succeeded=buckets[ProcessStatus.succeeded.value],
+        failed=buckets[ProcessStatus.failed.value],
+        cancel_requested=buckets[ProcessStatus.cancel_requested.value],
+        cancelled=buckets[ProcessStatus.cancelled.value],
+        timed_out=buckets[ProcessStatus.timed_out.value],
     )
 
 
-def _carrier_wait_refs(process: Process, *keys: str) -> list[str]:
+def _impulse_wait_refs(process: Process, *keys: str) -> list[str]:
     values: list[str] = []
     for source in (process.input, process.metadata):
         for key in keys:
@@ -6080,7 +6385,7 @@ def _carrier_wait_refs(process: Process, *keys: str) -> list[str]:
     return list(dict.fromkeys(values))
 
 
-def _carrier_wait_cycles(edges: dict[str, list[str]]) -> list[list[str]]:
+def _impulse_wait_cycles(edges: dict[str, list[str]]) -> list[list[str]]:
     cycles: list[list[str]] = []
     seen: set[tuple[str, ...]] = set()
     path: list[str] = []
@@ -6120,8 +6425,8 @@ def _run_args(run: Run) -> tuple[Any, ...]:
         run.package_id,
         run.package_version,
         run.package_digest,
-        run.flow_id,
-        run.flow_digest,
+        run.correlation_path_id,
+        run.correlation_path_digest,
         run.runtime_version,
         run.backend_version,
         run.schema_version,
@@ -6136,13 +6441,13 @@ def _run_args(run: Run) -> tuple[Any, ...]:
 def _run_from_row(row: sqlite3.Row) -> Run:
     return Run(
         id=row["id"],
-        status=CarrierRunStatus(row["status"]),
+        status=RunStatus(row["status"]),
         title=row["title"],
         package_id=row["package_id"],
         package_version=row["package_version"],
         package_digest=row["package_digest"],
-        flow_id=row["flow_id"],
-        flow_digest=row["flow_digest"],
+        correlation_path_id=row["correlation_path_id"],
+        correlation_path_digest=row["correlation_path_digest"],
         runtime_version=row["runtime_version"],
         backend_version=row["backend_version"],
         schema_version=row["schema_version"],
@@ -6162,7 +6467,7 @@ def _runtime_pool_args(pool: RuntimePool) -> tuple[Any, ...]:
             sort_keys=True,
             separators=(",", ":"),
         ),
-        json.dumps(pool.carrier_types, sort_keys=True, separators=(",", ":")),
+        json.dumps(pool.impulse_types, sort_keys=True, separators=(",", ":")),
         _dumps(pool.metadata),
     )
 
@@ -6171,7 +6476,7 @@ def _runtime_pool_from_row(row: sqlite3.Row) -> RuntimePool:
     return RuntimePool(
         id=row["id"],
         runtimes=_loads_runtime_refs(row["runtimes_json"]),
-        carrier_types=_loads_str_list(row["carrier_types"]),
+        impulse_types=_loads_str_list(row["impulse_types"]),
         metadata=_loads(row["metadata"]),
     )
 
@@ -6180,7 +6485,7 @@ def _delegation_policy_args(policy: DelegationPolicy) -> tuple[Any, ...]:
     return (
         policy.id,
         policy.pool_id,
-        json.dumps(policy.carrier_types, sort_keys=True, separators=(",", ":")),
+        json.dumps(policy.impulse_types, sort_keys=True, separators=(",", ":")),
         _dumps(policy.budget.model_dump(mode="json")),
         _dumps(policy.metadata),
     )
@@ -6190,7 +6495,7 @@ def _delegation_policy_from_row(row: sqlite3.Row) -> DelegationPolicy:
     return DelegationPolicy(
         id=row["id"],
         pool_id=row["pool_id"],
-        carrier_types=_loads_str_list(row["carrier_types"]),
+        impulse_types=_loads_str_list(row["impulse_types"]),
         budget=RuntimeBudget.model_validate(_loads(row["budget"])),
         metadata=_loads(row["metadata"]),
     )
@@ -6201,7 +6506,7 @@ def _process_args(process: Process) -> tuple[Any, ...]:
         process.run_id,
         process.id,
         process.process_type,
-        process.carrier_id,
+        process.impulse_id,
         process.status.value,
         process.priority,
         process.attempt,
@@ -6227,8 +6532,8 @@ def _process_from_row(row: sqlite3.Row) -> Process:
         id=row["id"],
         run_id=row["run_id"],
         process_type=row["process_type"],
-        carrier_id=row["carrier_id"],
-        status=CarrierProcessStatus(row["status"]),
+        impulse_id=row["impulse_id"],
+        status=ProcessStatus(row["status"]),
         priority=row["priority"],
         attempt=row["attempt"],
         max_attempts=row["max_attempts"],
@@ -6252,7 +6557,7 @@ def _impulse_from_row(row: sqlite3.Row) -> Impulse:
     return Impulse(
         id=row["id"],
         run_id=row["run_id"],
-        impulse_type=row["carrier_type"],
+        impulse_type=row["impulse_type"],
         payload=_loads(row["payload"]),
         metadata=_loads(row["metadata"]),
         created_at=_dt(row["created_at"]),
@@ -6260,8 +6565,8 @@ def _impulse_from_row(row: sqlite3.Row) -> Impulse:
     )
 
 
-def _carrier_type_from_row(row: sqlite3.Row) -> CarrierType:
-    return CarrierType(
+def _impulse_type_from_row(row: sqlite3.Row) -> ImpulseType:
+    return ImpulseType(
         id=row["id"],
         run_id=row["run_id"],
         title=row["title"],
@@ -6274,13 +6579,13 @@ def _carrier_type_from_row(row: sqlite3.Row) -> CarrierType:
     )
 
 
-def _carrier_relation_from_row(row: sqlite3.Row) -> CarrierRelation:
-    return CarrierRelation(
+def _impulse_relation_from_row(row: sqlite3.Row) -> ImpulseRelation:
+    return ImpulseRelation(
         id=row["id"],
         run_id=row["run_id"],
         relation_type=row["relation_type"],
-        source_carrier_id=row["source_carrier_id"],
-        target_carrier_id=row["target_carrier_id"],
+        source_impulse_id=row["source_impulse_id"],
+        target_impulse_id=row["target_impulse_id"],
         metadata=_loads(row["metadata"]),
         created_at=_dt(row["created_at"]),
     )
@@ -6306,7 +6611,7 @@ def _event_from_row(row: sqlite3.Row) -> RuntimeEvent:
         run_id=row["run_id"],
         event_type=row["event_type"],
         schema_version=row["schema_version"],
-        carrier_id=row["carrier_id"],
+        impulse_id=row["impulse_id"],
         process_id=row["process_id"],
         sequence=row["sequence"],
         command_id=row["command_id"],
@@ -6318,25 +6623,25 @@ def _event_from_row(row: sqlite3.Row) -> RuntimeEvent:
     )
 
 
-def _observation_from_row(row: sqlite3.Row) -> Observation:
-    return Observation(
+def _association_from_row(row: sqlite3.Row) -> Association:
+    return Association(
         id=row["id"],
         run_id=row["run_id"],
         kind=row["kind"],
-        carrier_id=row["carrier_id"],
+        impulse_id=row["impulse_id"],
         values=_loads(row["values_json"]),
         metadata=_loads(row["metadata"]),
         created_at=_dt(row["created_at"]),
     )
 
 
-def _artifact_from_row(row: sqlite3.Row) -> Artifact:
-    return Artifact(
+def _reaction_from_row(row: sqlite3.Row) -> Reaction:
+    return Reaction(
         id=row["id"],
         run_id=row["run_id"],
         kind=row["kind"],
         uri=row["uri"],
-        carrier_id=row["carrier_id"],
+        impulse_id=row["impulse_id"],
         media_type=row["media_type"],
         size_bytes=row["size_bytes"],
         content_hash=row["content_hash"],
@@ -6350,7 +6655,7 @@ def _homeostat_from_row(row: sqlite3.Row) -> Homeostat:
         id=row["id"],
         run_id=row["run_id"],
         kind=row["kind"],
-        carrier_id=row["carrier_id"],
+        impulse_id=row["impulse_id"],
         status=HomeostatStatus(row["status"]),
         values=_loads(row["values_json"]),
         metadata=_loads(row["metadata"]),
@@ -6378,7 +6683,7 @@ def _bridge_delivery_from_row(row: sqlite3.Row) -> BridgeDelivery:
         idempotency_key=row["idempotency_key"],
         source=RunRef.model_validate(_loads(row["source_ref"])),
         target=RunRef.model_validate(_loads(row["target_ref"])),
-        carrier=Carrier.model_validate(_loads(row["carrier_json"])),
+        impulse=Impulse.model_validate(_loads(row["impulse_json"])),
         event_ref=EventRef.model_validate(_loads(row["event_ref"]))
         if row["event_ref"] is not None
         else None,
@@ -6393,44 +6698,44 @@ def _bridge_delivery_from_row(row: sqlite3.Row) -> BridgeDelivery:
 
 
 _TERMINAL_RUN_STATUSES = (
-    CarrierRunStatus.completed,
-    CarrierRunStatus.failed,
-    CarrierRunStatus.cancelled,
-    CarrierRunStatus.timed_out,
+    RunStatus.completed,
+    RunStatus.failed,
+    RunStatus.cancelled,
+    RunStatus.timed_out,
 )
 
 
-async def _referenced_artifact_digests(backend: RuntimeBackend) -> set[str]:
+async def _referenced_reaction_digests(backend: RuntimeBackend) -> set[str]:
     digests: set[str] = set()
     for run in await backend.list_runs():
-        for artifact in await backend.list_artifacts(run_id=run.id):
-            digest = artifact.content_hash
+        for reaction in await backend.list_reactions(run_id=run.id):
+            digest = reaction.content_hash
             if digest and digest.startswith("sha256:"):
                 digest = digest.removeprefix("sha256:")
-            if not digest and artifact.uri.startswith("fala-artifact://sha256/"):
-                digest = artifact.uri.rsplit("/", 1)[-1]
+            if not digest and reaction.uri.startswith("fala-reaction://sha256/"):
+                digest = reaction.uri.rsplit("/", 1)[-1]
             if digest:
                 digests.add(digest.lower())
     return digests
 
 
 __all__ = [
-    "Artifact",
+    "Reaction",
     "BridgeDelivery",
     "BridgeDeliveryStatus",
-    "CarrierProcessStatus",
+    "ProcessStatus",
     "Impulse",
-    "CarrierRunStatus",
-    "CarrierRelation",
-    "CarrierType",
-    "CarrierWaitDiagnosticIssue",
-    "CarrierWaitGraphDiagnostic",
+    "RunStatus",
+    "ImpulseRelation",
+    "ImpulseType",
+    "WaitDiagnosticIssue",
+    "WaitGraphDiagnostic",
     "CommandSubmission",
     "DelegationPolicy",
     "EventRef",
-    "Gate",
-    "GateStatus",
-    "Observation",
+    "Homeostat",
+    "HomeostatStatus",
+    "Association",
     "Process",
     "Projection",
     "RuntimeBackend",
@@ -6441,6 +6746,7 @@ __all__ = [
     "RuntimePool",
     "RuntimeRef",
     "Run",
+    "RunBoundary",
     "RunRef",
     "SQLITE_RUNTIME_SCHEMA_VERSION",
     "Correlator",

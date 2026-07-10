@@ -102,9 +102,9 @@ class CacheTests(unittest.TestCase):
         rendered = json.loads(render_cache_stats_json(self.cache_dir))
         self.assertEqual(rendered["misses"], 1)
         summary = warm_cache_summary(4, self.cache_dir)
-        self.assertEqual(summary["processed_documents"], 4)
+        self.assertEqual(summary["processed_impulses"], 4)
         rendered_summary = json.loads(render_warm_cache_summary(4, self.cache_dir))
-        self.assertEqual(rendered_summary["processed_documents"], 4)
+        self.assertEqual(rendered_summary["processed_impulses"], 4)
 
     def test_stats_file_round_trips_through_model(self) -> None:
         record_cache_hit(self.cache_dir)

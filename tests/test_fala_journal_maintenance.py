@@ -11,16 +11,16 @@ SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from fala.carrier_runtime import FalaRuntime
+from fala.runtime import AutonomousCorrelator
 from fala.runtime_backend import (
-    Artifact,
-    CarrierRunStatus,
+    Reaction,
+    RunStatus,
     Run,
-    RuntimeArtifactBlob,
-    RuntimeArtifactStore,
+    RuntimeReactionBlob,
+    RuntimeReactionStore,
     RuntimeBackendService,
     RuntimeCommand,
-    SQLiteRuntimeBackend,
+    Correlator,
 )
 
 
@@ -28,10 +28,10 @@ class TestJournalMaintenance(unittest.TestCase):
     def test_maintain_journal_dry_run_has_no_side_effects(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "runtime.db"
-            service = RuntimeBackendService(SQLiteRuntimeBackend(db_path))
+            service = RuntimeBackendService(Correlator(db_path))
 
             async def run() -> tuple[object, object | None]:
-                old_run = Run(id="old", status=CarrierRunStatus.completed)
+                old_run = Run(id="old", status=RunStatus.completed)
                 await service.create_run(
                     old_run,
                     idempotency_key="old:create",
@@ -55,12 +55,12 @@ class TestJournalMaintenance(unittest.TestCase):
     def test_maintain_journal_deletes_old_terminal_runs_and_vacuums(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "runtime.db"
-            service = RuntimeBackendService(SQLiteRuntimeBackend(db_path))
+            service = RuntimeBackendService(Correlator(db_path))
 
             async def run() -> tuple[object, object | None, object | None]:
                 for run_id in ("old", "new"):
                     await service.create_run(
-                        Run(id=run_id, status=CarrierRunStatus.completed),
+                        Run(id=run_id, status=RunStatus.completed),
                         idempotency_key=f"{run_id}:create",
                         actor="test",
                     )
@@ -91,12 +91,12 @@ class TestJournalMaintenance(unittest.TestCase):
     def test_keep_last_preserves_most_recent_terminal_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "runtime.db"
-            service = RuntimeBackendService(SQLiteRuntimeBackend(db_path))
+            service = RuntimeBackendService(Correlator(db_path))
 
             async def run() -> tuple[object | None, object | None, object | None]:
                 for run_id in ("old_1", "old_2", "old_3"):
                     await service.create_run(
-                        Run(id=run_id, status=CarrierRunStatus.completed),
+                        Run(id=run_id, status=RunStatus.completed),
                         idempotency_key=f"{run_id}:create",
                         actor="test",
                     )
@@ -124,10 +124,10 @@ class TestJournalMaintenance(unittest.TestCase):
             self.assertIsNone(old_2)
             self.assertIsNotNone(old_3)
 
-    def test_artifact_gc_removes_unreferenced_blobs(self) -> None:
+    def test_reaction_gc_removes_unreferenced_blobs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "runtime.db"
-            blob_dir = Path(tmp) / "artifacts" / "blobs" / "sha256"
+            blob_dir = Path(tmp) / "reactions" / "blobs" / "sha256"
             referenced_digest = "a" * 64
             orphan_digest = "b" * 64
             referenced_path = blob_dir / referenced_digest[:2] / referenced_digest
@@ -136,48 +136,48 @@ class TestJournalMaintenance(unittest.TestCase):
             orphan_path.parent.mkdir(parents=True, exist_ok=True)
             referenced_path.write_bytes(b"keep")
             orphan_path.write_bytes(b"delete")
-            store = RuntimeArtifactStore(
-                root=Path(tmp) / "artifacts",
+            store = RuntimeReactionStore(
+                root=Path(tmp) / "reactions",
                 blobs={
-                    referenced_digest: RuntimeArtifactBlob(referenced_digest, 4, str(referenced_path)),
-                    orphan_digest: RuntimeArtifactBlob(orphan_digest, 6, str(orphan_path)),
+                    referenced_digest: RuntimeReactionBlob(referenced_digest, 4, str(referenced_path)),
+                    orphan_digest: RuntimeReactionBlob(orphan_digest, 6, str(orphan_path)),
                 },
             )
-            service = RuntimeBackendService(SQLiteRuntimeBackend(db_path))
+            service = RuntimeBackendService(Correlator(db_path))
 
             async def run() -> object:
                 await service.create_run(
-                    Run(id="run", status=CarrierRunStatus.completed),
+                    Run(id="run", status=RunStatus.completed),
                     idempotency_key="run:create",
                     actor="test",
                 )
-                await service.record_artifact(
-                    Artifact(
-                        id="artifact_keep",
+                await service.record_reaction(
+                    Reaction(
+                        id="reaction_keep",
                         run_id="run",
                         kind="text",
-                        uri=f"fala-artifact://sha256/{referenced_digest}",
+                        uri=f"fala-reaction://sha256/{referenced_digest}",
                         content_hash=f"sha256:{referenced_digest}",
                     ),
-                    idempotency_key="artifact:record",
+                    idempotency_key="reaction:record",
                     actor="test",
                 )
                 return await service.maintain_journal(
                     older_than_days=1.0,
                     dry_run=False,
                     vacuum=False,
-                    artifact_store=store,
+                    reaction_store=store,
                 )
 
             plan = asyncio.run(run())
             self.assertTrue(referenced_path.exists())
             self.assertFalse(orphan_path.exists())
-            self.assertEqual(plan.artifact_gc.deleted_count, 1)
+            self.assertEqual(plan.reaction_gc.deleted_count, 1)
             self.assertEqual(plan.bytes_reclaimed, 6)
 
     def test_embedded_facade_exposes_maintain_journal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            runtime = FalaRuntime.sqlite(Path(tmp) / "runtime.db")
+            runtime = AutonomousCorrelator.sqlite(Path(tmp) / "runtime.db")
 
             async def run() -> object:
                 return await runtime.maintain_journal(older_than_days=1.0, dry_run=True)

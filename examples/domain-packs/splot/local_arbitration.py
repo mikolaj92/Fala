@@ -5,19 +5,19 @@ import json
 import sys
 from pathlib import Path
 
-from fala.carrier_runtime import FalaRuntime
+from fala.runtime import AutonomousCorrelator
 from fala.runtime_backend import Run
 from fala.domain_packs.splot import (
     SplotArbitrationCase,
-    carrier_from_case,
+    impulse_from_case,
     case_projection,
-    jurisdiction_observation,
-    review_gate,
+    jurisdiction_association,
+    review_homeostat,
 )
 
 
 async def main(db_path: Path) -> dict:
-    runtime = FalaRuntime.sqlite(db_path)
+    runtime = AutonomousCorrelator.sqlite(db_path)
     await runtime.create_run(
         Run(id="run_splot", title="Splot arbitration example"),
         idempotency_key="run_splot:create",
@@ -30,7 +30,7 @@ async def main(db_path: Path) -> dict:
         amount=1200,
         currency="EUR",
         rules="splot-fast-track",
-        artifacts=[
+        reactions=[
             {
                 "id": "statement",
                 "kind": "claim_statement",
@@ -38,37 +38,37 @@ async def main(db_path: Path) -> dict:
             }
         ],
     )
-    carrier = carrier_from_case(case, run_id="run_splot")
-    await runtime.accept_carrier(
-        carrier,
-        idempotency_key="run_splot:carrier.accept:splot_case_1",
+    impulse = impulse_from_case(case, run_id="run_splot")
+    await runtime.accept_impulse(
+        impulse,
+        idempotency_key="run_splot:impulse.accept:splot_case_1",
     )
-    await runtime.record_observation(
-        jurisdiction_observation(
-            carrier,
+    await runtime.record_association(
+        jurisdiction_association(
+            impulse,
             admissible=True,
             reason="contract clause present",
         ),
-        idempotency_key="run_splot:observation.jurisdiction:splot_case_1",
+        idempotency_key="run_splot:association.jurisdiction:splot_case_1",
     )
-    gate, _ = await runtime.open_gate(
-        review_gate(carrier),
-        idempotency_key="run_splot:gate.review:splot_case_1",
+    homeostat, _ = await runtime.open_homeostat(
+        review_homeostat(impulse),
+        idempotency_key="run_splot:homeostat.review:splot_case_1",
     )
-    await runtime.complete_gate(
-        run_id=carrier.run_id,
-        gate_id=gate.id,
+    await runtime.complete_homeostat(
+        run_id=impulse.run_id,
+        homeostat_id=homeostat.id,
         values={"decision": "approved"},
-        idempotency_key="run_splot:gate.review.complete:splot_case_1",
+        idempotency_key="run_splot:homeostat.review.complete:splot_case_1",
     )
     await runtime.save_projection(
-        case_projection(carrier),
+        case_projection(impulse),
         idempotency_key="run_splot:projection.case:splot_case_1",
     )
     events = await runtime.list_events(run_id="run_splot")
     return {
         "db": str(db_path),
-        "carrier_type": carrier.carrier_type,
+        "impulse_type": impulse.impulse_type,
         "event_types": [event.event_type for event in events],
     }
 

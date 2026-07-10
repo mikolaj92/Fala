@@ -5,21 +5,21 @@ the core CLI or public schemas.
 
 Migration mapping:
 
-- `Document` -> `Carrier`
-- `DocumentType` -> `CarrierType`
-- `DocumentRelation` -> `CarrierRelation`
-- `DocumentRegistry` -> carrier package/domain pack definitions
-- document workflow -> information flow
+- `Document` -> `Impulse`
+- `DocumentType` -> `ImpulseType`
+- `DocumentRelation` -> `ImpulseRelation`
+- `DocumentRegistry` -> fala package/domain pack definitions
+- document workflow -> information correlation path
 
 Document-specific behavior belongs in `fala.domain_packs.documents`. New package
-YAML must use `carrier_types`, `carrier_relations`, observations, artifacts,
-capabilities, flows, and runtime config.
+YAML must use `impulse_types`, `impulse_relations`, associations, reactions,
+capabilities, correlation_paths, and runtime config.
 
 Recommended migration order:
 
-1. Convert package YAML to the Carrier schema.
+1. Convert package YAML to the Impulse schema.
 2. Move document-specific code into the document domain pack.
-3. Replace document CLI usage with Carrier CLI commands.
+3. Replace document CLI usage with Impulse CLI commands.
 4. Rebuild SQLite state with the Fala runtime schema.
-5. Recreate tests around carriers, observations, artifacts, events, gates, and
+5. Recreate tests around impulses, associations, reactions, events, homeostats, and
    projections.

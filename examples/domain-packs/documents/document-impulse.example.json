@@ -10,9 +10,9 @@
   "metadata": {
     "tenant": "demo"
   },
-  "artifacts": [
+  "reactions": [
     {
-      "id": "artifact_pdf",
+      "id": "reaction_pdf",
       "kind": "pdf",
       "uri": "file:///tmp/invoice.pdf"
     }
