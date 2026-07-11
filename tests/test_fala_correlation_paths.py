@@ -136,6 +136,7 @@ class FalaCorrelationPathInstantiationTests(unittest.TestCase):
                 "correlation_path_id": "run_correlation_path:correlation_path_main",
                 "correlation_path_spec_id": "correlation_path_main",
                 "effector_id": "root",
+                "seq": 0,
                 "conduction": [],
                 "accumulate_upstream_reactions": False,
             },
@@ -149,6 +150,34 @@ class FalaCorrelationPathInstantiationTests(unittest.TestCase):
         self.assertEqual(approval.status, ProcessStatus.pending)
         self.assertIsNone(approval.input["adapter"]["timeout_seconds"])
 
+    def test_instantiate_correlation_path_respects_max_attempts_by_effector(self) -> None:
+        correlation_path = CorrelationPathSpec(
+            id="correlation_path_ma",
+            effectors=[
+                _python_effector("root"),
+                _python_effector("dependent", conduction=["root"]),
+            ],
+        )
+
+        async def scenario(root: Path) -> CorrelationPathInstance:
+            service = await _service(root, "run_ma")
+            return await instantiate_correlation_path(
+                service,
+                run_id="run_ma",
+                correlation_path=correlation_path,
+                max_attempts=1,
+                max_attempts_by_effector={"dependent": 5},
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            instance = asyncio.run(scenario(Path(tmp_dir)))
+
+        by_effector = {
+            process.metadata["correlation_path"]["effector_id"]: process
+            for process in instance.processes
+        }
+        self.assertEqual(by_effector["root"].max_attempts, 1)
+        self.assertEqual(by_effector["dependent"].max_attempts, 5)
     def test_instantiate_correlation_path_resolves_python_placeholder(self) -> None:
         def _subprocess_effector(effector_id: str, command: list[str]) -> EffectorSpec:
             return EffectorSpec(
@@ -329,6 +358,7 @@ class FalaAdvanceCorrelationPathTests(unittest.TestCase):
                 run_id="run_advance",
                 correlation_path=_two_effector_correlation_path(),
                 effector_inputs={"first": {"value": 4}},
+                auto_advance=False,
             )
             first = instance.processes[0]
             claimed = await service.claim_next_ready_process(worker_id="tester", all_runs=True)
@@ -506,6 +536,7 @@ class FalaAdvanceCorrelationPathTests(unittest.TestCase):
                 run_id="run_failed",
                 correlation_path=_two_effector_correlation_path(),
                 effector_inputs={"first": {"value": 4}},
+                auto_advance=False,
             )
             claimed = await service.claim_next_ready_process(worker_id="tester", all_runs=True)
             assert claimed is not None
@@ -561,6 +592,153 @@ class FalaAdvanceCorrelationPathTests(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 asyncio.run(scenario(Path(tmp_dir)))
             self.assertIn("unknown effector", str(ctx.exception))
+    def test_advance_correlation_path_injects_regulation_from_marker(self) -> None:
+        async def scenario_ready(root: Path) -> dict[str, Any]:
+            service = await _service(root, "run_reg_ready")
+            instance = await instantiate_correlation_path(
+                service,
+                run_id="run_reg_ready",
+                correlation_path=_two_effector_correlation_path(),
+                effector_inputs={"first": {"value": 4}},
+                regulation_by_effector={"second": {"entropy": 0.42, "damping": "high"}},
+                auto_advance=False,
+            )
+            first = instance.processes[0]
+            await service.claim_next_ready_process(worker_id="tester", all_runs=True)
+            await service.complete_process(
+                run_id="run_reg_ready",
+                process_id=first.id,
+                output={"value": 8},
+                idempotency_key=f"run_reg_ready:process.complete:{first.id}:1",
+                actor="tester",
+            )
+            await advance_correlation_path(
+                service,
+                run_id="run_reg_ready",
+                correlation_path_id=instance.correlation_path_id,
+            )
+            second = await service.backend.get_process(
+                run_id="run_reg_ready",
+                process_id="run_reg_ready:correlation_path_pair:second",
+            )
+            assert second is not None
+            return second.input.get("regulation") or {}
+
+        async def scenario_dead(root: Path) -> dict[str, Any]:
+            service = await _service(root, "run_reg_dead")
+            instance = await instantiate_correlation_path(
+                service,
+                run_id="run_reg_dead",
+                correlation_path=_two_effector_correlation_path(),
+                effector_inputs={"first": {"value": 4}},
+                # default auto_advance=True so the atomic dead-cancellation fires on fail(first)
+            )
+            first = instance.processes[0]
+            # schedule a fresh pending that depends on first, carrying regulation in its marker
+            await service.schedule_process(
+                Process(
+                    id="run_reg_dead:correlation_path_pair:third",
+                    run_id="run_reg_dead",
+                    process_type="python_function",
+                    status=ProcessStatus.pending,
+                    input={"adapter": {"kind": "python_function", "ref": "tests.test_fala_correlation_paths._correlation_path_double"}},
+                    metadata={
+                        "correlation_path": {
+                            "correlation_path_id": instance.correlation_path_id,
+                            "effector_id": "third",
+                            "conduction": ["first"],
+                            "regulation": {"entropy": 0.7, "damping": "kill"},
+                        }
+                    },
+                ),
+                idempotency_key="run_reg_dead:process.schedule:correlation_path_pair:third",
+            )
+            # claim and fail the upstream -> transition_process should atomically dead-cancel third
+            # and embed the regulation from third's marker into the cancel error
+            claimed = await service.claim_next_ready_process(worker_id="tester", all_runs=True)
+            assert claimed is not None and claimed.id == first.id
+            await service.fail_process(
+                run_id="run_reg_dead",
+                process_id=first.id,
+                error={"message": "boom"},
+                idempotency_key=f"run_reg_dead:process.fail:{first.id}:1",
+                actor="tester",
+            )
+            third = await service.backend.get_process(run_id="run_reg_dead", process_id="run_reg_dead:correlation_path_pair:third")
+            assert third is not None
+            return (third.error or {})
+
+        with tempfile.TemporaryDirectory() as tmp_dir_ready:
+            reg_ready = asyncio.run(scenario_ready(Path(tmp_dir_ready)))
+        with tempfile.TemporaryDirectory() as tmp_dir_dead:
+            reg_dead = asyncio.run(scenario_dead(Path(tmp_dir_dead)))
+        self.assertEqual(reg_ready, {"entropy": 0.42, "damping": "high"})
+        self.assertIn("regulation", reg_dead)
+        self.assertEqual(reg_dead["regulation"], {"entropy": 0.7, "damping": "kill"})
+
+    def test_advance_correlation_path_propagates_regulation_and_dynamic_max_attempts(self) -> None:
+        """Regulation from marker is injected, propagated via conduction, and
+        regulation["max_attempts"] overrides the downstream process retry budget.
+        This is the core quantitative damping / variety control mechanism.
+        """
+        async def scenario(root: Path) -> tuple[dict[str, Any], int, int]:
+            service = await _service(root, "run_reg_dyn")
+            instance = await instantiate_correlation_path(
+                service,
+                run_id="run_reg_dyn",
+                correlation_path=_two_effector_correlation_path(),
+                effector_inputs={"first": {"value": 1}},
+                # Give downstream a regulation payload that both carries metadata
+                # and asks for higher retry budget (damping signal).
+                regulation_by_effector={
+                    "second": {
+                        "entropy": 0.13,
+                        "damping": "aggressive",
+                        "max_attempts": 4,
+                    }
+                },
+                max_attempts=1,  # global default is low
+                auto_advance=True,
+            )
+            first = instance.processes[0]
+            # complete first -> atomic ready of second (with regulation + override)
+            await service.claim_next_ready_process(worker_id="tester", all_runs=True)
+            await service.complete_process(
+                run_id="run_reg_dyn",
+                process_id=first.id,
+                output={"value": 2},
+                idempotency_key=f"run_reg_dyn:process.complete:{first.id}:1",
+                actor="tester",
+            )
+            second = await service.backend.get_process(
+                run_id="run_reg_dyn",
+                process_id="run_reg_dyn:correlation_path_pair:second",
+            )
+            assert second is not None
+            reg = second.input.get("regulation") or {}
+            # claim the ready downstream (regulation already injected at atomic ready)
+            claimed = await service.claim_next_ready_process(worker_id="tester", all_runs=True)
+            assert claimed is not None and claimed.id == second.id
+            # now fail it; with override=4 it should still have attempts left (attempt becomes 1)
+            await service.fail_process(
+                run_id="run_reg_dyn",
+                process_id=second.id,
+                error={"message": "transient"},
+                idempotency_key=f"run_reg_dyn:process.fail:{second.id}:1",
+                actor="tester",
+            )
+            second_after = await service.backend.get_process(
+                run_id="run_reg_dyn",
+                process_id=second.id,
+            )
+            assert second_after is not None
+            return (reg, second.max_attempts, second_after.attempt)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            reg, ma_at_ready, attempt_after_one_fail = asyncio.run(scenario(Path(tmp_dir)))
+        self.assertEqual(reg, {"entropy": 0.13, "damping": "aggressive", "max_attempts": 4})
+        self.assertEqual(ma_at_ready, 4)  # overridden from global 1
+        # with max_attempts=4 it is still eligible for retry (not yet exhausted)
 
     def test_advance_correlation_path_for_process_ignores_non_correlation_path_processes(self) -> None:
         async def scenario(root: Path) -> CorrelationPathAdvance | None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import tempfile
 import unittest
@@ -38,6 +39,30 @@ def _boom(request) -> dict:
 def _echo_config(request) -> dict:
     return {"scaled": request.config.get("scale", 0) * request.input["value"]}
 
+def _flaky_double(request) -> dict:
+    # module-level so it is importable via "tests.test_fala_run_correlation_path._flaky_double"
+    # for the python_function adapter.
+    # The test wraps call counting via a mutable container passed in input.
+    # Supports two modes for cross-boundary counting:
+    # - list (in-process mutation, e.g. direct service calls)
+    # - str|Path (file-backed JSON int, survives across run_correlation_path invocations)
+    state = request.input.get("__flaky_state__", [0])
+    if isinstance(state, (str, Path)):
+        p = Path(state)
+        try:
+            n = int(json.loads(p.read_text() or "0"))
+        except Exception:
+            n = 0
+        n += 1
+        p.write_text(json.dumps(n))
+        calls = n
+    else:
+        # list or other mutable container
+        state[0] += 1
+        calls = state[0]
+    if calls == 1:
+        raise RuntimeError("transient failure (first call)")
+    return {"value": request.input["value"] * 2}
 
 def _effector(effector_id: str, ref: str, *, conduction: list[str] | None = None) -> EffectorSpec:
     return EffectorSpec(
@@ -261,6 +286,59 @@ class RunCorrelationPathTests(unittest.TestCase):
         self.assertEqual(result.status, RunStatus.timed_out)
         self.assertEqual(stored.status, RunStatus.timed_out)
 
+    def test_run_correlation_path_respects_regulation_max_attempts_damping(self) -> None:
+        """End-to-end: regulation_by_effector + regulation["max_attempts"] lets a
+        transiently failing effector retry and eventually succeed, even when the
+        global max_attempts would have killed it. This is quantitative damping
+        (Mazur/Kossecki) realized in the conduction graph.
+        """
+        correlation_path = CorrelationPathSpec(
+            id="correlation_path_flaky",
+            effectors=[
+                _effector("flaky", "tests.test_fala_run_correlation_path._flaky_double"),
+            ],
+        )
+
+        async def scenario(root: Path):
+            service = _bare_service(root)
+            # Use a file-backed counter so the module-level _flaky_double can observe
+            # call count across Process serialization (driver + python_function adapter).
+            counter_path = root / "flaky_calls.json"
+            counter_path.write_text("0")
+            result = await run_correlation_path(
+                service,
+                run=Run(id="rf_damp"),
+                correlation_path=correlation_path,
+                worker_id="tester",
+                effector_inputs={
+                    "flaky": {
+                        "value": 7,
+                        "__flaky_state__": str(counter_path),
+                    }
+                },
+                # Global default (1) is insufficient; regulation overrides per-effector.
+                regulation_by_effector={"flaky": {"max_attempts": 3, "note": "damping active"}},
+            )
+            stored = await service.backend.get_process(
+                run_id="rf_damp",
+                process_id=f"{result.correlation_path.correlation_path_id}:flaky",
+            )
+            calls = int(json.loads(counter_path.read_text() or "0"))
+            return result, stored, calls
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result, stored, calls = asyncio.run(scenario(Path(tmp_dir)))
+
+        self.assertEqual(result.status, RunStatus.completed)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.status, ProcessStatus.succeeded)
+        self.assertEqual(stored.output["value"], 14)
+        self.assertEqual(stored.max_attempts, 3)  # regulation overrode global 1
+        self.assertGreaterEqual(calls, 2)  # at least one retry happened (fail once, succeed once)
+        # Schedule-time injection: regulation dict must be visible in the root effector input
+        # (roots are ready at birth; downstreams receive it on ready via advance).
+        self.assertIn("regulation", stored.input or {})
+        self.assertEqual(stored.input.get("regulation"), {"max_attempts": 3, "note": "damping active"})
     def test_run_correlation_path_marks_run_waiting_when_a_homeostat_parks_the_correlation_path(self) -> None:
         correlation_path = CorrelationPathSpec(
             id="correlation_path_homeostat",

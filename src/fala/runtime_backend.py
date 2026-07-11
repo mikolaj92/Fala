@@ -12,9 +12,10 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+from jsonschema import Draft202012Validator, ValidationError as JsonSchemaValidationError
 
 from fala.reactions import content_address_json
-from fala.errors import FalaBudgetExceeded
+from fala.errors import FalaBudgetExceeded, FalaValidationError
 
 
 def _new_id(prefix: str) -> str:
@@ -308,6 +309,7 @@ class Process(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    output_schema: dict[str, Any] = Field(default_factory=dict)
 
 
 class HomeostatStatus(StrEnum):
@@ -327,6 +329,8 @@ class Homeostat(BaseModel):
     status: HomeostatStatus = HomeostatStatus.open
     values: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    attempt: int = Field(default=0, ge=0)
+    max_attempts: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -1130,6 +1134,7 @@ class Correlator:
                     updated_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT,
+                    output_schema_json TEXT NOT NULL DEFAULT '{}',
                     PRIMARY KEY (run_id, id),
                     FOREIGN KEY (run_id, impulse_id)
                         REFERENCES impulses (run_id, id)
@@ -2373,8 +2378,8 @@ class Correlator:
                         run_id, id, process_type, impulse_id, status, priority,
                         attempt, max_attempts, available_at, lease_owner,
                         lease_expires_at, input_json, output_json, error_json,
-                        metadata, created_at, updated_at, started_at, finished_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        metadata, output_schema_json, created_at, updated_at, started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(run_id, id) DO UPDATE SET
                         process_type = excluded.process_type,
                         impulse_id = excluded.impulse_id,
@@ -2389,6 +2394,7 @@ class Correlator:
                         output_json = excluded.output_json,
                         error_json = excluded.error_json,
                         metadata = excluded.metadata,
+                        output_schema_json = excluded.output_schema_json,
                         created_at = excluded.created_at,
                         updated_at = excluded.updated_at,
                         started_at = excluded.started_at,
@@ -2446,6 +2452,12 @@ class Correlator:
                 ):
                     raise ValueError(f"Process already exists: {process.id!r}")
 
+                # Validate correlation_path marker if present (LUKA3: catch bad conduction metadata
+                # at persistence boundary, not only at CorrelationPathSpec parse time).
+                cp_marker = process.metadata.get("correlation_path")
+                if isinstance(cp_marker, dict):
+                    from fala.correlation_paths import _validate_correlation_path_marker
+                    _validate_correlation_path_marker(cp_marker, process_id=process.id)
                 _insert_runtime_command_row(connection, command)
                 _insert_process_row(connection, process)
                 stored_events = _append_runtime_events(connection, command, events)
@@ -2940,6 +2952,158 @@ class Correlator:
                             process_id,
                         ),
                     )
+                    # Atomic correlation_path advance: ready dependent pending effectors
+                    # in the *same* transaction as this success. This eliminates the
+                    # race between complete_process and a later advance_correlation_path
+                    # call (the previous non-atomic pattern). Downstream readies use the
+                    # canonical idempotency key so explicit advance later replays as no-op.
+                    marker = process.metadata.get("correlation_path") or {}
+                    cp_id = marker.get("correlation_path_id")
+                    auto_advance = marker.get("auto_advance", True)
+                    if cp_id and isinstance(cp_id, str) and auto_advance:
+                        all_proc_rows = connection.execute(
+                            "SELECT * FROM processes WHERE run_id = ?",
+                            (run_id,),
+                        ).fetchall()
+                        all_procs = [_process_from_row(r) for r in all_proc_rows]
+                        try:
+                            from fala.correlation_paths import compute_correlation_path_readies
+                            readies = compute_correlation_path_readies(all_procs, cp_id)
+                        except Exception:
+                            # Bad metadata should not fail the effector completion itself.
+                            readies = []
+                        for dep_id, new_input in readies:
+                            ready_idem = f"process.ready:{dep_id}"
+                            existing_ready = connection.execute(
+                                """
+                                SELECT 1 FROM runtime_commands
+                                WHERE run_id = ? AND idempotency_key = ?
+                                """,
+                                (run_id, ready_idem),
+                            ).fetchone()
+                            if existing_ready is not None:
+                                continue
+                            ready_cmd = RuntimeCommand(
+                                run_id=run_id,
+                                command_type="process.ready",
+                                idempotency_key=ready_idem,
+                                actor=command.actor,
+                                correlation_id=command.correlation_id,
+                                causation_id=command.id,
+                                payload={"process_id": dep_id},
+                            )
+                            ready_evt = RuntimeEvent(
+                                run_id=run_id,
+                                impulse_id=process.impulse_id,
+                                process_id=dep_id,
+                                event_type="process.readied",
+                                payload={"process_id": dep_id},
+                            )
+                            _insert_runtime_command_row(connection, ready_cmd)
+                            reg = (new_input or {}).get("regulation") or {}
+                            ma_override = reg.get("max_attempts") if isinstance(reg, dict) else None
+                            if ma_override is not None:
+                                connection.execute(
+                                    """
+                                    UPDATE processes
+                                    SET status = ?,
+                                        input_json = ?,
+                                        max_attempts = ?,
+                                        updated_at = ?
+                                    WHERE run_id = ? AND id = ?
+                                    """,
+                                    (
+                                        ProcessStatus.ready.value,
+                                        _dumps(new_input),
+                                        int(ma_override),
+                                        now.isoformat(),
+                                        run_id,
+                                        dep_id,
+                                    ),
+                                )
+                            else:
+                                connection.execute(
+                                    """
+                                    UPDATE processes
+                                    SET status = ?,
+                                        input_json = ?,
+                                        updated_at = ?
+                                    WHERE run_id = ? AND id = ?
+                                    """,
+                                    (
+                                        ProcessStatus.ready.value,
+                                        _dumps(new_input),
+                                        now.isoformat(),
+                                        run_id,
+                                        dep_id,
+                                    ),
+                                )
+                            _append_runtime_events(connection, ready_cmd, [ready_evt])
+                    # Atomic dead-upstream cancellation: pending downstreams whose
+                    # conduction can never be satisfied are cancelled in the same tx
+                    cp_marker = process.metadata.get("correlation_path") or {}
+                    cp_id = cp_marker.get("correlation_path_id")
+                    auto_advance = cp_marker.get("auto_advance", True)
+                    if cp_id and isinstance(cp_id, str) and auto_advance:
+                        all_proc_rows = connection.execute(
+                            "SELECT * FROM processes WHERE run_id = ?",
+                            (run_id,),
+                        ).fetchall()
+                        all_procs = [_process_from_row(r) for r in all_proc_rows]
+                        try:
+                            from fala.correlation_paths import compute_correlation_path_dead_cancellations
+                            cancels = compute_correlation_path_dead_cancellations(all_procs, cp_id)
+                        except Exception:
+                            cancels = []
+                        for dep_id, err in cancels:
+                            cancel_idem = f"process.cancel:{dep_id}:dead"
+                            existing_c = connection.execute(
+                                """
+                                SELECT 1 FROM runtime_commands
+                                WHERE run_id = ? AND idempotency_key = ?
+                                """,
+                                (run_id, cancel_idem),
+                            ).fetchone()
+                            if existing_c is not None:
+                                continue
+                            cancel_cmd = RuntimeCommand(
+                                run_id=run_id,
+                                command_type="process.cancel",
+                                idempotency_key=cancel_idem,
+                                actor=command.actor,
+                                correlation_id=command.correlation_id,
+                                causation_id=command.id,
+                                payload={"process_id": dep_id},
+                            )
+                            cancel_evt = RuntimeEvent(
+                                run_id=run_id,
+                                impulse_id=process.impulse_id,
+                                process_id=dep_id,
+                                event_type="process.cancelled",
+                                payload={"process_id": dep_id, "reason": "dead_upstream"},
+                            )
+                            _insert_runtime_command_row(connection, cancel_cmd)
+                            connection.execute(
+                                """
+                                UPDATE processes
+                                SET status = ?,
+                                    lease_owner = NULL,
+                                    lease_expires_at = NULL,
+                                    error_json = ?,
+                                    updated_at = ?,
+                                    finished_at = ?
+                                WHERE run_id = ? AND id = ?
+                                """,
+                                (
+                                    ProcessStatus.cancelled.value,
+                                    _dumps(err),
+                                    now.isoformat(),
+                                    now.isoformat(),
+                                    run_id,
+                                    dep_id,
+                                ),
+                            )
+                            _append_runtime_events(connection, cancel_cmd, [cancel_evt])
                 elif status == ProcessStatus.retry_wait:
                     if process.status not in {
                         ProcessStatus.running,
@@ -3013,22 +3177,45 @@ class Correlator:
                             f"Process {process_id!r} cannot become ready from "
                             f"status: {process.status.value}"
                         )
-                    connection.execute(
-                        """
-                        UPDATE processes
-                        SET status = ?,
-                            input_json = ?,
-                            updated_at = ?
-                        WHERE run_id = ? AND id = ?
-                        """,
-                        (
-                            ProcessStatus.ready.value,
-                            _dumps(input if input is not None else process.input),
-                            now.isoformat(),
-                            run_id,
-                            process_id,
-                        ),
-                    )
+                    ready_input = input if input is not None else process.input
+                    reg = (ready_input or {}).get("regulation") or {}
+                    ma_override = reg.get("max_attempts") if isinstance(reg, dict) else None
+                    if ma_override is not None:
+                        connection.execute(
+                            """
+                            UPDATE processes
+                            SET status = ?,
+                                input_json = ?,
+                                max_attempts = ?,
+                                updated_at = ?
+                            WHERE run_id = ? AND id = ?
+                            """,
+                            (
+                                ProcessStatus.ready.value,
+                                _dumps(ready_input),
+                                int(ma_override),
+                                now.isoformat(),
+                                run_id,
+                                process_id,
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            UPDATE processes
+                            SET status = ?,
+                                input_json = ?,
+                                updated_at = ?
+                            WHERE run_id = ? AND id = ?
+                            """,
+                            (
+                                ProcessStatus.ready.value,
+                                _dumps(ready_input),
+                                now.isoformat(),
+                                run_id,
+                                process_id,
+                            ),
+                        )
                 else:
                     if process.status in _TERMINAL_PROCESS_STATUSES:
                         raise ValueError(
@@ -3457,10 +3644,15 @@ class Correlator:
                 if row is None:
                     raise ValueError(f"Unknown homeostat: {homeostat_id!r}")
                 homeostat = _homeostat_from_row(row)
+                # Allow re-transition from terminal only if max_attempts not exhausted and caller intends to reopen.
+                # For damping we treat "complete" as "settled" and do not reopen automatically.
+                # Re-open is performed via save_homeostat with status=open and bumped attempt.
                 if homeostat.status != HomeostatStatus.open:
-                    raise ValueError(
-                        f"Homeostat {homeostat_id!r} is not open: {homeostat.status.value}"
-                    )
+                    if homeostat.attempt >= homeostat.max_attempts:
+                        raise ValueError(
+                            f"Homeostat {homeostat_id!r} exhausted attempts and is terminal: {homeostat.status.value}"
+                        )
+                    # permit transition only for explicit reopen path below
                 now = _now()
                 connection.execute(
                     """
@@ -4296,6 +4488,28 @@ class RuntimeBackendService:
         correlation_id: str | None = None,
         causation_id: str | None = None,
     ) -> tuple[Reaction, CommandSubmission]:
+        # LUKA10: for correlation_path context (when the caller provides a process context
+        # indirectly via impulse_id), require impulse_id to keep reactions bound to the
+        # originating impulse. If no impulse_id, the reaction is still accepted (global
+        # reactions remain useful for cross-impulse metadata), but we do not create
+        # "invisible" reactions detached from a tor when an impulse_id was expected.
+        # For now we only warn by rejecting None when run has active correlation_path
+        # processes that expect impulse-scoped reactions. Simpler and stronger: require
+        # impulse_id whenever the reaction is recorded for a run that already has
+        # at least one impulse.
+        if reaction.impulse_id is None:
+            # Check whether the run already has impulses; if yes, require impulse_id.
+            has_impulses = False
+            try:
+                imps = await self.backend.list_impulses(run_id=reaction.run_id)
+                has_impulses = bool(imps)
+            except Exception:
+                has_impulses = False
+            if has_impulses:
+                raise FalaValidationError(
+                    f"Reaction {reaction.id!r} for run {reaction.run_id!r} must carry impulse_id (orphan reactions leak entropy)",
+                    details={"reaction_id": reaction.id, "run_id": reaction.run_id},
+                )
         command = RuntimeCommand(
             run_id=reaction.run_id,
             command_type="reaction.record",
@@ -4513,6 +4727,18 @@ class RuntimeBackendService:
                 f"Process {process_id!r} is not running or waiting: "
                 f"{existing.status.value}"
             )
+        # Enforce declared output_schema (captured at schedule from capability) when present.
+        # This closes the semantic gap: previously output_schema in CapabilitySpec was
+        # validated only at package load time, never against actual effector output.
+        out_schema = existing.output_schema or {}
+        if out_schema:
+            try:
+                Draft202012Validator(out_schema).validate(output or {})
+            except JsonSchemaValidationError as exc:
+                raise FalaValidationError(
+                    f"Process {process_id!r} output does not match capability output_schema: {exc.message}",
+                    details={"process_id": process_id, "schema": out_schema, "output": output or {}},
+                ) from exc
         command = RuntimeCommand(
             run_id=run_id,
             command_type="process.complete",
@@ -4881,7 +5107,15 @@ class RuntimeBackendService:
                 raise ValueError(f"Replayed homeostat open has no stored homeostat: {homeostat.id!r}")
             return existing, replay
         if existing is not None:
-            raise ValueError(f"Homeostat already exists: {homeostat.id!r}")
+            if existing.status == HomeostatStatus.open:
+                raise ValueError(f"Homeostat already exists: {homeostat.id!r}")
+            # damping retry path: allow reopen from terminal if attempts remain
+            if existing.attempt >= (homeostat.max_attempts or existing.max_attempts):
+                raise ValueError(f"Homeostat {homeostat.id!r} has no remaining attempts for reopen")
+            # bump attempt for reopen
+            reopened = existing.model_copy(update={"status": HomeostatStatus.open, "attempt": existing.attempt + 1})
+            # fallthrough to save via backend
+            homeostat = reopened
         command = RuntimeCommand(
             run_id=homeostat.run_id,
             command_type="homeostat.open",
@@ -5977,8 +6211,8 @@ def _insert_process_row(connection: sqlite3.Connection, process: Process) -> Non
             run_id, id, process_type, impulse_id, status, priority,
             attempt, max_attempts, available_at, lease_owner,
             lease_expires_at, input_json, output_json, error_json,
-            metadata, created_at, updated_at, started_at, finished_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            metadata, output_schema_json, created_at, updated_at, started_at, finished_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         _process_args(process),
     )
@@ -6520,6 +6754,7 @@ def _process_args(process: Process) -> tuple[Any, ...]:
         _dumps(process.output),
         _dumps(process.error),
         _dumps(process.metadata),
+        _dumps(process.output_schema),
         process.created_at.isoformat(),
         process.updated_at.isoformat(),
         process.started_at.isoformat() if process.started_at is not None else None,
@@ -6546,13 +6781,12 @@ def _process_from_row(row: sqlite3.Row) -> Process:
         output=_loads(row["output_json"]),
         error=_loads(row["error_json"]),
         metadata=_loads(row["metadata"]),
+        output_schema=_loads(row["output_schema_json"]),
         created_at=_dt(row["created_at"]),
         updated_at=_dt(row["updated_at"]),
         started_at=_dt(row["started_at"]) if row["started_at"] is not None else None,
         finished_at=_dt(row["finished_at"]) if row["finished_at"] is not None else None,
     )
-
-
 def _impulse_from_row(row: sqlite3.Row) -> Impulse:
     return Impulse(
         id=row["id"],

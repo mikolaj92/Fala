@@ -124,6 +124,7 @@ class FalaDriverTests(unittest.TestCase):
                     ],
                 ),
                 effector_inputs={"first": {"value": 2}},
+                auto_advance=False,
             )
             result = await run_until_idle(
                 service,

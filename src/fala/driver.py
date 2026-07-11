@@ -10,13 +10,13 @@ completion the driver advances any correlation_path the effector belongs to (see
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 
 from fala.adapters import EffectorRunRequest, EffectorRunResult, create_effector_adapter
-from fala.errors import FalaConfigurationError
+from fala.errors import FalaConfigurationError, FalaDeadlockDetected
 from fala.correlation_paths import CorrelationPathInstance, advance_correlation_path_for_process, instantiate_correlation_path
 from fala.models import EffectorAdapterSpec, CorrelationPathSpec, new_id
 from fala.runtime_backend import (
@@ -27,6 +27,7 @@ from fala.runtime_backend import (
     EventRef,
     Homeostat,
     Process,
+    WaitGraphDiagnostic,
     Run,
     RunRef,
     RuntimeBackend,
@@ -46,6 +47,9 @@ class RunUntilIdleResult:
     completed: list[Process]
     failed: list[Process]
     waiting: list[Process]
+    deadlocked: bool = False
+    deadlocks: list[list[str]] = field(default_factory=list)
+    wait_diagnostic: WaitGraphDiagnostic | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +131,11 @@ async def run_until_idle(
                             kind=adapter.kind,
                             values=result.output,
                             metadata=result.metadata,
+                            # Inherit the (possibly regulation-overridden) damping budget
+                            # from the process. This makes homeostat defense elastic:
+                            # the same max_attempts granted to the effector applies to
+                            # re-open attempts on the homeostat.
+                            max_attempts=process.max_attempts,
                         ),
                         idempotency_key=f"homeostat.open:{result.homeostat_id}",
                         actor=worker_id,
@@ -176,9 +185,32 @@ async def run_until_idle(
                 )
             failed.append(stored)
             continue
-        if advance_correlation_paths:
-            await advance_correlation_path_for_process(service, process=stored, actor=worker_id)
+        # Readies and dead-upstream cancellations are performed atomically inside
+        # transition_process for succeeded/failed. External advance remains useful
+        # for unblocking after external events (homeostats, child runs).
 
+    # Deadlock detection (LUKA6): run a wait-graph diagnosis at the end of the
+    # idle loop. If a deadlock is present, record it so callers and higher layers
+    # (e.g. run_correlation_path status) can react instead of silently parking.
+    deadlocked = False
+    deadlocks: list[list[str]] = []
+    wait_diagnostic: WaitGraphDiagnostic | None = None
+    if run_id:
+        try:
+            diag = await service.diagnose_waits(run_id=run_id)
+            deadlocked = diag.deadlocked
+            deadlocks = diag.deadlocks
+            wait_diagnostic = diag
+            if deadlocked:
+                stopped = True
+        except Exception:
+            # Diagnosis must not break the driver; surface via result only.
+            pass
+    if deadlocked:
+        raise FalaDeadlockDetected(
+            f"deadlock detected during run_until_idle for run {run_id}",
+            details={"run_id": run_id, "deadlocks": deadlocks},
+        )
     return RunUntilIdleResult(
         ok=ticks < max_ticks,
         ticks=ticks,
@@ -186,9 +218,10 @@ async def run_until_idle(
         completed=completed,
         failed=failed,
         waiting=waiting,
+        deadlocked=deadlocked,
+        deadlocks=deadlocks,
+        wait_diagnostic=wait_diagnostic,
     )
-
-
 def process_error_text(process: Process) -> str:
     """Render a failed process's structured ``error`` into one human line.
 
@@ -270,6 +303,10 @@ async def run_correlation_path(
     correlation_path_id: str | None = None,
     effector_inputs: dict[str, dict[str, Any]] | None = None,
     effector_configs: dict[str, dict[str, Any]] | None = None,
+    capability_output_schemas: dict[str, dict[str, Any]] | None = None,
+    accepted_reaction_kinds_by_effector: dict[str, list[str]] | None = None,
+    max_attempts_by_effector: dict[str, int] | None = None,
+    regulation_by_effector: dict[str, dict[str, Any]] | None = None,
     work_dir: str | Path | None = None,
     max_ticks: int = 100,
     lease_seconds: float = 300.0,
@@ -298,8 +335,12 @@ async def run_correlation_path(
         correlation_path=correlation_path,
         correlation_path_id=correlation_path_id,
         effector_inputs=effector_inputs,
+        accepted_reaction_kinds_by_effector=accepted_reaction_kinds_by_effector,
         effector_configs=effector_configs,
         actor=actor,
+        capability_output_schemas=capability_output_schemas,
+        regulation_by_effector=regulation_by_effector,
+        max_attempts_by_effector=max_attempts_by_effector,
     )
     if stored_run.status in _TERMINAL_RUN_STATUSES:
         # Re-invoked on a run that already reached a terminal state (create_run

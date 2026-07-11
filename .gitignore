@@ -7,3 +7,4 @@ __pycache__/
 .correlation-path-runs/
 .omo/
 *.db
+.DS_Store

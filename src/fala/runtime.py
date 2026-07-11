@@ -343,6 +343,11 @@ class AutonomousCorrelator:
         actor: str | None = None,
         correlation_id: str | None = None,
         causation_id: str | None = None,
+        capability_output_schemas: dict[str, dict] | None = None,
+        accepted_reaction_kinds_by_effector: dict[str, list[str]] | None = None,
+        max_attempts_by_effector: dict[str, int] | None = None,
+        auto_advance: bool = True,
+        regulation_by_effector: dict[str, dict] | None = None,
     ) -> CorrelationPathInstance:
         return await instantiate_correlation_path(
             self.service,
@@ -357,6 +362,11 @@ class AutonomousCorrelator:
             actor=actor,
             correlation_id=correlation_id,
             causation_id=causation_id,
+            capability_output_schemas=capability_output_schemas,
+            accepted_reaction_kinds_by_effector=accepted_reaction_kinds_by_effector,
+            auto_advance=auto_advance,
+            regulation_by_effector=regulation_by_effector,
+            max_attempts_by_effector=max_attempts_by_effector,
         )
 
     async def advance_correlation_path(
@@ -372,7 +382,6 @@ class AutonomousCorrelator:
             correlation_path_id=correlation_path_id,
             actor=actor,
         )
-
     async def run_until_idle(
         self,
         *,
@@ -410,6 +419,8 @@ class AutonomousCorrelator:
         max_ticks: int = 100,
         lease_seconds: float = 300.0,
         actor: str | None = None,
+        max_attempts_by_effector: dict[str, int] | None = None,
+        regulation_by_effector: dict[str, dict] | None = None,
     ) -> RunCorrelationPathResult:
         return await run_correlation_path(
             self.service,
@@ -423,6 +434,8 @@ class AutonomousCorrelator:
             max_ticks=max_ticks,
             lease_seconds=lease_seconds,
             actor=actor,
+            regulation_by_effector=regulation_by_effector,
+            max_attempts_by_effector=max_attempts_by_effector,
         )
 
     async def complete_process(
