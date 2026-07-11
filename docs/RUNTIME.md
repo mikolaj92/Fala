@@ -38,8 +38,7 @@ New Fala runtime work should use `fala.runtime_backend` or
 `fala.runtime`. Impulse APIs use `impulse_id` and `impulse_type`.
 Web/API/client exports are outer surfaces and are loaded lazily from `fala`.
 
-Splot arbitration workflows live in `fala.domain_packs.splot`; see
-`docs/SPLOT_DOMAIN_PACK.md` for the domain/core boundary.
+Splot arbitration cases and reviews are modeled in `fala.domain_packs.splot`; see
 
 ## Core Concepts
 

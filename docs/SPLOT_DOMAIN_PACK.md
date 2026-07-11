@@ -16,7 +16,7 @@ SQLite persistence. Splot defines arbitration-specific meaning on top.
 
 ## Process Semantics
 
-The pack documents domain semantics without adding scheduler behavior to core:
+The pack encodes domain semantics without adding scheduler behavior to core:
 
 - `intake`: accept arbitration case impulse and source reactions
 - `jurisdiction`: record jurisdiction and admissibility associations

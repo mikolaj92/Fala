@@ -78,6 +78,5 @@ workflow API.
 | Docs/examples | DONE | Dedicated Fala conceptual, runtime, adapter, SQLite, reaction, replay, composition, domain pack, security, migration, and version policy docs exist. Impulse runtime, correlation path, Splot, Signals, and multi-Fala examples exist and create explicit run records. |
 
 ## Optional Non-Core Work
-
-1. Add more concrete domain packs only when a real workflow needs them.
+1. Add more concrete domain packs only when a real domain use case needs them.
 2. Add optional network bridge transports only when a concrete deployment needs them.
