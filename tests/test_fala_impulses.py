@@ -15,7 +15,7 @@ from fala import Impulse, Run, RuntimeCommand, RuntimeEvent, Correlator
 
 
 class ImpulseRuntimeTests(unittest.TestCase):
-    def test_non_document_impulse_correlation_path_uses_runtime_backend(self) -> None:
+    def test_arbitrary_impulse_types_are_accepted_without_legacy_baggage(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 backend = Correlator(Path(tmp_dir) / "fala.sqlite")

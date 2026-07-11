@@ -5,7 +5,6 @@ packs that map their concepts onto Impulse runtime records.
 
 Current packs:
 
-- `fala.domain_packs.documents`
 - `fala.domain_packs.signals`
 - `fala.domain_packs.splot`
 
@@ -21,4 +20,4 @@ Domain packs may provide:
 - package examples
 - migration guidance from prior domain-specific models
 
-Core runtime code must not depend on document-specific classes.
+Core runtime code must not depend on domain-specific classes from packs.

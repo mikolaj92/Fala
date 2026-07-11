@@ -19,13 +19,6 @@ from pathlib import Path
 
 from fala.runtime import AutonomousCorrelator
 from fala.cli import main as fala_cli_main
-from fala.domain_packs.documents import (
-    DocumentImpulseInput,
-    impulse_from_document,
-    document_from_impulse,
-    document_association,
-    document_projection,
-)
 from fala.domain_packs import signals, splot
 from fala.domain_packs.splot import (
     SPLOT_ARBITRATION_CASE,
@@ -48,6 +41,7 @@ from fala.domain_packs.signals import (
 from fala.reactions import FileReactionStore
 from fala.errors import FalaBudgetExceeded
 from fala.models import ReactionRef
+from fala.yaml_loader import load_fala_package_yaml
 from fala.runtime_backend import (
     Reaction,
     BridgeDelivery,
@@ -75,7 +69,6 @@ from fala.runtime_backend import (
     SQLITE_RUNTIME_SCHEMA_VERSION,
     Correlator,
 )
-from fala.yaml_loader import load_fala_package_yaml
 
 
 def _run_cli_json(*args: str) -> dict:
@@ -525,7 +518,7 @@ class AutonomousCorrelatorBackendTests(unittest.TestCase):
         self.assertTrue(compatible["ok"])
         self.assertEqual(compatible["unsupported_events"], [])
 
-    def test_fala_runtime_accepts_non_document_impulse_correlation_path(self) -> None:
+    def test_fala_runtime_accepts_arbitrary_impulse_types_without_legacy_document_fields(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
@@ -2624,52 +2617,6 @@ class AutonomousCorrelatorBackendTests(unittest.TestCase):
                 ["run.created", "run.cancel_requested"],
             )
 
-    def test_document_domain_pack_maps_documents_to_impulses(self) -> None:
-        async def scenario() -> None:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
-                await _put_test_run(runtime, "run_docs")
-                document = DocumentImpulseInput(
-                    id="doc_invoice_1",
-                    document_type="invoice_document",
-                    title="Invoice 1",
-                    media_type="application/pdf",
-                    source_uri="file:///tmp/invoice.pdf",
-                    values={"vendor": "Acme"},
-                    metadata={"tenant": "demo"},
-                    reactions=[
-                        {
-                            "id": "reaction_pdf",
-                            "kind": "pdf",
-                            "uri": "file:///tmp/invoice.pdf",
-                        }
-                    ],
-                )
-                impulse = impulse_from_document(document, run_id="run_docs")
-
-                stored, _submission = await runtime.accept_impulse(
-                    impulse,
-                    idempotency_key="run_docs:impulse.accept:doc_invoice_1",
-                )
-                association, _ = await runtime.record_association(
-                    document_association(stored),
-                    idempotency_key="run_docs:association.document:doc_invoice_1",
-                )
-                projection, _ = await runtime.save_projection(
-                    document_projection(stored),
-                    idempotency_key="run_docs:projection.document:doc_invoice_1",
-                )
-
-                round_trip = document_from_impulse(stored)
-                self.assertEqual(round_trip, document)
-                self.assertEqual(stored.impulse_type, "document.invoice_document")
-                self.assertEqual(stored.metadata["domain_pack"], "documents")
-                self.assertEqual(association.kind, "document.accepted")
-                self.assertEqual(association.values["reaction_count"], 1)
-                self.assertEqual(projection.name, "document:doc_invoice_1")
-                self.assertEqual(projection.data["document_type"], "invoice_document")
-
-        asyncio.run(scenario())
 
     def test_splot_domain_pack_uses_public_runtime_api(self) -> None:
         async def scenario() -> None:
@@ -2813,13 +2760,13 @@ class AutonomousCorrelatorBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_splot_domain_pack_does_not_use_document_runtime_internals(self) -> None:
+    def test_splot_domain_pack_does_not_use_legacy_document_internals(self) -> None:
         source = inspect.getsource(splot)
         self.assertNotIn("RuntimeDocument", source)
         self.assertNotIn("document_id", source)
         self.assertNotIn("document_type", source)
 
-    def test_signals_domain_pack_does_not_use_document_runtime_internals(self) -> None:
+    def test_signals_domain_pack_does_not_use_legacy_document_internals(self) -> None:
         source = inspect.getsource(signals)
         self.assertNotIn("RuntimeDocument", source)
         self.assertNotIn("document_id", source)
@@ -3712,7 +3659,7 @@ class AutonomousCorrelatorBackendTests(unittest.TestCase):
 
             package_path = (
                 Path(__file__).resolve().parents[1]
-                / "examples/pipelines/basic/fala-package.yaml"
+                / "examples/correlation-paths/basic/fala-package.yaml"
             )
             doctor_with_package = _run_cli_json(
                 "doctor",

@@ -46,8 +46,7 @@ The migrated source tree keeps the core runtime in:
 - `src/fala/errors.py`
 
 Domain-specific vocabulary lives outside core under `src/fala/domain_packs`.
-The document pack is a domain pack, not the runtime ontology.
-
+Concrete packs (Splot, Signals) map domain concepts onto the Impulse ontology.
 ## Removed From Core
 
 The old document workflow runtime, web/API layer, queue bridge, worker CLI,
@@ -74,9 +73,9 @@ workflow API.
 | Multi-Fala composition | DONE | Runtime refs, pools, delegation policies, bridge inbox/outbox, `fala_runtime` outbox enqueue, local pool resolution, local two-SQLite delivery, file handoff, and `manual`/`least_busy`/`round_robin` pool policies exist. Network transports remain optional non-core adapters. |
 | CLI | DONE | Local SQLite inspection, command/event inspection, direct create/schedule commands, runtime pool/policy mutation, package-aware doctor with adapter reference checks, wait diagnostics, trace, exports, GC, validated run-until-idle lease/tick limits, `fala_runtime` delegation, pool-backed delegation, local bridge delivery, and bridge file export/import exist. |
 | Package schema | DONE | Current YAML uses `impulse_types`, `impulse_relations`, capabilities, correlation_paths, and runtime config. Old package keys are rejected. |
-| Domain packs | DONE | Document, Splot, and Signals packs exist as Impulse mappings outside the core ontology. |
+| Domain packs | DONE | Splot and Signals packs exist as Impulse mappings outside the core ontology. |
 | Replay/export | DONE | Trace, timeline, DOT, HTML, debug bundle, run archive export, and guarded deterministic `replay-execution` exist. Deterministic rerun is covered for `python_function` and `subprocess`; manual and Fala-runtime effectors are explicit non-local replay boundaries. |
-| Docs/examples | DONE | Dedicated Fala conceptual, runtime, adapter, SQLite, reaction, replay, composition, domain pack, security, migration, and version policy docs exist. Impulse runtime, pipeline, Splot, Signals, and multi-Fala examples exist and create explicit run records. |
+| Docs/examples | DONE | Dedicated Fala conceptual, runtime, adapter, SQLite, reaction, replay, composition, domain pack, security, migration, and version policy docs exist. Impulse runtime, correlation path, Splot, Signals, and multi-Fala examples exist and create explicit run records. |
 
 ## Optional Non-Core Work
 

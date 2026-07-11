@@ -178,7 +178,7 @@ uv run fala gc --db .fala/state.sqlite --reaction-root .fala/reactions --dry-run
 uv run fala bridge export --db .fala/state.sqlite --run-id run_local --delivery-id bridge_123 --out bridge.json
 uv run fala bridge import --db /tmp/target.sqlite --file bridge.json
 
-uv run fala doctor --db .fala/state.sqlite --package examples/pipelines/basic/fala-package.yaml
+uv run fala doctor --db .fala/state.sqlite --package examples/correlation-paths/basic/fala-package.yaml
 uv run fala diagnose-waits --db .fala/state.sqlite --run-id run_local
 uv run fala trace --db .fala/state.sqlite --run-id run_local
 uv run fala replay-execution --db .fala/state.sqlite --run-id run_local --process-id process_123
