@@ -17,51 +17,45 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from fala.carrier_runtime import FalaRuntime
+from fala.runtime import AutonomousCorrelator
 from fala.cli import main as fala_cli_main
-from fala.domain_packs.documents import (
-    DocumentCarrierInput,
-    carrier_from_document,
-    document_from_carrier,
-    document_observation,
-    document_projection,
-)
 from fala.domain_packs import signals, splot
 from fala.domain_packs.splot import (
     SPLOT_ARBITRATION_CASE,
     SplotArbitrationCase,
-    carrier_from_case,
-    case_from_carrier,
+    impulse_from_case,
+    case_from_impulse,
     case_projection,
-    jurisdiction_observation,
-    review_gate,
+    jurisdiction_association,
+    review_homeostat,
 )
 from fala.domain_packs.signals import (
     SIGNAL_METRIC_SAMPLE,
     SIGNAL_THRESHOLD_READING,
     SignalMetricSample,
-    carrier_from_metric_sample,
-    metric_sample_from_carrier,
+    impulse_from_metric_sample,
+    metric_sample_from_impulse,
     signal_projection,
-    threshold_observation,
+    threshold_association,
 )
-from fala.artifacts import FileArtifactStore
+from fala.reactions import FileReactionStore
 from fala.errors import FalaBudgetExceeded
-from fala.models import ArtifactRef
+from fala.models import ReactionRef
+from fala.yaml_loader import load_fala_package_yaml
 from fala.runtime_backend import (
-    Artifact,
+    Reaction,
     BridgeDelivery,
     BridgeDeliveryStatus,
-    Carrier,
-    CarrierProcessStatus,
-    CarrierRunStatus,
-    CarrierRelation,
-    CarrierType,
+    Impulse,
+    ProcessStatus,
+    RunStatus,
+    ImpulseRelation,
+    ImpulseType,
     DelegationPolicy,
     EventRef,
-    Gate,
-    GateStatus,
-    Observation,
+    Homeostat,
+    HomeostatStatus,
+    Association,
     Process,
     Projection,
     RuntimeBudget,
@@ -73,9 +67,8 @@ from fala.runtime_backend import (
     Run,
     RunRef,
     SQLITE_RUNTIME_SCHEMA_VERSION,
-    SQLiteRuntimeBackend,
+    Correlator,
 )
-from fala.yaml_loader import load_carrier_workflow_package_yaml
 
 
 def _run_cli_json(*args: str) -> dict:
@@ -93,7 +86,7 @@ def _run_cli_raw(*args: str) -> tuple[int, dict]:
     return code, payload
 
 
-def _carrier_cli_step(request) -> dict:
+def _impulse_cli_effector(request) -> dict:
     return {"value": request.input["value"] + 1}
 
 
@@ -102,7 +95,7 @@ async def _put_test_run(target, run_id: str) -> None:
     await backend.put_run(Run(id=run_id))
 
 
-class FalaRuntimeBackendTests(unittest.TestCase):
+class AutonomousCorrelatorBackendTests(unittest.TestCase):
     def test_external_infrastructure_is_not_packaged_with_core(self) -> None:
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
         project = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
@@ -123,7 +116,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             )
         self.assertNotIn("optional-dependencies", project)
 
-    def test_carrier_core_runs_without_web_api_or_http_client_imports(self) -> None:
+    def test_impulse_core_runs_without_web_api_or_http_client_imports(self) -> None:
         src_dir = Path(__file__).resolve().parents[1] / "src"
         script = textwrap.dedent(
             """
@@ -142,28 +135,28 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
             builtins.__import__ = guarded_import
 
-            from fala import Carrier, FalaRuntime, Run
+            from fala import Impulse, AutonomousCorrelator, Run
             from fala.cli import _build_parser as build_cli_parser
 
             assert build_cli_parser().prog == "fala"
 
             async def main():
                 with tempfile.TemporaryDirectory() as tmp:
-                    runtime = FalaRuntime.sqlite(Path(tmp) / "core.sqlite")
+                    runtime = AutonomousCorrelator.sqlite(Path(tmp) / "core.sqlite")
                     await runtime.backend.put_run(Run(id="run_core"))
-                    carrier = Carrier(
-                        id="carrier_core",
+                    impulse = Impulse(
+                        id="impulse_core",
                         run_id="run_core",
-                        carrier_type="case",
+                        impulse_type="case",
                     )
-                    stored, submission = await runtime.accept_carrier(
-                        carrier,
-                        idempotency_key="run_core:carrier.accept:carrier_core",
+                    stored, submission = await runtime.accept_impulse(
+                        impulse,
+                        idempotency_key="run_core:impulse.accept:impulse_core",
                     )
                     events = await runtime.list_events(run_id="run_core")
-                    assert stored == carrier
+                    assert stored == impulse
                     assert not submission.replayed
-                    assert [event.event_type for event in events] == ["carrier.accepted"]
+                    assert [event.event_type for event in events] == ["impulse.accepted"]
 
             asyncio.run(main())
             """
@@ -236,7 +229,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parser.parse_args(
                     [
-                        "gates",
+                        "homeostats",
                         "complete",
                         "--db",
                         "state.sqlite",
@@ -247,20 +240,20 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         with redirect_stderr(StringIO()):
             with self.assertRaises(SystemExit):
                 parser.parse_args(
-                    ["gate", "list", "--db", "state.sqlite", "--run-id", "run_1"]
+                    ["homeostat", "list", "--db", "state.sqlite", "--run-id", "run_1"]
                 )
         with redirect_stderr(StringIO()):
             with self.assertRaises(SystemExit):
                 parser.parse_args(["queue-list-work", "--queue-db", "queue.sqlite"])
         with redirect_stderr(StringIO()):
             with self.assertRaises(SystemExit):
-                parser.parse_args(["doctor", "--carrier-runtime"])
+                parser.parse_args(["doctor", "--runtime"])
 
-    def test_cli_schema_is_carrier_contract_only(self) -> None:
+    def test_cli_schema_is_impulse_contract_only(self) -> None:
         from fala.cli import _build_parser
 
         parser = _build_parser()
-        parser.parse_args(["schema", "carrier-package"])
+        parser.parse_args(["schema", "fala-package"])
         parser.parse_args(["run-until-idle", "--db", "state.sqlite"])
         removed_models = [
             "document-type",
@@ -291,37 +284,37 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertFalse(hasattr(fala, name), name)
             self.assertNotIn(name, fala.__all__)
 
-    def test_sqlite_backend_records_carrier_command_and_ordered_event(self) -> None:
+    def test_sqlite_backend_records_impulse_command_and_ordered_event(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                backend = Correlator(Path(tmp_dir) / "fala.sqlite")
                 await backend.put_run(Run(id="run_alpha"))
-                carrier = Carrier(
+                impulse = Impulse(
                     run_id="run_alpha",
-                    carrier_type="invoice",
+                    impulse_type="invoice",
                     payload={"amount": 120},
                     metadata={"tenant": "acme"},
                 )
 
-                await backend.put_carrier(carrier)
-                stored = await backend.get_carrier(
-                    run_id="run_alpha", carrier_id=carrier.id
+                await backend.put_impulse(impulse)
+                stored = await backend.get_impulse(
+                    run_id="run_alpha", impulse_id=impulse.id
                 )
 
-                self.assertEqual(stored, carrier)
+                self.assertEqual(stored, impulse)
 
                 command = RuntimeCommand(
                     run_id="run_alpha",
-                    command_type="carrier.accept",
-                    idempotency_key="run_alpha:carrier.accept:invoice",
+                    command_type="impulse.accept",
+                    idempotency_key="run_alpha:impulse.accept:invoice",
                     actor="operator:mika",
                     correlation_id="corr_1",
-                    payload={"carrier_id": carrier.id},
+                    payload={"impulse_id": impulse.id},
                 )
                 event = RuntimeEvent(
                     run_id="run_alpha",
-                    carrier_id=carrier.id,
-                    event_type="carrier.accepted",
+                    impulse_id=impulse.id,
+                    event_type="impulse.accepted",
                     actor="operator:mika",
                     correlation_id="corr_1",
                     payload={"accepted": True},
@@ -345,7 +338,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(events[0].sequence, 1)
                 self.assertEqual(events[0].schema_version, 1)
                 self.assertEqual(events[0].command_id, first.command.id)
-                self.assertEqual(events[0].carrier_id, carrier.id)
+                self.assertEqual(events[0].impulse_id, impulse.id)
                 self.assertEqual(events[0].actor, "operator:mika")
                 self.assertEqual(events[0].correlation_id, "corr_1")
 
@@ -354,13 +347,13 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_sqlite_backend_rejects_unknown_run_command_and_direct_run_create(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                backend = Correlator(Path(tmp_dir) / "fala.sqlite")
                 with self.assertRaisesRegex(ValueError, "Unknown run"):
                     await backend.submit_command(
                         RuntimeCommand(
                             run_id="run_missing",
-                            command_type="carrier.accept",
-                            idempotency_key="run_missing:carrier.accept",
+                            command_type="impulse.accept",
+                            idempotency_key="run_missing:impulse.accept",
                         )
                     )
                 with self.assertRaisesRegex(ValueError, "create_run"):
@@ -377,12 +370,12 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_sqlite_backend_rejects_run_scoped_put_for_unknown_run(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                backend = Correlator(Path(tmp_dir) / "fala.sqlite")
                 with self.assertRaisesRegex(ValueError, "Unknown run"):
-                    await backend.put_carrier(
-                        Carrier(
+                    await backend.put_impulse(
+                        Impulse(
                             run_id="run_missing",
-                            carrier_type="case",
+                            impulse_type="case",
                         )
                     )
 
@@ -390,7 +383,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
     def test_sqlite_runtime_events_are_append_only(self) -> None:
         async def scenario(db_path: Path) -> None:
-            backend = SQLiteRuntimeBackend(db_path)
+            backend = Correlator(db_path)
             await backend.put_run(Run(id="run_events"))
             await backend.submit_command(
                 RuntimeCommand(
@@ -428,14 +421,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
     def test_sqlite_runtime_commands_are_append_only(self) -> None:
         async def scenario(db_path: Path) -> None:
-            backend = SQLiteRuntimeBackend(db_path)
+            backend = Correlator(db_path)
             await backend.put_run(Run(id="run_commands"))
             await backend.submit_command(
                 RuntimeCommand(
                     run_id="run_commands",
-                    command_type="carrier.accept",
-                    idempotency_key="run_commands:carrier.accept",
-                    payload={"carrier_id": "carrier_1"},
+                    command_type="impulse.accept",
+                    idempotency_key="run_commands:impulse.accept",
+                    payload={"impulse_id": "impulse_1"},
                 )
             )
 
@@ -450,7 +443,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                         SET payload = ?
                         WHERE run_id = ?
                         """,
-                        ('{"carrier_id":"carrier_2"}', "run_commands"),
+                        ('{"impulse_id":"impulse_2"}', "run_commands"),
                     )
                 with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only"):
                     connection.execute(
@@ -460,7 +453,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
     def test_cli_events_validate_schema_reports_unsupported_versions(self) -> None:
         async def setup(db_path: Path) -> None:
-            backend = SQLiteRuntimeBackend(db_path)
+            backend = Correlator(db_path)
             await backend.put_run(Run(id="run_event_schema"))
             await backend.submit_command(
                 RuntimeCommand(
@@ -525,103 +518,103 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         self.assertTrue(compatible["ok"])
         self.assertEqual(compatible["unsupported_events"], [])
 
-    def test_fala_runtime_accepts_non_document_carrier_flow(self) -> None:
+    def test_fala_runtime_accepts_arbitrary_impulse_types_without_legacy_document_fields(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(runtime, "run_case")
-                carrier = Carrier(
-                    id="carrier_case_2",
+                impulse = Impulse(
+                    id="impulse_case_2",
                     run_id="run_case",
-                    carrier_type="arbitration_case",
+                    impulse_type="arbitration_case",
                     payload={"claim_id": "CLM-2"},
                 )
 
-                stored, submission = await runtime.accept_carrier(
-                    carrier,
-                    idempotency_key="run_case:carrier.accept:carrier_case_2",
+                stored, submission = await runtime.accept_impulse(
+                    impulse,
+                    idempotency_key="run_case:impulse.accept:impulse_case_2",
                 )
                 events = await runtime.list_events(run_id="run_case")
 
-                self.assertEqual(stored, carrier)
+                self.assertEqual(stored, impulse)
                 self.assertFalse(submission.replayed)
-                self.assertEqual(carrier.carrier_type, "arbitration_case")
-                self.assertNotIn("document_type", carrier.payload)
-                self.assertEqual([event.event_type for event in events], ["carrier.accepted"])
+                self.assertEqual(impulse.impulse_type, "arbitration_case")
+                self.assertNotIn("document_type", impulse.payload)
+                self.assertEqual([event.event_type for event in events], ["impulse.accepted"])
 
         asyncio.run(scenario())
 
-    def test_fala_runtime_registers_carrier_types_and_relations(self) -> None:
+    def test_fala_runtime_registers_impulse_types_and_relations(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(runtime, "run_types")
-                carrier_type = CarrierType(
+                impulse_type = ImpulseType(
                     id="arbitration_case",
                     run_id="run_types",
                     title="Arbitration case",
                     media_types=["application/json"],
                     value_schema={"type": "object"},
                 )
-                source = Carrier(
-                    id="carrier_source",
+                source = Impulse(
+                    id="impulse_source",
                     run_id="run_types",
-                    carrier_type="arbitration_case",
+                    impulse_type="arbitration_case",
                 )
-                target = Carrier(
-                    id="carrier_target",
+                target = Impulse(
+                    id="impulse_target",
                     run_id="run_types",
-                    carrier_type="arbitration_case",
+                    impulse_type="arbitration_case",
                 )
-                relation = CarrierRelation(
+                relation = ImpulseRelation(
                     id="relation_derived",
                     run_id="run_types",
                     relation_type="derived_from",
-                    source_carrier_id=source.id,
-                    target_carrier_id=target.id,
+                    source_impulse_id=source.id,
+                    target_impulse_id=target.id,
                 )
 
-                stored_type, type_submission = await runtime.register_carrier_type(
-                    carrier_type,
-                    idempotency_key="run_types:carrier_type:arbitration_case",
+                stored_type, type_submission = await runtime.register_impulse_type(
+                    impulse_type,
+                    idempotency_key="run_types:impulse_type:arbitration_case",
                 )
-                replay_type, replay_type_submission = await runtime.register_carrier_type(
-                    carrier_type.model_copy(update={"title": "Changed"}),
-                    idempotency_key="run_types:carrier_type:arbitration_case",
+                replay_type, replay_type_submission = await runtime.register_impulse_type(
+                    impulse_type.model_copy(update={"title": "Changed"}),
+                    idempotency_key="run_types:impulse_type:arbitration_case",
                 )
                 with self.assertRaisesRegex(ValueError, "already exists"):
-                    await runtime.register_carrier_type(
-                        carrier_type,
-                        idempotency_key="run_types:carrier_type:arbitration_case:again",
+                    await runtime.register_impulse_type(
+                        impulse_type,
+                        idempotency_key="run_types:impulse_type:arbitration_case:again",
                     )
-                await runtime.accept_carrier(
+                await runtime.accept_impulse(
                     source,
-                    idempotency_key="run_types:carrier.accept:source",
+                    idempotency_key="run_types:impulse.accept:source",
                 )
-                await runtime.accept_carrier(
+                await runtime.accept_impulse(
                     target,
-                    idempotency_key="run_types:carrier.accept:target",
+                    idempotency_key="run_types:impulse.accept:target",
                 )
                 stored_relation, relation_submission = (
-                    await runtime.record_carrier_relation(
+                    await runtime.record_impulse_relation(
                         relation,
                         idempotency_key="run_types:relation:derived",
                     )
                 )
                 replay_relation, replay_relation_submission = (
-                    await runtime.record_carrier_relation(
+                    await runtime.record_impulse_relation(
                         relation.model_copy(update={"relation_type": "changed"}),
                         idempotency_key="run_types:relation:derived",
                     )
                 )
                 with self.assertRaisesRegex(ValueError, "already exists"):
-                    await runtime.record_carrier_relation(
+                    await runtime.record_impulse_relation(
                         relation,
                         idempotency_key="run_types:relation:derived:again",
                     )
 
-                self.assertEqual(stored_type, carrier_type)
-                self.assertEqual(replay_type, carrier_type)
+                self.assertEqual(stored_type, impulse_type)
+                self.assertEqual(replay_type, impulse_type)
                 self.assertFalse(type_submission.replayed)
                 self.assertTrue(replay_type_submission.replayed)
                 self.assertEqual(stored_relation, relation)
@@ -629,13 +622,13 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertFalse(relation_submission.replayed)
                 self.assertTrue(replay_relation_submission.replayed)
                 self.assertEqual(
-                    await runtime.list_carrier_types(run_id="run_types"),
-                    [carrier_type],
+                    await runtime.list_impulse_types(run_id="run_types"),
+                    [impulse_type],
                 )
                 self.assertEqual(
-                    await runtime.list_carrier_relations(
+                    await runtime.list_impulse_relations(
                         run_id="run_types",
-                        carrier_id=target.id,
+                        impulse_id=target.id,
                     ),
                     [relation],
                 )
@@ -643,10 +636,10 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(
                     [event.event_type for event in events],
                     [
-                        "carrier_type.registered",
-                        "carrier.accepted",
-                        "carrier.accepted",
-                        "carrier_relation.recorded",
+                        "impulse_type.registered",
+                        "impulse.accepted",
+                        "impulse.accepted",
+                        "impulse_relation.recorded",
                     ],
                 )
 
@@ -655,13 +648,13 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_fala_runtime_creates_and_transitions_runs(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
                 run = Run(
                     id="run_lifecycle",
                     title="Lifecycle",
                     package_id="pkg",
                     package_version="2",
-                    flow_id="basic",
+                    correlation_path_id="basic",
                 )
 
                 stored, create_submission = await runtime.create_run(
@@ -681,12 +674,12 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     )
                 active, active_submission = await runtime.set_run_status(
                     run_id=run.id,
-                    status=CarrierRunStatus.active,
+                    status=RunStatus.active,
                     idempotency_key="run_lifecycle:active",
                 )
                 completed, completed_submission = await runtime.set_run_status(
                     run_id=run.id,
-                    status=CarrierRunStatus.completed,
+                    status=RunStatus.completed,
                     idempotency_key="run_lifecycle:completed",
                 )
 
@@ -694,20 +687,20 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(replayed, run)
                 self.assertFalse(create_submission.replayed)
                 self.assertTrue(replay_submission.replayed)
-                self.assertEqual(active.status, CarrierRunStatus.active)
+                self.assertEqual(active.status, RunStatus.active)
                 self.assertIsNotNone(active.started_at)
-                self.assertEqual(completed.status, CarrierRunStatus.completed)
+                self.assertEqual(completed.status, RunStatus.completed)
                 self.assertIsNotNone(completed.finished_at)
                 self.assertFalse(active_submission.replayed)
                 self.assertFalse(completed_submission.replayed)
                 self.assertEqual(
-                    await runtime.list_runs(status=CarrierRunStatus.completed),
+                    await runtime.list_runs(status=RunStatus.completed),
                     [completed],
                 )
                 with self.assertRaisesRegex(ValueError, "terminal"):
                     await runtime.set_run_status(
                         run_id=run.id,
-                        status=CarrierRunStatus.active,
+                        status=RunStatus.active,
                         idempotency_key="run_lifecycle:reopen",
                     )
                 events = await runtime.list_events(run_id=run.id)
@@ -721,7 +714,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_fala_runtime_validates_run_status_transition_matrix(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
 
                 async def create_run(run_id: str) -> None:
                     await runtime.create_run(
@@ -732,92 +725,92 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 await create_run("run_waiting_active")
                 waiting, _ = await runtime.set_run_status(
                     run_id="run_waiting_active",
-                    status=CarrierRunStatus.waiting,
+                    status=RunStatus.waiting,
                     idempotency_key="run_waiting_active:waiting",
                 )
                 active, _ = await runtime.set_run_status(
                     run_id="run_waiting_active",
-                    status=CarrierRunStatus.active,
+                    status=RunStatus.active,
                     idempotency_key="run_waiting_active:active",
                 )
                 failed, _ = await runtime.set_run_status(
                     run_id="run_waiting_active",
-                    status=CarrierRunStatus.failed,
+                    status=RunStatus.failed,
                     idempotency_key="run_waiting_active:failed",
                 )
 
                 await create_run("run_cancel")
                 cancel_requested, _ = await runtime.set_run_status(
                     run_id="run_cancel",
-                    status=CarrierRunStatus.cancel_requested,
+                    status=RunStatus.cancel_requested,
                     idempotency_key="run_cancel:cancel_requested",
                 )
                 cancelled, _ = await runtime.set_run_status(
                     run_id="run_cancel",
-                    status=CarrierRunStatus.cancelled,
+                    status=RunStatus.cancelled,
                     idempotency_key="run_cancel:cancelled",
                 )
 
                 await create_run("run_invalid")
                 await runtime.set_run_status(
                     run_id="run_invalid",
-                    status=CarrierRunStatus.cancel_requested,
+                    status=RunStatus.cancel_requested,
                     idempotency_key="run_invalid:cancel_requested",
                 )
                 with self.assertRaisesRegex(ValueError, "Invalid run status transition"):
                     await runtime.set_run_status(
                         run_id="run_invalid",
-                        status=CarrierRunStatus.active,
+                        status=RunStatus.active,
                         idempotency_key="run_invalid:active",
                     )
 
                 await create_run("run_terminal")
                 await runtime.set_run_status(
                     run_id="run_terminal",
-                    status=CarrierRunStatus.completed,
+                    status=RunStatus.completed,
                     idempotency_key="run_terminal:completed",
                 )
                 with self.assertRaisesRegex(ValueError, "terminal"):
                     await runtime.set_run_status(
                         run_id="run_terminal",
-                        status=CarrierRunStatus.failed,
+                        status=RunStatus.failed,
                         idempotency_key="run_terminal:failed",
                     )
 
-                self.assertEqual(waiting.status, CarrierRunStatus.waiting)
-                self.assertEqual(active.status, CarrierRunStatus.active)
-                self.assertEqual(failed.status, CarrierRunStatus.failed)
+                self.assertEqual(waiting.status, RunStatus.waiting)
+                self.assertEqual(active.status, RunStatus.active)
+                self.assertEqual(failed.status, RunStatus.failed)
                 self.assertEqual(
                     cancel_requested.status,
-                    CarrierRunStatus.cancel_requested,
+                    RunStatus.cancel_requested,
                 )
-                self.assertEqual(cancelled.status, CarrierRunStatus.cancelled)
+                self.assertEqual(cancelled.status, RunStatus.cancelled)
 
         asyncio.run(scenario())
 
     def test_fala_runtime_schedules_claims_and_completes_processes(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await runtime.create_run(
                     Run(id="run_processes"),
                     idempotency_key="run_processes:create",
                 )
-                carrier = Carrier(
-                    id="carrier_process",
+                impulse = Impulse(
+                    id="impulse_process",
                     run_id="run_processes",
-                    carrier_type="case",
+                    impulse_type="case",
                 )
-                await runtime.accept_carrier(
-                    carrier,
-                    idempotency_key="run_processes:carrier:carrier_process",
+                await runtime.accept_impulse(
+                    impulse,
+                    idempotency_key="run_processes:impulse:impulse_process",
                 )
                 process = Process(
                     id="process_score",
                     run_id="run_processes",
-                    carrier_id=carrier.id,
+                    impulse_id=impulse.id,
                     process_type="score",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     input={"score": 1},
                 )
 
@@ -839,6 +832,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     process_id=process.id,
                     output={"score": 1},
                     idempotency_key="run_processes:process:score:complete",
+                    actor="worker_1",
                 )
 
                 self.assertEqual(scheduled, process)
@@ -846,9 +840,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertFalse(schedule_submission.replayed)
                 self.assertTrue(replay_submission.replayed)
                 self.assertIsNotNone(claimed)
-                self.assertEqual(claimed.status, CarrierProcessStatus.running)
+                self.assertEqual(claimed.status, ProcessStatus.running)
                 self.assertEqual(claimed.lease_owner, "worker_1")
-                self.assertEqual(completed.status, CarrierProcessStatus.succeeded)
+                self.assertEqual(completed.status, ProcessStatus.succeeded)
                 self.assertEqual(completed.output, {"score": 1})
                 self.assertFalse(complete_submission.replayed)
                 with self.assertRaisesRegex(ValueError, "not running"):
@@ -867,7 +861,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(
                     await runtime.list_processes(
                         run_id="run_processes",
-                        status=CarrierProcessStatus.succeeded,
+                        status=ProcessStatus.succeeded,
                     ),
                     [completed],
                 )
@@ -876,8 +870,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     [event.event_type for event in events],
                     [
                         "run.created",
-                        "carrier.accepted",
+                        "impulse.accepted",
                         "process.scheduled",
+                        "process.claimed",
                         "process.completed",
                     ],
                 )
@@ -886,74 +881,250 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 ]
                 self.assertEqual(
                     [event.process_id for event in process_events],
-                    ["process_score", "process_score"],
+                    ["process_score", "process_score", "process_score"],
                 )
                 self.assertEqual(
-                    [event.carrier_id for event in process_events],
-                    ["carrier_process", "carrier_process"],
+                    [event.impulse_id for event in process_events],
+                    ["impulse_process", "impulse_process", "impulse_process"],
                 )
+
+        asyncio.run(scenario())
+
+    def test_claim_is_journaled_and_lease_blocks_foreign_actor(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await runtime.create_run(
+                    Run(id="run_lease"),
+                    idempotency_key="run.create",
+                )
+                impulse = Impulse(
+                    id="impulse_lease",
+                    run_id="run_lease",
+                    impulse_type="case",
+                )
+                await runtime.accept_impulse(
+                    impulse,
+                    idempotency_key="impulse.accept:impulse_lease",
+                )
+                await runtime.schedule_process(
+                    Process(
+                        id="process_lease",
+                        run_id="run_lease",
+                        impulse_id=impulse.id,
+                        process_type="score",
+                        status=ProcessStatus.ready,
+                    ),
+                    idempotency_key="process.schedule:process_lease",
+                )
+                claimed = await runtime.claim_next_ready_process(
+                    run_id="run_lease",
+                    worker_id="worker_1",
+                )
+                assert claimed is not None
+
+                commands = await runtime.backend.list_commands(run_id="run_lease")
+                claim_commands = [
+                    command
+                    for command in commands
+                    if command.command_type == "process.claim"
+                ]
+                self.assertEqual(len(claim_commands), 1)
+                self.assertEqual(claim_commands[0].actor, "worker_1")
+                self.assertEqual(
+                    claim_commands[0].idempotency_key,
+                    "process.claim:process_lease:1",
+                )
+
+                with self.assertRaisesRegex(ValueError, "lease is held by"):
+                    await runtime.complete_process(
+                        run_id="run_lease",
+                        process_id="process_lease",
+                        output={},
+                        idempotency_key="process.complete:process_lease:intruder",
+                        actor="worker_intruder",
+                    )
+                completed, _ = await runtime.complete_process(
+                    run_id="run_lease",
+                    process_id="process_lease",
+                    output={"ok": True},
+                    idempotency_key="process.complete:process_lease",
+                    actor="worker_1",
+                )
+                self.assertEqual(completed.status, ProcessStatus.succeeded)
+
+        asyncio.run(scenario())
+
+    def test_retry_wait_lease_blocks_foreign_actor(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await runtime.create_run(
+                    Run(id="run_retry_lease"),
+                    idempotency_key="run.create",
+                )
+                impulse = Impulse(
+                    id="impulse_retry_lease",
+                    run_id="run_retry_lease",
+                    impulse_type="case",
+                )
+                await runtime.accept_impulse(
+                    impulse,
+                    idempotency_key="impulse.accept:impulse_retry_lease",
+                )
+                await runtime.schedule_process(
+                    Process(
+                        id="process_retry_lease",
+                        run_id="run_retry_lease",
+                        impulse_id=impulse.id,
+                        process_type="score",
+                        status=ProcessStatus.ready,
+                        max_attempts=2,
+                    ),
+                    idempotency_key="process.schedule:process_retry_lease",
+                )
+                claimed = await runtime.claim_next_ready_process(
+                    run_id="run_retry_lease",
+                    worker_id="worker_1",
+                )
+                assert claimed is not None
+
+                with self.assertRaisesRegex(ValueError, "lease is held by"):
+                    await runtime.retry_process(
+                        run_id="run_retry_lease",
+                        process_id="process_retry_lease",
+                        idempotency_key="process.retry:intruder",
+                        actor="worker_intruder",
+                    )
+                retried, _ = await runtime.retry_process(
+                    run_id="run_retry_lease",
+                    process_id="process_retry_lease",
+                    idempotency_key="process.retry:owner",
+                    actor="worker_1",
+                )
+                self.assertEqual(retried.status, ProcessStatus.retry_wait)
+
+        asyncio.run(scenario())
+
+    def test_claim_closes_expired_final_attempt_process(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
+                await runtime.create_run(
+                    Run(id="run_expired"),
+                    idempotency_key="run.create",
+                )
+                impulse = Impulse(
+                    id="impulse_expired",
+                    run_id="run_expired",
+                    impulse_type="case",
+                )
+                await runtime.accept_impulse(
+                    impulse,
+                    idempotency_key="impulse.accept:impulse_expired",
+                )
+                await runtime.schedule_process(
+                    Process(
+                        id="process_expired",
+                        run_id="run_expired",
+                        impulse_id=impulse.id,
+                        process_type="score",
+                        status=ProcessStatus.ready,
+                        max_attempts=1,
+                    ),
+                    idempotency_key="process.schedule:process_expired",
+                )
+                claimed = await runtime.claim_next_ready_process(
+                    run_id="run_expired",
+                    worker_id="worker_1",
+                    lease_seconds=0.01,
+                )
+                assert claimed is not None
+                await asyncio.sleep(0.05)
+
+                # The crashed final attempt can never be re-claimed; the claim
+                # sweep must close it as failed so the run settles.
+                reclaimed = await runtime.claim_next_ready_process(
+                    run_id="run_expired",
+                    worker_id="worker_2",
+                )
+                self.assertIsNone(reclaimed)
+                process = await runtime.backend.get_process(
+                    run_id="run_expired",
+                    process_id="process_expired",
+                )
+                assert process is not None
+                self.assertEqual(process.status, ProcessStatus.failed)
+                self.assertEqual(process.error["type"], "lease_expired")
+                failed_events = [
+                    event
+                    for event in await runtime.list_events(run_id="run_expired")
+                    if event.event_type == "process.failed"
+                ]
+                self.assertEqual(len(failed_events), 1)
+                self.assertEqual(failed_events[0].payload["attempt"], 1)
 
         asyncio.run(scenario())
 
     def test_fala_runtime_rebuilds_run_summary_projection(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await runtime.create_run(
                     Run(id="run_summary", title="Summary run"),
                     idempotency_key="run_summary:create",
                 )
-                carrier = Carrier(
-                    id="carrier_summary",
+                impulse = Impulse(
+                    id="impulse_summary",
                     run_id="run_summary",
-                    carrier_type="case",
+                    impulse_type="case",
                     payload={"case_id": "SUM-1"},
                 )
-                await runtime.accept_carrier(
-                    carrier,
-                    idempotency_key="run_summary:carrier.accept",
+                await runtime.accept_impulse(
+                    impulse,
+                    idempotency_key="run_summary:impulse.accept",
                 )
-                await runtime.record_observation(
-                    Observation(
-                        run_id=carrier.run_id,
-                        carrier_id=carrier.id,
+                await runtime.record_association(
+                    Association(
+                        run_id=impulse.run_id,
+                        impulse_id=impulse.id,
                         kind="score",
                         values={"score": 1},
                     ),
-                    idempotency_key="run_summary:observation.score",
+                    idempotency_key="run_summary:association.score",
                 )
-                await runtime.record_artifact(
-                    Artifact(
-                        id="artifact_summary",
-                        run_id=carrier.run_id,
-                        carrier_id=carrier.id,
+                await runtime.record_reaction(
+                    Reaction(
+                        id="reaction_summary",
+                        run_id=impulse.run_id,
+                        impulse_id=impulse.id,
                         kind="report",
-                        uri="fala-artifact://sha256/summary",
+                        uri="fala-reaction://sha256/summary",
                     ),
-                    idempotency_key="run_summary:artifact.report",
+                    idempotency_key="run_summary:reaction.report",
                 )
-                await runtime.save_gate(
-                    Gate(
-                        run_id=carrier.run_id,
-                        carrier_id=carrier.id,
+                await runtime.save_homeostat(
+                    Homeostat(
+                        run_id=impulse.run_id,
+                        impulse_id=impulse.id,
                         kind="review",
-                        status=GateStatus.open,
+                        status=HomeostatStatus.open,
                     ),
-                    idempotency_key="run_summary:gate.review",
+                    idempotency_key="run_summary:homeostat.review",
                 )
                 await runtime.schedule_process(
                     Process(
                         id="process_summary",
-                        run_id=carrier.run_id,
-                        carrier_id=carrier.id,
+                        run_id=impulse.run_id,
+                        impulse_id=impulse.id,
                         process_type="score",
-                        status=CarrierProcessStatus.ready,
+                        status=ProcessStatus.ready,
                     ),
                     idempotency_key="run_summary:process.score",
                 )
 
                 rebuilt, submission = await runtime.rebuild_projections(
-                    run_id=carrier.run_id,
+                    run_id=impulse.run_id,
                     idempotency_key="run_summary:projection.rebuild",
                 )
                 self.assertFalse(submission.replayed)
@@ -962,13 +1133,13 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(summary.name, "run_summary")
                 self.assertEqual(summary.source_event_sequence, 7)
                 self.assertEqual(summary.data["event_count"], 7)
-                self.assertEqual(summary.data["carrier_count"], 1)
-                self.assertEqual(summary.data["observation_count"], 1)
-                self.assertEqual(summary.data["artifact_count"], 1)
-                self.assertEqual(summary.data["gate_status_counts"], {"open": 1})
+                self.assertEqual(summary.data["impulse_count"], 1)
+                self.assertEqual(summary.data["association_count"], 1)
+                self.assertEqual(summary.data["reaction_count"], 1)
+                self.assertEqual(summary.data["homeostat_status_counts"], {"open": 1})
                 self.assertEqual(summary.data["process_status_counts"], {"ready": 1})
                 self.assertEqual(
-                    summary.data["resource_accounting"]["artifact_bytes"],
+                    summary.data["resource_accounting"]["reaction_bytes"],
                     0,
                 )
                 self.assertEqual(
@@ -981,7 +1152,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 )
 
                 replayed, replay = await runtime.rebuild_projections(
-                    run_id=carrier.run_id,
+                    run_id=impulse.run_id,
                     idempotency_key="run_summary:projection.rebuild",
                 )
                 self.assertTrue(replay.replayed)
@@ -989,55 +1160,55 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_fala_runtime_records_file_artifact_in_filesystem_store(self) -> None:
+    def test_fala_runtime_records_file_reaction_in_filesystem_store(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 root = Path(tmp_dir)
                 source = root / "report.txt"
-                content = b"carrier artifact\n"
+                content = b"impulse reaction\n"
                 source.write_bytes(content)
-                runtime = FalaRuntime.sqlite(root / ".fala" / "state.sqlite")
+                runtime = AutonomousCorrelator.sqlite(root / ".fala" / "state.sqlite")
                 await runtime.create_run(
-                    Run(id="run_artifact_file"),
-                    idempotency_key="run_artifact_file:create",
+                    Run(id="run_reaction_file"),
+                    idempotency_key="run_reaction_file:create",
                 )
 
-                artifact, submission = await runtime.record_file_artifact(
-                    run_id="run_artifact_file",
+                reaction, submission = await runtime.record_file_reaction(
+                    run_id="run_reaction_file",
                     kind="report",
                     path=source,
                     media_type="text/plain",
-                    artifact_store=root / ".fala" / "artifacts",
-                    idempotency_key="run_artifact_file:artifact.report",
+                    reaction_store=root / ".fala" / "reactions",
+                    idempotency_key="run_reaction_file:reaction.report",
                 )
 
                 digest = hashlib.sha256(content).hexdigest()
-                blob = root / ".fala" / "artifacts" / "blobs" / "sha256" / digest[:2] / digest
-                stored = await runtime.service.backend.get_artifact(
-                    run_id="run_artifact_file",
-                    artifact_id=artifact.id,
+                blob = root / ".fala" / "reactions" / "blobs" / "sha256" / digest[:2] / digest
+                stored = await runtime.service.backend.get_reaction(
+                    run_id="run_reaction_file",
+                    reaction_id=reaction.id,
                 )
 
                 self.assertFalse(submission.replayed)
                 self.assertTrue(blob.is_file())
                 self.assertEqual(blob.read_bytes(), content)
-                self.assertEqual(artifact.uri, f"fala-artifact://sha256/{digest}")
-                self.assertEqual(artifact.content_hash, f"sha256:{digest}")
-                self.assertEqual(artifact.size_bytes, len(content))
-                self.assertEqual(artifact.media_type, "text/plain")
-                self.assertEqual(stored, artifact)
+                self.assertEqual(reaction.uri, f"fala-reaction://sha256/{digest}")
+                self.assertEqual(reaction.content_hash, f"sha256:{digest}")
+                self.assertEqual(reaction.size_bytes, len(content))
+                self.assertEqual(reaction.media_type, "text/plain")
+                self.assertEqual(stored, reaction)
 
         asyncio.run(scenario())
 
-    def test_file_artifact_store_rejects_corrupt_existing_blob(self) -> None:
+    def test_file_reaction_store_rejects_corrupt_existing_blob(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             source = root / "report.txt"
-            content = b"artifact payload"
+            content = b"reaction payload"
             source.write_bytes(content)
             digest = hashlib.sha256(content).hexdigest()
-            store = FileArtifactStore(root / "artifacts")
-            blob = root / "artifacts" / "blobs" / "sha256" / digest[:2] / digest
+            store = FileReactionStore(root / "reactions")
+            blob = root / "reactions" / "blobs" / "sha256" / digest[:2] / digest
             blob.parent.mkdir(parents=True, exist_ok=True)
             blob.write_bytes(b"corrupt")
 
@@ -1046,23 +1217,23 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
             self.assertEqual(blob.read_bytes(), b"corrupt")
 
-    def test_cli_gc_removes_unreferenced_filesystem_artifact_blobs(self) -> None:
-        async def setup(root: Path) -> tuple[Artifact, ArtifactRef]:
-            runtime = FalaRuntime.sqlite(root / "state.sqlite")
+    def test_cli_gc_removes_unreferenced_filesystem_reaction_blobs(self) -> None:
+        async def setup(root: Path) -> tuple[Reaction, ReactionRef]:
+            runtime = AutonomousCorrelator.sqlite(root / "state.sqlite")
             run = Run(id="run_gc")
             await runtime.create_run(run, idempotency_key="run_gc:create")
             source = root / "source.txt"
             source.write_text("referenced", encoding="utf-8")
             orphan = root / "orphan.txt"
             orphan.write_text("orphan", encoding="utf-8")
-            store = FileArtifactStore(root / "artifacts")
+            store = FileReactionStore(root / "reactions")
 
-            referenced, _ = await runtime.record_file_artifact(
+            referenced, _ = await runtime.record_file_reaction(
                 run_id=run.id,
                 kind="text",
                 path=source,
-                artifact_store=store,
-                idempotency_key="run_gc:artifact:referenced",
+                reaction_store=store,
+                idempotency_key="run_gc:reaction:referenced",
             )
             orphan_ref = store.put_file(kind="text", path=orphan)
             return referenced, orphan_ref
@@ -1070,14 +1241,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             referenced, orphan_ref = asyncio.run(setup(root))
-            store = FileArtifactStore(root / "artifacts")
+            store = FileReactionStore(root / "reactions")
 
             dry_run = _run_cli_json(
                 "gc",
                 "--db",
                 str(root / "state.sqlite"),
-                "--artifact-root",
-                str(root / "artifacts"),
+                "--reaction-root",
+                str(root / "reactions"),
                 "--dry-run",
             )
             self.assertEqual(dry_run["collectable"], [orphan_ref.metadata["sha256"]])
@@ -1087,13 +1258,13 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "gc",
                 "--db",
                 str(root / "state.sqlite"),
-                "--artifact-root",
-                str(root / "artifacts"),
+                "--reaction-root",
+                str(root / "reactions"),
             )
             self.assertEqual(collected["deleted"], [orphan_ref.metadata["sha256"]])
             self.assertTrue(
                 store.resolve(
-                    ArtifactRef(
+                    ReactionRef(
                         id=referenced.id,
                         kind=referenced.kind,
                         uri=referenced.uri,
@@ -1105,8 +1276,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 store.resolve(orphan_ref)
 
     def test_cli_gc_run_scope_keeps_blobs_referenced_by_other_runs(self) -> None:
-        async def setup(root: Path) -> tuple[Artifact, ArtifactRef]:
-            runtime = FalaRuntime.sqlite(root / "state.sqlite")
+        async def setup(root: Path) -> tuple[Reaction, ReactionRef]:
+            runtime = AutonomousCorrelator.sqlite(root / "state.sqlite")
             await runtime.create_run(Run(id="run_gc"), idempotency_key="run_gc:create")
             await runtime.create_run(
                 Run(id="run_keep"),
@@ -1116,14 +1287,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             source.write_text("shared", encoding="utf-8")
             orphan = root / "orphan.txt"
             orphan.write_text("orphan", encoding="utf-8")
-            store = FileArtifactStore(root / "artifacts")
+            store = FileReactionStore(root / "reactions")
 
-            shared, _ = await runtime.record_file_artifact(
+            shared, _ = await runtime.record_file_reaction(
                 run_id="run_keep",
                 kind="text",
                 path=source,
-                artifact_store=store,
-                idempotency_key="run_keep:artifact:shared",
+                reaction_store=store,
+                idempotency_key="run_keep:reaction:shared",
             )
             orphan_ref = store.put_file(kind="text", path=orphan)
             return shared, orphan_ref
@@ -1131,14 +1302,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             shared, orphan_ref = asyncio.run(setup(root))
-            store = FileArtifactStore(root / "artifacts")
+            store = FileReactionStore(root / "reactions")
 
             collected = _run_cli_json(
                 "gc",
                 "--db",
                 str(root / "state.sqlite"),
-                "--artifact-root",
-                str(root / "artifacts"),
+                "--reaction-root",
+                str(root / "reactions"),
                 "--run-id",
                 "run_gc",
             )
@@ -1150,7 +1321,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(collected["deleted"], [orphan_ref.metadata["sha256"]])
             self.assertTrue(
                 store.resolve(
-                    ArtifactRef(
+                    ReactionRef(
                         id=shared.id,
                         kind=shared.kind,
                         uri=shared.uri,
@@ -1159,103 +1330,103 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 ).exists()
             )
 
-    def test_cli_inspects_carrier_runtime_state_without_web_stack(self) -> None:
+    def test_cli_inspects_runtime_state_without_web_stack(self) -> None:
         async def scenario(db_path: Path) -> None:
-            runtime = FalaRuntime.sqlite(db_path)
-            carrier_type = CarrierType(
+            runtime = AutonomousCorrelator.sqlite(db_path)
+            impulse_type = ImpulseType(
                 id="case",
                 run_id="run_cli",
                 title="Case",
                 media_types=["application/json"],
             )
-            carrier = Carrier(
-                id="carrier_cli",
+            impulse = Impulse(
+                id="impulse_cli",
                 run_id="run_cli",
-                carrier_type="case",
+                impulse_type="case",
                 payload={"case_id": "CLI-1"},
             )
-            child = Carrier(
-                id="carrier_cli_child",
+            child = Impulse(
+                id="impulse_cli_child",
                 run_id="run_cli",
-                carrier_type="case",
+                impulse_type="case",
                 payload={"case_id": "CLI-1-child"},
             )
-            await runtime.register_carrier_type(
-                carrier_type,
-                idempotency_key="run_cli:carrier_type:case",
+            await runtime.register_impulse_type(
+                impulse_type,
+                idempotency_key="run_cli:impulse_type:case",
             )
-            stored, _ = await runtime.accept_carrier(
-                carrier,
-                idempotency_key="run_cli:carrier.accept:carrier_cli",
+            stored, _ = await runtime.accept_impulse(
+                impulse,
+                idempotency_key="run_cli:impulse.accept:impulse_cli",
             )
-            await runtime.accept_carrier(
+            await runtime.accept_impulse(
                 child,
-                idempotency_key="run_cli:carrier.accept:carrier_cli_child",
+                idempotency_key="run_cli:impulse.accept:impulse_cli_child",
             )
-            await runtime.record_carrier_relation(
-                CarrierRelation(
+            await runtime.record_impulse_relation(
+                ImpulseRelation(
                     id="relation_cli",
                     run_id="run_cli",
                     relation_type="derived_from",
-                    source_carrier_id=stored.id,
-                    target_carrier_id=child.id,
+                    source_impulse_id=stored.id,
+                    target_impulse_id=child.id,
                 ),
-                idempotency_key="run_cli:carrier_relation:relation_cli",
+                idempotency_key="run_cli:impulse_relation:relation_cli",
             )
-            await runtime.record_artifact(
-                Artifact(
-                    id="artifact_cli",
+            await runtime.record_reaction(
+                Reaction(
+                    id="reaction_cli",
                     run_id="run_cli",
-                    carrier_id=stored.id,
+                    impulse_id=stored.id,
                     kind="report",
-                    uri="fala-artifact://sha256/abc",
+                    uri="fala-reaction://sha256/abc",
                     media_type="application/json",
                     size_bytes=3,
                     content_hash="sha256:abc",
                 ),
-                idempotency_key="run_cli:artifact:artifact_cli",
+                idempotency_key="run_cli:reaction:reaction_cli",
             )
             await runtime.schedule_process(
                 Process(
                     id="process_cli",
                     run_id="run_cli",
-                    carrier_id=stored.id,
+                    impulse_id=stored.id,
                     process_type="score",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     input={"case_id": "CLI-1"},
                 ),
                 idempotency_key="run_cli:process:process_cli",
             )
-            await runtime.record_observation(
-                Observation(
+            await runtime.record_association(
+                Association(
                     run_id=stored.run_id,
-                    carrier_id=stored.id,
+                    impulse_id=stored.id,
                     kind="score",
                     values={"score": 1},
                 ),
-                idempotency_key="run_cli:observation.score:carrier_cli",
+                idempotency_key="run_cli:association.score:impulse_cli",
             )
-            await runtime.save_gate(
-                Gate(
+            await runtime.save_homeostat(
+                Homeostat(
                     run_id=stored.run_id,
-                    carrier_id=stored.id,
+                    impulse_id=stored.id,
                     kind="review",
-                    status=GateStatus.open,
+                    status=HomeostatStatus.open,
                 ),
-                idempotency_key="run_cli:gate.review:carrier_cli",
+                idempotency_key="run_cli:homeostat.review:impulse_cli",
             )
             await runtime.save_projection(
                 Projection(
                     run_id=stored.run_id,
                     name="case_summary",
-                    data={"carrier_id": stored.id},
+                    data={"impulse_id": stored.id},
                     source_event_sequence=1,
                 ),
                 idempotency_key="run_cli:projection.case_summary",
             )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "carrier.sqlite"
+            db_path = Path(tmp_dir) / "impulse.sqlite"
             created_run = _run_cli_json(
                 "create-run",
                 "--db",
@@ -1337,75 +1508,75 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertTrue(inspected_command["ok"])
             self.assertEqual(
                 inspected_command["command"]["idempotency_key"],
-                "run_cli:run.create",
+                "run.create",
             )
 
-            carriers = _run_cli_json(
-                "carriers",
+            impulses = _run_cli_json(
+                "impulses",
                 "list",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
             )
-            self.assertEqual(carriers["count"], 2)
-            self.assertEqual(carriers["carriers"][0]["id"], "carrier_cli")
+            self.assertEqual(impulses["count"], 2)
+            self.assertEqual(impulses["impulses"][0]["id"], "impulse_cli")
 
             inspected = _run_cli_json(
-                "carriers",
+                "impulses",
                 "inspect",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--carrier-id",
-                "carrier_cli",
+                "--impulse-id",
+                "impulse_cli",
             )
             self.assertTrue(inspected["ok"])
-            self.assertEqual(inspected["carrier"]["carrier_type"], "case")
+            self.assertEqual(inspected["impulse"]["impulse_type"], "case")
 
-            carrier_types = _run_cli_json(
-                "carrier-types",
+            impulse_types = _run_cli_json(
+                "impulse-types",
                 "list",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
             )
-            self.assertEqual(carrier_types["count"], 1)
-            self.assertEqual(carrier_types["carrier_types"][0]["id"], "case")
+            self.assertEqual(impulse_types["count"], 1)
+            self.assertEqual(impulse_types["impulse_types"][0]["id"], "case")
 
             inspected_type = _run_cli_json(
-                "carrier-types",
+                "impulse-types",
                 "inspect",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--carrier-type-id",
+                "--impulse-type-id",
                 "case",
             )
             self.assertTrue(inspected_type["ok"])
-            self.assertEqual(inspected_type["carrier_type"]["title"], "Case")
+            self.assertEqual(inspected_type["impulse_type"]["title"], "Case")
 
-            carrier_relations = _run_cli_json(
-                "carrier-relations",
+            impulse_relations = _run_cli_json(
+                "impulse-relations",
                 "list",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--carrier-id",
-                "carrier_cli_child",
+                "--impulse-id",
+                "impulse_cli_child",
             )
-            self.assertEqual(carrier_relations["count"], 1)
+            self.assertEqual(impulse_relations["count"], 1)
             self.assertEqual(
-                carrier_relations["carrier_relations"][0]["relation_type"],
+                impulse_relations["impulse_relations"][0]["relation_type"],
                 "derived_from",
             )
 
             inspected_relation = _run_cli_json(
-                "carrier-relations",
+                "impulse-relations",
                 "inspect",
                 "--db",
                 str(db_path),
@@ -1416,37 +1587,37 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             )
             self.assertTrue(inspected_relation["ok"])
             self.assertEqual(
-                inspected_relation["carrier_relation"]["target_carrier_id"],
-                "carrier_cli_child",
+                inspected_relation["impulse_relation"]["target_impulse_id"],
+                "impulse_cli_child",
             )
 
-            artifacts = _run_cli_json(
-                "artifacts",
+            reactions = _run_cli_json(
+                "reactions",
                 "list",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--carrier-id",
-                "carrier_cli",
+                "--impulse-id",
+                "impulse_cli",
                 "--kind",
                 "report",
             )
-            self.assertEqual(artifacts["count"], 1)
-            self.assertEqual(artifacts["artifacts"][0]["id"], "artifact_cli")
+            self.assertEqual(reactions["count"], 1)
+            self.assertEqual(reactions["reactions"][0]["id"], "reaction_cli")
 
-            inspected_artifact = _run_cli_json(
-                "artifacts",
+            inspected_reaction = _run_cli_json(
+                "reactions",
                 "inspect",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--artifact-id",
-                "artifact_cli",
+                "--reaction-id",
+                "reaction_cli",
             )
-            self.assertTrue(inspected_artifact["ok"])
-            self.assertEqual(inspected_artifact["artifact"]["size_bytes"], 3)
+            self.assertTrue(inspected_reaction["ok"])
+            self.assertEqual(inspected_reaction["reaction"]["size_bytes"], 3)
 
             processes = _run_cli_json(
                 "processes",
@@ -1455,8 +1626,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--carrier-id",
-                "carrier_cli",
+                "--impulse-id",
+                "impulse_cli",
                 "--status",
                 "ready",
             )
@@ -1483,50 +1654,50 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--carrier-id",
-                "carrier_cli",
+                "--impulse-id",
+                "impulse_cli",
             )
             self.assertEqual(
                 [event["event_type"] for event in events["events"]],
                 [
-                    "carrier.accepted",
-                    "carrier_relation.recorded",
-                    "artifact.recorded",
+                    "impulse.accepted",
+                    "impulse_relation.recorded",
+                    "reaction.recorded",
                     "process.scheduled",
-                    "observation.recorded",
-                    "gate.saved",
+                    "association.recorded",
+                    "homeostat.saved",
                 ],
             )
 
-            observations = _run_cli_json(
-                "observations",
+            associations = _run_cli_json(
+                "associations",
                 "list",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--carrier-id",
-                "carrier_cli",
+                "--impulse-id",
+                "impulse_cli",
             )
-            self.assertEqual(observations["observations"][0]["kind"], "score")
-            inspected_observation = _run_cli_json(
-                "observations",
+            self.assertEqual(associations["associations"][0]["kind"], "score")
+            inspected_association = _run_cli_json(
+                "associations",
                 "inspect",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--observation-id",
-                observations["observations"][0]["id"],
+                "--association-id",
+                associations["associations"][0]["id"],
             )
-            self.assertTrue(inspected_observation["ok"])
+            self.assertTrue(inspected_association["ok"])
             self.assertEqual(
-                inspected_observation["observation"]["kind"],
+                inspected_association["association"]["kind"],
                 "score",
             )
 
-            gates = _run_cli_json(
-                "gates",
+            homeostats = _run_cli_json(
+                "homeostats",
                 "list",
                 "--db",
                 str(db_path),
@@ -1535,29 +1706,29 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "--status",
                 "open",
             )
-            self.assertEqual(gates["gates"][0]["kind"], "review")
+            self.assertEqual(homeostats["homeostats"][0]["kind"], "review")
 
-            completed_gate = _run_cli_json(
-                "gate",
+            completed_homeostat = _run_cli_json(
+                "homeostat",
                 "complete",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_cli",
-                "--gate-id",
-                gates["gates"][0]["id"],
+                "--homeostat-id",
+                homeostats["homeostats"][0]["id"],
                 "--value",
                 "decision=approved",
             )
-            self.assertTrue(completed_gate["ok"])
-            self.assertEqual(completed_gate["gate"]["status"], "completed")
+            self.assertTrue(completed_homeostat["ok"])
+            self.assertEqual(completed_homeostat["homeostat"]["status"], "completed")
             self.assertEqual(
-                completed_gate["gate"]["values"],
+                completed_homeostat["homeostat"]["values"],
                 {"decision": "approved"},
             )
 
-            completed_gates = _run_cli_json(
-                "gates",
+            completed_homeostats = _run_cli_json(
+                "homeostats",
                 "list",
                 "--db",
                 str(db_path),
@@ -1566,7 +1737,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "--status",
                 "completed",
             )
-            self.assertEqual(completed_gates["count"], 1)
+            self.assertEqual(completed_homeostats["count"], 1)
 
             projections = _run_cli_json(
                 "projections",
@@ -1590,10 +1761,10 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             summary = rebuilt["projections"][0]
             self.assertEqual(summary["name"], "run_summary")
             self.assertEqual(summary["source_event_sequence"], 12)
-            self.assertEqual(summary["data"]["carrier_count"], 2)
-            self.assertEqual(summary["data"]["artifact_count"], 1)
+            self.assertEqual(summary["data"]["impulse_count"], 2)
+            self.assertEqual(summary["data"]["reaction_count"], 1)
             self.assertEqual(
-                summary["data"]["resource_accounting"]["artifact_bytes"],
+                summary["data"]["resource_accounting"]["reaction_bytes"],
                 3,
             )
             self.assertEqual(
@@ -1613,11 +1784,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "run_cli",
             )
             payload = trace["trace"]
-            self.assertEqual(payload["counts"]["carriers"], 2)
+            self.assertEqual(payload["counts"]["impulses"], 2)
             self.assertEqual(payload["counts"]["events"], 12)
             self.assertEqual(payload["counts"]["projections"], 2)
             self.assertEqual(payload["timeline"][-1]["type"], "projection.rebuilt")
-            self.assertEqual(payload["gates"][0]["status"], "completed")
+            self.assertEqual(payload["homeostats"][0]["status"], "completed")
 
             report_path = Path(tmp_dir) / "report.html"
             exported = _run_cli_json(
@@ -1631,7 +1802,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             )
             self.assertTrue(exported["ok"])
             report = report_path.read_text(encoding="utf-8")
-            self.assertIn("Fala Carrier Runtime Report", report)
+            self.assertIn("Fala Impulse Runtime Report", report)
             self.assertIn("projection.rebuilt", report)
             self.assertIn("decision", report)
 
@@ -1652,7 +1823,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     ["graph.dot", "report.html", "timeline.json", "trace.json"],
                 )
                 graph = archive.read("graph.dot").decode("utf-8")
-            self.assertIn('"carrier_cli" -> "carrier_cli_child"', graph)
+            self.assertIn('"impulse_cli" -> "impulse_cli_child"', graph)
             self.assertIn("derived_from", graph)
 
             archive_path = Path(tmp_dir) / "run_cli.archive.zip"
@@ -1726,9 +1897,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertFalse(expired.exists())
             self.assertTrue(retained.exists())
 
-    def test_cli_mutates_carriers_observations_and_processes(self) -> None:
+    def test_cli_mutates_impulses_associations_and_processes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "carrier.sqlite"
+            db_path = Path(tmp_dir) / "impulse.sqlite"
             _run_cli_json(
                 "create-run",
                 "--db",
@@ -1737,70 +1908,70 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "run_mutate",
             )
 
-            carrier = _run_cli_json(
-                "carriers",
+            impulse = _run_cli_json(
+                "impulses",
                 "create",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_mutate",
-                "--carrier-id",
-                "carrier_mutate",
-                "--carrier-type",
+                "--impulse-id",
+                "impulse_mutate",
+                "--impulse-type",
                 "case",
                 "--payload-json",
                 '{"case_id":"M-1"}',
                 "--metadata-json",
                 '{"tenant":"demo"}',
             )
-            self.assertTrue(carrier["ok"])
-            self.assertEqual(carrier["carrier"]["payload"], {"case_id": "M-1"})
-            self.assertEqual(carrier["command"]["command_type"], "carrier.accept")
+            self.assertTrue(impulse["ok"])
+            self.assertEqual(impulse["impulse"]["payload"], {"case_id": "M-1"})
+            self.assertEqual(impulse["command"]["command_type"], "impulse.accept")
 
-            artifact_path = Path(tmp_dir) / "report.txt"
-            artifact_path.write_text("case report", encoding="utf-8")
-            artifact = _run_cli_json(
-                "artifacts",
+            reaction_path = Path(tmp_dir) / "report.txt"
+            reaction_path.write_text("case report", encoding="utf-8")
+            reaction = _run_cli_json(
+                "reactions",
                 "record",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_mutate",
-                "--artifact-root",
-                str(Path(tmp_dir) / "artifacts"),
+                "--reaction-root",
+                str(Path(tmp_dir) / "reactions"),
                 "--path",
-                str(artifact_path),
+                str(reaction_path),
                 "--kind",
                 "report",
-                "--carrier-id",
-                "carrier_mutate",
+                "--impulse-id",
+                "impulse_mutate",
                 "--media-type",
                 "text/plain",
             )
-            self.assertTrue(artifact["ok"])
-            self.assertEqual(artifact["command"]["command_type"], "artifact.record")
-            self.assertEqual(artifact["artifact"]["size_bytes"], 11)
+            self.assertTrue(reaction["ok"])
+            self.assertEqual(reaction["command"]["command_type"], "reaction.record")
+            self.assertEqual(reaction["reaction"]["size_bytes"], 11)
 
-            observation = _run_cli_json(
-                "observations",
+            association = _run_cli_json(
+                "associations",
                 "append",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_mutate",
-                "--observation-id",
-                "observation_mutate",
-                "--carrier-id",
-                "carrier_mutate",
+                "--association-id",
+                "association_mutate",
+                "--impulse-id",
+                "impulse_mutate",
                 "--kind",
                 "score",
                 "--values-json",
                 '{"score":7}',
             )
-            self.assertTrue(observation["ok"])
+            self.assertTrue(association["ok"])
             self.assertEqual(
-                observation["command"]["command_type"],
-                "observation.record",
+                association["command"]["command_type"],
+                "association.record",
             )
 
             process = _run_cli_json(
@@ -1812,8 +1983,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "run_mutate",
                 "--process-id",
                 "process_mutate",
-                "--carrier-id",
-                "carrier_mutate",
+                "--impulse-id",
+                "impulse_mutate",
                 "--process-type",
                 "score",
                 "--status",
@@ -1844,43 +2015,43 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "process.cancel",
             )
 
-            gate = _run_cli_json(
-                "gate",
+            homeostat = _run_cli_json(
+                "homeostat",
                 "open",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_mutate",
-                "--gate-id",
-                "gate_mutate",
-                "--carrier-id",
-                "carrier_mutate",
+                "--homeostat-id",
+                "homeostat_mutate",
+                "--impulse-id",
+                "impulse_mutate",
                 "--kind",
                 "human.review",
                 "--values-json",
                 '{"reason":"manual"}',
             )
-            self.assertTrue(gate["ok"])
-            self.assertEqual(gate["gate"]["status"], "open")
-            self.assertEqual(gate["command"]["command_type"], "gate.open")
+            self.assertTrue(homeostat["ok"])
+            self.assertEqual(homeostat["homeostat"]["status"], "open")
+            self.assertEqual(homeostat["command"]["command_type"], "homeostat.open")
 
-            cancelled_gate = _run_cli_json(
-                "gate",
+            cancelled_homeostat = _run_cli_json(
+                "homeostat",
                 "cancel",
                 "--db",
                 str(db_path),
                 "--run-id",
                 "run_mutate",
-                "--gate-id",
-                "gate_mutate",
+                "--homeostat-id",
+                "homeostat_mutate",
                 "--value",
                 "reason=operator",
             )
-            self.assertTrue(cancelled_gate["ok"])
-            self.assertEqual(cancelled_gate["gate"]["status"], "cancelled")
+            self.assertTrue(cancelled_homeostat["ok"])
+            self.assertEqual(cancelled_homeostat["homeostat"]["status"], "cancelled")
             self.assertEqual(
-                cancelled_gate["command"]["command_type"],
-                "gate.cancel",
+                cancelled_homeostat["command"]["command_type"],
+                "homeostat.cancel",
             )
 
             events = _run_cli_json(
@@ -1895,19 +2066,19 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 [event["event_type"] for event in events["events"]],
                 [
                     "run.created",
-                    "carrier.accepted",
-                    "artifact.recorded",
-                    "observation.recorded",
+                    "impulse.accepted",
+                    "reaction.recorded",
+                    "association.recorded",
                     "process.scheduled",
                     "process.cancelled",
-                    "gate.opened",
-                    "gate.cancelled",
+                    "homeostat.opened",
+                    "homeostat.cancelled",
                 ],
             )
 
-    def test_cli_init_and_run_until_idle_execute_carrier_process(self) -> None:
+    def test_cli_init_and_run_until_idle_execute_impulse_process(self) -> None:
         async def setup(db_path: Path) -> None:
-            backend = SQLiteRuntimeBackend(db_path)
+            backend = Correlator(db_path)
             service = RuntimeBackendService(backend)
             await service.create_run(
                 Run(id="run_idle"),
@@ -1918,11 +2089,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_idle",
                     run_id="run_idle",
                     process_type="python_function",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     input={
                         "adapter": {
                             "kind": "python_function",
-                            "ref": "tests.test_fala_runtime_backend._carrier_cli_step",
+                            "ref": "tests.test_fala_runtime_backend._impulse_cli_effector",
                         },
                         "value": 2,
                     },
@@ -1931,7 +2102,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             )
 
         async def inspect(db_path: Path) -> Process:
-            backend = SQLiteRuntimeBackend(db_path)
+            backend = Correlator(db_path)
             process = await backend.get_process(
                 run_id="run_idle",
                 process_id="process_idle",
@@ -1946,12 +2117,12 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "init",
                 "--db",
                 str(db_path),
-                "--artifact-root",
-                str(root / "artifacts"),
+                "--reaction-root",
+                str(root / "reactions"),
             )
             self.assertTrue(init["ok"])
             self.assertTrue(db_path.exists())
-            self.assertTrue((root / "artifacts").exists())
+            self.assertTrue((root / "reactions").exists())
 
             asyncio.run(setup(db_path))
             result = _run_cli_json(
@@ -1964,7 +2135,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(result["stopped_reason"], "idle")
             self.assertEqual(len(result["completed"]), 1)
             process = asyncio.run(inspect(db_path))
-            self.assertEqual(process.status, CarrierProcessStatus.succeeded)
+            self.assertEqual(process.status, ProcessStatus.succeeded)
             self.assertEqual(process.output["value"], 3)
 
     def test_cli_run_until_idle_rejects_invalid_lease_seconds(self) -> None:
@@ -1993,11 +2164,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_replay",
                     run_id="run_replay",
                     process_type="python_function",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     input={
                         "adapter": {
                             "kind": "python_function",
-                            "ref": "tests.test_fala_runtime_backend._carrier_cli_step",
+                            "ref": "tests.test_fala_runtime_backend._impulse_cli_effector",
                         },
                         "value": 6,
                     },
@@ -2010,7 +2181,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_not_deterministic",
                     run_id="run_replay",
                     process_type="python_function",
-                    status=CarrierProcessStatus.succeeded,
+                    status=ProcessStatus.succeeded,
                     input={},
                     output={"value": 1},
                 )
@@ -2082,7 +2253,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_subprocess_replay",
                     run_id="run_subprocess_replay",
                     process_type="subprocess",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     input={
                         "adapter": {
                             "kind": "subprocess",
@@ -2100,7 +2271,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             db_path = root / "state.sqlite"
-            script = root / "step.py"
+            script = root / "effector.py"
             script.write_text(
                 textwrap.dedent(
                     """
@@ -2110,8 +2281,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     import os
                     from pathlib import Path
 
-                    manifest = json.loads(Path(os.environ["FALA_STEP_MANIFEST"]).read_text())
-                    output = Path(os.environ["FALA_STEP_OUTPUT_DIR"])
+                    manifest = json.loads(Path(os.environ["FALA_EFFECTOR_MANIFEST"]).read_text())
+                    output = Path(os.environ["FALA_EFFECTOR_OUTPUT_DIR"])
                     output.mkdir(parents=True, exist_ok=True)
                     value = int(manifest["input"]["value"])
                     (output / "result.json").write_text(
@@ -2159,14 +2330,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 Run(id="run_target"),
                 idempotency_key="run_target:create",
             )
-            await source.accept_carrier(
-                Carrier(
-                    id="carrier_delegate",
+            await source.accept_impulse(
+                Impulse(
+                    id="impulse_delegate",
                     run_id="run_source",
-                    carrier_type="case",
+                    impulse_type="case",
                     payload={"claim": "DELEGATE-1"},
                 ),
-                idempotency_key="run_source:carrier.accept:carrier_delegate",
+                idempotency_key="run_source:impulse.accept:impulse_delegate",
             )
             await source.save_runtime_pool(
                 RuntimePool(
@@ -2183,7 +2354,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                             metadata={"load": 1},
                         ),
                     ],
-                    carrier_types=["case"],
+                    impulse_types=["case"],
                     metadata={"policy": "least_busy"},
                 )
             )
@@ -2191,10 +2362,10 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 DelegationPolicy(
                     id="delegate_cases",
                     pool_id="target_pool",
-                    carrier_types=["case"],
+                    impulse_types=["case"],
                     budget=RuntimeBudget(
                         runtime_hops=1,
-                        carrier_count=1,
+                        impulse_count=1,
                         attempts=1,
                     ),
                 )
@@ -2203,9 +2374,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 Process(
                     id="process_delegate",
                     run_id="run_source",
-                    carrier_id="carrier_delegate",
+                    impulse_id="impulse_delegate",
                     process_type="fala_runtime",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     input={
                         "adapter": {
                             "kind": "fala_runtime",
@@ -2249,8 +2420,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(outbox["count"], 1)
             self.assertEqual(outbox["bridge_outbox"][0]["status"], "pending")
             self.assertEqual(
-                outbox["bridge_outbox"][0]["carrier"]["id"],
-                "carrier_delegate",
+                outbox["bridge_outbox"][0]["impulse"]["id"],
+                "impulse_delegate",
             )
             self.assertEqual(outbox["bridge_outbox"][0]["pool_id"], "target_pool")
             self.assertEqual(
@@ -2291,7 +2462,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             )
             self.assertEqual(inbox["count"], 1)
             self.assertEqual(
-                inbox["bridge_inbox"][0]["carrier"]["payload"]["claim"],
+                inbox["bridge_inbox"][0]["impulse"]["payload"]["claim"],
                 "DELEGATE-1",
             )
 
@@ -2309,7 +2480,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                         RuntimeRef(id="target_a", uri="sqlite:///tmp/target-a.sqlite"),
                         RuntimeRef(id="target_b", uri="sqlite:///tmp/target-b.sqlite"),
                     ],
-                    carrier_types=["case"],
+                    impulse_types=["case"],
                     metadata={"policy": "round_robin"},
                 )
             )
@@ -2317,27 +2488,27 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 DelegationPolicy(
                     id="rr_cases",
                     pool_id="rr_pool",
-                    carrier_types=["case"],
-                    budget=RuntimeBudget(runtime_hops=1, carrier_count=1),
+                    impulse_types=["case"],
+                    budget=RuntimeBudget(runtime_hops=1, impulse_count=1),
                 )
             )
             for index in range(2):
-                carrier_id = f"carrier_rr_{index}"
-                await source.accept_carrier(
-                    Carrier(
-                        id=carrier_id,
+                impulse_id = f"impulse_rr_{index}"
+                await source.accept_impulse(
+                    Impulse(
+                        id=impulse_id,
                         run_id="run_round_robin",
-                        carrier_type="case",
+                        impulse_type="case",
                     ),
-                    idempotency_key=f"run_round_robin:carrier.accept:{carrier_id}",
+                    idempotency_key=f"run_round_robin:impulse.accept:{impulse_id}",
                 )
                 await source.schedule_process(
                     Process(
                         id=f"process_rr_{index}",
                         run_id="run_round_robin",
-                        carrier_id=carrier_id,
+                        impulse_id=impulse_id,
                         process_type="fala_runtime",
-                        status=CarrierProcessStatus.ready,
+                        status=ProcessStatus.ready,
                         input={
                             "adapter": {
                                 "kind": "fala_runtime",
@@ -2391,9 +2562,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 0,
             )
 
-    def test_cli_cancels_carrier_runtime_run(self) -> None:
+    def test_cli_cancels_runtime_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "carrier.sqlite"
+            db_path = Path(tmp_dir) / "impulse.sqlite"
             _run_cli_json(
                 "create-run",
                 "--db",
@@ -2446,57 +2617,11 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 ["run.created", "run.cancel_requested"],
             )
 
-    def test_document_domain_pack_maps_documents_to_carriers(self) -> None:
+
+    def test_splot_domain_pack_uses_public_runtime_api(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
-                await _put_test_run(runtime, "run_docs")
-                document = DocumentCarrierInput(
-                    id="doc_invoice_1",
-                    document_type="invoice_document",
-                    title="Invoice 1",
-                    media_type="application/pdf",
-                    source_uri="file:///tmp/invoice.pdf",
-                    values={"vendor": "Acme"},
-                    metadata={"tenant": "demo"},
-                    artifacts=[
-                        {
-                            "id": "artifact_pdf",
-                            "kind": "pdf",
-                            "uri": "file:///tmp/invoice.pdf",
-                        }
-                    ],
-                )
-                carrier = carrier_from_document(document, run_id="run_docs")
-
-                stored, _submission = await runtime.accept_carrier(
-                    carrier,
-                    idempotency_key="run_docs:carrier.accept:doc_invoice_1",
-                )
-                observation, _ = await runtime.record_observation(
-                    document_observation(stored),
-                    idempotency_key="run_docs:observation.document:doc_invoice_1",
-                )
-                projection, _ = await runtime.save_projection(
-                    document_projection(stored),
-                    idempotency_key="run_docs:projection.document:doc_invoice_1",
-                )
-
-                round_trip = document_from_carrier(stored)
-                self.assertEqual(round_trip, document)
-                self.assertEqual(stored.carrier_type, "document.invoice_document")
-                self.assertEqual(stored.metadata["domain_pack"], "documents")
-                self.assertEqual(observation.kind, "document.accepted")
-                self.assertEqual(observation.values["artifact_count"], 1)
-                self.assertEqual(projection.name, "document:doc_invoice_1")
-                self.assertEqual(projection.data["document_type"], "invoice_document")
-
-        asyncio.run(scenario())
-
-    def test_splot_domain_pack_uses_public_carrier_runtime_api(self) -> None:
-        async def scenario() -> None:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(runtime, "run_splot")
                 case = SplotArbitrationCase(
                     id="splot_case_1",
@@ -2506,7 +2631,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     amount=1200,
                     currency="EUR",
                     rules="splot-fast-track",
-                    artifacts=[
+                    reactions=[
                         {
                             "id": "statement",
                             "kind": "claim_statement",
@@ -2514,29 +2639,29 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                         }
                     ],
                 )
-                carrier = carrier_from_case(case, run_id="run_splot")
+                impulse = impulse_from_case(case, run_id="run_splot")
 
-                stored, submission = await runtime.accept_carrier(
-                    carrier,
-                    idempotency_key="run_splot:carrier.accept:splot_case_1",
+                stored, submission = await runtime.accept_impulse(
+                    impulse,
+                    idempotency_key="run_splot:impulse.accept:splot_case_1",
                 )
-                observation, _ = await runtime.record_observation(
-                    jurisdiction_observation(
+                association, _ = await runtime.record_association(
+                    jurisdiction_association(
                         stored,
                         admissible=True,
                         reason="contract clause present",
                     ),
-                    idempotency_key="run_splot:observation.jurisdiction:splot_case_1",
+                    idempotency_key="run_splot:association.jurisdiction:splot_case_1",
                 )
-                opened_gate, _ = await runtime.open_gate(
-                    review_gate(stored),
-                    idempotency_key="run_splot:gate.review:splot_case_1",
+                opened_homeostat, _ = await runtime.open_homeostat(
+                    review_homeostat(stored),
+                    idempotency_key="run_splot:homeostat.review:splot_case_1",
                 )
-                gate, _ = await runtime.complete_gate(
+                homeostat, _ = await runtime.complete_homeostat(
                     run_id=stored.run_id,
-                    gate_id=opened_gate.id,
+                    homeostat_id=opened_homeostat.id,
                     values={"decision": "approved"},
-                    idempotency_key="run_splot:gate.review.complete:splot_case_1",
+                    idempotency_key="run_splot:homeostat.review.complete:splot_case_1",
                 )
                 projection, _ = await runtime.save_projection(
                     case_projection(stored),
@@ -2545,51 +2670,51 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 events = await runtime.list_events(run_id=stored.run_id)
 
                 self.assertFalse(submission.replayed)
-                self.assertEqual(stored.carrier_type, SPLOT_ARBITRATION_CASE)
-                self.assertEqual(case_from_carrier(stored), case)
-                self.assertEqual(observation.kind, "splot.jurisdiction")
-                self.assertEqual(observation.values["admissible"], True)
-                self.assertEqual(gate.kind, "splot.review")
-                self.assertEqual(gate.status, GateStatus.completed)
+                self.assertEqual(stored.impulse_type, SPLOT_ARBITRATION_CASE)
+                self.assertEqual(case_from_impulse(stored), case)
+                self.assertEqual(association.kind, "splot.jurisdiction")
+                self.assertEqual(association.values["admissible"], True)
+                self.assertEqual(homeostat.kind, "splot.review")
+                self.assertEqual(homeostat.status, HomeostatStatus.completed)
                 self.assertEqual(projection.name, "splot.case:SP-1")
-                self.assertEqual(projection.data["artifact_count"], 1)
+                self.assertEqual(projection.data["reaction_count"], 1)
                 self.assertEqual(
                     [event.event_type for event in events],
                     [
-                        "carrier.accepted",
-                        "observation.recorded",
-                        "gate.opened",
-                        "gate.completed",
+                        "impulse.accepted",
+                        "association.recorded",
+                        "homeostat.opened",
+                        "homeostat.completed",
                         "projection.saved",
                     ],
                 )
 
         asyncio.run(scenario())
 
-    def test_splot_domain_pack_package_manifest_is_carrier_first(self) -> None:
-        package = load_carrier_workflow_package_yaml(
-            Path("examples/domain-packs/splot/carrier-package.yaml")
+    def test_splot_domain_pack_package_manifest_is_impulse_first(self) -> None:
+        package = load_fala_package_yaml(
+            Path("examples/domain-packs/splot/fala-package.yaml")
         )
 
         self.assertEqual(package.id, "splot_arbitration_basic")
-        self.assertEqual(package.carrier_types[0].id, SPLOT_ARBITRATION_CASE)
-        self.assertEqual(package.flows[0].steps[0].adapter.kind, "manual_gate")
+        self.assertEqual(package.impulse_types[0].id, SPLOT_ARBITRATION_CASE)
+        self.assertEqual(package.correlation_paths[0].effectors[0].adapter.kind, "manual_homeostat")
 
-    def test_signals_domain_pack_package_manifest_is_carrier_first(self) -> None:
-        package = load_carrier_workflow_package_yaml(
-            Path("examples/domain-packs/signals/carrier-package.yaml")
+    def test_signals_domain_pack_package_manifest_is_impulse_first(self) -> None:
+        package = load_fala_package_yaml(
+            Path("examples/domain-packs/signals/fala-package.yaml")
         )
 
         self.assertEqual(package.id, "signals_basic")
-        self.assertEqual(package.carrier_types[0].id, SIGNAL_METRIC_SAMPLE)
-        self.assertEqual(package.observation_kinds[0].id, SIGNAL_THRESHOLD_READING)
-        self.assertEqual(package.artifact_kinds[0].id, "signal_report")
-        self.assertEqual(package.flows[0].steps[0].adapter.kind, "subprocess")
+        self.assertEqual(package.impulse_types[0].id, SIGNAL_METRIC_SAMPLE)
+        self.assertEqual(package.association_kinds[0].id, SIGNAL_THRESHOLD_READING)
+        self.assertEqual(package.reaction_kinds[0].id, "signal_report")
+        self.assertEqual(package.correlation_paths[0].effectors[0].adapter.kind, "subprocess")
 
-    def test_signals_domain_pack_uses_public_carrier_runtime_api(self) -> None:
+    def test_signals_domain_pack_uses_public_runtime_api(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                runtime = FalaRuntime.sqlite(Path(tmp_dir) / "fala.sqlite")
+                runtime = AutonomousCorrelator.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(runtime, "run_signals")
                 sample = SignalMetricSample(
                     id="metric_cpu_1",
@@ -2599,207 +2724,207 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     values={"host": "worker-1"},
                     metadata={"tenant": "ops"},
                 )
-                carrier = carrier_from_metric_sample(sample, run_id="run_signals")
+                impulse = impulse_from_metric_sample(sample, run_id="run_signals")
 
-                stored, submission = await runtime.accept_carrier(
-                    carrier,
-                    idempotency_key="run_signals:carrier.accept:metric_cpu_1",
+                stored, submission = await runtime.accept_impulse(
+                    impulse,
+                    idempotency_key="run_signals:impulse.accept:metric_cpu_1",
                 )
-                observation, _ = await runtime.record_observation(
-                    threshold_observation(stored),
-                    idempotency_key="run_signals:observation.threshold:metric_cpu_1",
+                association, _ = await runtime.record_association(
+                    threshold_association(stored),
+                    idempotency_key="run_signals:association.threshold:metric_cpu_1",
                 )
                 projection, _ = await runtime.save_projection(
-                    signal_projection(stored, observation),
+                    signal_projection(stored, association),
                     idempotency_key="run_signals:projection.signal:metric_cpu_1",
                 )
                 events = await runtime.list_events(run_id=stored.run_id)
 
                 self.assertFalse(submission.replayed)
-                self.assertEqual(stored.carrier_type, SIGNAL_METRIC_SAMPLE)
-                self.assertEqual(metric_sample_from_carrier(stored), sample)
+                self.assertEqual(stored.impulse_type, SIGNAL_METRIC_SAMPLE)
+                self.assertEqual(metric_sample_from_impulse(stored), sample)
                 self.assertEqual(stored.metadata["domain_pack"], "signals")
-                self.assertEqual(observation.kind, SIGNAL_THRESHOLD_READING)
-                self.assertEqual(observation.values["state"], "critical")
-                self.assertEqual(observation.values["threshold"], 90)
+                self.assertEqual(association.kind, SIGNAL_THRESHOLD_READING)
+                self.assertEqual(association.values["state"], "critical")
+                self.assertEqual(association.values["threshold"], 90)
                 self.assertEqual(projection.name, "signal:metric_cpu_1")
                 self.assertEqual(projection.data["state"], "critical")
                 self.assertEqual(
                     [event.event_type for event in events],
                     [
-                        "carrier.accepted",
-                        "observation.recorded",
+                        "impulse.accepted",
+                        "association.recorded",
                         "projection.saved",
                     ],
                 )
 
         asyncio.run(scenario())
 
-    def test_splot_domain_pack_does_not_use_document_runtime_internals(self) -> None:
+    def test_splot_domain_pack_does_not_use_legacy_document_internals(self) -> None:
         source = inspect.getsource(splot)
         self.assertNotIn("RuntimeDocument", source)
         self.assertNotIn("document_id", source)
         self.assertNotIn("document_type", source)
 
-    def test_signals_domain_pack_does_not_use_document_runtime_internals(self) -> None:
+    def test_signals_domain_pack_does_not_use_legacy_document_internals(self) -> None:
         source = inspect.getsource(signals)
         self.assertNotIn("RuntimeDocument", source)
         self.assertNotIn("document_id", source)
         self.assertNotIn("document_type", source)
 
-    def test_runtime_backend_service_accepts_carrier_idempotently(self) -> None:
+    def test_runtime_backend_service_accepts_impulse_idempotently(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(service, "run_service")
-                carrier = Carrier(
-                    id="carrier_case_1",
+                impulse = Impulse(
+                    id="impulse_case_1",
                     run_id="run_service",
-                    carrier_type="arbitration_case",
+                    impulse_type="arbitration_case",
                     payload={"claim_id": "CLM-1"},
                 )
 
-                first_carrier, first_submission = await service.accept_carrier(
-                    carrier,
-                    idempotency_key="run_service:carrier.accept:carrier_case_1",
+                first_impulse, first_submission = await service.accept_impulse(
+                    impulse,
+                    idempotency_key="run_service:impulse.accept:impulse_case_1",
                     actor="operator:mika",
                 )
-                replay_carrier, replay_submission = await service.accept_carrier(
-                    carrier.model_copy(update={"payload": {"claim_id": "changed"}}),
-                    idempotency_key="run_service:carrier.accept:carrier_case_1",
+                replay_impulse, replay_submission = await service.accept_impulse(
+                    impulse.model_copy(update={"payload": {"claim_id": "changed"}}),
+                    idempotency_key="run_service:impulse.accept:impulse_case_1",
                     actor="operator:mika",
                 )
                 with self.assertRaisesRegex(ValueError, "already exists"):
-                    await service.accept_carrier(
-                        carrier,
-                        idempotency_key="run_service:carrier.accept:again",
+                    await service.accept_impulse(
+                        impulse,
+                        idempotency_key="run_service:impulse.accept:again",
                     )
 
-                self.assertEqual(first_carrier, carrier)
+                self.assertEqual(first_impulse, impulse)
                 self.assertFalse(first_submission.replayed)
-                self.assertEqual(replay_carrier, carrier)
+                self.assertEqual(replay_impulse, impulse)
                 self.assertTrue(replay_submission.replayed)
                 self.assertEqual(replay_submission.events, [])
                 events = await service.backend.list_events(run_id="run_service")
                 self.assertEqual(len(events), 1)
-                self.assertEqual(events[0].event_type, "carrier.accepted")
+                self.assertEqual(events[0].event_type, "impulse.accepted")
 
         asyncio.run(scenario())
 
-    def test_runtime_backend_service_records_observations_and_artifacts_idempotently(
+    def test_runtime_backend_service_records_associations_and_reactions_idempotently(
         self,
     ) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(service, "run_observe")
-                carrier = Carrier(
-                    id="carrier_observe",
+                impulse = Impulse(
+                    id="impulse_observe",
                     run_id="run_observe",
-                    carrier_type="arbitration_case",
+                    impulse_type="arbitration_case",
                     payload={"claim_id": "CLM-1"},
                 )
-                await service.accept_carrier(
-                    carrier,
-                    idempotency_key="run_observe:carrier.accept:carrier_observe",
+                await service.accept_impulse(
+                    impulse,
+                    idempotency_key="run_observe:impulse.accept:impulse_observe",
                 )
 
-                observation = Observation(
-                    id="observation_score",
-                    run_id=carrier.run_id,
-                    carrier_id=carrier.id,
+                association = Association(
+                    id="association_score",
+                    run_id=impulse.run_id,
+                    impulse_id=impulse.id,
                     kind="score",
                     values={"score": 1},
                 )
-                first_observation, first_observation_submission = (
-                    await service.record_observation(
-                        observation,
-                        idempotency_key="run_observe:observation.record:score",
+                first_association, first_association_submission = (
+                    await service.record_association(
+                        association,
+                        idempotency_key="run_observe:association.record:score",
                     )
                 )
-                replay_observation, replay_observation_submission = (
-                    await service.record_observation(
-                        observation.model_copy(update={"values": {"score": 2}}),
-                        idempotency_key="run_observe:observation.record:score",
+                replay_association, replay_association_submission = (
+                    await service.record_association(
+                        association.model_copy(update={"values": {"score": 2}}),
+                        idempotency_key="run_observe:association.record:score",
                     )
                 )
                 with self.assertRaisesRegex(ValueError, "already exists"):
-                    await service.record_observation(
-                        observation,
-                        idempotency_key="run_observe:observation.record:again",
+                    await service.record_association(
+                        association,
+                        idempotency_key="run_observe:association.record:again",
                     )
 
-                artifact = Artifact(
-                    id="artifact_report",
-                    run_id=carrier.run_id,
-                    carrier_id=carrier.id,
+                reaction = Reaction(
+                    id="reaction_report",
+                    run_id=impulse.run_id,
+                    impulse_id=impulse.id,
                     kind="report",
-                    uri="fala-artifact://sha256/report",
+                    uri="fala-reaction://sha256/report",
                     media_type="application/json",
                     size_bytes=6,
                     content_hash="sha256:report",
                 )
-                first_artifact, first_artifact_submission = (
-                    await service.record_artifact(
-                        artifact,
-                        idempotency_key="run_observe:artifact.record:report",
+                first_reaction, first_reaction_submission = (
+                    await service.record_reaction(
+                        reaction,
+                        idempotency_key="run_observe:reaction.record:report",
                     )
                 )
-                replay_artifact, replay_artifact_submission = (
-                    await service.record_artifact(
-                        artifact.model_copy(
-                            update={"uri": "fala-artifact://sha256/changed"}
+                replay_reaction, replay_reaction_submission = (
+                    await service.record_reaction(
+                        reaction.model_copy(
+                            update={"uri": "fala-reaction://sha256/changed"}
                         ),
-                        idempotency_key="run_observe:artifact.record:report",
+                        idempotency_key="run_observe:reaction.record:report",
                     )
                 )
                 with self.assertRaisesRegex(ValueError, "already exists"):
-                    await service.record_artifact(
-                        artifact,
-                        idempotency_key="run_observe:artifact.record:again",
+                    await service.record_reaction(
+                        reaction,
+                        idempotency_key="run_observe:reaction.record:again",
                     )
 
-                self.assertEqual(first_observation, observation)
-                self.assertFalse(first_observation_submission.replayed)
-                self.assertEqual(replay_observation, observation)
-                self.assertTrue(replay_observation_submission.replayed)
-                self.assertEqual(replay_observation_submission.events, [])
-                self.assertEqual(first_artifact, artifact)
-                self.assertFalse(first_artifact_submission.replayed)
-                self.assertEqual(replay_artifact, artifact)
-                self.assertTrue(replay_artifact_submission.replayed)
-                self.assertEqual(replay_artifact_submission.events, [])
+                self.assertEqual(first_association, association)
+                self.assertFalse(first_association_submission.replayed)
+                self.assertEqual(replay_association, association)
+                self.assertTrue(replay_association_submission.replayed)
+                self.assertEqual(replay_association_submission.events, [])
+                self.assertEqual(first_reaction, reaction)
+                self.assertFalse(first_reaction_submission.replayed)
+                self.assertEqual(replay_reaction, reaction)
+                self.assertTrue(replay_reaction_submission.replayed)
+                self.assertEqual(replay_reaction_submission.events, [])
 
         asyncio.run(scenario())
 
-    def test_runtime_backend_service_replays_gate_and_projection_writes(self) -> None:
+    def test_runtime_backend_service_replays_homeostat_and_projection_writes(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(service, "run_service")
-                gate = Gate(
-                    id="gate_review",
+                homeostat = Homeostat(
+                    id="homeostat_review",
                     run_id="run_service",
                     kind="human.review",
-                    status=GateStatus.completed,
+                    status=HomeostatStatus.completed,
                 )
                 projection = Projection(
                     id="projection_summary",
                     run_id="run_service",
                     name="summary",
                     version=1,
-                    data={"completed_gates": 1},
+                    data={"completed_homeostats": 1},
                     source_event_sequence=1,
                 )
 
-                first_gate, first_gate_submission = await service.save_gate(
-                    gate,
-                    idempotency_key="run_service:gate.save:gate_review",
+                first_homeostat, first_homeostat_submission = await service.save_homeostat(
+                    homeostat,
+                    idempotency_key="run_service:homeostat.save:homeostat_review",
                     actor="operator:mika",
                 )
-                replay_gate, replay_gate_submission = await service.save_gate(
-                    gate.model_copy(update={"status": GateStatus.cancelled}),
-                    idempotency_key="run_service:gate.save:gate_review",
+                replay_homeostat, replay_homeostat_submission = await service.save_homeostat(
+                    homeostat.model_copy(update={"status": HomeostatStatus.cancelled}),
+                    idempotency_key="run_service:homeostat.save:homeostat_review",
                     actor="operator:mika",
                 )
                 first_projection, first_projection_submission = (
@@ -2817,10 +2942,10 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     )
                 )
 
-                self.assertEqual(first_gate, gate)
-                self.assertFalse(first_gate_submission.replayed)
-                self.assertEqual(replay_gate, gate)
-                self.assertTrue(replay_gate_submission.replayed)
+                self.assertEqual(first_homeostat, homeostat)
+                self.assertFalse(first_homeostat_submission.replayed)
+                self.assertEqual(replay_homeostat, homeostat)
+                self.assertTrue(replay_homeostat_submission.replayed)
                 self.assertEqual(first_projection, projection)
                 self.assertFalse(first_projection_submission.replayed)
                 self.assertEqual(replay_projection, projection)
@@ -2829,7 +2954,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertEqual([event.sequence for event in events], [1, 2])
                 self.assertEqual(
                     [event.event_type for event in events],
-                    ["gate.saved", "projection.saved"],
+                    ["homeostat.saved", "projection.saved"],
                 )
                 self.assertEqual(events[1].correlation_id, "corr_projection")
 
@@ -2844,8 +2969,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     Process(
                         id="process_wait",
                         run_id="run_wait_service",
-                        process_type="manual_gate",
-                        status=CarrierProcessStatus.ready,
+                        process_type="manual_homeostat",
+                        status=ProcessStatus.ready,
                     ),
                     idempotency_key="run_wait_service:process.schedule:process_wait",
                 )
@@ -2875,7 +3000,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     idempotency_key="run_wait_service:process.wait:process_wait",
                 )
 
-                self.assertEqual(waiting.status, CarrierProcessStatus.waiting)
+                self.assertEqual(waiting.status, ProcessStatus.waiting)
                 self.assertEqual(waiting.output["status"], "waiting")
                 self.assertFalse(submission.replayed)
                 self.assertEqual(replayed, waiting)
@@ -2887,7 +3012,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                             run_id="run_wait_service"
                         )
                     ],
-                    ["process.scheduled", "process.waiting"],
+                    ["process.scheduled", "process.claimed", "process.waiting"],
                 )
 
         asyncio.run(scenario())
@@ -2901,7 +3026,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_initial",
                     run_id="run_process_initial",
                     process_type="score",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                 )
 
                 scheduled, submission = await service.schedule_process(
@@ -2910,7 +3035,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 )
                 replayed, replay = await service.schedule_process(
                     process.model_copy(
-                        update={"status": CarrierProcessStatus.succeeded}
+                        update={"status": ProcessStatus.succeeded}
                     ),
                     idempotency_key="run_process_initial:process.schedule:initial",
                 )
@@ -2925,13 +3050,13 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                             id="process_invalid",
                             run_id="run_process_initial",
                             process_type="score",
-                            status=CarrierProcessStatus.succeeded,
+                            status=ProcessStatus.succeeded,
                         ),
                         idempotency_key="run_process_initial:process.schedule:invalid",
                     )
 
                 self.assertFalse(submission.replayed)
-                self.assertEqual(scheduled.status, CarrierProcessStatus.ready)
+                self.assertEqual(scheduled.status, ProcessStatus.ready)
                 self.assertTrue(replay.replayed)
                 self.assertEqual(replayed, scheduled)
 
@@ -2946,7 +3071,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_matrix",
                     run_id="run_process_matrix",
                     process_type="score",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                     max_attempts=2,
                 )
                 await service.schedule_process(
@@ -3001,6 +3126,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     process_id=process.id,
                     output={"score": 1},
                     idempotency_key="run_process_matrix:process.complete:retry",
+                    actor="worker:matrix",
                 )
                 with self.assertRaisesRegex(ValueError, "cannot be retried"):
                     await service.retry_process(
@@ -3009,16 +3135,16 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                         idempotency_key="run_process_matrix:process.retry:succeeded",
                     )
 
-                self.assertEqual(failed.status, CarrierProcessStatus.failed)
+                self.assertEqual(failed.status, ProcessStatus.failed)
                 self.assertFalse(fail_submission.replayed)
-                self.assertEqual(retry_wait.status, CarrierProcessStatus.retry_wait)
+                self.assertEqual(retry_wait.status, ProcessStatus.retry_wait)
                 self.assertFalse(retry_submission.replayed)
                 self.assertEqual(
                     claimed_again.status,
-                    CarrierProcessStatus.running,
+                    ProcessStatus.running,
                 )
                 self.assertEqual(claimed_again.attempt, 2)
-                self.assertEqual(succeeded.status, CarrierProcessStatus.succeeded)
+                self.assertEqual(succeeded.status, ProcessStatus.succeeded)
                 self.assertEqual(succeeded.output, {"score": 1})
                 self.assertFalse(complete_submission.replayed)
                 events = await service.backend.list_events(run_id=process.run_id)
@@ -3026,8 +3152,10 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     [event.event_type for event in events],
                     [
                         "process.scheduled",
+                        "process.claimed",
                         "process.failed",
                         "process.retry_scheduled",
+                        "process.claimed",
                         "process.completed",
                     ],
                 )
@@ -3043,13 +3171,13 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_cancel",
                     run_id="run_process_stop",
                     process_type="score",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                 )
                 timeout_process = Process(
                     id="process_timeout",
                     run_id="run_process_stop",
                     process_type="score",
-                    status=CarrierProcessStatus.ready,
+                    status=ProcessStatus.ready,
                 )
                 await service.schedule_process(
                     cancel_process,
@@ -3082,12 +3210,12 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     actor="system",
                 )
 
-                self.assertEqual(cancelled.status, CarrierProcessStatus.cancelled)
+                self.assertEqual(cancelled.status, ProcessStatus.cancelled)
                 self.assertEqual(cancelled.error, {"reason": "operator"})
                 self.assertFalse(cancel_submission.replayed)
                 self.assertEqual(replayed, cancelled)
                 self.assertTrue(replay.replayed)
-                self.assertEqual(timed_out.status, CarrierProcessStatus.timed_out)
+                self.assertEqual(timed_out.status, ProcessStatus.timed_out)
                 self.assertEqual(timed_out.error, {"reason": "timeout"})
                 self.assertFalse(timeout_submission.replayed)
                 with self.assertRaisesRegex(ValueError, "terminal"):
@@ -3111,175 +3239,175 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_runtime_backend_service_open_gate_is_create_only(self) -> None:
+    def test_runtime_backend_service_open_homeostat_is_create_only(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
-                await _put_test_run(service, "run_gate_open")
-                gate = Gate(
-                    id="gate_open_once",
-                    run_id="run_gate_open",
+                await _put_test_run(service, "run_homeostat_open")
+                homeostat = Homeostat(
+                    id="homeostat_open_once",
+                    run_id="run_homeostat_open",
                     kind="human.review",
-                    status=GateStatus.open,
+                    status=HomeostatStatus.open,
                 )
-                opened, opened_submission = await service.open_gate(
-                    gate,
-                    idempotency_key="run_gate_open:gate.open:gate_open_once",
+                opened, opened_submission = await service.open_homeostat(
+                    homeostat,
+                    idempotency_key="run_homeostat_open:homeostat.open:homeostat_open_once",
                 )
-                replayed, replay = await service.open_gate(
-                    gate.model_copy(update={"metadata": {"changed": True}}),
-                    idempotency_key="run_gate_open:gate.open:gate_open_once",
+                replayed, replay = await service.open_homeostat(
+                    homeostat.model_copy(update={"metadata": {"changed": True}}),
+                    idempotency_key="run_homeostat_open:homeostat.open:homeostat_open_once",
                 )
 
-                self.assertEqual(opened, gate)
+                self.assertEqual(opened, homeostat)
                 self.assertFalse(opened_submission.replayed)
-                self.assertEqual(replayed, gate)
+                self.assertEqual(replayed, homeostat)
                 self.assertTrue(replay.replayed)
                 with self.assertRaisesRegex(ValueError, "already exists"):
-                    await service.open_gate(
-                        gate.model_copy(update={"metadata": {"new": True}}),
-                        idempotency_key="run_gate_open:gate.open:duplicate",
+                    await service.open_homeostat(
+                        homeostat.model_copy(update={"metadata": {"new": True}}),
+                        idempotency_key="run_homeostat_open:homeostat.open:duplicate",
                     )
 
-                completed, _ = await service.complete_gate(
-                    run_id=gate.run_id,
-                    gate_id=gate.id,
+                completed, _ = await service.complete_homeostat(
+                    run_id=homeostat.run_id,
+                    homeostat_id=homeostat.id,
                     values={"decision": "approved"},
-                    idempotency_key="run_gate_open:gate.complete:gate_open_once",
+                    idempotency_key="run_homeostat_open:homeostat.complete:homeostat_open_once",
                 )
-                self.assertEqual(completed.status, GateStatus.completed)
+                self.assertEqual(completed.status, HomeostatStatus.completed)
                 with self.assertRaisesRegex(ValueError, "already exists"):
-                    await service.open_gate(
-                        gate,
-                        idempotency_key="run_gate_open:gate.open:after_complete",
+                    await service.open_homeostat(
+                        homeostat,
+                        idempotency_key="run_homeostat_open:homeostat.open:after_complete",
                     )
 
         asyncio.run(scenario())
 
-    def test_runtime_backend_service_completes_gate_idempotently(self) -> None:
+    def test_runtime_backend_service_completes_homeostat_idempotently(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(service, "run_service")
-                gate = Gate(
-                    id="gate_review",
+                homeostat = Homeostat(
+                    id="homeostat_review",
                     run_id="run_service",
-                    carrier_id="carrier_review",
+                    impulse_id="impulse_review",
                     kind="human.review",
-                    status=GateStatus.open,
+                    status=HomeostatStatus.open,
                 )
-                await service.save_gate(
-                    gate,
-                    idempotency_key="run_service:gate.save:gate_review",
+                await service.save_homeostat(
+                    homeostat,
+                    idempotency_key="run_service:homeostat.save:homeostat_review",
                 )
 
-                completed, completion = await service.complete_gate(
-                    run_id=gate.run_id,
-                    gate_id=gate.id,
+                completed, completion = await service.complete_homeostat(
+                    run_id=homeostat.run_id,
+                    homeostat_id=homeostat.id,
                     values={"decision": "approved"},
-                    idempotency_key="run_service:gate.complete:gate_review",
+                    idempotency_key="run_service:homeostat.complete:homeostat_review",
                     actor="human:jan",
                 )
-                replayed, replay = await service.complete_gate(
-                    run_id=gate.run_id,
-                    gate_id=gate.id,
+                replayed, replay = await service.complete_homeostat(
+                    run_id=homeostat.run_id,
+                    homeostat_id=homeostat.id,
                     values={"decision": "rejected"},
-                    idempotency_key="run_service:gate.complete:gate_review",
+                    idempotency_key="run_service:homeostat.complete:homeostat_review",
                     actor="human:jan",
                 )
 
                 self.assertFalse(completion.replayed)
-                self.assertEqual(completed.status, GateStatus.completed)
+                self.assertEqual(completed.status, HomeostatStatus.completed)
                 self.assertEqual(completed.values, {"decision": "approved"})
                 self.assertTrue(replay.replayed)
                 self.assertEqual(replayed, completed)
                 with self.assertRaisesRegex(ValueError, "not open"):
-                    await service.complete_gate(
-                        run_id=gate.run_id,
-                        gate_id=gate.id,
+                    await service.complete_homeostat(
+                        run_id=homeostat.run_id,
+                        homeostat_id=homeostat.id,
                         values={"decision": "approved-again"},
-                        idempotency_key="run_service:gate.complete:gate_review:again",
+                        idempotency_key="run_service:homeostat.complete:homeostat_review:again",
                     )
-                events = await service.backend.list_events(run_id=gate.run_id)
+                events = await service.backend.list_events(run_id=homeostat.run_id)
                 self.assertEqual(
                     [event.event_type for event in events],
-                    ["gate.saved", "gate.completed"],
+                    ["homeostat.saved", "homeostat.completed"],
                 )
                 self.assertEqual(events[1].actor, "human:jan")
                 self.assertEqual(events[1].payload["value_keys"], ["decision"])
 
         asyncio.run(scenario())
 
-    def test_runtime_backend_service_cancels_and_expires_gates(self) -> None:
+    def test_runtime_backend_service_cancels_and_expires_homeostats(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
-                await _put_test_run(service, "run_gate_terminal")
-                cancel_gate = Gate(
-                    id="gate_cancel",
-                    run_id="run_gate_terminal",
+                await _put_test_run(service, "run_homeostat_terminal")
+                cancel_homeostat = Homeostat(
+                    id="homeostat_cancel",
+                    run_id="run_homeostat_terminal",
                     kind="human.review",
-                    status=GateStatus.open,
+                    status=HomeostatStatus.open,
                 )
-                expire_gate = Gate(
-                    id="gate_expire",
-                    run_id="run_gate_terminal",
+                expire_homeostat = Homeostat(
+                    id="homeostat_expire",
+                    run_id="run_homeostat_terminal",
                     kind="human.review",
-                    status=GateStatus.open,
+                    status=HomeostatStatus.open,
                 )
-                await service.open_gate(
-                    cancel_gate,
-                    idempotency_key="run_gate_terminal:gate.open:cancel",
+                await service.open_homeostat(
+                    cancel_homeostat,
+                    idempotency_key="run_homeostat_terminal:homeostat.open:cancel",
                 )
-                await service.open_gate(
-                    expire_gate,
-                    idempotency_key="run_gate_terminal:gate.open:expire",
+                await service.open_homeostat(
+                    expire_homeostat,
+                    idempotency_key="run_homeostat_terminal:homeostat.open:expire",
                 )
 
-                cancelled, cancel_submission = await service.cancel_gate(
-                    run_id="run_gate_terminal",
-                    gate_id=cancel_gate.id,
+                cancelled, cancel_submission = await service.cancel_homeostat(
+                    run_id="run_homeostat_terminal",
+                    homeostat_id=cancel_homeostat.id,
                     values={"reason": "operator"},
-                    idempotency_key="run_gate_terminal:gate.cancel:cancel",
+                    idempotency_key="run_homeostat_terminal:homeostat.cancel:cancel",
                     actor="cli:user",
                 )
-                replayed, replay = await service.cancel_gate(
-                    run_id="run_gate_terminal",
-                    gate_id=cancel_gate.id,
+                replayed, replay = await service.cancel_homeostat(
+                    run_id="run_homeostat_terminal",
+                    homeostat_id=cancel_homeostat.id,
                     values={"reason": "changed"},
-                    idempotency_key="run_gate_terminal:gate.cancel:cancel",
+                    idempotency_key="run_homeostat_terminal:homeostat.cancel:cancel",
                     actor="cli:user",
                 )
-                expired, expire_submission = await service.expire_gate(
-                    run_id="run_gate_terminal",
-                    gate_id=expire_gate.id,
+                expired, expire_submission = await service.expire_homeostat(
+                    run_id="run_homeostat_terminal",
+                    homeostat_id=expire_homeostat.id,
                     values={"reason": "timeout"},
-                    idempotency_key="run_gate_terminal:gate.expire:expire",
+                    idempotency_key="run_homeostat_terminal:homeostat.expire:expire",
                     actor="system",
                 )
 
-                self.assertEqual(cancelled.status, GateStatus.cancelled)
+                self.assertEqual(cancelled.status, HomeostatStatus.cancelled)
                 self.assertEqual(cancelled.values, {"reason": "operator"})
                 self.assertFalse(cancel_submission.replayed)
                 self.assertEqual(replayed, cancelled)
                 self.assertTrue(replay.replayed)
-                self.assertEqual(expired.status, GateStatus.expired)
+                self.assertEqual(expired.status, HomeostatStatus.expired)
                 self.assertEqual(expired.values, {"reason": "timeout"})
                 self.assertFalse(expire_submission.replayed)
                 with self.assertRaisesRegex(ValueError, "not open"):
-                    await service.expire_gate(
-                        run_id="run_gate_terminal",
-                        gate_id=cancel_gate.id,
-                        idempotency_key="run_gate_terminal:gate.expire:cancel",
+                    await service.expire_homeostat(
+                        run_id="run_homeostat_terminal",
+                        homeostat_id=cancel_homeostat.id,
+                        idempotency_key="run_homeostat_terminal:homeostat.expire:cancel",
                     )
-                events = await service.backend.list_events(run_id="run_gate_terminal")
+                events = await service.backend.list_events(run_id="run_homeostat_terminal")
                 self.assertEqual(
                     [event.event_type for event in events],
                     [
-                        "gate.opened",
-                        "gate.opened",
-                        "gate.cancelled",
-                        "gate.expired",
+                        "homeostat.opened",
+                        "homeostat.opened",
+                        "homeostat.cancelled",
+                        "homeostat.expired",
                     ],
                 )
                 self.assertEqual(events[2].actor, "cli:user")
@@ -3290,7 +3418,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
     def test_sqlite_backend_records_schema_migration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "fala.sqlite"
-            SQLiteRuntimeBackend(db_path)
+            Correlator(db_path)
             with sqlite3.connect(db_path) as connection:
                 row = connection.execute(
                     """
@@ -3305,7 +3433,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             ("runtime_backend", SQLITE_RUNTIME_SCHEMA_VERSION, "runtime_backend"),
         )
 
-    def test_cli_db_init_status_and_migrate_manage_carrier_schema(self) -> None:
+    def test_cli_db_init_status_and_migrate_manage_impulse_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "fala.sqlite"
 
@@ -3334,21 +3462,21 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
     def test_cli_lists_and_inspects_runtime_pools(self) -> None:
         async def scenario(db_path: Path) -> None:
-            backend = SQLiteRuntimeBackend(db_path)
+            backend = Correlator(db_path)
             pool = RuntimePool(
                 id="local_pool",
                 runtimes=[
                     RuntimeRef(id="source", uri="sqlite://source.sqlite"),
                     RuntimeRef(id="target", uri="sqlite://target.sqlite"),
                 ],
-                carrier_types=["case"],
+                impulse_types=["case"],
                 metadata={"tenant": "local"},
             )
             policy = DelegationPolicy(
                 id="policy_case",
                 pool_id=pool.id,
-                carrier_types=["case"],
-                budget=RuntimeBudget(runtime_hops=1, carrier_count=1, attempts=2),
+                impulse_types=["case"],
+                budget=RuntimeBudget(runtime_hops=1, impulse_count=1, attempts=2),
             )
             await backend.put_runtime_pool(pool)
             await backend.put_delegation_policy(policy)
@@ -3393,7 +3521,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "cli_pool",
                 "--runtime-json",
                 '{"id":"target","uri":"sqlite:///tmp/target.sqlite"}',
-                "--carrier-type",
+                "--impulse-type",
                 "case",
                 "--policy",
                 "round_robin",
@@ -3414,10 +3542,10 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 "cli_policy",
                 "--pool-id",
                 "cli_pool",
-                "--carrier-type",
+                "--impulse-type",
                 "case",
                 "--budget-json",
-                '{"runtime_hops":1,"carrier_count":1,"attempts":2}',
+                '{"runtime_hops":1,"impulse_count":1,"attempts":2}',
             )
             self.assertTrue(policy["ok"])
             self.assertEqual(policy["delegation_policy"]["pool_id"], "cli_pool")
@@ -3434,9 +3562,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(inspected["runtime_pool"]["metadata"]["tenant"], "local")
             self.assertEqual(inspected["delegation_policies"][0]["id"], "cli_policy")
 
-    def test_cli_diagnoses_carrier_runtime_waits_and_deadlocks(self) -> None:
+    def test_cli_diagnoses_runtime_waits_and_deadlocks(self) -> None:
         async def scenario(db_path: Path) -> None:
-            runtime = FalaRuntime.sqlite(db_path)
+            runtime = AutonomousCorrelator.sqlite(db_path)
             await runtime.create_run(
                 Run(id="run_waits", title="Wait diagnostics"),
                 idempotency_key="run_waits:create",
@@ -3446,7 +3574,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_a",
                     run_id="run_waits",
                     process_type="join",
-                    status=CarrierProcessStatus.waiting,
+                    status=ProcessStatus.waiting,
                     input={"wait_for_processes": ["process_b"]},
                 )
             )
@@ -3455,19 +3583,19 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id="process_b",
                     run_id="run_waits",
                     process_type="review",
-                    status=CarrierProcessStatus.waiting,
+                    status=ProcessStatus.waiting,
                     input={
                         "wait_for_processes": ["process_a"],
-                        "wait_for_gates": ["gate_review"],
+                        "wait_for_homeostats": ["homeostat_review"],
                     },
                 )
             )
-            await runtime.service.backend.put_gate(
-                Gate(
-                    id="gate_review",
+            await runtime.service.backend.put_homeostat(
+                Homeostat(
+                    id="homeostat_review",
                     run_id="run_waits",
                     kind="manual_review",
-                    status=GateStatus.open,
+                    status=HomeostatStatus.open,
                 )
             )
             return await runtime.diagnose_waits(run_id="run_waits")
@@ -3484,26 +3612,26 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             cli = _run_cli_json("diagnose-waits", "--db", str(db_path), "--run-id", "run_waits")
             diagnostics = cli["wait_diagnostics"]
             self.assertTrue(diagnostics["deadlocked"])
-            self.assertEqual(diagnostics["open_gates"], ["gate_review"])
+            self.assertEqual(diagnostics["open_homeostats"], ["homeostat_review"])
             blocked = {
                 item["process_id"]: item for item in diagnostics["blocked"]
             }
-            self.assertIn("gate:gate_review", blocked["process_b"]["blocked_by"])
+            self.assertIn("homeostat:homeostat_review", blocked["process_b"]["blocked_by"])
 
-    def test_carrier_runtime_doctor_checks_sqlite_schema(self) -> None:
+    def test_runtime_doctor_checks_sqlite_schema(self) -> None:
         async def scenario(db_path: Path) -> None:
-            runtime = FalaRuntime.sqlite(db_path)
+            runtime = AutonomousCorrelator.sqlite(db_path)
             await runtime.create_run(
                 Run(id="run_doctor", title="Doctor run"),
                 idempotency_key="run_doctor:create",
             )
-            await runtime.accept_carrier(
-                Carrier(
-                    id="carrier_doctor",
+            await runtime.accept_impulse(
+                Impulse(
+                    id="impulse_doctor",
                     run_id="run_doctor",
-                    carrier_type="case",
+                    impulse_type="case",
                 ),
-                idempotency_key="run_doctor:carrier.accept",
+                idempotency_key="run_doctor:impulse.accept",
             )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -3526,12 +3654,12 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 SQLITE_RUNTIME_SCHEMA_VERSION,
             )
             self.assertEqual(doctor["counts"]["runs"], 1)
-            self.assertEqual(doctor["counts"]["carriers"], 1)
+            self.assertEqual(doctor["counts"]["impulses"], 1)
             self.assertEqual(doctor["counts"]["runtime_events"], 2)
 
             package_path = (
                 Path(__file__).resolve().parents[1]
-                / "examples/pipelines/basic/carrier-package.yaml"
+                / "examples/correlation-paths/basic/fala-package.yaml"
             )
             doctor_with_package = _run_cli_json(
                 "doctor",
@@ -3543,13 +3671,13 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertTrue(doctor_with_package["ok"])
             self.assertEqual(doctor_with_package["packages"][0]["id"], "basic_examples")
             self.assertEqual(
-                doctor_with_package["packages"][0]["flow_count"],
+                doctor_with_package["packages"][0]["correlation_path_count"],
                 1,
             )
 
             bad_package = Path(tmp_dir) / "bad-package.yaml"
             bad_package.write_text(
-                "version: '2'\nid: bad\ndocument_types: []\nflows: []\n",
+                "version: '2'\nid: bad\nbogus_field: []\n",
                 encoding="utf-8",
             )
             code, invalid_package = _run_cli_raw(
@@ -3562,7 +3690,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertFalse(invalid_package["ok"])
             self.assertFalse(invalid_package["packages"][0]["ok"])
-            self.assertIn("document_types", invalid_package["packages"][0]["error"])
+            self.assertIn("bogus_field", invalid_package["packages"][0]["error"])
 
             missing_script_package = Path(tmp_dir) / "missing-script-package.yaml"
             missing_script_package.write_text(
@@ -3572,9 +3700,9 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     id: missing_script
                     capabilities:
                       - id: missing_capability
-                    flows:
+                    correlation_paths:
                       - id: basic
-                        steps:
+                        effectors:
                           - id: missing
                             capability: missing_capability
                             adapter:
@@ -3616,65 +3744,65 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             self.assertEqual(written["package_error_count"], 0)
             self.assertTrue(output.is_file())
 
-    def test_sqlite_backend_persists_observations_gates_and_projections(self) -> None:
+    def test_sqlite_backend_persists_associations_homeostats_and_projections(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                backend = SQLiteRuntimeBackend(Path(tmp_dir) / "fala.sqlite")
+                backend = Correlator(Path(tmp_dir) / "fala.sqlite")
                 await backend.put_run(Run(id="run_beta"))
-                carrier = Carrier(
+                impulse = Impulse(
                     run_id="run_beta",
-                    carrier_type="message",
+                    impulse_type="message",
                     payload={"text": "hello"},
                 )
-                await backend.put_carrier(carrier)
+                await backend.put_impulse(impulse)
 
-                observation = Observation(
+                association = Association(
                     run_id="run_beta",
-                    carrier_id=carrier.id,
+                    impulse_id=impulse.id,
                     kind="classifier.score",
                     values={"score": 0.98},
                     metadata={"model": "local"},
                 )
-                await backend.put_observation(observation)
+                await backend.put_association(association)
 
-                gate = Gate(
+                homeostat = Homeostat(
                     run_id="run_beta",
-                    carrier_id=carrier.id,
+                    impulse_id=impulse.id,
                     kind="human.approval",
-                    status=GateStatus.open,
-                    values={"reason": "needs review"},
+                    status=HomeostatStatus.open,
+                    values={"reason": "manual review"},
                 )
-                await backend.put_gate(gate)
-                completed_gate = await backend.complete_gate(
+                await backend.put_homeostat(homeostat)
+                completed_homeostat = await backend.complete_homeostat(
                     run_id="run_beta",
-                    gate_id=gate.id,
+                    homeostat_id=homeostat.id,
                     values={"approved": "yes"},
                 )
 
                 projection = Projection(
                     run_id="run_beta",
-                    name="carrier_summary",
+                    name="impulse_summary",
                     version=1,
-                    data={"carrier_count": 1, "last_kind": observation.kind},
+                    data={"impulse_count": 1, "last_kind": association.kind},
                     source_event_sequence=0,
                 )
                 await backend.put_projection(projection)
 
-                observations = await backend.list_observations(run_id="run_beta")
-                stored_gate = await backend.get_gate(run_id="run_beta", gate_id=gate.id)
+                associations = await backend.list_associations(run_id="run_beta")
+                stored_homeostat = await backend.get_homeostat(run_id="run_beta", homeostat_id=homeostat.id)
                 stored_projection = await backend.get_projection(
-                    run_id="run_beta", name="carrier_summary"
+                    run_id="run_beta", name="impulse_summary"
                 )
-                gates = await backend.list_gates(
+                homeostats = await backend.list_homeostats(
                     run_id="run_beta",
-                    status=GateStatus.completed,
+                    status=HomeostatStatus.completed,
                 )
                 projections = await backend.list_projections(run_id="run_beta")
 
-                self.assertEqual(observations, [observation])
-                self.assertEqual(stored_gate, completed_gate)
+                self.assertEqual(associations, [association])
+                self.assertEqual(stored_homeostat, completed_homeostat)
                 self.assertEqual(stored_projection, projection)
-                self.assertEqual(gates, [completed_gate])
+                self.assertEqual(homeostats, [completed_homeostat])
                 self.assertEqual(projections, [projection])
 
         asyncio.run(scenario())
@@ -3684,54 +3812,54 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp_dir:
                 service = RuntimeBackendService.sqlite(Path(tmp_dir) / "fala.sqlite")
                 await _put_test_run(service, "run_query")
-                carrier = Carrier(
+                impulse = Impulse(
                     run_id="run_query",
-                    carrier_type="message",
+                    impulse_type="message",
                     payload={"text": "hello"},
                 )
-                await service.accept_carrier(
-                    carrier,
-                    idempotency_key="run_query:carrier.accept:message",
+                await service.accept_impulse(
+                    impulse,
+                    idempotency_key="run_query:impulse.accept:message",
                 )
-                observation, _ = await service.record_observation(
-                    Observation(
+                association, _ = await service.record_association(
+                    Association(
                         run_id="run_query",
-                        carrier_id=carrier.id,
+                        impulse_id=impulse.id,
                         kind="classifier.score",
                         values={"score": 0.98},
                     ),
-                    idempotency_key="run_query:observation.record:score",
+                    idempotency_key="run_query:association.record:score",
                 )
-                gate, _ = await service.save_gate(
-                    Gate(
+                homeostat, _ = await service.save_homeostat(
+                    Homeostat(
                         run_id="run_query",
-                        carrier_id=carrier.id,
+                        impulse_id=impulse.id,
                         kind="human.approval",
-                        status=GateStatus.open,
+                        status=HomeostatStatus.open,
                     ),
-                    idempotency_key="run_query:gate.save:approval",
+                    idempotency_key="run_query:homeostat.save:approval",
                 )
                 projection, _ = await service.save_projection(
                     Projection(
                         run_id="run_query",
-                        name="carrier_summary",
-                        data={"carrier_count": 1},
+                        name="impulse_summary",
+                        data={"impulse_count": 1},
                         source_event_sequence=2,
                     ),
-                    idempotency_key="run_query:projection.save:carrier_summary",
+                    idempotency_key="run_query:projection.save:impulse_summary",
                 )
 
                 self.assertEqual(
-                    await service.list_observations(run_id="run_query"),
-                    [observation],
+                    await service.list_associations(run_id="run_query"),
+                    [association],
                 )
                 self.assertEqual(
-                    await service.list_gates(
+                    await service.list_homeostats(
                         run_id="run_query",
-                        carrier_id=carrier.id,
-                        status=GateStatus.open,
+                        impulse_id=impulse.id,
+                        status=HomeostatStatus.open,
                     ),
-                    [gate],
+                    [homeostat],
                 )
                 self.assertEqual(
                     await service.list_projections(run_id="run_query"),
@@ -3740,7 +3868,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_sqlite_bridge_delivers_carrier_between_local_runtimes_idempotently(self) -> None:
+    def test_sqlite_bridge_delivers_impulse_between_local_runtimes_idempotently(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp_dir:
                 source_path = Path(tmp_dir) / "source.sqlite"
@@ -3754,30 +3882,30 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 pool = RuntimePool(
                     id="local_pair",
                     runtimes=[source_ref, target_ref],
-                    carrier_types=["case"],
+                    impulse_types=["case"],
                 )
                 policy = DelegationPolicy(
                     pool_id=pool.id,
-                    carrier_types=["case"],
+                    impulse_types=["case"],
                     budget=RuntimeBudget(
                         runtime_hops=1,
                         spawned_runs=1,
-                        carrier_count=1,
+                        impulse_count=1,
                         wall_time_seconds=30,
                         attempts=2,
-                        artifact_bytes=4096,
+                        reaction_bytes=4096,
                     ),
                 )
-                carrier = Carrier(
-                    id="carrier_case",
+                impulse = Impulse(
+                    id="impulse_case",
                     run_id="run_source",
-                    carrier_type="case",
+                    impulse_type="case",
                     payload={"claim": "CLM-1"},
                 )
 
-                await source.accept_carrier(
-                    carrier,
-                    idempotency_key="run_source:carrier.accept:carrier_case",
+                await source.accept_impulse(
+                    impulse,
+                    idempotency_key="run_source:impulse.accept:impulse_case",
                 )
                 source_events = await source.backend.list_events(run_id="run_source")
                 delivery = BridgeDelivery(
@@ -3786,7 +3914,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     idempotency_key="run_source:bridge:case",
                     source=RunRef(runtime=source_ref, run_id="run_source"),
                     target=RunRef(runtime=target_ref, run_id="run_target"),
-                    carrier=carrier,
+                    impulse=impulse,
                     event_ref=EventRef(
                         runtime=source_ref,
                         run_id="run_source",
@@ -3832,8 +3960,8 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(imported.status, BridgeDeliveryStatus.imported)
                 self.assertEqual(delivered.budget.runtime_hops, 0)
                 self.assertEqual(imported.budget.runtime_hops, 0)
-                self.assertEqual(delivered.budget.carrier_count, 0)
-                self.assertEqual(imported.budget.carrier_count, 0)
+                self.assertEqual(delivered.budget.impulse_count, 0)
+                self.assertEqual(imported.budget.impulse_count, 0)
                 self.assertFalse(delivered_submission.replayed)
                 self.assertFalse(import_submission.replayed)
                 self.assertEqual(replay_delivered, delivered)
@@ -3841,15 +3969,15 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertTrue(delivered_replay.replayed)
                 self.assertTrue(import_replay.replayed)
 
-                target_carrier = await target.backend.get_carrier(
+                target_impulse = await target.backend.get_impulse(
                     run_id="run_target",
-                    carrier_id="carrier_case",
+                    impulse_id="impulse_case",
                 )
-                self.assertIsNotNone(target_carrier)
-                assert target_carrier is not None
-                self.assertEqual(target_carrier.run_id, "run_target")
+                self.assertIsNotNone(target_impulse)
+                assert target_impulse is not None
+                self.assertEqual(target_impulse.run_id, "run_target")
                 self.assertEqual(
-                    target_carrier.metadata["source_runtime_id"],
+                    target_impulse.metadata["source_runtime_id"],
                     "source",
                 )
                 self.assertEqual(
@@ -3869,7 +3997,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 self.assertEqual(
                     [event.event_type for event in await source.backend.list_events(run_id="run_source")],
                     [
-                        "carrier.accepted",
+                        "impulse.accepted",
                         "bridge.outbox.enqueued",
                         "bridge.outbox.delivered",
                     ],
@@ -3892,14 +4020,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                 await _put_test_run(target, "run_target")
                 source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
                 target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
-                carrier = Carrier(
-                    id="carrier_budget",
+                impulse = Impulse(
+                    id="impulse_budget",
                     run_id="run_source",
-                    carrier_type="case",
+                    impulse_type="case",
                 )
-                await source.accept_carrier(
-                    carrier,
-                    idempotency_key="run_source:carrier.accept:carrier_budget",
+                await source.accept_impulse(
+                    impulse,
+                    idempotency_key="run_source:impulse.accept:impulse_budget",
                 )
                 source_events = await source.backend.list_events(run_id="run_source")
                 delivery = BridgeDelivery(
@@ -3908,14 +4036,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     idempotency_key="run_source:bridge:budget",
                     source=RunRef(runtime=source_ref, run_id="run_source"),
                     target=RunRef(runtime=target_ref, run_id="run_target"),
-                    carrier=carrier,
+                    impulse=impulse,
                     event_ref=EventRef(
                         runtime=source_ref,
                         run_id="run_source",
                         event_id=source_events[0].id,
                         sequence=source_events[0].sequence,
                     ),
-                    budget=RuntimeBudget(runtime_hops=1, carrier_count=1, attempts=1),
+                    budget=RuntimeBudget(runtime_hops=1, impulse_count=1, attempts=1),
                     attempts=1,
                 )
                 await source.backend.put_outbox_delivery(delivery)
@@ -3934,7 +4062,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_cli_delivers_bridge_between_local_carrier_runtimes(self) -> None:
+    def test_cli_delivers_bridge_between_local_runtimes(self) -> None:
         async def scenario(source_path: Path, target_path: Path) -> None:
             source = RuntimeBackendService.sqlite(source_path)
             target = RuntimeBackendService.sqlite(target_path)
@@ -3942,15 +4070,15 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             await _put_test_run(target, "run_target")
             source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
             target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
-            carrier = Carrier(
-                id="carrier_cli_bridge",
+            impulse = Impulse(
+                id="impulse_cli_bridge",
                 run_id="run_source",
-                carrier_type="case",
+                impulse_type="case",
                 payload={"claim": "CLI-BRIDGE"},
             )
-            await source.accept_carrier(
-                carrier,
-                idempotency_key="run_source:carrier.accept:carrier_cli_bridge",
+            await source.accept_impulse(
+                impulse,
+                idempotency_key="run_source:impulse.accept:impulse_cli_bridge",
             )
             source_events = await source.backend.list_events(run_id="run_source")
             await source.enqueue_bridge_delivery(
@@ -3960,14 +4088,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     idempotency_key="run_source:bridge:cli",
                     source=RunRef(runtime=source_ref, run_id="run_source"),
                     target=RunRef(runtime=target_ref, run_id="run_target"),
-                    carrier=carrier,
+                    impulse=impulse,
                     event_ref=EventRef(
                         runtime=source_ref,
                         run_id="run_source",
                         event_id=source_events[0].id,
                         sequence=source_events[0].sequence,
                     ),
-                    budget=RuntimeBudget(runtime_hops=1, carrier_count=1),
+                    budget=RuntimeBudget(runtime_hops=1, impulse_count=1),
                 ),
             )
 
@@ -4034,7 +4162,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             )
             self.assertEqual(inbox["count"], 1)
             self.assertEqual(
-                inbox["bridge_inbox"][0]["carrier"]["metadata"]["source_run_id"],
+                inbox["bridge_inbox"][0]["impulse"]["metadata"]["source_run_id"],
                 "run_source",
             )
 
@@ -4046,15 +4174,15 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             await _put_test_run(target, "run_target")
             source_ref = RuntimeRef(id="source", uri=f"sqlite://{source_path}")
             target_ref = RuntimeRef(id="target", uri=f"sqlite://{target_path}")
-            carrier = Carrier(
-                id="carrier_file_bridge",
+            impulse = Impulse(
+                id="impulse_file_bridge",
                 run_id="run_source",
-                carrier_type="case",
+                impulse_type="case",
                 payload={"claim": "FILE-BRIDGE"},
             )
-            await source.accept_carrier(
-                carrier,
-                idempotency_key="run_source:carrier.accept:carrier_file_bridge",
+            await source.accept_impulse(
+                impulse,
+                idempotency_key="run_source:impulse.accept:impulse_file_bridge",
             )
             source_events = await source.backend.list_events(run_id="run_source")
             await source.enqueue_bridge_delivery(
@@ -4064,14 +4192,14 @@ class FalaRuntimeBackendTests(unittest.TestCase):
                     idempotency_key="run_source:bridge:file",
                     source=RunRef(runtime=source_ref, run_id="run_source"),
                     target=RunRef(runtime=target_ref, run_id="run_target"),
-                    carrier=carrier,
+                    impulse=impulse,
                     event_ref=EventRef(
                         runtime=source_ref,
                         run_id="run_source",
                         event_id=source_events[0].id,
                         sequence=source_events[0].sequence,
                     ),
-                    budget=RuntimeBudget(runtime_hops=1, carrier_count=1),
+                    budget=RuntimeBudget(runtime_hops=1, impulse_count=1),
                 ),
             )
 
@@ -4131,7 +4259,7 @@ class FalaRuntimeBackendTests(unittest.TestCase):
             )
             self.assertEqual(inbox["count"], 1)
             self.assertEqual(
-                inbox["bridge_inbox"][0]["carrier"]["payload"]["claim"],
+                inbox["bridge_inbox"][0]["impulse"]["payload"]["claim"],
                 "FILE-BRIDGE",
             )
 

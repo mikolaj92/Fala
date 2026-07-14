@@ -1,10 +1,10 @@
 version: "2"
 id: basic_examples
 title: Basic Fala examples
-description: Neutral Carrier flow examples for Fala.
+description: Neutral impulse correlation-path examples for Fala.
 tags: ["example"]
 
-carrier_types:
+impulse_types:
   - id: source_payload
     title: Source payload
     media_types: ["text/plain", "application/json"]
@@ -15,13 +15,13 @@ carrier_types:
           type: string
       additionalProperties: true
 
-observation_kinds:
+association_kinds:
   - id: process_progress
     title: Process progress
 
-artifact_kinds:
+reaction_kinds:
   - id: source_payload
-    title: Source payload artifact
+    title: Source payload reaction
     media_types: ["text/plain", "application/json"]
   - id: enriched_payload
     title: Enriched payload
@@ -33,49 +33,49 @@ artifact_kinds:
 capabilities:
   - id: ingest_source
     title: Ingest source
-    accepts_carrier_types: [source_payload]
-    emits_artifact_kinds: [source_payload]
-    emits_observation_kinds: [process_progress]
+    accepts_impulse_types: [source_payload]
+    emits_reaction_kinds: [source_payload]
+    emits_association_kinds: [process_progress]
   - id: enrich_source
     title: Enrich source
-    accepts_artifact_kinds: [source_payload]
-    emits_artifact_kinds: [enriched_payload]
-    emits_observation_kinds: [process_progress]
+    accepts_reaction_kinds: [source_payload]
+    emits_reaction_kinds: [enriched_payload]
+    emits_association_kinds: [process_progress]
   - id: export_source
     title: Export source
-    accepts_artifact_kinds: [enriched_payload]
-    emits_artifact_kinds: [exported_payload]
-    emits_observation_kinds: [process_progress]
+    accepts_reaction_kinds: [enriched_payload]
+    emits_reaction_kinds: [exported_payload]
+    emits_association_kinds: [process_progress]
 
-flows:
+correlation_paths:
   - id: basic_enrichment
     title: Basic enrichment
-    steps:
+    effectors:
       - id: ingest
         capability: ingest_source
         adapter:
           kind: subprocess
-          command: ["python", "steps/ingest.py"]
+          command: ["python", "effectors/ingest.py"]
           cwd: "."
       - id: enrich
         capability: enrich_source
-        needs: [ingest]
+        conduction: [ingest]
         adapter:
           kind: subprocess
-          command: ["python", "steps/enrich.py"]
+          command: ["python", "effectors/enrich.py"]
           cwd: "."
       - id: export
         capability: export_source
-        needs: [enrich]
+        conduction: [enrich]
         adapter:
           kind: subprocess
-          command: ["python", "steps/export.py"]
+          command: ["python", "effectors/export.py"]
           cwd: "."
 
 runtime:
   backend:
     kind: sqlite
     path: .fala/state.sqlite
-  artifact_store:
+  reaction_store:
     kind: filesystem
-    root: .fala/artifacts
+    root: .fala/reactions

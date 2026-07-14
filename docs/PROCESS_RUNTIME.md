@@ -1,7 +1,7 @@
 # Fala Process Runtime
 
 Fala processes are schedulable execution units attached to a run and optionally
-to a carrier. They are part of the embedded Carrier runtime and persist in the
+to an impulse. They are part of the embedded Impulse runtime and persist in the
 SQLite backend.
 
 ## Runtime Boundary
@@ -9,15 +9,15 @@ SQLite backend.
 Fala owns:
 
 - run state
-- carrier state
+- impulse state
 - process scheduling
 - claim and lease state
 - retry and timeout state
 - command idempotency
 - event append
-- observation append
-- artifact metadata
-- gate state
+- association append
+- reaction metadata
+- homeostat state
 - projection rebuilds
 - bridge outbox/inbox records
 
@@ -26,7 +26,7 @@ return validated output for the runtime to commit.
 
 ## Process State
 
-Current Carrier process statuses are:
+Current Impulse process statuses are:
 
 - `pending`
 - `ready`
@@ -44,31 +44,31 @@ go through backend/service operations and append runtime events.
 
 ## Adapter Kinds
 
-Carrier package steps declare adapters:
+Fala package effectors declare adapters:
 
 ```yaml
-flows:
+correlation_paths:
   - id: basic
-    steps:
+    effectors:
       - id: normalize
         capability: normalize
         adapter:
           kind: python_function
-          ref: examples.steps.normalize_text
+          ref: examples.effectors.normalize_text
 ```
 
 Supported adapter kinds are:
 
-- `python`: importable Python function.
+- `python_function`: importable Python function.
 - `subprocess`: local command as an argument list.
-- `manual_gate`: explicit operator gate.
+- `manual_homeostat`: explicit operator homeostat.
 - `fala_runtime`: delegation to another Fala runtime through bridge outbox.
   `runtime_ref` may be a runtime URI or a local runtime pool id. Runtime pools
-  support `manual`, `least_busy`, and `round_robin` policies.
+  support `manual`, `first`, `least_busy`, and `round_robin` policies.
 
 Subprocess commands are lists, not shell strings. The runtime prepares input
 manifests, captures stdout/stderr, validates output manifests, and commits
-resulting events/artifacts/observations transactionally.
+resulting events/reactions/associations transactionally.
 
 ## Local Inspection
 
@@ -85,7 +85,7 @@ uv run fala processes inspect \
   --process-id process_123
 ```
 
-Waits and deadlocks are diagnosed from persisted process/gate state:
+Waits and deadlocks are diagnosed from persisted process/homeostat state:
 
 ```bash
 uv run fala diagnose-waits \
@@ -100,7 +100,7 @@ The SQLite backend is the reference backend for process state. It must support:
 - atomic claim/lease
 - retry scheduling
 - completion and failure commits
-- gate waits
+- homeostat waits
 - projection rebuilds
 - restart recovery
 - command deduplication

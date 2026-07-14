@@ -12,82 +12,86 @@ import time
 import zipfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 from pydantic import BaseModel
 
-from fala.adapters import StepRunRequest, StepRunResult, create_step_adapter
-from fala.artifacts import FileArtifactStore, digest_from_fala_artifact_uri
+from fala.adapters import EffectorRunRequest, create_effector_adapter
+from fala.reactions import FileReactionStore, digest_from_fala_reaction_uri
+from fala.driver import process_effector_request_parts as _process_effector_request_parts
+from fala.driver import run_until_idle
+from fala.driver import sqlite_db_path as _runtime_db_path
 from fala.models import (
-    ArtifactKindSpec,
-    ArtifactRef,
-    CarrierAdapterSpec,
-    CarrierArtifactStoreConfig,
-    CarrierCapabilitySpec,
-    CarrierFlowSpec,
-    CarrierFlowStepSpec,
-    CarrierRelationSpec,
-    CarrierRuntimeBackendConfig,
-    CarrierRuntimeConfigSpec,
-    CarrierTypeSpec,
-    CarrierWorkflowPackageSpec,
-    ObservationKindSpec,
+    ReactionKindSpec,
+    ReactionRef,
+    EffectorAdapterSpec,
+    ReactionStoreConfig,
+    CapabilitySpec,
+    CorrelationPathSpec,
+    EffectorSpec,
+    ImpulseRelationSpec,
+    RuntimeBackendConfig,
+    RuntimeConfigSpec,
+    ImpulseTypeSpec,
+    FalaPackageSpec,
+    AssociationKindSpec,
 )
-from fala.runtime_backend import Artifact as CarrierArtifact
+from fala.runtime_backend import Reaction
 from fala.runtime_backend import BridgeDelivery
 from fala.runtime_backend import BridgeDeliveryStatus
-from fala.runtime_backend import Carrier
-from fala.runtime_backend import CarrierProcessStatus
-from fala.runtime_backend import CarrierRelation
-from fala.runtime_backend import CarrierRunStatus
-from fala.runtime_backend import CarrierType
+from fala.runtime_backend import Impulse
+from fala.runtime_backend import ProcessStatus
+from fala.runtime_backend import ImpulseRelation
+from fala.runtime_backend import RunStatus
+from fala.runtime_backend import ImpulseType
 from fala.runtime_backend import CommandSubmission
 from fala.runtime_backend import DelegationPolicy
 from fala.runtime_backend import EventRef
-from fala.runtime_backend import Gate as CarrierGate
-from fala.runtime_backend import GateStatus as CarrierGateStatus
-from fala.runtime_backend import Observation
-from fala.runtime_backend import Process as CarrierProcess
+from fala.runtime_backend import Homeostat
+from fala.runtime_backend import HomeostatStatus
+from fala.runtime_backend import Association
+from fala.runtime_backend import Process
 from fala.runtime_backend import Projection
-from fala.runtime_backend import Run as CarrierRun
+from fala.runtime_backend import Run
 from fala.runtime_backend import RunRef
 from fala.runtime_backend import RuntimeBackendService
+from fala.runtime_backend import RuntimeReactionBlob
+from fala.runtime_backend import RuntimeReactionStore
 from fala.runtime_backend import RuntimeBudget
 from fala.runtime_backend import RuntimeCommand
 from fala.runtime_backend import RuntimeEvent
 from fala.runtime_backend import RuntimePool
 from fala.runtime_backend import RuntimeRef
 from fala.runtime_backend import SQLITE_RUNTIME_SCHEMA_VERSION
-from fala.runtime_backend import SQLiteRuntimeBackend
-from fala.yaml_loader import load_carrier_workflow_package_yaml
+from fala.runtime_backend import Correlator
+from fala.yaml_loader import load_fala_package_yaml
 
 CONTRACT_MODELS: dict[str, type[BaseModel]] = {
-    "adapter": CarrierAdapterSpec,
-    "artifact": CarrierArtifact,
-    "artifact-kind": ArtifactKindSpec,
-    "artifact-ref": ArtifactRef,
-    "carrier": Carrier,
-    "carrier-artifact-store-config": CarrierArtifactStoreConfig,
-    "carrier-capability": CarrierCapabilitySpec,
-    "carrier-package": CarrierWorkflowPackageSpec,
-    "carrier-flow": CarrierFlowSpec,
-    "carrier-flow-step": CarrierFlowStepSpec,
-    "carrier-relation": CarrierRelation,
-    "carrier-relation-spec": CarrierRelationSpec,
-    "carrier-runtime-backend-config": CarrierRuntimeBackendConfig,
-    "carrier-runtime-config": CarrierRuntimeConfigSpec,
-    "carrier-type": CarrierType,
-    "carrier-type-spec": CarrierTypeSpec,
+    "adapter": EffectorAdapterSpec,
+    "reaction": Reaction,
+    "reaction-kind": ReactionKindSpec,
+    "reaction-ref": ReactionRef,
+    "impulse": Impulse,
+    "impulse-reaction-store-config": ReactionStoreConfig,
+    "impulse-capability": CapabilitySpec,
+    "fala-package": FalaPackageSpec,
+    "impulse-correlation-path": CorrelationPathSpec,
+    "impulse-correlation-path-effector": EffectorSpec,
+    "impulse-relation": ImpulseRelation,
+    "impulse-relation-spec": ImpulseRelationSpec,
+    "runtime-backend-config": RuntimeBackendConfig,
+    "runtime-config": RuntimeConfigSpec,
+    "impulse-type": ImpulseType,
+    "impulse-type-spec": ImpulseTypeSpec,
     "command": RuntimeCommand,
     "command-submission": CommandSubmission,
     "event": RuntimeEvent,
     "event-ref": EventRef,
-    "gate": CarrierGate,
-    "observation": Observation,
-    "observation-kind": ObservationKindSpec,
-    "process": CarrierProcess,
+    "homeostat": Homeostat,
+    "association": Association,
+    "association-kind": AssociationKindSpec,
+    "process": Process,
     "projection": Projection,
-    "run": CarrierRun,
+    "run": Run,
     "run-ref": RunRef,
     "runtime-budget": RuntimeBudget,
     "runtime-pool": RuntimePool,
@@ -125,19 +129,20 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "archive-run",
             "db",
             "create-run",
-            "carrier-relations",
-            "carrier-types",
-            "carriers",
+            "impulse-relations",
+            "impulse-types",
+            "impulses",
             "bridge",
             "doctor",
             "events",
             "export-bundle",
             "export-html",
-            "gate",
+            "homeostat",
             "init",
-            "gates",
+            "homeostats",
             "gc",
-            "observations",
+            "maintain-journal",
+            "associations",
             "processes",
             "projections",
             "runs",
@@ -154,34 +159,42 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fala")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init = subparsers.add_parser("init", help="Initialize a local Carrier runtime workspace.")
+    init = subparsers.add_parser("init", help="Initialize a local Impulse runtime workspace.")
     init.add_argument("--db", default=".fala/state.sqlite", help="Runtime SQLite DB path or sqlite:// URL.")
-    init.add_argument("--artifact-root", default=".fala/artifacts", help="Filesystem artifact store root.")
+    init.add_argument("--reaction-root", default=".fala/reactions", help="Filesystem reaction store root.")
 
-    schema = subparsers.add_parser("schema", help="Emit JSON Schema for a Carrier runtime contract.")
+    schema = subparsers.add_parser("schema", help="Emit JSON Schema for an Impulse runtime contract.")
     schema.add_argument("model", choices=sorted(CONTRACT_MODELS))
 
     db = subparsers.add_parser(
         "db",
-        help="Initialize, migrate, and inspect Carrier runtime SQLite databases.",
+        help="Initialize, migrate, and inspect Impulse runtime SQLite databases.",
     )
     db_subparsers = db.add_subparsers(dest="db_command", required=True)
-    db_init = db_subparsers.add_parser("init", help="Create the Carrier SQLite schema.")
-    _add_carrier_runtime_db_arg(db_init)
-    db_migrate = db_subparsers.add_parser("migrate", help="Apply pending Carrier SQLite migrations.")
-    _add_carrier_runtime_db_arg(db_migrate)
-    db_status = db_subparsers.add_parser("status", help="Report Carrier SQLite schema status.")
-    _add_carrier_runtime_db_arg(db_status)
+    db_init = db_subparsers.add_parser("init", help="Create the Impulse SQLite schema.")
+    _add_runtime_db_arg(db_init)
+    db_migrate = db_subparsers.add_parser("migrate", help="Apply pending Impulse SQLite migrations.")
+    _add_runtime_db_arg(db_migrate)
+    db_status = db_subparsers.add_parser("status", help="Report Impulse SQLite schema status.")
+    _add_runtime_db_arg(db_status)
     db_status.add_argument("--ensure-schema", action="store_true")
-    db_vacuum = db_subparsers.add_parser("vacuum", help="Compact the Carrier SQLite database.")
-    _add_carrier_runtime_db_arg(db_vacuum)
+    db_vacuum = db_subparsers.add_parser("vacuum", help="Compact the Impulse SQLite database.")
+    _add_runtime_db_arg(db_vacuum)
 
-    gc = subparsers.add_parser("gc", help="Garbage-collect unreferenced filesystem artifact blobs.")
+    gc = subparsers.add_parser("gc", help="Garbage-collect unreferenced filesystem reaction blobs.")
     gc.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
-    gc.add_argument("--artifact-root", default=".fala/artifacts", help="Filesystem artifact store root.")
+    gc.add_argument("--reaction-root", default=".fala/reactions", help="Filesystem reaction store root.")
     gc.add_argument("--run-id", default=None)
     gc.add_argument("--older-than", default=None, help="Only collect blobs older than duration like 30d, 12h, 20m.")
     gc.add_argument("--dry-run", action="store_true")
+
+    maintain_journal = subparsers.add_parser("maintain-journal", help="Run retention, reaction GC, and optional VACUUM in one operation.")
+    maintain_journal.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    maintain_journal.add_argument("--reaction-root", default=".fala/reactions", help="Filesystem reaction store root.")
+    maintain_journal.add_argument("--older-than-days", type=float, required=True)
+    maintain_journal.add_argument("--keep-last", type=int, default=None)
+    maintain_journal.add_argument("--no-vacuum", action="store_true")
+    maintain_journal.add_argument("--delete", action="store_true", help="Apply deletions. Defaults to dry-run.")
 
     archive_run = subparsers.add_parser("archive-run", help="Write a portable run archive bundle.")
     archive_run.add_argument("run_id")
@@ -193,38 +206,44 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_gc.add_argument("--archive-root", required=True, help="Directory containing .zip run archives.")
     archive_gc.add_argument("--dry-run", action="store_true")
 
-    doctor = subparsers.add_parser("doctor", help="Check Carrier runtime readiness.")
-    doctor.add_argument("--db", default=".fala/state.sqlite", help="Carrier runtime SQLite DB path or sqlite:// URL.")
-    doctor.add_argument("--ensure-schema", action="store_true", help="Create/repair Carrier runtime schema before checking.")
-    doctor.add_argument("--package", dest="packages", action="append", default=[], help="Carrier package YAML path to validate. Repeatable.")
+    doctor = subparsers.add_parser("doctor", help="Check Impulse runtime readiness.")
+    doctor.add_argument("--db", default=".fala/state.sqlite", help="Impulse runtime SQLite DB path or sqlite:// URL.")
+    doctor.add_argument("--ensure-schema", action="store_true", help="Create/repair Impulse runtime schema before checking.")
+    doctor.add_argument("--package", dest="packages", action="append", default=[], help="Fala package YAML path to validate. Repeatable.")
     doctor.add_argument("--output", default=None, help="Write JSON doctor report to this path instead of stdout envelope.")
 
-    create_run = subparsers.add_parser("create-run", help="Create a Carrier run.")
-    _add_carrier_runtime_db_arg(create_run)
+    create_run = subparsers.add_parser("create-run", help="Create an Impulse run.")
+    _add_runtime_db_arg(create_run)
     create_run.add_argument("--run-id", default=None)
     create_run.add_argument("--title", default=None)
     create_run.add_argument("--package-id", default=None)
     create_run.add_argument("--package-version", default=None)
     create_run.add_argument("--package-digest", default=None)
-    create_run.add_argument("--flow-id", default=None)
-    create_run.add_argument("--flow-digest", default=None)
+    create_run.add_argument("--correlation_path-id", default=None)
+    create_run.add_argument("--correlation_path-digest", default=None)
     create_run.add_argument("--runtime-version", default=None)
     create_run.add_argument("--backend-version", default=None)
     create_run.add_argument("--metadata", action="append", default=[])
     create_run.add_argument("--idempotency-key", default=None)
 
-    runs = subparsers.add_parser("runs", help="Inspect Carrier runtime runs.")
+    runs = subparsers.add_parser("runs", help="Inspect Impulse runtime runs.")
     run_subparsers = runs.add_subparsers(dest="run_command", required=True)
-    runs_list = run_subparsers.add_parser("list", help="List Carrier runs.")
-    _add_carrier_runtime_db_arg(runs_list)
-    runs_list.add_argument("--status", choices=[status.value for status in CarrierRunStatus], default=None)
+    runs_list = run_subparsers.add_parser("list", help="List Impulse runs.")
+    _add_runtime_db_arg(runs_list)
+    runs_list.add_argument("--status", choices=[status.value for status in RunStatus], default=None)
     runs_list.add_argument("--limit", type=int, default=None)
     runs_list.add_argument("--jsonl", action="store_true")
-    runs_inspect = run_subparsers.add_parser("inspect", help="Inspect one Carrier run.")
-    _add_carrier_runtime_db_arg(runs_inspect)
+    runs_inspect = run_subparsers.add_parser("inspect", help="Inspect one Impulse run.")
+    _add_runtime_db_arg(runs_inspect)
     runs_inspect.add_argument("--run-id", required=True)
-    runs_cancel = run_subparsers.add_parser("cancel", help="Request cancellation for one Carrier run.")
-    _add_carrier_runtime_db_arg(runs_cancel)
+    runs_observe = run_subparsers.add_parser(
+        "observe",
+        help="Observe one run's boundary: derived status, process counts, event watermark.",
+    )
+    _add_runtime_db_arg(runs_observe)
+    runs_observe.add_argument("--run-id", required=True)
+    runs_cancel = run_subparsers.add_parser("cancel", help="Request cancellation for one Impulse run.")
+    _add_runtime_db_arg(runs_cancel)
     runs_cancel.add_argument("--run-id", required=True)
     runs_cancel.add_argument("--reason", default=None)
     runs_cancel.add_argument("--idempotency-key", default=None)
@@ -235,7 +254,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     commands_list = command_subparsers.add_parser("list", help="List runtime commands.")
-    _add_carrier_runtime_db_run_args(commands_list)
+    _add_runtime_db_run_args(commands_list)
     commands_list.add_argument("--command-type", default=None)
     commands_list.add_argument("--actor", default=None)
     commands_list.add_argument("--limit", type=int, default=None)
@@ -244,97 +263,97 @@ def _build_parser() -> argparse.ArgumentParser:
         "inspect",
         help="Inspect one runtime command.",
     )
-    _add_carrier_runtime_db_run_args(commands_inspect)
+    _add_runtime_db_run_args(commands_inspect)
     commands_inspect.add_argument("--command-id", required=True)
 
-    runtimes = subparsers.add_parser("runtimes", help="Inspect Carrier runtime pools.")
+    runtimes = subparsers.add_parser("runtimes", help="Inspect Impulse runtime pools.")
     runtime_subparsers = runtimes.add_subparsers(dest="runtime_command", required=True)
     runtimes_list = runtime_subparsers.add_parser("list", help="List runtime pools.")
-    _add_carrier_runtime_db_arg(runtimes_list)
+    _add_runtime_db_arg(runtimes_list)
     runtimes_list.add_argument("--jsonl", action="store_true")
     runtimes_create = runtime_subparsers.add_parser("create-pool", help="Create or replace a runtime pool.")
-    _add_carrier_runtime_db_arg(runtimes_create)
+    _add_runtime_db_arg(runtimes_create)
     runtimes_create.add_argument("--pool-id", required=True)
     runtimes_create.add_argument("--runtime-json", action="append", required=True, help="RuntimeRef JSON object. Repeatable.")
-    runtimes_create.add_argument("--carrier-type", action="append", default=[])
+    runtimes_create.add_argument("--impulse-type", action="append", default=[])
     runtimes_create.add_argument("--policy", choices=["manual", "first", "least_busy", "round_robin"], default=None)
     runtimes_create.add_argument("--metadata-json", default="{}")
     runtimes_policy = runtime_subparsers.add_parser("add-policy", help="Create or replace a delegation policy.")
-    _add_carrier_runtime_db_arg(runtimes_policy)
+    _add_runtime_db_arg(runtimes_policy)
     runtimes_policy.add_argument("--policy-id", default=None)
     runtimes_policy.add_argument("--pool-id", required=True)
-    runtimes_policy.add_argument("--carrier-type", action="append", default=[])
+    runtimes_policy.add_argument("--impulse-type", action="append", default=[])
     runtimes_policy.add_argument("--budget-json", default="{}")
     runtimes_policy.add_argument("--metadata-json", default="{}")
     runtimes_inspect = runtime_subparsers.add_parser("inspect", help="Inspect one runtime pool.")
-    _add_carrier_runtime_db_arg(runtimes_inspect)
+    _add_runtime_db_arg(runtimes_inspect)
     runtimes_inspect.add_argument("--pool-id", required=True)
 
-    carriers = subparsers.add_parser("carriers", help="Inspect Carrier runtime carriers.")
-    carrier_subparsers = carriers.add_subparsers(dest="carrier_command", required=True)
-    carriers_create = carrier_subparsers.add_parser("create", help="Create a carrier.")
-    _add_carrier_runtime_db_run_args(carriers_create)
-    carriers_create.add_argument("--carrier-id", default=None)
-    carriers_create.add_argument("--carrier-type", required=True)
-    carriers_create.add_argument("--payload-json", default="{}")
-    carriers_create.add_argument("--metadata-json", default="{}")
-    carriers_create.add_argument("--idempotency-key", default=None)
-    carriers_list = carrier_subparsers.add_parser("list", help="List carriers.")
-    _add_carrier_runtime_db_run_args(carriers_list)
-    carriers_list.add_argument("--carrier-type", default=None)
-    carriers_list.add_argument("--limit", type=int, default=None)
-    carriers_list.add_argument("--jsonl", action="store_true")
-    carriers_inspect = carrier_subparsers.add_parser("inspect", help="Inspect one carrier.")
-    _add_carrier_runtime_db_run_args(carriers_inspect)
-    carriers_inspect.add_argument("--carrier-id", required=True)
+    impulses = subparsers.add_parser("impulses", help="Inspect Impulse runtime impulses.")
+    impulse_subparsers = impulses.add_subparsers(dest="impulse_command", required=True)
+    impulses_create = impulse_subparsers.add_parser("create", help="Create an impulse.")
+    _add_runtime_db_run_args(impulses_create)
+    impulses_create.add_argument("--impulse-id", default=None)
+    impulses_create.add_argument("--impulse-type", required=True)
+    impulses_create.add_argument("--payload-json", default="{}")
+    impulses_create.add_argument("--metadata-json", default="{}")
+    impulses_create.add_argument("--idempotency-key", default=None)
+    impulses_list = impulse_subparsers.add_parser("list", help="List impulses.")
+    _add_runtime_db_run_args(impulses_list)
+    impulses_list.add_argument("--impulse-type", default=None)
+    impulses_list.add_argument("--limit", type=int, default=None)
+    impulses_list.add_argument("--jsonl", action="store_true")
+    impulses_inspect = impulse_subparsers.add_parser("inspect", help="Inspect one impulse.")
+    _add_runtime_db_run_args(impulses_inspect)
+    impulses_inspect.add_argument("--impulse-id", required=True)
 
-    carrier_types = subparsers.add_parser("carrier-types", help="Inspect Carrier type metadata.")
-    carrier_type_subparsers = carrier_types.add_subparsers(dest="carrier_type_command", required=True)
-    carrier_types_list = carrier_type_subparsers.add_parser("list", help="List carrier types.")
-    _add_carrier_runtime_db_run_args(carrier_types_list)
-    carrier_types_list.add_argument("--jsonl", action="store_true")
-    carrier_types_inspect = carrier_type_subparsers.add_parser("inspect", help="Inspect one carrier type.")
-    _add_carrier_runtime_db_run_args(carrier_types_inspect)
-    carrier_types_inspect.add_argument("--carrier-type-id", required=True)
+    impulse_types = subparsers.add_parser("impulse-types", help="Inspect Impulse type metadata.")
+    impulse_type_subparsers = impulse_types.add_subparsers(dest="impulse_type_command", required=True)
+    impulse_types_list = impulse_type_subparsers.add_parser("list", help="List impulse types.")
+    _add_runtime_db_run_args(impulse_types_list)
+    impulse_types_list.add_argument("--jsonl", action="store_true")
+    impulse_types_inspect = impulse_type_subparsers.add_parser("inspect", help="Inspect one impulse type.")
+    _add_runtime_db_run_args(impulse_types_inspect)
+    impulse_types_inspect.add_argument("--impulse-type-id", required=True)
 
-    carrier_relations = subparsers.add_parser("carrier-relations", help="Inspect Carrier relations.")
-    carrier_relation_subparsers = carrier_relations.add_subparsers(dest="carrier_relation_command", required=True)
-    carrier_relations_list = carrier_relation_subparsers.add_parser("list", help="List carrier relations.")
-    _add_carrier_runtime_db_run_args(carrier_relations_list)
-    carrier_relations_list.add_argument("--carrier-id", default=None)
-    carrier_relations_list.add_argument("--relation-type", default=None)
-    carrier_relations_list.add_argument("--jsonl", action="store_true")
-    carrier_relations_inspect = carrier_relation_subparsers.add_parser("inspect", help="Inspect one carrier relation.")
-    _add_carrier_runtime_db_run_args(carrier_relations_inspect)
-    carrier_relations_inspect.add_argument("--relation-id", required=True)
+    impulse_relations = subparsers.add_parser("impulse-relations", help="Inspect Impulse relations.")
+    impulse_relation_subparsers = impulse_relations.add_subparsers(dest="impulse_relation_command", required=True)
+    impulse_relations_list = impulse_relation_subparsers.add_parser("list", help="List impulse relations.")
+    _add_runtime_db_run_args(impulse_relations_list)
+    impulse_relations_list.add_argument("--impulse-id", default=None)
+    impulse_relations_list.add_argument("--relation-type", default=None)
+    impulse_relations_list.add_argument("--jsonl", action="store_true")
+    impulse_relations_inspect = impulse_relation_subparsers.add_parser("inspect", help="Inspect one impulse relation.")
+    _add_runtime_db_run_args(impulse_relations_inspect)
+    impulse_relations_inspect.add_argument("--relation-id", required=True)
 
-    artifacts = subparsers.add_parser("artifacts", help="Inspect Carrier artifact metadata.")
-    artifact_subparsers = artifacts.add_subparsers(dest="artifact_command", required=True)
-    artifacts_record = artifact_subparsers.add_parser("record", help="Record one filesystem artifact.")
-    _add_carrier_runtime_db_run_args(artifacts_record)
-    artifacts_record.add_argument("--artifact-root", default=".fala/artifacts")
-    artifacts_record.add_argument("--path", required=True)
-    artifacts_record.add_argument("--kind", required=True)
-    artifacts_record.add_argument("--artifact-id", default=None)
-    artifacts_record.add_argument("--carrier-id", default=None)
-    artifacts_record.add_argument("--media-type", default=None)
-    artifacts_record.add_argument("--metadata-json", default="{}")
-    artifacts_record.add_argument("--idempotency-key", default=None)
-    artifacts_list = artifact_subparsers.add_parser("list", help="List artifacts.")
-    _add_carrier_runtime_db_run_args(artifacts_list)
-    artifacts_list.add_argument("--carrier-id", default=None)
-    artifacts_list.add_argument("--kind", default=None)
-    artifacts_list.add_argument("--jsonl", action="store_true")
-    artifacts_inspect = artifact_subparsers.add_parser("inspect", help="Inspect one artifact.")
-    _add_carrier_runtime_db_run_args(artifacts_inspect)
-    artifacts_inspect.add_argument("--artifact-id", required=True)
+    reactions = subparsers.add_parser("reactions", help="Inspect Impulse reaction metadata.")
+    reaction_subparsers = reactions.add_subparsers(dest="reaction_command", required=True)
+    reactions_record = reaction_subparsers.add_parser("record", help="Record one filesystem reaction.")
+    _add_runtime_db_run_args(reactions_record)
+    reactions_record.add_argument("--reaction-root", default=".fala/reactions")
+    reactions_record.add_argument("--path", required=True)
+    reactions_record.add_argument("--kind", required=True)
+    reactions_record.add_argument("--reaction-id", default=None)
+    reactions_record.add_argument("--impulse-id", default=None)
+    reactions_record.add_argument("--media-type", default=None)
+    reactions_record.add_argument("--metadata-json", default="{}")
+    reactions_record.add_argument("--idempotency-key", default=None)
+    reactions_list = reaction_subparsers.add_parser("list", help="List reactions.")
+    _add_runtime_db_run_args(reactions_list)
+    reactions_list.add_argument("--impulse-id", default=None)
+    reactions_list.add_argument("--kind", default=None)
+    reactions_list.add_argument("--jsonl", action="store_true")
+    reactions_inspect = reaction_subparsers.add_parser("inspect", help="Inspect one reaction.")
+    _add_runtime_db_run_args(reactions_inspect)
+    reactions_inspect.add_argument("--reaction-id", required=True)
 
-    processes = subparsers.add_parser("processes", help="Inspect Carrier runtime processes.")
+    processes = subparsers.add_parser("processes", help="Inspect Impulse runtime processes.")
     process_subparsers = processes.add_subparsers(dest="process_command", required=True)
-    processes_schedule = process_subparsers.add_parser("schedule", help="Schedule a carrier process.")
-    _add_carrier_runtime_db_run_args(processes_schedule)
+    processes_schedule = process_subparsers.add_parser("schedule", help="Schedule an impulse process.")
+    _add_runtime_db_run_args(processes_schedule)
     processes_schedule.add_argument("--process-id", default=None)
-    processes_schedule.add_argument("--carrier-id", default=None)
+    processes_schedule.add_argument("--impulse-id", default=None)
     processes_schedule.add_argument("--process-type", required=True)
     processes_schedule.add_argument("--status", choices=["pending", "ready"], default="ready")
     processes_schedule.add_argument("--priority", type=int, default=0)
@@ -343,47 +362,47 @@ def _build_parser() -> argparse.ArgumentParser:
     processes_schedule.add_argument("--metadata-json", default="{}")
     processes_schedule.add_argument("--idempotency-key", default=None)
     processes_list = process_subparsers.add_parser("list", help="List processes.")
-    _add_carrier_runtime_db_run_args(processes_list)
-    processes_list.add_argument("--status", choices=[status.value for status in CarrierProcessStatus], default=None)
-    processes_list.add_argument("--carrier-id", default=None)
+    _add_runtime_db_run_args(processes_list)
+    processes_list.add_argument("--status", choices=[status.value for status in ProcessStatus], default=None)
+    processes_list.add_argument("--impulse-id", default=None)
     processes_list.add_argument("--jsonl", action="store_true")
     processes_inspect = process_subparsers.add_parser("inspect", help="Inspect one process.")
-    _add_carrier_runtime_db_run_args(processes_inspect)
+    _add_runtime_db_run_args(processes_inspect)
     processes_inspect.add_argument("--process-id", required=True)
     processes_cancel = process_subparsers.add_parser("cancel", help="Cancel one process.")
-    _add_carrier_runtime_db_run_args(processes_cancel)
+    _add_runtime_db_run_args(processes_cancel)
     processes_cancel.add_argument("--process-id", required=True)
     processes_cancel.add_argument("--error-json", default="{}")
     processes_cancel.add_argument("--idempotency-key", default=None)
     processes_timeout = process_subparsers.add_parser("timeout", help="Mark one process timed out.")
-    _add_carrier_runtime_db_run_args(processes_timeout)
+    _add_runtime_db_run_args(processes_timeout)
     processes_timeout.add_argument("--process-id", required=True)
     processes_timeout.add_argument("--error-json", default="{}")
     processes_timeout.add_argument("--idempotency-key", default=None)
 
-    observations = subparsers.add_parser("observations", help="Inspect Carrier observations.")
-    observation_subparsers = observations.add_subparsers(dest="observation_command", required=True)
-    observations_append = observation_subparsers.add_parser("append", help="Append one observation.")
-    _add_carrier_runtime_db_run_args(observations_append)
-    observations_append.add_argument("--observation-id", default=None)
-    observations_append.add_argument("--carrier-id", default=None)
-    observations_append.add_argument("--kind", required=True)
-    observations_append.add_argument("--values-json", default="{}")
-    observations_append.add_argument("--metadata-json", default="{}")
-    observations_append.add_argument("--idempotency-key", default=None)
-    observations_list = observation_subparsers.add_parser("list", help="List observations.")
-    _add_carrier_runtime_db_run_args(observations_list)
-    observations_list.add_argument("--carrier-id", default=None)
-    observations_list.add_argument("--jsonl", action="store_true")
-    observations_inspect = observation_subparsers.add_parser("inspect", help="Inspect one observation.")
-    _add_carrier_runtime_db_run_args(observations_inspect)
-    observations_inspect.add_argument("--observation-id", required=True)
+    associations = subparsers.add_parser("associations", help="Inspect Impulse associations.")
+    association_subparsers = associations.add_subparsers(dest="association_command", required=True)
+    associations_append = association_subparsers.add_parser("append", help="Append one association.")
+    _add_runtime_db_run_args(associations_append)
+    associations_append.add_argument("--association-id", default=None)
+    associations_append.add_argument("--impulse-id", default=None)
+    associations_append.add_argument("--kind", required=True)
+    associations_append.add_argument("--values-json", default="{}")
+    associations_append.add_argument("--metadata-json", default="{}")
+    associations_append.add_argument("--idempotency-key", default=None)
+    associations_list = association_subparsers.add_parser("list", help="List associations.")
+    _add_runtime_db_run_args(associations_list)
+    associations_list.add_argument("--impulse-id", default=None)
+    associations_list.add_argument("--jsonl", action="store_true")
+    associations_inspect = association_subparsers.add_parser("inspect", help="Inspect one association.")
+    _add_runtime_db_run_args(associations_inspect)
+    associations_inspect.add_argument("--association-id", required=True)
 
-    events = subparsers.add_parser("events", help="Inspect Carrier runtime events.")
+    events = subparsers.add_parser("events", help="Inspect Impulse runtime events.")
     event_subparsers = events.add_subparsers(dest="event_command", required=True)
     events_list = event_subparsers.add_parser("list", help="List ordered events.")
-    _add_carrier_runtime_db_run_args(events_list)
-    events_list.add_argument("--carrier-id", default=None)
+    _add_runtime_db_run_args(events_list)
+    events_list.add_argument("--impulse-id", default=None)
     events_list.add_argument("--after-sequence", type=int, default=None)
     events_list.add_argument("--limit", type=int, default=None)
     events_list.add_argument("--jsonl", action="store_true")
@@ -391,106 +410,112 @@ def _build_parser() -> argparse.ArgumentParser:
         "validate-schema",
         help="Validate event schema versions for a run.",
     )
-    _add_carrier_runtime_db_run_args(events_validate)
+    _add_runtime_db_run_args(events_validate)
     events_validate.add_argument("--max-schema-version", type=int, default=1)
 
-    gates = subparsers.add_parser("gates", help="Inspect Carrier runtime gates.")
-    gate_subparsers = gates.add_subparsers(dest="gate_command", required=True)
-    gates_list = gate_subparsers.add_parser("list", help="List gates.")
-    _add_carrier_runtime_db_run_args(gates_list)
-    gates_list.add_argument("--carrier-id", default=None)
-    gates_list.add_argument("--status", choices=[status.value for status in CarrierGateStatus], default=None)
-    gates_list.add_argument("--jsonl", action="store_true")
+    homeostats = subparsers.add_parser("homeostats", help="Inspect Impulse runtime homeostats.")
+    homeostat_subparsers = homeostats.add_subparsers(dest="homeostat_command", required=True)
+    homeostats_list = homeostat_subparsers.add_parser("list", help="List homeostats.")
+    _add_runtime_db_run_args(homeostats_list)
+    homeostats_list.add_argument("--impulse-id", default=None)
+    homeostats_list.add_argument("--status", choices=[status.value for status in HomeostatStatus], default=None)
+    homeostats_list.add_argument("--jsonl", action="store_true")
 
-    gate = subparsers.add_parser("gate", help="Mutate one Carrier runtime gate.")
-    single_gate_subparsers = gate.add_subparsers(dest="gate_command", required=True)
-    gate_open = single_gate_subparsers.add_parser("open", help="Open a gate.")
-    _add_carrier_runtime_db_run_args(gate_open)
-    gate_open.add_argument("--gate-id", default=None)
-    gate_open.add_argument("--carrier-id", default=None)
-    gate_open.add_argument("--kind", required=True)
-    gate_open.add_argument("--values-json", default="{}")
-    gate_open.add_argument("--metadata-json", default="{}")
-    gate_open.add_argument("--idempotency-key", default=None)
-    gate_complete = single_gate_subparsers.add_parser("complete", help="Complete an open gate.")
-    _add_carrier_runtime_db_run_args(gate_complete)
-    gate_complete.add_argument("--gate-id", required=True)
-    gate_complete.add_argument("--value", action="append", default=[], help="Gate output value as key=value. Repeatable.")
-    gate_complete.add_argument("--idempotency-key", default=None)
-    gate_cancel = single_gate_subparsers.add_parser("cancel", help="Cancel an open gate.")
-    _add_carrier_runtime_db_run_args(gate_cancel)
-    gate_cancel.add_argument("--gate-id", required=True)
-    gate_cancel.add_argument("--value", action="append", default=[], help="Gate output value as key=value. Repeatable.")
-    gate_cancel.add_argument("--idempotency-key", default=None)
-    gate_expire = single_gate_subparsers.add_parser("expire", help="Expire an open gate.")
-    _add_carrier_runtime_db_run_args(gate_expire)
-    gate_expire.add_argument("--gate-id", required=True)
-    gate_expire.add_argument("--value", action="append", default=[], help="Gate output value as key=value. Repeatable.")
-    gate_expire.add_argument("--idempotency-key", default=None)
+    homeostat = subparsers.add_parser("homeostat", help="Mutate one Impulse runtime homeostat.")
+    single_homeostat_subparsers = homeostat.add_subparsers(dest="homeostat_command", required=True)
+    homeostat_open = single_homeostat_subparsers.add_parser("open", help="Open a homeostat.")
+    _add_runtime_db_run_args(homeostat_open)
+    homeostat_open.add_argument("--homeostat-id", default=None)
+    homeostat_open.add_argument("--impulse-id", default=None)
+    homeostat_open.add_argument("--kind", required=True)
+    homeostat_open.add_argument("--values-json", default="{}")
+    homeostat_open.add_argument("--metadata-json", default="{}")
+    homeostat_open.add_argument("--idempotency-key", default=None)
+    homeostat_complete = single_homeostat_subparsers.add_parser("complete", help="Complete an open homeostat.")
+    _add_runtime_db_run_args(homeostat_complete)
+    homeostat_complete.add_argument("--homeostat-id", required=True)
+    homeostat_complete.add_argument("--value", action="append", default=[], help="Homeostat output value as key=value. Repeatable.")
+    homeostat_complete.add_argument("--idempotency-key", default=None)
+    homeostat_cancel = single_homeostat_subparsers.add_parser("cancel", help="Cancel an open homeostat.")
+    _add_runtime_db_run_args(homeostat_cancel)
+    homeostat_cancel.add_argument("--homeostat-id", required=True)
+    homeostat_cancel.add_argument("--value", action="append", default=[], help="Homeostat output value as key=value. Repeatable.")
+    homeostat_cancel.add_argument("--idempotency-key", default=None)
+    homeostat_expire = single_homeostat_subparsers.add_parser("expire", help="Expire an open homeostat.")
+    _add_runtime_db_run_args(homeostat_expire)
+    homeostat_expire.add_argument("--homeostat-id", required=True)
+    homeostat_expire.add_argument("--value", action="append", default=[], help="Homeostat output value as key=value. Repeatable.")
+    homeostat_expire.add_argument("--idempotency-key", default=None)
 
-    projections = subparsers.add_parser("projections", help="Inspect Carrier projections.")
+    projections = subparsers.add_parser("projections", help="Inspect Impulse projections.")
     projection_subparsers = projections.add_subparsers(dest="projection_command", required=True)
     projections_list = projection_subparsers.add_parser("list", help="List projections.")
-    _add_carrier_runtime_db_run_args(projections_list)
+    _add_runtime_db_run_args(projections_list)
     projections_list.add_argument("--jsonl", action="store_true")
-    projections_rebuild = projection_subparsers.add_parser("rebuild", help="Rebuild Carrier projections.")
-    _add_carrier_runtime_db_run_args(projections_rebuild)
+    projections_rebuild = projection_subparsers.add_parser("rebuild", help="Rebuild Impulse projections.")
+    _add_runtime_db_run_args(projections_rebuild)
     projections_rebuild.add_argument("--name", action="append", default=[], help="Projection name to rebuild. Repeatable. Defaults to all built-ins.")
     projections_rebuild.add_argument("--idempotency-key", default=None)
     projections_rebuild.add_argument("--jsonl", action="store_true")
 
-    bridge = subparsers.add_parser("bridge", help="Inspect and deliver Carrier runtime bridge records.")
+    bridge = subparsers.add_parser("bridge", help="Inspect and deliver Impulse runtime bridge records.")
     bridge_subparsers = bridge.add_subparsers(dest="bridge_command", required=True)
     bridge_list = bridge_subparsers.add_parser("list", help="List bridge deliveries.")
-    _add_carrier_runtime_db_run_args(bridge_list)
+    _add_runtime_db_run_args(bridge_list)
     bridge_list.add_argument("--box", choices=("outbox", "inbox"), default="outbox")
     bridge_list.add_argument("--status", choices=[status.value for status in BridgeDeliveryStatus], default=None)
     bridge_list.add_argument("--jsonl", action="store_true")
     bridge_deliver = bridge_subparsers.add_parser("deliver", help="Deliver one outbox record into another local SQLite runtime.")
-    _add_carrier_runtime_db_run_args(bridge_deliver)
+    _add_runtime_db_run_args(bridge_deliver)
     bridge_deliver.add_argument("--delivery-id", required=True)
     bridge_deliver.add_argument("--target-db", required=True)
     bridge_deliver.add_argument("--idempotency-key", default=None)
     bridge_deliver.add_argument("--import-idempotency-key", default=None)
     bridge_export = bridge_subparsers.add_parser("export", help="Export one outbox bridge delivery to JSON.")
-    _add_carrier_runtime_db_run_args(bridge_export)
+    _add_runtime_db_run_args(bridge_export)
     bridge_export.add_argument("--delivery-id", required=True)
     bridge_export.add_argument("--out", required=True)
     bridge_import = bridge_subparsers.add_parser("import", help="Import one bridge delivery JSON file.")
-    _add_carrier_runtime_db_arg(bridge_import)
+    _add_runtime_db_arg(bridge_import)
     bridge_import.add_argument("--file", required=True)
     bridge_import.add_argument("--idempotency-key", default=None)
 
-    run_until_idle = subparsers.add_parser("run-until-idle", help="Run ready Carrier processes until idle.")
+    run_until_idle = subparsers.add_parser("run-until-idle", help="Run ready Impulse processes until idle.")
     run_until_idle.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     run_until_idle.add_argument("--run-id", default=None)
+    run_until_idle.add_argument("--all-runs", action="store_true")
     run_until_idle.add_argument("--worker-id", default="cli:run-until-idle")
     run_until_idle.add_argument("--lease-seconds", type=float, default=300.0)
     run_until_idle.add_argument("--max-ticks", type=int, default=100)
     run_until_idle.add_argument("--work-dir", default=None)
 
-    replay_execution = subparsers.add_parser("replay-execution", help="Replay or verify a recorded Carrier process execution.")
+    replay_execution = subparsers.add_parser("replay-execution", help="Replay or verify a recorded Impulse process execution.")
     replay_execution.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     replay_execution.add_argument("--run-id", required=True)
     replay_execution.add_argument("--process-id", required=True)
     replay_execution.add_argument("--rerun", action="store_true", help="Rerun only if process metadata marks it deterministic.")
+    replay_execution.add_argument(
+        "--compare",
+        action="store_true",
+        help="Rerun and report a structural path-by-path diff of rerun vs recorded output.",
+    )
     replay_execution.add_argument("--work-dir", default=None)
 
-    diagnose_waits = subparsers.add_parser("diagnose-waits", help="Diagnose Carrier waits and wait-graph deadlocks.")
+    diagnose_waits = subparsers.add_parser("diagnose-waits", help="Diagnose Impulse waits and wait-graph deadlocks.")
     diagnose_waits.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     diagnose_waits.add_argument("--run-id", required=True)
-    diagnose_waits.add_argument("--carrier-id", default=None)
+    diagnose_waits.add_argument("--impulse-id", default=None)
 
-    trace = subparsers.add_parser("trace", help="Show Carrier runtime trace for one run.")
+    trace = subparsers.add_parser("trace", help="Show Impulse runtime trace for one run.")
     trace.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     trace.add_argument("--run-id", required=True)
 
-    export_html = subparsers.add_parser("export-html", help="Export a static Carrier runtime HTML report.")
+    export_html = subparsers.add_parser("export-html", help="Export a static Impulse runtime HTML report.")
     export_html.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     export_html.add_argument("--run-id", required=True)
     export_html.add_argument("--out", required=True, help="Output HTML path.")
 
-    export_bundle = subparsers.add_parser("export-bundle", help="Export a portable Carrier runtime debug bundle.")
+    export_bundle = subparsers.add_parser("export-bundle", help="Export a portable Impulse runtime debug bundle.")
     export_bundle.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
     export_bundle.add_argument("--run-id", required=True)
     export_bundle.add_argument("--out", required=True, help="Output .zip path.")
@@ -499,15 +524,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
     if args.command == "init":
-        db_path = Path(_carrier_runtime_db_path(args.db))
-        artifact_root = Path(args.artifact_root).expanduser()
+        db_path = Path(_runtime_db_path(args.db))
+        reaction_root = Path(args.reaction_root).expanduser()
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        artifact_root.mkdir(parents=True, exist_ok=True)
-        SQLiteRuntimeBackend(db_path)
+        reaction_root.mkdir(parents=True, exist_ok=True)
+        Correlator(db_path)
         return {
             "ok": True,
             "db": str(db_path),
-            "artifact_root": str(artifact_root),
+            "reaction_root": str(reaction_root),
             "schema_version": SQLITE_RUNTIME_SCHEMA_VERSION,
         }
 
@@ -520,17 +545,17 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         }
 
     if args.command == "db":
-        db_path = _carrier_runtime_db_path(args.db)
-        backend = SQLiteRuntimeBackend(db_path)
+        db_path = _runtime_db_path(args.db)
         if args.db_command in {"init", "migrate"}:
+            Correlator(db_path)
             return {
                 "ok": True,
                 "path": str(db_path),
                 "schema_version": SQLITE_RUNTIME_SCHEMA_VERSION,
             }
         if args.db_command == "vacuum":
-            return _carrier_runtime_vacuum(db_path)
-        return _carrier_runtime_doctor(
+            return _runtime_vacuum(db_path)
+        return _runtime_doctor(
             argparse.Namespace(
                 db=args.db,
                 ensure_schema=args.ensure_schema,
@@ -540,26 +565,27 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         )
 
     if args.command == "doctor":
-        return _carrier_runtime_doctor(args)
+        return _runtime_doctor(args)
 
     if args.command in {
         "archive-gc",
         "archive-run",
-        "artifacts",
+        "reactions",
         "bridge",
         "create-run",
-        "carrier-relations",
-        "carrier-types",
-        "carriers",
+        "impulse-relations",
+        "impulse-types",
+        "impulses",
         "commands",
         "diagnose-waits",
         "events",
         "export-bundle",
         "export-html",
-        "gate",
-        "gates",
+        "homeostat",
+        "homeostats",
         "gc",
-        "observations",
+        "maintain-journal",
+        "associations",
         "processes",
         "projections",
         "runtimes",
@@ -568,20 +594,20 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "runs",
         "trace",
     }:
-        return await _carrier_runtime_command(args)
+        return await _runtime_command(args)
 
     raise ValueError(f"Unknown Fala command: {args.command}")
 
-_CARRIER_RUNTIME_REQUIRED_TABLES = (
-    "artifacts",
+_RUNTIME_REQUIRED_TABLES = (
+    "reactions",
     "bridge_inbox",
     "bridge_outbox",
-    "carrier_relations",
-    "carrier_types",
-    "carriers",
+    "impulse_relations",
+    "impulse_types",
+    "impulses",
     "delegation_policies",
-    "gates",
-    "observations",
+    "homeostats",
+    "associations",
     "processes",
     "projections",
     "runtime_pools",
@@ -592,56 +618,58 @@ _CARRIER_RUNTIME_REQUIRED_TABLES = (
 )
 
 
-async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
+async def _runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
     if args.command == "diagnose-waits":
         service = RuntimeBackendService(
-            SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+            Correlator(_runtime_db_path(args.db))
         )
         diagnostic = await service.diagnose_waits(
             run_id=args.run_id,
-            carrier_id=args.carrier_id,
+            impulse_id=args.impulse_id,
         )
         return {
             "ok": True,
             "wait_diagnostics": diagnostic.model_dump(mode="json"),
         }
     if args.command == "trace":
-        return await _carrier_runtime_trace(args)
+        return await _runtime_trace(args)
     if args.command == "archive-gc":
-        return _carrier_runtime_archive_gc(args)
+        return _runtime_archive_gc(args)
     if args.command == "archive-run":
-        return await _carrier_runtime_archive_run(args)
+        return await _runtime_archive_run(args)
     if args.command == "export-html":
-        return await _carrier_runtime_export_html(args)
+        return await _runtime_export_html(args)
     if args.command == "export-bundle":
-        return await _carrier_runtime_export_bundle(args)
+        return await _runtime_export_bundle(args)
     if args.command == "gc":
-        return await _carrier_runtime_gc(args)
+        return await _runtime_gc(args)
+    if args.command == "maintain-journal":
+        return await _runtime_maintain_journal(args)
     if args.command == "run-until-idle":
-        return await _carrier_runtime_run_until_idle(args)
+        return await _runtime_run_until_idle(args)
     if args.command == "replay-execution":
-        return await _carrier_runtime_replay_execution(args)
+        return await _runtime_replay_execution(args)
 
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    backend = Correlator(_runtime_db_path(args.db))
     if args.command == "create-run":
         run_data = {
             "title": args.title,
             "package_id": args.package_id,
             "package_version": args.package_version,
             "package_digest": args.package_digest,
-            "flow_id": args.flow_id,
-            "flow_digest": args.flow_digest,
+            "correlation_path_id": args.correlation_path_id,
+            "correlation_path_digest": args.correlation_path_digest,
             "runtime_version": args.runtime_version,
             "backend_version": args.backend_version,
             "metadata": _parse_values(args.metadata),
         }
         if args.run_id is not None:
             run_data["id"] = args.run_id
-        run = CarrierRun.model_validate(run_data)
+        run = Run.model_validate(run_data)
         service = RuntimeBackendService(backend)
         stored, submission = await service.create_run(
             run,
-            idempotency_key=args.idempotency_key or f"{run.id}:run.create",
+            idempotency_key=args.idempotency_key or "run.create",
             actor="cli:user",
         )
         return {
@@ -653,15 +681,22 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
     if args.command == "runs":
         if args.run_command == "list":
             runs = await backend.list_runs(
-                status=CarrierRunStatus(args.status) if args.status else None,
+                status=RunStatus(args.status) if args.status else None,
                 limit=args.limit,
             )
-            return _carrier_runtime_list_result("runs", runs, jsonl=args.jsonl)
+            return _runtime_list_result("runs", runs, jsonl=args.jsonl)
+        if args.run_command == "observe":
+            service = RuntimeBackendService(backend)
+            boundary = await service.observe_run(run_id=args.run_id)
+            return {
+                "ok": True,
+                "boundary": boundary.model_dump(mode="json"),
+            }
         if args.run_command == "cancel":
             service = RuntimeBackendService(backend)
             run, submission = await service.cancel_run(
                 run_id=args.run_id,
-                idempotency_key=args.idempotency_key or f"{args.run_id}:run.cancel",
+                idempotency_key=args.idempotency_key or "run.cancel",
                 reason=args.reason,
                 actor="cli:user",
             )
@@ -694,7 +729,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             actor=args.actor,
             limit=args.limit,
         )
-        return _carrier_runtime_list_result(
+        return _runtime_list_result(
             "commands",
             commands,
             jsonl=args.jsonl,
@@ -703,7 +738,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         service = RuntimeBackendService(backend)
         if args.runtime_command == "list":
             pools = await backend.list_runtime_pools()
-            return _carrier_runtime_list_result(
+            return _runtime_list_result(
                 "runtime_pools",
                 pools,
                 jsonl=args.jsonl,
@@ -720,7 +755,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                     )
                     for value in args.runtime_json
                 ],
-                carrier_types=args.carrier_type,
+                impulse_types=args.impulse_type,
                 metadata=metadata,
             )
             stored = await service.save_runtime_pool(pool)
@@ -731,7 +766,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         if args.runtime_command == "add-policy":
             policy_data = {
                 "pool_id": args.pool_id,
-                "carrier_types": args.carrier_type,
+                "impulse_types": args.impulse_type,
                 "budget": _parse_json_object(args.budget_json, "--budget-json"),
                 "metadata": _parse_json_object(args.metadata_json, "--metadata-json"),
             }
@@ -753,82 +788,82 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 policy.model_dump(mode="json") for policy in policies
             ],
         }
-    if args.command == "carriers":
-        if args.carrier_command == "create":
-            carrier_data = {
+    if args.command == "impulses":
+        if args.impulse_command == "create":
+            impulse_data = {
                 "run_id": args.run_id,
-                "carrier_type": args.carrier_type,
+                "impulse_type": args.impulse_type,
                 "payload": _parse_json_object(args.payload_json, "--payload-json"),
                 "metadata": _parse_json_object(args.metadata_json, "--metadata-json"),
             }
-            if args.carrier_id is not None:
-                carrier_data["id"] = args.carrier_id
-            carrier = Carrier.model_validate(carrier_data)
+            if args.impulse_id is not None:
+                impulse_data["id"] = args.impulse_id
+            impulse = Impulse.model_validate(impulse_data)
             service = RuntimeBackendService(backend)
-            stored, submission = await service.accept_carrier(
-                carrier,
+            stored, submission = await service.accept_impulse(
+                impulse,
                 idempotency_key=args.idempotency_key
-                or f"{carrier.run_id}:carrier.accept:{carrier.id}",
+                or f"impulse.accept:{impulse.id}",
                 actor="cli:user",
             )
             return {
                 "ok": True,
-                "carrier": stored.model_dump(mode="json"),
+                "impulse": stored.model_dump(mode="json"),
                 "command": submission.command.model_dump(mode="json"),
                 "replayed": submission.replayed,
             }
-        if args.carrier_command == "list":
-            carriers = await backend.list_carriers(
+        if args.impulse_command == "list":
+            impulses = await backend.list_impulses(
                 run_id=args.run_id,
-                carrier_type=args.carrier_type,
+                impulse_type=args.impulse_type,
                 limit=args.limit,
             )
-            return _carrier_runtime_list_result("carriers", carriers, jsonl=args.jsonl)
-        carrier = await backend.get_carrier(
+            return _runtime_list_result("impulses", impulses, jsonl=args.jsonl)
+        impulse = await backend.get_impulse(
             run_id=args.run_id,
-            carrier_id=args.carrier_id,
+            impulse_id=args.impulse_id,
         )
         return {
-            "ok": carrier is not None,
-            "carrier": carrier.model_dump(mode="json") if carrier is not None else None,
+            "ok": impulse is not None,
+            "impulse": impulse.model_dump(mode="json") if impulse is not None else None,
         }
-    if args.command == "carrier-types":
-        if args.carrier_type_command == "list":
-            carrier_types = await backend.list_carrier_types(run_id=args.run_id)
-            return _carrier_runtime_list_result(
-                "carrier_types",
-                carrier_types,
+    if args.command == "impulse-types":
+        if args.impulse_type_command == "list":
+            impulse_types = await backend.list_impulse_types(run_id=args.run_id)
+            return _runtime_list_result(
+                "impulse_types",
+                impulse_types,
                 jsonl=args.jsonl,
             )
-        carrier_type = await backend.get_carrier_type(
+        impulse_type = await backend.get_impulse_type(
             run_id=args.run_id,
-            carrier_type_id=args.carrier_type_id,
+            impulse_type_id=args.impulse_type_id,
         )
         return {
-            "ok": carrier_type is not None,
-            "carrier_type": carrier_type.model_dump(mode="json")
-            if carrier_type is not None
+            "ok": impulse_type is not None,
+            "impulse_type": impulse_type.model_dump(mode="json")
+            if impulse_type is not None
             else None,
         }
-    if args.command == "carrier-relations":
-        if args.carrier_relation_command == "list":
-            relations = await backend.list_carrier_relations(
+    if args.command == "impulse-relations":
+        if args.impulse_relation_command == "list":
+            relations = await backend.list_impulse_relations(
                 run_id=args.run_id,
-                carrier_id=args.carrier_id,
+                impulse_id=args.impulse_id,
                 relation_type=args.relation_type,
             )
-            return _carrier_runtime_list_result(
-                "carrier_relations",
+            return _runtime_list_result(
+                "impulse_relations",
                 relations,
                 jsonl=args.jsonl,
             )
-        relation = await backend.get_carrier_relation(
+        relation = await backend.get_impulse_relation(
             run_id=args.run_id,
             relation_id=args.relation_id,
         )
         return {
             "ok": relation is not None,
-            "carrier_relation": relation.model_dump(mode="json")
+            "impulse_relation": relation.model_dump(mode="json")
             if relation is not None
             else None,
         }
@@ -847,7 +882,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                     status=status,
                 )
             )
-            return _carrier_runtime_list_result(
+            return _runtime_list_result(
                 f"bridge_{args.box}",
                 deliveries,
                 jsonl=args.jsonl,
@@ -885,7 +920,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             imported, submission = await service.import_bridge_delivery(
                 delivery,
                 idempotency_key=args.idempotency_key
-                or f"{delivery.target.run_id}:bridge.file.import:{delivery.id}",
+                or f"bridge.file.import:{delivery.id}",
                 actor="cli:user",
             )
             return {
@@ -894,14 +929,14 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 "command": submission.command.model_dump(mode="json"),
                 "replayed": submission.replayed,
             }
-        target = RuntimeBackendService.sqlite(_carrier_runtime_db_path(args.target_db))
+        target = RuntimeBackendService.sqlite(_runtime_db_path(args.target_db))
         delivered, imported, delivery_submission, import_submission = (
             await service.deliver_bridge_delivery(
                 run_id=args.run_id,
                 delivery_id=args.delivery_id,
                 target=target,
                 idempotency_key=args.idempotency_key
-                or f"{args.run_id}:bridge.deliver:{args.delivery_id}",
+                or f"bridge.deliver:{args.delivery_id}",
                 import_idempotency_key=args.import_idempotency_key,
                 actor="cli:user",
             )
@@ -915,68 +950,68 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             "delivery_replayed": delivery_submission.replayed,
             "import_replayed": import_submission.replayed,
         }
-    if args.command == "artifacts":
-        if args.artifact_command == "record":
-            store = FileArtifactStore(args.artifact_root)
+    if args.command == "reactions":
+        if args.reaction_command == "record":
+            store = FileReactionStore(args.reaction_root)
             ref = store.put_file(
                 kind=args.kind,
                 path=args.path,
-                artifact_id=args.artifact_id,
+                reaction_id=args.reaction_id,
                 metadata=_parse_json_object(args.metadata_json, "--metadata-json"),
             )
             digest = ref.metadata.get("sha256")
-            artifact = CarrierArtifact(
+            reaction = Reaction(
                 id=ref.id,
                 run_id=args.run_id,
-                carrier_id=args.carrier_id,
+                impulse_id=args.impulse_id,
                 kind=args.kind,
                 uri=ref.uri,
                 media_type=args.media_type,
                 size_bytes=ref.metadata.get("size_bytes"),
                 content_hash=f"sha256:{digest}" if isinstance(digest, str) else None,
-                metadata={**ref.metadata, "artifact_store": store.location},
+                metadata={**ref.metadata, "reaction_store": store.location},
             )
             service = RuntimeBackendService(backend)
-            stored, submission = await service.record_artifact(
-                artifact,
+            stored, submission = await service.record_reaction(
+                reaction,
                 idempotency_key=args.idempotency_key
-                or f"{args.run_id}:artifact.record:{artifact.id}",
+                or f"reaction.record:{reaction.id}",
                 actor="cli:user",
             )
             return {
                 "ok": True,
-                "artifact": stored.model_dump(mode="json"),
+                "reaction": stored.model_dump(mode="json"),
                 "command": submission.command.model_dump(mode="json"),
                 "replayed": submission.replayed,
             }
-        if args.artifact_command == "list":
-            artifacts = await backend.list_artifacts(
+        if args.reaction_command == "list":
+            reactions = await backend.list_reactions(
                 run_id=args.run_id,
-                carrier_id=args.carrier_id,
+                impulse_id=args.impulse_id,
                 kind=args.kind,
             )
-            return _carrier_runtime_list_result(
-                "artifacts",
-                artifacts,
+            return _runtime_list_result(
+                "reactions",
+                reactions,
                 jsonl=args.jsonl,
             )
-        artifact = await backend.get_artifact(
+        reaction = await backend.get_reaction(
             run_id=args.run_id,
-            artifact_id=args.artifact_id,
+            reaction_id=args.reaction_id,
         )
         return {
-            "ok": artifact is not None,
-            "artifact": artifact.model_dump(mode="json")
-            if artifact is not None
+            "ok": reaction is not None,
+            "reaction": reaction.model_dump(mode="json")
+            if reaction is not None
             else None,
         }
     if args.command == "processes":
         if args.process_command == "schedule":
             process_data = {
                 "run_id": args.run_id,
-                "carrier_id": args.carrier_id,
+                "impulse_id": args.impulse_id,
                 "process_type": args.process_type,
-                "status": CarrierProcessStatus(args.status),
+                "status": ProcessStatus(args.status),
                 "priority": args.priority,
                 "max_attempts": args.max_attempts,
                 "input": _parse_json_object(args.input_json, "--input-json"),
@@ -984,12 +1019,12 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             }
             if args.process_id is not None:
                 process_data["id"] = args.process_id
-            process = CarrierProcess.model_validate(process_data)
+            process = Process.model_validate(process_data)
             service = RuntimeBackendService(backend)
             stored, submission = await service.schedule_process(
                 process,
                 idempotency_key=args.idempotency_key
-                or f"{process.run_id}:process.schedule:{process.id}",
+                or f"process.schedule:{process.id}",
                 actor="cli:user",
             )
             return {
@@ -1009,7 +1044,7 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 process_id=args.process_id,
                 error=_parse_json_object(args.error_json, "--error-json"),
                 idempotency_key=args.idempotency_key
-                or f"{args.run_id}:process.{args.process_command}:{args.process_id}",
+                or f"process.{args.process_command}:{args.process_id}",
                 actor="cli:user",
             )
             return {
@@ -1021,10 +1056,10 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
         if args.process_command == "list":
             processes = await backend.list_processes(
                 run_id=args.run_id,
-                status=CarrierProcessStatus(args.status) if args.status else None,
-                carrier_id=args.carrier_id,
+                status=ProcessStatus(args.status) if args.status else None,
+                impulse_id=args.impulse_id,
             )
-            return _carrier_runtime_list_result(
+            return _runtime_list_result(
                 "processes",
                 processes,
                 jsonl=args.jsonl,
@@ -1039,122 +1074,122 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
             if process is not None
             else None,
         }
-    if args.command == "observations":
-        if args.observation_command == "append":
-            observation_data = {
+    if args.command == "associations":
+        if args.association_command == "append":
+            association_data = {
                 "run_id": args.run_id,
-                "carrier_id": args.carrier_id,
+                "impulse_id": args.impulse_id,
                 "kind": args.kind,
                 "values": _parse_json_object(args.values_json, "--values-json"),
                 "metadata": _parse_json_object(args.metadata_json, "--metadata-json"),
             }
-            if args.observation_id is not None:
-                observation_data["id"] = args.observation_id
-            observation = Observation.model_validate(observation_data)
+            if args.association_id is not None:
+                association_data["id"] = args.association_id
+            association = Association.model_validate(association_data)
             service = RuntimeBackendService(backend)
-            stored, submission = await service.record_observation(
-                observation,
+            stored, submission = await service.record_association(
+                association,
                 idempotency_key=args.idempotency_key
-                or f"{observation.run_id}:observation.record:{observation.id}",
+                or f"association.record:{association.id}",
                 actor="cli:user",
             )
             return {
                 "ok": True,
-                "observation": stored.model_dump(mode="json"),
+                "association": stored.model_dump(mode="json"),
                 "command": submission.command.model_dump(mode="json"),
                 "replayed": submission.replayed,
             }
-        if args.observation_command == "inspect":
-            observations = await backend.list_observations(run_id=args.run_id)
-            observation = next(
+        if args.association_command == "inspect":
+            associations = await backend.list_associations(run_id=args.run_id)
+            association = next(
                 (
                     item
-                    for item in observations
-                    if item.id == args.observation_id
+                    for item in associations
+                    if item.id == args.association_id
                 ),
                 None,
             )
             return {
-                "ok": observation is not None,
-                "observation": observation.model_dump(mode="json")
-                if observation is not None
+                "ok": association is not None,
+                "association": association.model_dump(mode="json")
+                if association is not None
                 else None,
             }
-        observations = await backend.list_observations(
+        associations = await backend.list_associations(
             run_id=args.run_id,
-            carrier_id=args.carrier_id,
+            impulse_id=args.impulse_id,
         )
-        return _carrier_runtime_list_result(
-            "observations",
-            observations,
+        return _runtime_list_result(
+            "associations",
+            associations,
             jsonl=args.jsonl,
         )
     if args.command == "events":
         if args.event_command == "validate-schema":
             events = await backend.list_events(run_id=args.run_id)
-            return _carrier_runtime_event_schema_report(
+            return _runtime_event_schema_report(
                 events,
                 max_schema_version=args.max_schema_version,
             )
         events = await backend.list_events(
             run_id=args.run_id,
-            carrier_id=args.carrier_id,
+            impulse_id=args.impulse_id,
             after_sequence=args.after_sequence,
             limit=args.limit,
         )
-        return _carrier_runtime_list_result("events", events, jsonl=args.jsonl)
-    if args.command in {"gate", "gates"}:
-        if args.gate_command == "open":
-            gate_data = {
+        return _runtime_list_result("events", events, jsonl=args.jsonl)
+    if args.command in {"homeostat", "homeostats"}:
+        if args.homeostat_command == "open":
+            homeostat_data = {
                 "run_id": args.run_id,
-                "carrier_id": args.carrier_id,
+                "impulse_id": args.impulse_id,
                 "kind": args.kind,
                 "values": _parse_json_object(args.values_json, "--values-json"),
                 "metadata": _parse_json_object(args.metadata_json, "--metadata-json"),
             }
-            if args.gate_id is not None:
-                gate_data["id"] = args.gate_id
-            gate = CarrierGate.model_validate(gate_data)
+            if args.homeostat_id is not None:
+                homeostat_data["id"] = args.homeostat_id
+            homeostat = Homeostat.model_validate(homeostat_data)
             service = RuntimeBackendService(backend)
-            opened, submission = await service.open_gate(
-                gate,
+            opened, submission = await service.open_homeostat(
+                homeostat,
                 idempotency_key=args.idempotency_key
-                or f"{args.run_id}:gate.open:{gate.id}",
+                or f"homeostat.open:{homeostat.id}",
                 actor="cli:user",
             )
             return {
                 "ok": True,
-                "gate": opened.model_dump(mode="json"),
+                "homeostat": opened.model_dump(mode="json"),
                 "command": submission.command.model_dump(mode="json"),
                 "replayed": submission.replayed,
             }
-        if args.gate_command in {"complete", "cancel", "expire"}:
+        if args.homeostat_command in {"complete", "cancel", "expire"}:
             service = RuntimeBackendService(backend)
             method = {
-                "complete": service.complete_gate,
-                "cancel": service.cancel_gate,
-                "expire": service.expire_gate,
-            }[args.gate_command]
-            gate, submission = await method(
+                "complete": service.complete_homeostat,
+                "cancel": service.cancel_homeostat,
+                "expire": service.expire_homeostat,
+            }[args.homeostat_command]
+            homeostat, submission = await method(
                 run_id=args.run_id,
-                gate_id=args.gate_id,
+                homeostat_id=args.homeostat_id,
                 values=_parse_values(args.value),
                 idempotency_key=args.idempotency_key
-                or f"{args.run_id}:gate.{args.gate_command}:{args.gate_id}",
+                or f"homeostat.{args.homeostat_command}:{args.homeostat_id}",
                 actor="cli:user",
             )
             return {
                 "ok": True,
-                "gate": gate.model_dump(mode="json"),
+                "homeostat": homeostat.model_dump(mode="json"),
                 "command": submission.command.model_dump(mode="json"),
                 "replayed": submission.replayed,
             }
-        gates = await backend.list_gates(
+        homeostats = await backend.list_homeostats(
             run_id=args.run_id,
-            carrier_id=args.carrier_id,
-            status=CarrierGateStatus(args.status) if args.status else None,
+            impulse_id=args.impulse_id,
+            status=HomeostatStatus(args.status) if args.status else None,
         )
-        return _carrier_runtime_list_result("gates", gates, jsonl=args.jsonl)
+        return _runtime_list_result("homeostats", homeostats, jsonl=args.jsonl)
     if args.command == "projections":
         if args.projection_command == "rebuild":
             service = RuntimeBackendService(backend)
@@ -1163,11 +1198,11 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 run_id=args.run_id,
                 names=names,
                 idempotency_key=args.idempotency_key
-                or f"{args.run_id}:projection.rebuild:{','.join(args.name) if args.name else 'all'}",
+                or f"projection.rebuild:{','.join(args.name) if args.name else 'all'}",
                 actor="cli:user",
             )
             if args.jsonl:
-                return _carrier_runtime_list_result(
+                return _runtime_list_result(
                     "projections",
                     rebuilt,
                     jsonl=True,
@@ -1182,15 +1217,15 @@ async def _carrier_runtime_command(args: argparse.Namespace) -> dict[str, Any] |
                 "replayed": submission.replayed,
             }
         projections = await backend.list_projections(run_id=args.run_id)
-        return _carrier_runtime_list_result(
+        return _runtime_list_result(
             "projections",
             projections,
             jsonl=args.jsonl,
         )
-    raise ValueError(f"Unknown Carrier runtime command: {args.command}")
+    raise ValueError(f"Unknown Impulse runtime command: {args.command}")
 
 
-def _carrier_runtime_list_result(
+def _runtime_list_result(
     key: str,
     items: list[Any],
     *,
@@ -1208,7 +1243,7 @@ def _carrier_runtime_list_result(
     }
 
 
-def _carrier_runtime_event_schema_report(
+def _runtime_event_schema_report(
     events: list[RuntimeEvent],
     *,
     max_schema_version: int,
@@ -1240,126 +1275,34 @@ def _carrier_runtime_event_schema_report(
     }
 
 
-async def _carrier_runtime_run_until_idle(args: argparse.Namespace) -> dict[str, Any]:
+async def _runtime_run_until_idle(args: argparse.Namespace) -> dict[str, Any]:
     if args.max_ticks < 1:
         raise ValueError("--max-ticks must be greater than zero")
     if args.lease_seconds <= 0:
         raise ValueError("--lease-seconds must be greater than zero")
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+    backend = Correlator(_runtime_db_path(args.db))
     service = RuntimeBackendService(backend)
-    completed: list[dict[str, Any]] = []
-    failed: list[dict[str, Any]] = []
-    waiting: list[dict[str, Any]] = []
-    ticks = 0
-    work_root = Path(args.work_dir).expanduser() if args.work_dir else None
-    if work_root is not None:
-        work_root.mkdir(parents=True, exist_ok=True)
-
-    while ticks < args.max_ticks:
-        process = await service.claim_next_ready_process(
-            worker_id=args.worker_id,
-            run_id=args.run_id,
-            lease_seconds=args.lease_seconds,
-        )
-        if process is None:
-            break
-        ticks += 1
-        try:
-            adapter, step_input, config = _process_step_request_parts(process)
-            step_work_dir = work_root / process.id if work_root is not None else None
-            if step_work_dir is not None:
-                step_work_dir.mkdir(parents=True, exist_ok=True)
-            request = StepRunRequest(
-                run_id=process.run_id,
-                process_id=process.id,
-                carrier_id=process.carrier_id,
-                adapter=adapter,
-                input=step_input,
-                config=config,
-                work_dir=step_work_dir,
-            )
-            if adapter.kind == "fala_runtime":
-                result = await _carrier_runtime_enqueue_fala_runtime_process(
-                    backend=backend,
-                    service=service,
-                    process=process,
-                    request=request,
-                    db_path=_carrier_runtime_db_path(args.db),
-                    actor=args.worker_id,
-                )
-            else:
-                result = await create_step_adapter(adapter.kind).run(request)
-            if result.waiting:
-                if result.gate_id is not None:
-                    await service.save_gate(
-                        CarrierGate(
-                            id=result.gate_id,
-                            run_id=process.run_id,
-                            carrier_id=process.carrier_id,
-                            kind=adapter.kind,
-                            values=result.output,
-                            metadata=result.metadata,
-                        ),
-                        idempotency_key=f"{process.run_id}:gate.open:{result.gate_id}",
-                        actor=args.worker_id,
-                    )
-                stored, _ = await service.wait_process(
-                    run_id=process.run_id,
-                    process_id=process.id,
-                    output=result.output,
-                    idempotency_key=f"{process.run_id}:process.wait:{process.id}:{process.attempt}",
-                    actor=args.worker_id,
-                )
-                waiting.append(stored.model_dump(mode="json"))
-                continue
-
-            stored, _ = await service.complete_process(
-                run_id=process.run_id,
-                process_id=process.id,
-                output={
-                    **result.output,
-                    "adapter": {
-                        "returncode": result.returncode,
-                        "stdout": result.stdout,
-                        "stderr": result.stderr,
-                    },
-                },
-                idempotency_key=f"{process.run_id}:process.complete:{process.id}:{process.attempt}",
-                actor=args.worker_id,
-            )
-            completed.append(stored.model_dump(mode="json"))
-        except Exception as exc:
-            error = {"type": type(exc).__name__, "message": str(exc)}
-            if process.attempt < process.max_attempts:
-                stored, _ = await service.retry_process(
-                    run_id=process.run_id,
-                    process_id=process.id,
-                    error=error,
-                    idempotency_key=f"{process.run_id}:process.retry:{process.id}:{process.attempt}",
-                    actor=args.worker_id,
-                )
-            else:
-                stored, _ = await service.fail_process(
-                    run_id=process.run_id,
-                    process_id=process.id,
-                    error=error,
-                    idempotency_key=f"{process.run_id}:process.fail:{process.id}:{process.attempt}",
-                    actor=args.worker_id,
-                )
-            failed.append(stored.model_dump(mode="json"))
-
+    result = await run_until_idle(
+        service,
+        worker_id=args.worker_id,
+        run_id=args.run_id,
+        lease_seconds=args.lease_seconds,
+        max_ticks=args.max_ticks,
+        work_dir=args.work_dir,
+        all_runs=args.all_runs,
+    )
     return {
-        "ok": ticks < args.max_ticks,
-        "ticks": ticks,
-        "stopped_reason": "max_ticks" if ticks >= args.max_ticks else "idle",
-        "completed": completed,
-        "failed": failed,
-        "waiting": waiting,
+        "ok": result.ok,
+        "ticks": result.ticks,
+        "stopped_reason": result.stopped_reason,
+        "completed": [item.model_dump(mode="json") for item in result.completed],
+        "failed": [item.model_dump(mode="json") for item in result.failed],
+        "waiting": [item.model_dump(mode="json") for item in result.waiting],
     }
 
 
-async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[str, Any]:
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+async def _runtime_replay_execution(args: argparse.Namespace) -> dict[str, Any]:
+    backend = Correlator(_runtime_db_path(args.db))
     process = await backend.get_process(
         run_id=args.run_id,
         process_id=args.process_id,
@@ -1385,7 +1328,7 @@ async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[st
             "error": process.error,
         },
     }
-    if not args.rerun:
+    if not args.rerun and not args.compare:
         return {
             **base,
             "mode": "recorded",
@@ -1398,7 +1341,7 @@ async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[st
             "mode": "rerun",
             "error": "process is not marked deterministic",
         }
-    if process.status != CarrierProcessStatus.succeeded:
+    if process.status != ProcessStatus.succeeded:
         return {
             **base,
             "ok": False,
@@ -1406,8 +1349,8 @@ async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[st
             "error": f"process is not succeeded: {process.status.value}",
         }
 
-    adapter, step_input, config = _process_step_request_parts(process)
-    if adapter.kind in {"manual_gate", "fala_runtime"}:
+    adapter, effector_input, config = _process_effector_request_parts(process)
+    if adapter.kind in {"manual_homeostat", "fala_runtime"}:
         return {
             **base,
             "ok": False,
@@ -1417,13 +1360,12 @@ async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[st
     work_dir = Path(args.work_dir).expanduser() if args.work_dir else None
     if work_dir is not None:
         work_dir.mkdir(parents=True, exist_ok=True)
-    result = await create_step_adapter(adapter.kind).run(
-        StepRunRequest(
-            run_id=process.run_id,
+    result = await create_effector_adapter(adapter.kind).run(
+        EffectorRunRequest(
             process_id=process.id,
-            carrier_id=process.carrier_id,
+            impulse_id=process.impulse_id,
             adapter=adapter,
-            input=step_input,
+            input=effector_input,
             config=config,
             work_dir=work_dir,
         )
@@ -1436,202 +1378,66 @@ async def _carrier_runtime_replay_execution(args: argparse.Namespace) -> dict[st
             "stderr": result.stderr,
         },
     }
+    rerun = {
+        "output": rerun_output,
+        "matches_recorded_output": rerun_output == process.output,
+    }
+    if args.compare:
+        rerun["diff"] = _structural_diff(process.output, rerun_output)
     return {
         **base,
         "mode": "rerun",
-        "rerun": {
-            "output": rerun_output,
-            "matches_recorded_output": rerun_output == process.output,
-        },
+        "rerun": rerun,
     }
 
 
-async def _carrier_runtime_enqueue_fala_runtime_process(
-    *,
-    backend: SQLiteRuntimeBackend,
-    service: RuntimeBackendService,
-    process: CarrierProcess,
-    request: StepRunRequest,
-    db_path: str,
-    actor: str,
-) -> StepRunResult:
-    if request.adapter.runtime_ref is None:
-        raise ValueError("fala_runtime adapter requires runtime_ref")
-    if process.carrier_id is None:
-        raise ValueError("fala_runtime process requires carrier_id")
+def _structural_diff(
+    recorded: Any, rerun: Any, path: str = "$"
+) -> list[dict[str, Any]]:
+    """Path-by-path diff of two JSON-able values, leaves only.
 
-    carrier = await backend.get_carrier(
-        run_id=process.run_id,
-        carrier_id=process.carrier_id,
-    )
-    if carrier is None:
-        raise ValueError(f"Unknown carrier for fala_runtime process: {process.carrier_id!r}")
-
-    events = await backend.list_events(
-        run_id=process.run_id,
-        carrier_id=process.carrier_id,
-    )
-    source_runtime = RuntimeRef(
-        id=str(request.config.get("source_runtime_id") or "local"),
-        uri=f"sqlite://{Path(db_path).expanduser().resolve()}",
-    )
-    target_runtime, pool_id, budget = await _resolve_fala_runtime_target(
-        backend=backend,
-        carrier=carrier,
-        request=request,
-    )
-    target_run_id = str(request.config.get("target_run_id") or process.run_id)
-    delivery_id = str(
-        request.config.get("delivery_id")
-        or f"bridge:{process.run_id}:{process.id}"
-    )
-    delivery = BridgeDelivery(
-        id=delivery_id,
-        run_id=process.run_id,
-        idempotency_key=f"{process.run_id}:bridge.enqueue:{process.id}:{process.attempt}",
-        source=RunRef(runtime=source_runtime, run_id=process.run_id),
-        target=RunRef(runtime=target_runtime, run_id=target_run_id),
-        carrier=carrier,
-        event_ref=EventRef(
-            runtime=source_runtime,
-            run_id=process.run_id,
-            event_id=events[-1].id if events else None,
-            sequence=events[-1].sequence if events else None,
-        ),
-        pool_id=pool_id,
-        budget=budget,
-        metadata={
-            "process_id": process.id,
-            "process_type": process.process_type,
-        },
-    )
-    outbox, submission = await service.enqueue_bridge_delivery(
-        delivery,
-        actor=actor,
-    )
-    return StepRunResult(
-        waiting=True,
-        output={
-            "status": "submitted",
-            "runtime_ref": request.adapter.runtime_ref,
-            "target_run_id": target_run_id,
-            "delivery_id": outbox.id,
-            "command_id": submission.command.id,
-            "replayed": submission.replayed,
-        },
-    )
+    Each entry names the JSONPath-ish location, both values, and whether the
+    path was ``added`` (rerun only), ``removed`` (recorded only), or
+    ``changed``. Equal values contribute nothing.
+    """
+    if isinstance(recorded, dict) and isinstance(rerun, dict):
+        diffs: list[dict[str, Any]] = []
+        for key in sorted(set(recorded) | set(rerun)):
+            child = f"{path}.{key}"
+            if key not in recorded:
+                diffs.append(
+                    {"path": child, "change": "added", "recorded": None, "rerun": rerun[key]}
+                )
+            elif key not in rerun:
+                diffs.append(
+                    {"path": child, "change": "removed", "recorded": recorded[key], "rerun": None}
+                )
+            else:
+                diffs.extend(_structural_diff(recorded[key], rerun[key], child))
+        return diffs
+    if isinstance(recorded, list) and isinstance(rerun, list):
+        diffs = []
+        for index in range(max(len(recorded), len(rerun))):
+            child = f"{path}[{index}]"
+            if index >= len(recorded):
+                diffs.append(
+                    {"path": child, "change": "added", "recorded": None, "rerun": rerun[index]}
+                )
+            elif index >= len(rerun):
+                diffs.append(
+                    {"path": child, "change": "removed", "recorded": recorded[index], "rerun": None}
+                )
+            else:
+                diffs.extend(_structural_diff(recorded[index], rerun[index], child))
+        return diffs
+    if recorded != rerun:
+        return [{"path": path, "change": "changed", "recorded": recorded, "rerun": rerun}]
+    return []
 
 
-async def _resolve_fala_runtime_target(
-    *,
-    backend: SQLiteRuntimeBackend,
-    carrier: Carrier,
-    request: StepRunRequest,
-) -> tuple[RuntimeRef, str | None, RuntimeBudget]:
-    assert request.adapter.runtime_ref is not None
-    configured_budget = request.config.get("budget")
-    pool = await backend.get_runtime_pool(pool_id=request.adapter.runtime_ref)
-    if pool is None:
-        return (
-            RuntimeRef(
-                id=str(
-                    request.config.get("target_runtime_id")
-                    or _runtime_ref_id(request.adapter.runtime_ref)
-                ),
-                uri=request.adapter.runtime_ref,
-            ),
-            request.config.get("pool_id"),
-            RuntimeBudget.model_validate(configured_budget or {}),
-        )
-
-    if pool.carrier_types and carrier.carrier_type not in pool.carrier_types:
-        raise ValueError(
-            f"Runtime pool {pool.id!r} does not accept carrier type {carrier.carrier_type!r}"
-        )
-    if not pool.runtimes:
-        raise ValueError(f"Runtime pool {pool.id!r} has no runtimes")
-
-    policies = await backend.list_delegation_policies(pool_id=pool.id)
-    delegation_policy = next(
-        (
-            item
-            for item in policies
-            if not item.carrier_types or carrier.carrier_type in item.carrier_types
-        ),
-        None,
-    )
-    budget = RuntimeBudget.model_validate(
-        configured_budget
-        or (
-            delegation_policy.budget.model_dump(mode="json")
-            if delegation_policy is not None
-            else {}
-        )
-    )
-    pool_policy = str(request.config.get("pool_policy") or pool.metadata.get("policy") or "manual")
-    return await _select_runtime_from_pool(backend, pool=pool, policy=pool_policy), pool.id, budget
-
-
-async def _select_runtime_from_pool(
-    backend: SQLiteRuntimeBackend,
-    *,
-    pool: RuntimePool,
-    policy: str,
-) -> RuntimeRef:
-    if policy in {"manual", "first"}:
-        return pool.runtimes[0]
-    if policy == "least_busy":
-        return min(pool.runtimes, key=_runtime_declared_load)
-    if policy == "round_robin":
-        index = _int_metadata(pool.metadata.get("round_robin_index"))
-        selected = pool.runtimes[index % len(pool.runtimes)]
-        metadata = {
-            **pool.metadata,
-            "round_robin_index": (index + 1) % len(pool.runtimes),
-        }
-        await backend.put_runtime_pool(pool.model_copy(update={"metadata": metadata}))
-        return selected
-    raise ValueError(f"Unknown runtime pool policy: {policy!r}")
-
-
-def _runtime_declared_load(runtime: RuntimeRef) -> float:
-    value = runtime.metadata.get("load", runtime.metadata.get("pending_processes", 0))
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Runtime {runtime.id!r} has invalid load metadata") from exc
-
-
-def _int_metadata(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("runtime pool round_robin_index metadata must be an integer") from exc
-
-
-def _runtime_ref_id(value: str) -> str:
-    parsed = urlparse(value)
-    if parsed.scheme in {"sqlite", "sqlite3"}:
-        path = Path(_carrier_runtime_db_path(value))
-        return path.stem or "sqlite"
-    return value
-
-
-def _process_step_request_parts(
-    process: CarrierProcess,
-) -> tuple[CarrierAdapterSpec, dict[str, Any], dict[str, Any]]:
-    raw_input = dict(process.input)
-    raw_adapter = raw_input.pop("adapter", None)
-    if not isinstance(raw_adapter, dict):
-        raise ValueError(f"Process {process.id!r} input requires adapter object")
-    raw_config = raw_input.pop("config", {})
-    config = raw_config if isinstance(raw_config, dict) else {}
-    return CarrierAdapterSpec.model_validate(raw_adapter), raw_input, dict(config)
-
-
-async def _carrier_runtime_gc(args: argparse.Namespace) -> dict[str, Any]:
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
-    store = FileArtifactStore(args.artifact_root)
+async def _runtime_gc(args: argparse.Namespace) -> dict[str, Any]:
+    backend = Correlator(_runtime_db_path(args.db))
+    store = FileReactionStore(args.reaction_root)
     cutoff = (
         time.time() - _parse_duration_seconds(args.older_than)
         if args.older_than
@@ -1641,8 +1447,8 @@ async def _carrier_runtime_gc(args: argparse.Namespace) -> dict[str, Any]:
     all_run_ids = [run.id for run in await backend.list_runs()]
     run_ids = [args.run_id] if args.run_id else all_run_ids
     for run_id in all_run_ids:
-        for artifact in await backend.list_artifacts(run_id=run_id):
-            digest = digest_from_fala_artifact_uri(artifact.uri)
+        for reaction in await backend.list_reactions(run_id=run_id):
+            digest = digest_from_fala_reaction_uri(reaction.uri)
             if digest is not None:
                 referenced.add(digest)
 
@@ -1661,7 +1467,7 @@ async def _carrier_runtime_gc(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "ok": True,
         "dry_run": bool(args.dry_run),
-        "artifact_root": str(store.root),
+        "reaction_root": str(store.root),
         "run_ids": run_ids,
         "scanned_run_ids": all_run_ids,
         "referenced_count": len(referenced),
@@ -1691,12 +1497,12 @@ def _parse_duration_seconds(value: str) -> float:
     return seconds
 
 
-def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
-    db_path = Path(_carrier_runtime_db_path(args.db))
-    packages = _carrier_runtime_package_reports(getattr(args, "packages", []))
+def _runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
+    db_path = Path(_runtime_db_path(args.db))
+    packages = _runtime_package_reports(getattr(args, "packages", []))
     packages_ok = all(package["ok"] for package in packages)
     if args.ensure_schema:
-        SQLiteRuntimeBackend(db_path)
+        Correlator(db_path)
     if not db_path.exists():
         report = {
             "ok": False,
@@ -1705,7 +1511,7 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
             "error": f"SQLite database does not exist: {db_path}",
             "packages": packages,
         }
-        return _write_carrier_runtime_doctor_report(args, report)
+        return _write_runtime_doctor_report(args, report)
 
     with sqlite3.connect(db_path) as connection:
         tables = {
@@ -1714,7 +1520,7 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
-        missing_tables = sorted(set(_CARRIER_RUNTIME_REQUIRED_TABLES) - tables)
+        missing_tables = sorted(set(_RUNTIME_REQUIRED_TABLES) - tables)
         migration = None
         if "schema_migrations" in tables:
             migration = connection.execute(
@@ -1728,13 +1534,13 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
             table: _sqlite_count(connection, table) if table in tables else None
             for table in (
                 "runs",
-                "carriers",
+                "impulses",
                 "runtime_commands",
                 "runtime_events",
-                "observations",
-                "artifacts",
+                "associations",
+                "reactions",
                 "processes",
-                "gates",
+                "homeostats",
                 "projections",
                 "bridge_outbox",
                 "bridge_inbox",
@@ -1749,7 +1555,7 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
         "store_kind": "sqlite",
         "path": str(db_path),
         "schema": {
-            "required_tables": list(_CARRIER_RUNTIME_REQUIRED_TABLES),
+            "required_tables": list(_RUNTIME_REQUIRED_TABLES),
             "missing_tables": missing_tables,
             "current_version": current_version,
             "latest_version": latest_version,
@@ -1764,15 +1570,15 @@ def _carrier_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
         "counts": counts,
         "packages": packages,
     }
-    return _write_carrier_runtime_doctor_report(args, report)
+    return _write_runtime_doctor_report(args, report)
 
 
-def _carrier_runtime_package_reports(paths: list[str]) -> list[dict[str, Any]]:
+def _runtime_package_reports(paths: list[str]) -> list[dict[str, Any]]:
     reports: list[dict[str, Any]] = []
     for raw_path in paths:
         path = Path(raw_path).expanduser()
         try:
-            package = load_carrier_workflow_package_yaml(path)
+            package = load_fala_package_yaml(path)
         except Exception as exc:
             reports.append(
                 {
@@ -1782,29 +1588,29 @@ def _carrier_runtime_package_reports(paths: list[str]) -> list[dict[str, Any]]:
                 }
             )
         else:
-            adapter_errors = _carrier_package_adapter_errors(package)
+            adapter_errors = _fala_package_adapter_errors(package)
             reports.append(
                 {
                     "ok": not adapter_errors,
                     "path": str(path),
                     "id": package.id,
                     "version": package.version,
-                    "carrier_type_count": len(package.carrier_types),
-                    "flow_count": len(package.flows),
+                    "impulse_type_count": len(package.impulse_types),
+                    "correlation_path_count": len(package.correlation_paths),
                     "adapter_errors": adapter_errors,
                 }
             )
     return reports
 
 
-def _carrier_package_adapter_errors(
-    package: CarrierWorkflowPackageSpec,
+def _fala_package_adapter_errors(
+    package: FalaPackageSpec,
 ) -> list[dict[str, str]]:
     errors: list[dict[str, str]] = []
-    for flow in package.flows:
-        for step in flow.steps:
-            adapter = step.adapter
-            label = f"{flow.id}.{step.id}"
+    for correlation_path in package.correlation_paths:
+        for effector in correlation_path.effectors:
+            adapter = effector.adapter
+            label = f"{correlation_path.id}.{effector.id}"
             try:
                 if adapter.kind == "python_function" and adapter.ref:
                     _resolve_python_ref(adapter.ref)
@@ -1813,7 +1619,7 @@ def _carrier_package_adapter_errors(
             except Exception as exc:
                 errors.append(
                     {
-                        "step": label,
+                        "effector": label,
                         "adapter_kind": adapter.kind,
                         "error": str(exc),
                     }
@@ -1830,7 +1636,7 @@ def _resolve_python_ref(ref: str) -> Any:
     return getattr(import_module(module_name), attr_name)
 
 
-def _validate_subprocess_adapter_reference(adapter: CarrierAdapterSpec) -> None:
+def _validate_subprocess_adapter_reference(adapter: EffectorAdapterSpec) -> None:
     cwd = Path(adapter.cwd).expanduser() if adapter.cwd else Path.cwd()
     if not cwd.exists() or not cwd.is_dir():
         raise ValueError(f"subprocess cwd does not exist: {cwd}")
@@ -1843,7 +1649,7 @@ def _validate_subprocess_adapter_reference(adapter: CarrierAdapterSpec) -> None:
             raise ValueError(f"subprocess script does not exist: {script}")
 
 
-def _write_carrier_runtime_doctor_report(
+def _write_runtime_doctor_report(
     args: argparse.Namespace,
     report: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1866,12 +1672,12 @@ def _write_carrier_runtime_doctor_report(
     }
 
 
-def _add_carrier_runtime_db_arg(parser: argparse.ArgumentParser) -> None:
+def _add_runtime_db_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
 
 
-def _add_carrier_runtime_db_run_args(parser: argparse.ArgumentParser) -> None:
-    _add_carrier_runtime_db_arg(parser)
+def _add_runtime_db_run_args(parser: argparse.ArgumentParser) -> None:
+    _add_runtime_db_arg(parser)
     parser.add_argument("--run-id", required=True)
 
 
@@ -1879,7 +1685,7 @@ def _sqlite_count(connection: sqlite3.Connection, table: str) -> int:
     return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
-def _carrier_runtime_vacuum(db_path: str) -> dict[str, Any]:
+def _runtime_vacuum(db_path: str) -> dict[str, Any]:
     with sqlite3.connect(db_path) as connection:
         before = {
             "page_count": int(connection.execute("PRAGMA page_count").fetchone()[0]),
@@ -1898,27 +1704,27 @@ def _carrier_runtime_vacuum(db_path: str) -> dict[str, Any]:
     }
 
 
-async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
-    backend = SQLiteRuntimeBackend(_carrier_runtime_db_path(args.db))
+async def _runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
+    backend = Correlator(_runtime_db_path(args.db))
     run = await backend.get_run(run_id=args.run_id)
     events = await backend.list_events(run_id=args.run_id)
-    carriers = await backend.list_carriers(run_id=args.run_id)
-    carrier_relations = await backend.list_carrier_relations(run_id=args.run_id)
-    observations = await backend.list_observations(run_id=args.run_id)
-    artifacts = await backend.list_artifacts(run_id=args.run_id)
+    impulses = await backend.list_impulses(run_id=args.run_id)
+    impulse_relations = await backend.list_impulse_relations(run_id=args.run_id)
+    associations = await backend.list_associations(run_id=args.run_id)
+    reactions = await backend.list_reactions(run_id=args.run_id)
     processes = await backend.list_processes(run_id=args.run_id)
-    gates = await backend.list_gates(run_id=args.run_id)
+    homeostats = await backend.list_homeostats(run_id=args.run_id)
     projections = await backend.list_projections(run_id=args.run_id)
     trace = {
         "run_id": args.run_id,
         "run": run.model_dump(mode="json") if run is not None else None,
         "counts": {
-            "artifacts": len(artifacts),
-            "carrier_relations": len(carrier_relations),
-            "carriers": len(carriers),
+            "reactions": len(reactions),
+            "impulse_relations": len(impulse_relations),
+            "impulses": len(impulses),
             "events": len(events),
-            "gates": len(gates),
-            "observations": len(observations),
+            "homeostats": len(homeostats),
+            "associations": len(associations),
             "processes": len(processes),
             "projections": len(projections),
         },
@@ -1926,7 +1732,7 @@ async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "sequence": event.sequence,
                 "type": event.event_type,
-                "carrier_id": event.carrier_id,
+                "impulse_id": event.impulse_id,
                 "process_id": event.process_id,
                 "actor": event.actor,
                 "created_at": event.created_at.isoformat(),
@@ -1934,16 +1740,16 @@ async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
             for event in events
         ],
         "events": [event.model_dump(mode="json") for event in events],
-        "carriers": [carrier.model_dump(mode="json") for carrier in carriers],
-        "carrier_relations": [
-            relation.model_dump(mode="json") for relation in carrier_relations
+        "impulses": [impulse.model_dump(mode="json") for impulse in impulses],
+        "impulse_relations": [
+            relation.model_dump(mode="json") for relation in impulse_relations
         ],
-        "observations": [
-            observation.model_dump(mode="json") for observation in observations
+        "associations": [
+            association.model_dump(mode="json") for association in associations
         ],
-        "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
+        "reactions": [reaction.model_dump(mode="json") for reaction in reactions],
         "processes": [process.model_dump(mode="json") for process in processes],
-        "gates": [gate.model_dump(mode="json") for gate in gates],
+        "homeostats": [homeostat.model_dump(mode="json") for homeostat in homeostats],
         "projections": [
             projection.model_dump(mode="json") for projection in projections
         ],
@@ -1951,25 +1757,57 @@ async def _carrier_runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "trace": trace}
 
 
-async def _carrier_runtime_export_html(args: argparse.Namespace) -> dict[str, Any]:
-    result = await _carrier_runtime_trace(args)
+async def _runtime_maintain_journal(args: argparse.Namespace) -> dict[str, Any]:
+    service = RuntimeBackendService(Correlator(_runtime_db_path(args.db)))
+    reaction_store = _runtime_reaction_store_from_root(Path(args.reaction_root))
+    plan = await service.maintain_journal(
+        older_than_days=args.older_than_days,
+        keep_last=args.keep_last,
+        vacuum=not args.no_vacuum,
+        dry_run=not args.delete,
+        reaction_store=reaction_store,
+    )
+    return {"ok": True, "maintenance": plan.model_dump(mode="json")}
+
+
+def _runtime_reaction_store_from_root(root: Path) -> RuntimeReactionStore:
+    resolved = root.expanduser().resolve()
+    blobs: dict[str, RuntimeReactionBlob] = {}
+    blob_root = resolved / "blobs" / "sha256"
+    if blob_root.exists():
+        for path in sorted(blob_root.glob("*/*")):
+            if not path.is_file():
+                continue
+            digest = path.name.lower()
+            if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+                continue
+            blobs[digest] = RuntimeReactionBlob(
+                digest=digest,
+                size_bytes=path.stat().st_size,
+                location=str(path),
+            )
+    return RuntimeReactionStore(root=resolved, blobs=blobs)
+
+
+async def _runtime_export_html(args: argparse.Namespace) -> dict[str, Any]:
+    result = await _runtime_trace(args)
     trace = result["trace"]
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(_render_carrier_runtime_html(trace), encoding="utf-8")
+    out.write_text(_render_runtime_html(trace), encoding="utf-8")
     return {"ok": True, "run_id": args.run_id, "out": str(out)}
 
 
-async def _carrier_runtime_export_bundle(args: argparse.Namespace) -> dict[str, Any]:
-    result = await _carrier_runtime_trace(args)
+async def _runtime_export_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    result = await _runtime_trace(args)
     trace = result["trace"]
     out = Path(args.out).expanduser()
     out.parent.mkdir(parents=True, exist_ok=True)
     files = {
         "trace.json": json.dumps(trace, indent=2, sort_keys=True),
         "timeline.json": json.dumps(trace["timeline"], indent=2, sort_keys=True),
-        "graph.dot": _render_carrier_runtime_dot(trace),
-        "report.html": _render_carrier_runtime_html(trace),
+        "graph.dot": _render_runtime_dot(trace),
+        "report.html": _render_runtime_html(trace),
     }
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in files.items():
@@ -1982,9 +1820,9 @@ async def _carrier_runtime_export_bundle(args: argparse.Namespace) -> dict[str, 
     }
 
 
-async def _carrier_runtime_archive_run(args: argparse.Namespace) -> dict[str, Any]:
+async def _runtime_archive_run(args: argparse.Namespace) -> dict[str, Any]:
     trace_args = argparse.Namespace(db=args.db, run_id=args.run_id)
-    result = await _carrier_runtime_trace(trace_args)
+    result = await _runtime_trace(trace_args)
     trace = result["trace"]
     if trace["run"] is None:
         return {"ok": False, "run_id": args.run_id, "error": "run not found"}
@@ -2012,8 +1850,8 @@ async def _carrier_runtime_archive_run(args: argparse.Namespace) -> dict[str, An
         "archive.json": json.dumps(archive, indent=2, sort_keys=True),
         "trace.json": json.dumps(trace, indent=2, sort_keys=True),
         "timeline.json": json.dumps(trace["timeline"], indent=2, sort_keys=True),
-        "graph.dot": _render_carrier_runtime_dot(trace),
-        "report.html": _render_carrier_runtime_html(trace),
+        "graph.dot": _render_runtime_dot(trace),
+        "report.html": _render_runtime_html(trace),
     }
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in files.items():
@@ -2027,7 +1865,7 @@ async def _carrier_runtime_archive_run(args: argparse.Namespace) -> dict[str, An
     }
 
 
-def _carrier_runtime_archive_gc(args: argparse.Namespace) -> dict[str, Any]:
+def _runtime_archive_gc(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.archive_root).expanduser().resolve()
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Archive root does not exist: {root}")
@@ -2088,7 +1926,7 @@ def _parse_utc_timestamp(value: str) -> datetime:
     return parsed.replace(tzinfo=timezone.utc)
 
 
-def _render_carrier_runtime_html(trace: dict[str, Any]) -> str:
+def _render_runtime_html(trace: dict[str, Any]) -> str:
     counts = trace["counts"]
     count_items = "\n".join(
         f"<li><span>{_html(key)}</span><strong>{_html(value)}</strong></li>"
@@ -2098,7 +1936,7 @@ def _render_carrier_runtime_html(trace: dict[str, Any]) -> str:
         "<tr>"
         f"<td>{_html(item['sequence'])}</td>"
         f"<td>{_html(item['type'])}</td>"
-        f"<td>{_html(item['carrier_id'] or '')}</td>"
+        f"<td>{_html(item['impulse_id'] or '')}</td>"
         f"<td>{_html(item['process_id'] or '')}</td>"
         f"<td>{_html(item['actor'] or '')}</td>"
         f"<td>{_html(item['created_at'])}</td>"
@@ -2111,7 +1949,7 @@ def _render_carrier_runtime_html(trace: dict[str, Any]) -> str:
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Fala Carrier Runtime Report - {_html(trace["run_id"])}</title>
+  <title>Fala Impulse Runtime Report - {_html(trace["run_id"])}</title>
   <style>
     body {{ font-family: system-ui, sans-serif; margin: 32px; color: #172026; }}
     h1, h2 {{ margin: 0 0 12px; }}
@@ -2126,7 +1964,7 @@ def _render_carrier_runtime_html(trace: dict[str, Any]) -> str:
   </style>
 </head>
 <body>
-  <h1>Fala Carrier Runtime Report</h1>
+  <h1>Fala Impulse Runtime Report</h1>
   <p>Run: <strong>{_html(trace["run_id"])}</strong></p>
 
   <section>
@@ -2140,7 +1978,7 @@ def _render_carrier_runtime_html(trace: dict[str, Any]) -> str:
     <h2>Timeline</h2>
     <table>
       <thead>
-        <tr><th>Seq</th><th>Type</th><th>Carrier</th><th>Process</th><th>Actor</th><th>Created</th></tr>
+        <tr><th>Seq</th><th>Type</th><th>Impulse</th><th>Process</th><th>Actor</th><th>Created</th></tr>
       </thead>
       <tbody>
         {event_rows}
@@ -2165,16 +2003,16 @@ def _json_html(value: Any) -> str:
     return html_escape(json.dumps(value, indent=2, sort_keys=True), quote=True)
 
 
-def _render_carrier_runtime_dot(trace: dict[str, Any]) -> str:
+def _render_runtime_dot(trace: dict[str, Any]) -> str:
     lines = ["digraph fala_runtime {", "  rankdir=LR;"]
-    for carrier in trace["carriers"]:
-        label = f"{carrier['id']}\\n{carrier['carrier_type']}"
-        lines.append(f"  {_dot_quote(carrier['id'])} [label={_dot_quote(label)}];")
-    for relation in trace["carrier_relations"]:
+    for impulse in trace["impulses"]:
+        label = f"{impulse['id']}\\n{impulse['impulse_type']}"
+        lines.append(f"  {_dot_quote(impulse['id'])} [label={_dot_quote(label)}];")
+    for relation in trace["impulse_relations"]:
         lines.append(
             "  "
-            f"{_dot_quote(relation['source_carrier_id'])} -> "
-            f"{_dot_quote(relation['target_carrier_id'])} "
+            f"{_dot_quote(relation['source_impulse_id'])} -> "
+            f"{_dot_quote(relation['target_impulse_id'])} "
             f"[label={_dot_quote(relation['relation_type'])}];"
         )
     lines.append("}")
@@ -2183,25 +2021,6 @@ def _render_carrier_runtime_dot(trace: dict[str, Any]) -> str:
 
 def _dot_quote(value: Any) -> str:
     return json.dumps(str(value))
-
-
-def _carrier_runtime_db_path(target: str) -> str:
-    parsed = urlparse(target)
-    if parsed.scheme in {"sqlite", "sqlite3"}:
-        if parsed.netloc and parsed.netloc != "localhost":
-            raise ValueError("SQLite URL host must be empty or localhost")
-        if parsed.netloc == "localhost":
-            path = parsed.path
-        elif target.startswith(f"{parsed.scheme}:////"):
-            path = parsed.path
-        else:
-            path = parsed.path.lstrip("/")
-        if not path:
-            raise ValueError("SQLite URL must include a database path")
-        return unquote(path)
-    if parsed.scheme:
-        raise ValueError(f"Unsupported Carrier runtime DB URL scheme: {parsed.scheme!r}")
-    return target
 
 
 def _parse_values(items: list[str]) -> dict[str, str]:

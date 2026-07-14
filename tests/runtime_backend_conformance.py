@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 from fala.runtime_backend import (
-    Artifact,
+    Reaction,
     BridgeDelivery,
     BridgeDeliveryStatus,
-    Carrier,
-    CarrierProcessStatus,
-    CarrierRunStatus,
-    CarrierRelation,
-    CarrierType,
+    Impulse,
+    ProcessStatus,
+    RunStatus,
+    ImpulseRelation,
+    ImpulseType,
     DelegationPolicy,
     EventRef,
-    Gate,
-    GateStatus,
-    Observation,
+    Homeostat,
+    HomeostatStatus,
+    Association,
     Process,
     Projection,
     RuntimeBackend,
@@ -31,7 +31,7 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     runtime = RuntimeRef(id="local", uri="sqlite://local")
     create_run = Run(
         id="run_create_conformance",
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
     )
     create_command = RuntimeCommand(
         run_id=create_run.id,
@@ -62,7 +62,7 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
 
     run_status_run = Run(
         id="run_status_conformance",
-        status=CarrierRunStatus.created,
+        status=RunStatus.created,
     )
     run_status_command = RuntimeCommand(
         run_id=run_status_run.id,
@@ -72,7 +72,7 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     await backend.put_run(run_status_run)
     active_run, run_status_submission = await backend.transition_run(
         run_id=run_status_run.id,
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
         command=run_status_command,
         events=[
             RuntimeEvent(
@@ -83,11 +83,11 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     )
     replayed_active_run, run_status_replay = await backend.transition_run(
         run_id=run_status_run.id,
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
         command=run_status_command.model_copy(update={"id": "command_run_replay"}),
         events=[],
     )
-    assert active_run.status == CarrierRunStatus.active
+    assert active_run.status == RunStatus.active
     assert active_run.started_at is not None
     assert replayed_active_run == active_run
     assert not run_status_submission.replayed
@@ -95,244 +95,244 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
 
     accept_run = Run(
         id="run_accept_conformance",
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
     )
-    accept_carrier = Carrier(
-        id="carrier_accept_conformance",
+    accept_impulse = Impulse(
+        id="impulse_accept_conformance",
         run_id=accept_run.id,
-        carrier_type="case",
+        impulse_type="case",
     )
     accept_command = RuntimeCommand(
         run_id=accept_run.id,
-        command_type="carrier.accept",
-        idempotency_key="run_accept_conformance:carrier.accept",
+        command_type="impulse.accept",
+        idempotency_key="run_accept_conformance:impulse.accept",
     )
     await backend.put_run(accept_run)
-    accept_submission = await backend.accept_carrier(
-        accept_carrier,
+    accept_submission = await backend.accept_impulse(
+        accept_impulse,
         accept_command,
         events=[
             RuntimeEvent(
                 run_id=accept_run.id,
-                carrier_id=accept_carrier.id,
-                event_type="carrier.accepted",
+                impulse_id=accept_impulse.id,
+                event_type="impulse.accepted",
             )
         ],
     )
-    accept_replay = await backend.accept_carrier(
-        accept_carrier.model_copy(update={"payload": {"changed": True}}),
+    accept_replay = await backend.accept_impulse(
+        accept_impulse.model_copy(update={"payload": {"changed": True}}),
         accept_command.model_copy(update={"id": "command_accept_replay"}),
         events=[],
     )
-    assert await backend.get_carrier(
+    assert await backend.get_impulse(
         run_id=accept_run.id,
-        carrier_id=accept_carrier.id,
-    ) == accept_carrier
+        impulse_id=accept_impulse.id,
+    ) == accept_impulse
     assert not accept_submission.replayed
     assert accept_replay.replayed
     accept_events = await backend.list_events(run_id=accept_run.id)
-    assert [event.event_type for event in accept_events] == ["carrier.accepted"]
+    assert [event.event_type for event in accept_events] == ["impulse.accepted"]
 
     type_run = Run(
         id="run_type_conformance",
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
     )
-    registered_type = CarrierType(
+    registered_type = ImpulseType(
         id="registered_case",
         run_id=type_run.id,
         media_types=["application/json"],
     )
     type_command = RuntimeCommand(
         run_id=type_run.id,
-        command_type="carrier_type.register",
-        idempotency_key="run_type_conformance:carrier_type.register",
+        command_type="impulse_type.register",
+        idempotency_key="run_type_conformance:impulse_type.register",
     )
     await backend.put_run(type_run)
-    type_submission = await backend.register_carrier_type(
+    type_submission = await backend.register_impulse_type(
         registered_type,
         type_command,
         events=[
             RuntimeEvent(
                 run_id=type_run.id,
-                event_type="carrier_type.registered",
+                event_type="impulse_type.registered",
             )
         ],
     )
-    type_replay = await backend.register_carrier_type(
+    type_replay = await backend.register_impulse_type(
         registered_type.model_copy(update={"title": "changed"}),
         type_command.model_copy(update={"id": "command_type_replay"}),
         events=[],
     )
-    assert await backend.get_carrier_type(
+    assert await backend.get_impulse_type(
         run_id=type_run.id,
-        carrier_type_id=registered_type.id,
+        impulse_type_id=registered_type.id,
     ) == registered_type
     assert not type_submission.replayed
     assert type_replay.replayed
 
     relation_run = Run(
         id="run_relation_conformance",
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
     )
-    relation_source = Carrier(
-        id="carrier_relation_source",
+    relation_source = Impulse(
+        id="impulse_relation_source",
         run_id=relation_run.id,
-        carrier_type="case",
+        impulse_type="case",
     )
-    relation_target = Carrier(
-        id="carrier_relation_target",
+    relation_target = Impulse(
+        id="impulse_relation_target",
         run_id=relation_run.id,
-        carrier_type="case",
+        impulse_type="case",
     )
-    recorded_relation = CarrierRelation(
+    recorded_relation = ImpulseRelation(
         id="relation_recorded",
         run_id=relation_run.id,
         relation_type="derived_from",
-        source_carrier_id=relation_source.id,
-        target_carrier_id=relation_target.id,
+        source_impulse_id=relation_source.id,
+        target_impulse_id=relation_target.id,
     )
     relation_command = RuntimeCommand(
         run_id=relation_run.id,
-        command_type="carrier_relation.record",
+        command_type="impulse_relation.record",
         idempotency_key="run_relation_conformance:relation.recorded",
     )
     await backend.put_run(relation_run)
-    await backend.put_carrier(relation_source)
-    await backend.put_carrier(relation_target)
-    relation_submission = await backend.record_carrier_relation(
+    await backend.put_impulse(relation_source)
+    await backend.put_impulse(relation_target)
+    relation_submission = await backend.record_impulse_relation(
         recorded_relation,
         relation_command,
         events=[
             RuntimeEvent(
                 run_id=relation_run.id,
-                carrier_id=relation_source.id,
-                event_type="carrier_relation.recorded",
+                impulse_id=relation_source.id,
+                event_type="impulse_relation.recorded",
             )
         ],
     )
-    relation_replay = await backend.record_carrier_relation(
+    relation_replay = await backend.record_impulse_relation(
         recorded_relation.model_copy(update={"metadata": {"changed": True}}),
         relation_command.model_copy(update={"id": "command_relation_replay"}),
         events=[],
     )
-    assert await backend.get_carrier_relation(
+    assert await backend.get_impulse_relation(
         run_id=relation_run.id,
         relation_id=recorded_relation.id,
     ) == recorded_relation
     assert not relation_submission.replayed
     assert relation_replay.replayed
 
-    observation_run = Run(
-        id="run_observation_conformance",
-        status=CarrierRunStatus.active,
+    association_run = Run(
+        id="run_association_conformance",
+        status=RunStatus.active,
     )
-    observation_carrier = Carrier(
-        id="carrier_observation",
-        run_id=observation_run.id,
-        carrier_type="case",
+    association_impulse = Impulse(
+        id="impulse_association",
+        run_id=association_run.id,
+        impulse_type="case",
     )
-    recorded_observation = Observation(
-        id="observation_recorded",
-        run_id=observation_run.id,
-        carrier_id=observation_carrier.id,
+    recorded_association = Association(
+        id="association_recorded",
+        run_id=association_run.id,
+        impulse_id=association_impulse.id,
         kind="score",
         values={"score": 1},
     )
-    observation_command = RuntimeCommand(
-        run_id=observation_run.id,
-        command_type="observation.record",
-        idempotency_key="run_observation_conformance:observation.recorded",
+    association_command = RuntimeCommand(
+        run_id=association_run.id,
+        command_type="association.record",
+        idempotency_key="run_association_conformance:association.recorded",
     )
-    await backend.put_run(observation_run)
-    await backend.put_carrier(observation_carrier)
-    observation_submission = await backend.record_observation(
-        recorded_observation,
-        observation_command,
+    await backend.put_run(association_run)
+    await backend.put_impulse(association_impulse)
+    association_submission = await backend.record_association(
+        recorded_association,
+        association_command,
         events=[
             RuntimeEvent(
-                run_id=observation_run.id,
-                carrier_id=observation_carrier.id,
-                event_type="observation.recorded",
+                run_id=association_run.id,
+                impulse_id=association_impulse.id,
+                event_type="association.recorded",
             )
         ],
     )
-    observation_replay = await backend.record_observation(
-        recorded_observation.model_copy(update={"values": {"score": 2}}),
-        observation_command.model_copy(update={"id": "command_observation_replay"}),
+    association_replay = await backend.record_association(
+        recorded_association.model_copy(update={"values": {"score": 2}}),
+        association_command.model_copy(update={"id": "command_association_replay"}),
         events=[],
     )
-    assert await backend.list_observations(
-        run_id=observation_run.id,
-        carrier_id=observation_carrier.id,
-    ) == [recorded_observation]
-    assert not observation_submission.replayed
-    assert observation_replay.replayed
+    assert await backend.list_associations(
+        run_id=association_run.id,
+        impulse_id=association_impulse.id,
+    ) == [recorded_association]
+    assert not association_submission.replayed
+    assert association_replay.replayed
 
-    artifact_run = Run(
-        id="run_artifact_conformance",
-        status=CarrierRunStatus.active,
+    reaction_run = Run(
+        id="run_reaction_conformance",
+        status=RunStatus.active,
     )
-    artifact_carrier = Carrier(
-        id="carrier_artifact",
-        run_id=artifact_run.id,
-        carrier_type="case",
+    reaction_impulse = Impulse(
+        id="impulse_reaction",
+        run_id=reaction_run.id,
+        impulse_type="case",
     )
-    recorded_artifact = Artifact(
-        id="artifact_recorded",
-        run_id=artifact_run.id,
-        carrier_id=artifact_carrier.id,
+    recorded_reaction = Reaction(
+        id="reaction_recorded",
+        run_id=reaction_run.id,
+        impulse_id=reaction_impulse.id,
         kind="report",
-        uri="fala-artifact://sha256/recorded",
+        uri="fala-reaction://sha256/recorded",
         media_type="application/json",
         size_bytes=8,
         content_hash="sha256:recorded",
     )
-    artifact_command = RuntimeCommand(
-        run_id=artifact_run.id,
-        command_type="artifact.record",
-        idempotency_key="run_artifact_conformance:artifact.recorded",
+    reaction_command = RuntimeCommand(
+        run_id=reaction_run.id,
+        command_type="reaction.record",
+        idempotency_key="run_reaction_conformance:reaction.recorded",
     )
-    await backend.put_run(artifact_run)
-    await backend.put_carrier(artifact_carrier)
-    artifact_submission = await backend.record_artifact(
-        recorded_artifact,
-        artifact_command,
+    await backend.put_run(reaction_run)
+    await backend.put_impulse(reaction_impulse)
+    reaction_submission = await backend.record_reaction(
+        recorded_reaction,
+        reaction_command,
         events=[
             RuntimeEvent(
-                run_id=artifact_run.id,
-                carrier_id=artifact_carrier.id,
-                event_type="artifact.recorded",
+                run_id=reaction_run.id,
+                impulse_id=reaction_impulse.id,
+                event_type="reaction.recorded",
             )
         ],
     )
-    artifact_replay = await backend.record_artifact(
-        recorded_artifact.model_copy(update={"uri": "fala-artifact://sha256/changed"}),
-        artifact_command.model_copy(update={"id": "command_artifact_replay"}),
+    reaction_replay = await backend.record_reaction(
+        recorded_reaction.model_copy(update={"uri": "fala-reaction://sha256/changed"}),
+        reaction_command.model_copy(update={"id": "command_reaction_replay"}),
         events=[],
     )
-    assert await backend.get_artifact(
-        run_id=artifact_run.id,
-        artifact_id=recorded_artifact.id,
-    ) == recorded_artifact
-    assert not artifact_submission.replayed
-    assert artifact_replay.replayed
+    assert await backend.get_reaction(
+        run_id=reaction_run.id,
+        reaction_id=recorded_reaction.id,
+    ) == recorded_reaction
+    assert not reaction_submission.replayed
+    assert reaction_replay.replayed
 
     schedule_run = Run(
         id="run_schedule_conformance",
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
     )
-    schedule_carrier = Carrier(
-        id="carrier_schedule",
+    schedule_impulse = Impulse(
+        id="impulse_schedule",
         run_id=schedule_run.id,
-        carrier_type="case",
+        impulse_type="case",
     )
     scheduled_process = Process(
         id="process_scheduled",
         run_id=schedule_run.id,
-        carrier_id=schedule_carrier.id,
+        impulse_id=schedule_impulse.id,
         process_type="score",
-        status=CarrierProcessStatus.ready,
-        input={"carrier_id": schedule_carrier.id},
+        status=ProcessStatus.ready,
+        input={"impulse_id": schedule_impulse.id},
     )
     schedule_command = RuntimeCommand(
         run_id=schedule_run.id,
@@ -340,14 +340,14 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         idempotency_key="run_schedule_conformance:process.scheduled",
     )
     await backend.put_run(schedule_run)
-    await backend.put_carrier(schedule_carrier)
+    await backend.put_impulse(schedule_impulse)
     schedule_submission = await backend.schedule_process(
         scheduled_process,
         schedule_command,
         events=[
             RuntimeEvent(
                 run_id=schedule_run.id,
-                carrier_id=schedule_carrier.id,
+                impulse_id=schedule_impulse.id,
                 process_id=scheduled_process.id,
                 event_type="process.scheduled",
             )
@@ -367,19 +367,19 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
 
     transition_run = Run(
         id="run_transition_conformance",
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
     )
-    transition_carrier = Carrier(
-        id="carrier_transition",
+    transition_impulse = Impulse(
+        id="impulse_transition",
         run_id=transition_run.id,
-        carrier_type="case",
+        impulse_type="case",
     )
     running_process = Process(
         id="process_transition",
         run_id=transition_run.id,
-        carrier_id=transition_carrier.id,
+        impulse_id=transition_impulse.id,
         process_type="score",
-        status=CarrierProcessStatus.running,
+        status=ProcessStatus.running,
         attempt=1,
     )
     transition_command = RuntimeCommand(
@@ -388,17 +388,17 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         idempotency_key="run_transition_conformance:process.complete",
     )
     await backend.put_run(transition_run)
-    await backend.put_carrier(transition_carrier)
+    await backend.put_impulse(transition_impulse)
     await backend.put_process(running_process)
     completed_process, transition_submission = await backend.transition_process(
         run_id=transition_run.id,
         process_id=running_process.id,
-        status=CarrierProcessStatus.succeeded,
+        status=ProcessStatus.succeeded,
         command=transition_command,
         events=[
             RuntimeEvent(
                 run_id=transition_run.id,
-                carrier_id=transition_carrier.id,
+                impulse_id=transition_impulse.id,
                 process_id=running_process.id,
                 event_type="process.completed",
             )
@@ -408,94 +408,94 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     replayed_process, transition_replay = await backend.transition_process(
         run_id=transition_run.id,
         process_id=running_process.id,
-        status=CarrierProcessStatus.succeeded,
+        status=ProcessStatus.succeeded,
         command=transition_command.model_copy(
             update={"id": "command_transition_replay"}
         ),
         events=[],
         output={"score": 2},
     )
-    assert completed_process.status == CarrierProcessStatus.succeeded
+    assert completed_process.status == ProcessStatus.succeeded
     assert completed_process.output == {"score": 1}
     assert replayed_process == completed_process
     assert not transition_submission.replayed
     assert transition_replay.replayed
 
-    gate_run = Run(
-        id="run_gate_conformance",
-        status=CarrierRunStatus.active,
+    homeostat_run = Run(
+        id="run_homeostat_conformance",
+        status=RunStatus.active,
     )
-    saved_gate = Gate(
-        id="gate_recorded",
-        run_id=gate_run.id,
+    saved_homeostat = Homeostat(
+        id="homeostat_recorded",
+        run_id=homeostat_run.id,
         kind="review",
-        status=GateStatus.open,
+        status=HomeostatStatus.open,
     )
-    gate_command = RuntimeCommand(
-        run_id=gate_run.id,
-        command_type="gate.open",
-        idempotency_key="run_gate_conformance:gate.open",
+    homeostat_command = RuntimeCommand(
+        run_id=homeostat_run.id,
+        command_type="homeostat.open",
+        idempotency_key="run_homeostat_conformance:homeostat.open",
     )
-    await backend.put_run(gate_run)
-    gate_submission = await backend.save_gate(
-        saved_gate,
-        gate_command,
+    await backend.put_run(homeostat_run)
+    homeostat_submission = await backend.save_homeostat(
+        saved_homeostat,
+        homeostat_command,
         events=[
             RuntimeEvent(
-                run_id=gate_run.id,
-                event_type="gate.opened",
+                run_id=homeostat_run.id,
+                event_type="homeostat.opened",
             )
         ],
     )
-    gate_replay = await backend.save_gate(
-        saved_gate.model_copy(update={"metadata": {"changed": True}}),
-        gate_command.model_copy(update={"id": "command_gate_replay"}),
+    homeostat_replay = await backend.save_homeostat(
+        saved_homeostat.model_copy(update={"metadata": {"changed": True}}),
+        homeostat_command.model_copy(update={"id": "command_homeostat_replay"}),
         events=[],
     )
-    completed_gate, gate_transition = await backend.transition_gate(
-        run_id=gate_run.id,
-        gate_id=saved_gate.id,
-        status=GateStatus.completed,
+    completed_homeostat, homeostat_transition = await backend.transition_homeostat(
+        run_id=homeostat_run.id,
+        homeostat_id=saved_homeostat.id,
+        status=HomeostatStatus.completed,
         command=RuntimeCommand(
-            run_id=gate_run.id,
-            command_type="gate.complete",
-            idempotency_key="run_gate_conformance:gate.complete",
+            run_id=homeostat_run.id,
+            command_type="homeostat.complete",
+            idempotency_key="run_homeostat_conformance:homeostat.complete",
         ),
         events=[
             RuntimeEvent(
-                run_id=gate_run.id,
-                event_type="gate.completed",
+                run_id=homeostat_run.id,
+                event_type="homeostat.completed",
             )
         ],
         values={"decision": "approved"},
     )
-    replayed_gate, gate_transition_replay = await backend.transition_gate(
-        run_id=gate_run.id,
-        gate_id=saved_gate.id,
-        status=GateStatus.completed,
+    replayed_homeostat, homeostat_transition_replay = await backend.transition_homeostat(
+        run_id=homeostat_run.id,
+        homeostat_id=saved_homeostat.id,
+        status=HomeostatStatus.completed,
         command=RuntimeCommand(
-            run_id=gate_run.id,
-            command_type="gate.complete",
-            idempotency_key="run_gate_conformance:gate.complete",
+            run_id=homeostat_run.id,
+            command_type="homeostat.complete",
+            idempotency_key="run_homeostat_conformance:homeostat.complete",
         ),
         events=[],
         values={"decision": "changed"},
     )
     assert (
-        await backend.get_gate(run_id=gate_run.id, gate_id=saved_gate.id)
-        == completed_gate
+        await backend.get_homeostat(run_id=homeostat_run.id, homeostat_id=saved_homeostat.id)
+        == completed_homeostat
     )
-    assert completed_gate.status == GateStatus.completed
-    assert completed_gate.values == {"decision": "approved"}
-    assert replayed_gate == completed_gate
-    assert not gate_submission.replayed
-    assert gate_replay.replayed
-    assert not gate_transition.replayed
-    assert gate_transition_replay.replayed
+    assert completed_homeostat.status == HomeostatStatus.completed
+    assert completed_homeostat.values == {"decision": "approved"}
+    assert replayed_homeostat == completed_homeostat
+    assert not homeostat_submission.replayed
+    assert homeostat_replay.replayed
+    assert not homeostat_transition.replayed
+    assert homeostat_transition_replay.replayed
 
     projection_run = Run(
         id="run_projection_conformance",
-        status=CarrierRunStatus.active,
+        status=RunStatus.active,
     )
     saved_projection = Projection(
         run_id=projection_run.id,
@@ -562,25 +562,25 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
 
     run = Run(
         id="run_conformance",
-        status=CarrierRunStatus.created,
+        status=RunStatus.created,
         title="Conformance run",
         package_id="conformance",
-        flow_id="basic",
+        correlation_path_id="basic",
     )
     await backend.put_run(run)
     assert await backend.get_run(run_id=run.id) == run
-    assert await backend.list_runs(status=CarrierRunStatus.created) == [run]
+    assert await backend.list_runs(status=RunStatus.created) == [run]
 
     pool = RuntimePool(
         id="local_pool",
         runtimes=[runtime, RuntimeRef(id="target", uri="sqlite://target")],
-        carrier_types=["case"],
+        impulse_types=["case"],
     )
     policy = DelegationPolicy(
         id="policy_case",
         pool_id=pool.id,
-        carrier_types=["case"],
-        budget=RuntimeBudget(runtime_hops=1, carrier_count=1, attempts=2),
+        impulse_types=["case"],
+        budget=RuntimeBudget(runtime_hops=1, impulse_count=1, attempts=2),
     )
     await backend.put_runtime_pool(pool)
     await backend.put_delegation_policy(policy)
@@ -589,72 +589,72 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert await backend.get_delegation_policy(policy_id=policy.id) == policy
     assert await backend.list_delegation_policies(pool_id=pool.id) == [policy]
 
-    carrier_type = CarrierType(
+    impulse_type = ImpulseType(
         id="case",
         run_id=run.id,
         title="Case",
         media_types=["application/json"],
         value_schema={"type": "object"},
     )
-    await backend.put_carrier_type(carrier_type)
-    assert await backend.get_carrier_type(
-        run_id=carrier_type.run_id,
-        carrier_type_id=carrier_type.id,
-    ) == carrier_type
-    assert await backend.list_carrier_types(run_id=carrier_type.run_id) == [carrier_type]
+    await backend.put_impulse_type(impulse_type)
+    assert await backend.get_impulse_type(
+        run_id=impulse_type.run_id,
+        impulse_type_id=impulse_type.id,
+    ) == impulse_type
+    assert await backend.list_impulse_types(run_id=impulse_type.run_id) == [impulse_type]
 
-    carrier = Carrier(
-        id="carrier_conformance",
+    impulse = Impulse(
+        id="impulse_conformance",
         run_id="run_conformance",
-        carrier_type="case",
+        impulse_type="case",
         payload={"case_id": "C-1"},
     )
-    await backend.put_carrier(carrier)
-    assert await backend.get_carrier(
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
-    ) == carrier
-    assert await backend.list_carriers(run_id=carrier.run_id) == [carrier]
-    child_carrier = Carrier(
-        id="carrier_child",
-        run_id=carrier.run_id,
-        carrier_type="case",
+    await backend.put_impulse(impulse)
+    assert await backend.get_impulse(
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
+    ) == impulse
+    assert await backend.list_impulses(run_id=impulse.run_id) == [impulse]
+    child_impulse = Impulse(
+        id="impulse_child",
+        run_id=impulse.run_id,
+        impulse_type="case",
         payload={"case_id": "C-1-child"},
     )
-    await backend.put_carrier(child_carrier)
-    relation = CarrierRelation(
+    await backend.put_impulse(child_impulse)
+    relation = ImpulseRelation(
         id="relation_conformance",
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         relation_type="derived_from",
-        source_carrier_id=carrier.id,
-        target_carrier_id=child_carrier.id,
+        source_impulse_id=impulse.id,
+        target_impulse_id=child_impulse.id,
     )
-    await backend.put_carrier_relation(relation)
-    assert await backend.get_carrier_relation(
-        run_id=carrier.run_id,
+    await backend.put_impulse_relation(relation)
+    assert await backend.get_impulse_relation(
+        run_id=impulse.run_id,
         relation_id=relation.id,
     ) == relation
-    assert await backend.list_carrier_relations(run_id=carrier.run_id) == [relation]
-    assert await backend.list_carrier_relations(
-        run_id=carrier.run_id,
-        carrier_id=child_carrier.id,
+    assert await backend.list_impulse_relations(run_id=impulse.run_id) == [relation]
+    assert await backend.list_impulse_relations(
+        run_id=impulse.run_id,
+        impulse_id=child_impulse.id,
     ) == [relation]
 
     command = RuntimeCommand(
-        run_id=carrier.run_id,
-        command_type="carrier.accept",
-        idempotency_key="run_conformance:carrier.accept:C-1",
+        run_id=impulse.run_id,
+        command_type="impulse.accept",
+        idempotency_key="run_conformance:impulse.accept:C-1",
         actor="tester",
         correlation_id="corr-conformance",
-        payload={"carrier_id": carrier.id},
+        payload={"impulse_id": impulse.id},
     )
     first = await backend.submit_command(
         command,
         events=[
             RuntimeEvent(
-                run_id=carrier.run_id,
-                carrier_id=carrier.id,
-                event_type="carrier.accepted",
+                run_id=impulse.run_id,
+                impulse_id=impulse.id,
+                event_type="impulse.accepted",
                 payload={"ok": True},
             )
         ],
@@ -663,13 +663,13 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         command.model_copy(update={"id": "command_replay"}),
         events=[
             RuntimeEvent(
-                run_id=carrier.run_id,
-                carrier_id=carrier.id,
-                event_type="carrier.accepted",
+                run_id=impulse.run_id,
+                impulse_id=impulse.id,
+                event_type="impulse.accepted",
             )
         ],
     )
-    events = await backend.list_events(run_id=carrier.run_id)
+    events = await backend.list_events(run_id=impulse.run_id)
     assert not first.replayed
     assert replay.replayed
     assert replay.events == []
@@ -677,265 +677,268 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert events[0].command_id == command.id
     assert events[0].correlation_id == "corr-conformance"
     assert await backend.get_command(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         command_id=command.id,
     ) == command
     assert await backend.get_command_by_idempotency(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         idempotency_key=command.idempotency_key,
     ) == command
-    assert await backend.list_commands(run_id=carrier.run_id) == [command]
+    assert await backend.list_commands(run_id=impulse.run_id) == [command]
     assert await backend.list_commands(
-        run_id=carrier.run_id,
-        command_type="carrier.accept",
+        run_id=impulse.run_id,
+        command_type="impulse.accept",
     ) == [command]
     assert await backend.list_commands(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         actor="tester",
     ) == [command]
     assert await backend.list_events(
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
     ) == events
     assert await backend.list_events(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         after_sequence=0,
         limit=1,
     ) == events
 
-    observation = Observation(
-        id="observation_score",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+    association = Association(
+        id="association_score",
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="score",
         values={"score": 1},
     )
-    await backend.put_observation(observation)
-    assert await backend.list_observations(run_id=carrier.run_id) == [observation]
+    await backend.put_association(association)
+    assert await backend.list_associations(run_id=impulse.run_id) == [association]
 
-    artifact = Artifact(
-        id="artifact_report",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+    reaction = Reaction(
+        id="reaction_report",
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="report",
-        uri="fala-artifact://sha256/abc",
+        uri="fala-reaction://sha256/abc",
         media_type="application/json",
         size_bytes=3,
         content_hash="sha256:abc",
     )
-    await backend.put_artifact(artifact)
-    await backend.put_artifact(
-        artifact.model_copy(update={"uri": "fala-artifact://sha256/changed"})
+    await backend.put_reaction(reaction)
+    await backend.put_reaction(
+        reaction.model_copy(update={"uri": "fala-reaction://sha256/changed"})
     )
-    assert await backend.get_artifact(
-        run_id=carrier.run_id,
-        artifact_id=artifact.id,
-    ) == artifact
-    assert await backend.list_artifacts(
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+    assert await backend.get_reaction(
+        run_id=impulse.run_id,
+        reaction_id=reaction.id,
+    ) == reaction
+    assert await backend.list_reactions(
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="report",
-    ) == [artifact]
+    ) == [reaction]
 
     process = Process(
         id="process_score",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         process_type="score",
-        status=CarrierProcessStatus.ready,
+        status=ProcessStatus.ready,
         max_attempts=2,
-        input={"carrier_id": carrier.id},
+        input={"impulse_id": impulse.id},
     )
     await backend.put_process(process)
     assert await backend.list_processes(
-        run_id=carrier.run_id,
-        status=CarrierProcessStatus.ready,
+        run_id=impulse.run_id,
+        status=ProcessStatus.ready,
     ) == [process]
     claimed = await backend.claim_next_ready_process(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         worker_id="worker_1",
         lease_seconds=30,
     )
     assert claimed is not None
-    assert claimed.status == CarrierProcessStatus.running
+    assert claimed.status == ProcessStatus.running
     assert claimed.attempt == 1
     assert claimed.lease_owner == "worker_1"
     assert (
         await backend.claim_next_ready_process(
-            run_id=carrier.run_id,
+            run_id=impulse.run_id,
             worker_id="worker_2",
             lease_seconds=30,
         )
         is None
     )
     completed = await backend.complete_process(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         process_id=process.id,
         output={"score": 1},
     )
-    assert completed.status == CarrierProcessStatus.succeeded
+    assert completed.status == ProcessStatus.succeeded
     assert completed.output == {"score": 1}
 
     retry_process = Process(
         id="process_retry",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         process_type="retryable",
-        status=CarrierProcessStatus.ready,
+        status=ProcessStatus.ready,
         max_attempts=2,
     )
     await backend.put_process(retry_process)
     claimed_retry = await backend.claim_next_ready_process(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         worker_id="worker_1",
     )
     assert claimed_retry is not None
     failed = await backend.fail_process(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         process_id=retry_process.id,
         error={"message": "temporary"},
     )
-    assert failed.status == CarrierProcessStatus.failed
+    assert failed.status == ProcessStatus.failed
     waiting = await backend.retry_process(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         process_id=retry_process.id,
         error={"message": "try again"},
     )
-    assert waiting.status == CarrierProcessStatus.retry_wait
+    assert waiting.status == ProcessStatus.retry_wait
     claimed_again = await backend.claim_next_ready_process(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         worker_id="worker_2",
     )
     assert claimed_again is not None
-    assert claimed_again.status == CarrierProcessStatus.running
+    assert claimed_again.status == ProcessStatus.running
     assert claimed_again.attempt == 2
 
     cancel_process = Process(
         id="process_cancel",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         process_type="cancelable",
-        status=CarrierProcessStatus.ready,
+        status=ProcessStatus.ready,
     )
     await backend.put_process(cancel_process)
     cancelled_process = await backend.cancel_process(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         process_id=cancel_process.id,
         error={"reason": "operator"},
     )
-    assert cancelled_process.status == CarrierProcessStatus.cancelled
+    assert cancelled_process.status == ProcessStatus.cancelled
     assert cancelled_process.error == {"reason": "operator"}
     timeout_process = Process(
         id="process_timeout",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         process_type="timeoutable",
-        status=CarrierProcessStatus.running,
+        status=ProcessStatus.running,
     )
     await backend.put_process(timeout_process)
     timed_out_process = await backend.timeout_process(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         process_id=timeout_process.id,
         error={"reason": "timeout"},
     )
-    assert timed_out_process.status == CarrierProcessStatus.timed_out
+    assert timed_out_process.status == ProcessStatus.timed_out
     assert timed_out_process.error == {"reason": "timeout"}
 
-    gate = Gate(
-        id="gate_review",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+    homeostat = Homeostat(
+        id="homeostat_review",
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="review",
-        status=GateStatus.open,
+        status=HomeostatStatus.open,
     )
-    await backend.put_gate(gate)
-    completed_gate = await backend.complete_gate(
-        run_id=carrier.run_id,
-        gate_id=gate.id,
+    await backend.put_homeostat(homeostat)
+    completed_homeostat = await backend.complete_homeostat(
+        run_id=impulse.run_id,
+        homeostat_id=homeostat.id,
         values={"decision": "approved"},
     )
-    assert completed_gate.status == GateStatus.completed
-    assert completed_gate.values == {"decision": "approved"}
-    assert await backend.get_gate(run_id=carrier.run_id, gate_id=gate.id) == completed_gate
-    assert await backend.list_gates(
-        run_id=carrier.run_id,
-        status=GateStatus.completed,
-    ) == [completed_gate]
-    cancel_gate = Gate(
-        id="gate_cancel",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+    assert completed_homeostat.status == HomeostatStatus.completed
+    assert completed_homeostat.values == {"decision": "approved"}
+    assert await backend.get_homeostat(run_id=impulse.run_id, homeostat_id=homeostat.id) == completed_homeostat
+    assert await backend.list_homeostats(
+        run_id=impulse.run_id,
+        status=HomeostatStatus.completed,
+    ) == [completed_homeostat]
+    cancel_homeostat = Homeostat(
+        id="homeostat_cancel",
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="review",
-        status=GateStatus.open,
+        status=HomeostatStatus.open,
     )
-    await backend.put_gate(cancel_gate)
-    cancelled_gate = await backend.cancel_gate(
-        run_id=carrier.run_id,
-        gate_id=cancel_gate.id,
+    await backend.put_homeostat(cancel_homeostat)
+    cancelled_homeostat = await backend.cancel_homeostat(
+        run_id=impulse.run_id,
+        homeostat_id=cancel_homeostat.id,
         values={"reason": "operator"},
     )
-    assert cancelled_gate.status == GateStatus.cancelled
-    assert cancelled_gate.values == {"reason": "operator"}
-    expire_gate = Gate(
-        id="gate_expire",
-        run_id=carrier.run_id,
-        carrier_id=carrier.id,
+    assert cancelled_homeostat.status == HomeostatStatus.cancelled
+    assert cancelled_homeostat.values == {"reason": "operator"}
+    expire_homeostat = Homeostat(
+        id="homeostat_expire",
+        run_id=impulse.run_id,
+        impulse_id=impulse.id,
         kind="review",
-        status=GateStatus.open,
+        status=HomeostatStatus.open,
     )
-    await backend.put_gate(expire_gate)
-    expired_gate = await backend.expire_gate(
-        run_id=carrier.run_id,
-        gate_id=expire_gate.id,
+    await backend.put_homeostat(expire_homeostat)
+    expired_homeostat = await backend.expire_homeostat(
+        run_id=impulse.run_id,
+        homeostat_id=expire_homeostat.id,
         values={"reason": "timeout"},
     )
-    assert expired_gate.status == GateStatus.expired
-    assert expired_gate.values == {"reason": "timeout"}
+    assert expired_homeostat.status == HomeostatStatus.expired
+    assert expired_homeostat.values == {"reason": "timeout"}
 
     projection = Projection(
         id="projection_case",
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         name="case_summary",
-        data={"carrier_id": carrier.id},
+        data={"impulse_id": impulse.id},
         source_event_sequence=1,
     )
     await backend.put_projection(projection)
     assert await backend.get_projection(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         name=projection.name,
     ) == projection
-    assert await backend.list_projections(run_id=carrier.run_id) == [projection]
-    rebuilt = await backend.rebuild_projections(run_id=carrier.run_id)
+    assert await backend.list_projections(run_id=impulse.run_id) == [projection]
+    rebuilt = await backend.rebuild_projections(run_id=impulse.run_id)
     assert len(rebuilt) == 1
     summary = rebuilt[0]
     assert summary.id == "projection_run_summary"
     assert summary.name == "run_summary"
-    assert summary.source_event_sequence == 1
-    assert summary.data["event_type_counts"] == {"carrier.accepted": 1}
-    assert summary.data["carrier_count"] == 2
+    assert summary.source_event_sequence == 4
+    assert summary.data["event_type_counts"] == {
+        "impulse.accepted": 1,
+        "process.claimed": 3,
+    }
+    assert summary.data["impulse_count"] == 2
     assert summary.data["process_status_counts"] == {
         "cancelled": 1,
         "running": 1,
         "succeeded": 1,
         "timed_out": 1,
     }
-    assert summary.data["resource_accounting"]["artifact_bytes"] == 3
+    assert summary.data["resource_accounting"]["reaction_bytes"] == 3
     assert summary.data["resource_accounting"]["process_attempts"] == 3
     assert summary.data["resource_accounting"]["bridge_delivery_count"] == 0
     assert await backend.get_projection(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         name="run_summary",
     ) == summary
 
     delivery = BridgeDelivery(
         id="bridge_conformance",
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         idempotency_key="bridge:conformance",
-        source=RunRef(runtime=runtime, run_id=carrier.run_id),
+        source=RunRef(runtime=runtime, run_id=impulse.run_id),
         target=RunRef(runtime=RuntimeRef(id="target"), run_id="run_target"),
-        carrier=carrier,
-        event_ref=EventRef(runtime=runtime, run_id=carrier.run_id, sequence=1),
-        budget=RuntimeBudget(runtime_hops=1, carrier_count=1),
+        impulse=impulse,
+        event_ref=EventRef(runtime=runtime, run_id=impulse.run_id, sequence=1),
+        budget=RuntimeBudget(runtime_hops=1, impulse_count=1),
     )
     await backend.put_outbox_delivery(delivery)
     await backend.put_run(Run(id="run_target"))
@@ -948,11 +951,11 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         )
     )
     assert await backend.get_outbox_delivery(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         delivery_id=delivery.id,
     ) == delivery
     assert await backend.list_outbox_deliveries(
-        run_id=carrier.run_id,
+        run_id=impulse.run_id,
         status=BridgeDeliveryStatus.pending,
     ) == [delivery]
     assert len(
@@ -979,7 +982,7 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         events=[
             RuntimeEvent(
                 run_id=commanded_delivery.run_id,
-                carrier_id=commanded_delivery.carrier.id,
+                impulse_id=commanded_delivery.impulse.id,
                 event_type="bridge.outbox.enqueued",
             )
         ],
@@ -996,11 +999,11 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     assert not enqueue_submission.replayed
     assert enqueue_replay.replayed
 
-    imported_carrier = carrier.model_copy(update={"run_id": "run_target"})
+    imported_impulse = impulse.model_copy(update={"run_id": "run_target"})
     imported_delivery = commanded_delivery.model_copy(
         update={
             "run_id": "run_target",
-            "carrier": imported_carrier,
+            "impulse": imported_impulse,
             "status": BridgeDeliveryStatus.imported,
             "attempts": 1,
         }
@@ -1012,12 +1015,12 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
     )
     import_submission = await backend.import_inbox_delivery(
         imported_delivery,
-        imported_carrier,
+        imported_impulse,
         import_command,
         events=[
             RuntimeEvent(
                 run_id=imported_delivery.run_id,
-                carrier_id=imported_carrier.id,
+                impulse_id=imported_impulse.id,
                 event_type="bridge.inbox.imported",
             )
         ],
@@ -1045,7 +1048,7 @@ async def assert_runtime_backend_conformance(backend: RuntimeBackend) -> None:
         events=[
             RuntimeEvent(
                 run_id=delivered_delivery.run_id,
-                carrier_id=delivered_delivery.carrier.id,
+                impulse_id=delivered_delivery.impulse.id,
                 event_type="bridge.outbox.delivered",
             )
         ],

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-class FalaRuntimeError(RuntimeError):
+class AutonomousCorrelatorError(RuntimeError):
     code = "fala.runtime_error"
     retryable = False
     human_required = False
@@ -28,50 +28,50 @@ class FalaRuntimeError(RuntimeError):
         }
 
 
-class FalaConfigurationError(FalaRuntimeError):
+class FalaConfigurationError(AutonomousCorrelatorError):
     code = "fala.configuration_error"
 
 
-class FalaValidationError(FalaRuntimeError):
+class FalaValidationError(AutonomousCorrelatorError):
     code = "fala.validation_error"
 
 
-class FalaRetryableStepError(FalaRuntimeError):
-    code = "fala.retryable_step_error"
+class FalaRetryableEffectorError(AutonomousCorrelatorError):
+    code = "fala.retryable_effector_error"
     retryable = True
 
 
-class FalaPermanentStepError(FalaRuntimeError):
-    code = "fala.permanent_step_error"
+class FalaPermanentEffectorError(AutonomousCorrelatorError):
+    code = "fala.permanent_effector_error"
 
 
-class FalaExternalDependencyError(FalaRuntimeError):
+class FalaExternalDependencyError(AutonomousCorrelatorError):
     code = "fala.external_dependency_error"
     retryable = True
 
 
-class FalaPolicyBlocked(FalaRuntimeError):
+class FalaPolicyBlocked(AutonomousCorrelatorError):
     code = "fala.policy_blocked"
 
 
-class FalaHumanRequired(FalaRuntimeError):
+class FalaHumanRequired(AutonomousCorrelatorError):
     code = "fala.human_required"
     human_required = True
 
 
-class FalaDeadlockDetected(FalaRuntimeError):
+class FalaDeadlockDetected(AutonomousCorrelatorError):
     code = "fala.deadlock_detected"
 
 
-class FalaBudgetExceeded(FalaRuntimeError):
+class FalaBudgetExceeded(AutonomousCorrelatorError):
     code = "fala.budget_exceeded"
 
 
-class FalaAdapterError(FalaRuntimeError):
+class FalaAdapterError(AutonomousCorrelatorError):
     code = "fala.adapter_error"
 
 
-class FalaBackendError(FalaRuntimeError):
+class FalaBackendError(AutonomousCorrelatorError):
     code = "fala.backend_error"
 
 
@@ -83,9 +83,9 @@ __all__ = [
     "FalaDeadlockDetected",
     "FalaExternalDependencyError",
     "FalaHumanRequired",
-    "FalaPermanentStepError",
+    "FalaPermanentEffectorError",
     "FalaPolicyBlocked",
-    "FalaRetryableStepError",
-    "FalaRuntimeError",
+    "FalaRetryableEffectorError",
+    "AutonomousCorrelatorError",
     "FalaValidationError",
 ]

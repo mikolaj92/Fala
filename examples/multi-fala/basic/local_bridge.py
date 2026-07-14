@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fala.runtime_backend import (
     BridgeDelivery,
-    Carrier,
+    Impulse,
     EventRef,
     Run,
     RunRef,
@@ -31,15 +31,15 @@ async def main(root: Path) -> dict:
     await source.create_run(source_run, idempotency_key="run_source:create")
     await target.create_run(target_run, idempotency_key="run_target:create")
 
-    carrier = Carrier(
-        id="carrier_case_1",
+    impulse = Impulse(
+        id="impulse_case_1",
         run_id=source_run.id,
-        carrier_type="case",
+        impulse_type="case",
         payload={"claim_id": "CLM-1"},
     )
-    await source.accept_carrier(
-        carrier,
-        idempotency_key="run_source:carrier.accept:carrier_case_1",
+    await source.accept_impulse(
+        impulse,
+        idempotency_key="run_source:impulse.accept:impulse_case_1",
     )
     source_events = await source.backend.list_events(run_id=source_run.id)
 
@@ -49,14 +49,14 @@ async def main(root: Path) -> dict:
         idempotency_key="run_source:bridge.case_1",
         source=RunRef(runtime=source_ref, run_id=source_run.id),
         target=RunRef(runtime=target_ref, run_id=target_run.id),
-        carrier=carrier,
+        impulse=impulse,
         event_ref=EventRef(
             runtime=source_ref,
             run_id=source_run.id,
             event_id=source_events[-1].id,
             sequence=source_events[-1].sequence,
         ),
-        budget=RuntimeBudget(runtime_hops=1, carrier_count=1, attempts=2),
+        budget=RuntimeBudget(runtime_hops=1, impulse_count=1, attempts=2),
     )
     await source.enqueue_bridge_delivery(delivery)
     delivered, imported, _, _ = await source.deliver_bridge_delivery(
@@ -65,9 +65,9 @@ async def main(root: Path) -> dict:
         target=target,
         idempotency_key="run_source:bridge.deliver:bridge_case_1",
     )
-    target_carrier = await target.backend.get_carrier(
+    target_impulse = await target.backend.get_impulse(
         run_id=target_run.id,
-        carrier_id=carrier.id,
+        impulse_id=impulse.id,
     )
 
     return {
@@ -75,8 +75,8 @@ async def main(root: Path) -> dict:
         "target_db": str(target_db),
         "delivered_status": delivered.status.value,
         "imported_status": imported.status.value,
-        "target_carrier": target_carrier.model_dump(mode="json")
-        if target_carrier is not None
+        "target_impulse": target_impulse.model_dump(mode="json")
+        if target_impulse is not None
         else None,
     }
 

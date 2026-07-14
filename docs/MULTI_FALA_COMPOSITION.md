@@ -8,10 +8,10 @@ Core pieces:
 - `RunRef`: identifies a run in another runtime.
 - `EventRef`: identifies a source event.
 - `RuntimePool`: groups candidate runtimes.
-- `DelegationPolicy`: stores carrier type filters and bridge budget.
+- `DelegationPolicy`: stores impulse type filters and bridge budget.
 - bridge outbox/inbox: durable local delivery records.
 
-`fala_runtime` steps enqueue bridge outbox deliveries. A `runtime_ref` may be a
+`fala_runtime` effectors enqueue bridge outbox deliveries. A `runtime_ref` may be a
 runtime URI or a local runtime pool id.
 
 Runtime pool policies:

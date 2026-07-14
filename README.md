@@ -1,31 +1,31 @@
 # Fala
 
-Fala is an embedded, SQLite-first runtime for observable information flows.
+Fala is an embedded, SQLite-first runtime for observable correlation paths.
 
-The core object is a `Carrier`: a typed information carrier that moves through
-process graphs. Fala records durable runs, carriers, carrier relations,
-observations, artifacts, events, gates, projections, commands, bridge records,
+The core object is an `Impulse`: a typed information impulse that moves through
+process graphs. Fala records durable runs, impulses, impulse relations,
+associations, reactions, events, homeostats, projections, commands, bridge records,
 lineage, and audit data in local state.
 
 The default runtime path is serverless and local:
 
 - SQLite is the bundled reference backend.
-- The filesystem is the default artifact store.
+- The filesystem is the default reaction store.
 - The CLI is the primary operator interface.
 - No Redis, Postgres, Kafka, RabbitMQ, NATS, Docker, FastAPI, Uvicorn, or web
-  server is required to run a local flow.
+  server is required to run a local correlation path.
 
 ## Shape
 
 The Fala architecture is built around these modules:
 
-- `fala.carrier_runtime.FalaRuntime`: embedded runtime facade.
-- `fala.runtime_backend.SQLiteRuntimeBackend`: SQLite backend and command/event
+- `fala.runtime.AutonomousCorrelator`: embedded runtime facade.
+- `fala.runtime_backend.Correlator`: SQLite backend and command/event
   store.
 - `fala.runtime_backend.RuntimeBackendService`: transactional runtime service.
-- `fala.artifacts.FileArtifactStore`: filesystem artifact store.
-- `fala.models.CarrierWorkflowPackageSpec`: Carrier-first package schema.
-- `fala.yaml_loader.load_carrier_workflow_package_yaml`: Carrier package loader.
+- `fala.reactions.FileReactionStore`: filesystem reaction store.
+- `fala.models.FalaPackageSpec`: Impulse-first package schema.
+- `fala.yaml_loader.load_fala_package_yaml`: Fala package loader.
 
 ## Install
 
@@ -51,7 +51,7 @@ uv run fala --help
 Create a local runtime database:
 
 ```bash
-uv run fala init --db .fala/state.sqlite --artifact-root .fala/artifacts
+uv run fala init --db .fala/state.sqlite --reaction-root .fala/reactions
 ```
 
 Create a run:
@@ -60,16 +60,16 @@ Create a run:
 uv run fala create-run \
   --db .fala/state.sqlite \
   --run-id run_local \
-  --title "Local carrier run"
+  --title "Local impulse run"
 ```
 
-Record a local Carrier flow:
+Record a local impulse correlation path:
 
 ```bash
-uv run python examples/carrier-runtime/local_first.py .fala/state.sqlite
+uv run python examples/runtime/local_first.py .fala/state.sqlite
 ```
 
-Bridge a Carrier between two local Fala runtimes:
+Bridge an Impulse between two local Fala runtimes:
 
 ```bash
 uv run python examples/multi-fala/basic/local_bridge.py .fala/multi-fala-basic
@@ -93,60 +93,60 @@ uv run fala export-html \
   --out report.html
 ```
 
-## Carrier Package Schema
+## Impulse Package Schema
 
-Carrier packages use the current schema directly:
+Fala packages use the current schema directly:
 
 ```yaml
 version: 2
-id: example_flow
+id: example_correlation_path
 
-carrier_types:
+impulse_types:
   - id: input_text
     media_types:
       - text/plain
 
-observation_kinds:
+association_kinds:
   - id: text_stats
 
-artifact_kinds:
+reaction_kinds:
   - id: normalized_text
     media_types:
       - text/plain
 
 capabilities:
   - id: normalize
-    accepts_carrier_types:
+    accepts_impulse_types:
       - input_text
-    emits_artifact_kinds:
+    emits_reaction_kinds:
       - normalized_text
-    emits_observation_kinds:
+    emits_association_kinds:
       - text_stats
 
-flows:
+correlation_paths:
   - id: basic
-    steps:
+    effectors:
       - id: normalize
         capability: normalize
         adapter:
           kind: python_function
-          ref: examples.steps.normalize_text
+          ref: examples.effectors.normalize_text
 
 runtime:
   backend:
     kind: sqlite
     path: .fala/state.sqlite
-  artifact_store:
+  reaction_store:
     kind: filesystem
-    root: .fala/artifacts
+    root: .fala/reactions
 ```
 
 Load the schema with:
 
 ```python
-from fala import load_carrier_workflow_package_yaml
+from fala import load_fala_package_yaml
 
-package = load_carrier_workflow_package_yaml("carrier-package.yaml")
+package = load_fala_package_yaml("fala-package.yaml")
 ```
 
 ## CLI Surface
@@ -162,23 +162,23 @@ uv run fala db vacuum --db .fala/state.sqlite
 uv run fala create-run --db .fala/state.sqlite --run-id run_local
 uv run fala runs list --db .fala/state.sqlite
 uv run fala runtimes create-pool --db .fala/state.sqlite --pool-id local_pool --policy round_robin --runtime-json '{"id":"target","uri":"sqlite:///tmp/target.sqlite"}'
-uv run fala runtimes add-policy --db .fala/state.sqlite --pool-id local_pool --carrier-type source_payload --budget-json '{"runtime_hops":1,"carrier_count":1}'
-uv run fala carriers list --db .fala/state.sqlite --run-id run_local
-uv run fala observations list --db .fala/state.sqlite --run-id run_local
+uv run fala runtimes add-policy --db .fala/state.sqlite --pool-id local_pool --impulse-type source_payload --budget-json '{"runtime_hops":1,"impulse_count":1}'
+uv run fala impulses list --db .fala/state.sqlite --run-id run_local
+uv run fala associations list --db .fala/state.sqlite --run-id run_local
 uv run fala processes list --db .fala/state.sqlite --run-id run_local
 uv run fala events list --db .fala/state.sqlite --run-id run_local
-uv run fala artifacts record --db .fala/state.sqlite --run-id run_local --kind report --path report.txt
-uv run fala artifacts list --db .fala/state.sqlite --run-id run_local
-uv run fala gates list --db .fala/state.sqlite --run-id run_local
-uv run fala gate open --db .fala/state.sqlite --run-id run_local --kind human.review
-uv run fala gate complete --db .fala/state.sqlite --run-id run_local --gate-id gate_123
+uv run fala reactions record --db .fala/state.sqlite --run-id run_local --kind report --path report.txt
+uv run fala reactions list --db .fala/state.sqlite --run-id run_local
+uv run fala homeostats list --db .fala/state.sqlite --run-id run_local
+uv run fala homeostat open --db .fala/state.sqlite --run-id run_local --kind human.review
+uv run fala homeostat complete --db .fala/state.sqlite --run-id run_local --homeostat-id homeostat_123
 uv run fala projections rebuild --db .fala/state.sqlite --run-id run_local
 uv run fala run-until-idle --db .fala/state.sqlite --run-id run_local
-uv run fala gc --db .fala/state.sqlite --artifact-root .fala/artifacts --dry-run
+uv run fala gc --db .fala/state.sqlite --reaction-root .fala/reactions --dry-run
 uv run fala bridge export --db .fala/state.sqlite --run-id run_local --delivery-id bridge_123 --out bridge.json
 uv run fala bridge import --db /tmp/target.sqlite --file bridge.json
 
-uv run fala doctor --db .fala/state.sqlite --package examples/pipelines/basic/carrier-package.yaml
+uv run fala doctor --db .fala/state.sqlite --package examples/correlation-paths/basic/fala-package.yaml
 uv run fala diagnose-waits --db .fala/state.sqlite --run-id run_local
 uv run fala trace --db .fala/state.sqlite --run-id run_local
 uv run fala replay-execution --db .fala/state.sqlite --run-id run_local --process-id process_123
@@ -187,13 +187,13 @@ uv run fala archive-gc --archive-root .fala/archives --dry-run
 uv run fala export-bundle --db .fala/state.sqlite --run-id run_local --out run_local.fala.zip
 ```
 
-`fala schema` exposes Carrier-first contracts:
+`fala schema` exposes Impulse-first contracts:
 
 ```bash
-uv run fala schema carrier-package
-uv run fala schema carrier
+uv run fala schema fala-package
+uv run fala schema impulse
 uv run fala schema event
-uv run fala schema gate
+uv run fala schema homeostat
 uv run fala schema projection
 ```
 
@@ -203,21 +203,21 @@ The SQLite backend stores runtime state and event data in one local database. It
 enables:
 
 - run creation and inspection
-- carrier and carrier relation storage
+- impulse and impulse relation storage
 - ordered event append
-- observation and artifact metadata storage
+- association and reaction metadata storage
 - process scheduling and leasing
-- gate persistence
+- homeostat persistence
 - projection rebuilds
 - command idempotency
 - local bridge outbox/inbox delivery
 
 The runtime initializes SQLite with WAL mode, foreign keys, and a busy timeout.
 
-## Artifact Store
+## Reaction Store
 
-Artifact content belongs in an artifact store. SQLite stores metadata and refs;
-the default store is a local filesystem root such as `.fala/artifacts`.
+Reaction content belongs in a reaction store. SQLite stores metadata and refs;
+the default store is a local filesystem root such as `.fala/reactions`.
 `fala gc` only deletes blobs that are not referenced by any run in the SQLite
 runtime, even when `--run-id` is supplied.
 
@@ -233,7 +233,7 @@ Start with `docs/CONCEPTUAL_MODEL.md`, then `docs/RUNTIME_SEMANTICS.md`,
 `docs/MULTI_FALA_COMPOSITION.md`. Version policy lives in
 `docs/MIGRATIONS.md`.
 
-Carrier-first domain-pack examples live under `examples/domain-packs`.
+Impulse-first domain-pack examples live under `examples/domain-packs`.
 
 ## Development Check
 
@@ -242,7 +242,7 @@ Focused Fala checks:
 ```bash
 uv run python -m unittest \
   tests.test_fala_runtime_backend \
-  tests.test_carrier_package_schema \
+  tests.test_fala_package_schema \
   tests.test_runtime_backend_conformance \
-  tests.test_fala_carriers
+  tests.test_fala_impulses
 ```

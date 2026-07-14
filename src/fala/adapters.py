@@ -12,37 +12,36 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from fala.errors import FalaAdapterError
-from fala.models import CarrierAdapterSpec
+from fala.models import EffectorAdapterSpec
 
 
 @dataclass(frozen=True)
-class StepRunRequest:
-    run_id: str
+class EffectorRunRequest:
     process_id: str
-    adapter: CarrierAdapterSpec
-    carrier_id: str | None = None
+    adapter: EffectorAdapterSpec
+    impulse_id: str | None = None
     input: dict[str, Any] = field(default_factory=dict)
     config: dict[str, Any] = field(default_factory=dict)
     work_dir: Path | None = None
 
 
 @dataclass(frozen=True)
-class StepRunResult:
+class EffectorRunResult:
     output: dict[str, Any] = field(default_factory=dict)
     stdout: str = ""
     stderr: str = ""
     returncode: int | None = None
     waiting: bool = False
-    gate_id: str | None = None
+    homeostat_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class StepAdapter(Protocol):
-    async def run(self, request: StepRunRequest) -> StepRunResult: ...
+class EffectorAdapter(Protocol):
+    async def run(self, request: EffectorRunRequest) -> EffectorRunResult: ...
 
 
-class PythonFunctionStepAdapter:
-    async def run(self, request: StepRunRequest) -> StepRunResult:
+class PythonFunctionEffectorAdapter:
+    async def run(self, request: EffectorRunRequest) -> EffectorRunResult:
         if request.adapter.kind != "python_function":
             raise FalaAdapterError("python_function adapter received wrong adapter kind")
         if not request.adapter.ref:
@@ -55,19 +54,19 @@ class PythonFunctionStepAdapter:
         return _coerce_result(result)
 
 
-class SubprocessStepAdapter:
-    async def run(self, request: StepRunRequest) -> StepRunResult:
+class SubprocessEffectorAdapter:
+    async def run(self, request: EffectorRunRequest) -> EffectorRunResult:
         if request.adapter.kind != "subprocess":
             raise FalaAdapterError("subprocess adapter received wrong adapter kind")
         if not request.adapter.command:
             raise FalaAdapterError("subprocess adapter requires command")
 
         if request.work_dir is None:
-            with tempfile.TemporaryDirectory(prefix="fala-step-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="fala-effector-") as tmp:
                 return await self._run_in_dir(request, Path(tmp))
         return await self._run_in_dir(request, request.work_dir)
 
-    async def _run_in_dir(self, request: StepRunRequest, root: Path) -> StepRunResult:
+    async def _run_in_dir(self, request: EffectorRunRequest, root: Path) -> EffectorRunResult:
         input_dir = root / "input"
         output_dir = root / "output"
         input_dir.mkdir(parents=True, exist_ok=True)
@@ -84,11 +83,11 @@ class SubprocessStepAdapter:
         }
 
         env = {
-            **os.environ,
+            **_base_subprocess_env(request.adapter.inherit_env),
             **adapter_env,
-            "FALA_STEP_INPUT_DIR": str(input_dir),
-            "FALA_STEP_OUTPUT_DIR": str(output_dir),
-            "FALA_STEP_MANIFEST": str(manifest_path),
+            "FALA_EFFECTOR_INPUT_DIR": str(input_dir),
+            "FALA_EFFECTOR_OUTPUT_DIR": str(output_dir),
+            "FALA_EFFECTOR_MANIFEST": str(manifest_path),
         }
         process = await asyncio.create_subprocess_exec(
             *request.adapter.command,
@@ -119,7 +118,7 @@ class SubprocessStepAdapter:
         if not result_path.exists():
             raise FalaAdapterError("subprocess adapter did not write output/result.json")
         output = _redact_value(_load_output_result(result_path), redacted_values)
-        return StepRunResult(
+        return EffectorRunResult(
             output=output,
             stdout=stdout_text,
             stderr=stderr_text,
@@ -127,42 +126,38 @@ class SubprocessStepAdapter:
         )
 
 
-class ManualGateStepAdapter:
-    async def run(self, request: StepRunRequest) -> StepRunResult:
-        if request.adapter.kind != "manual_gate":
-            raise FalaAdapterError("manual_gate adapter received wrong adapter kind")
-        return StepRunResult(
+class ManualHomeostatEffectorAdapter:
+    async def run(self, request: EffectorRunRequest) -> EffectorRunResult:
+        if request.adapter.kind != "manual_homeostat":
+            raise FalaAdapterError("manual_homeostat adapter received wrong adapter kind")
+        return EffectorRunResult(
             waiting=True,
-            gate_id=f"gate:{request.run_id}:{request.process_id}",
+            homeostat_id=f"homeostat:{request.process_id}",
             output={"status": "waiting"},
         )
 
 
-class FalaRuntimeStepAdapter:
-    async def run(self, request: StepRunRequest) -> StepRunResult:
+class AutonomousCorrelatorEffectorAdapter:
+    async def run(self, request: EffectorRunRequest) -> EffectorRunResult:
         if request.adapter.kind != "fala_runtime":
             raise FalaAdapterError("fala_runtime adapter received wrong adapter kind")
-        if not request.adapter.runtime_ref:
-            raise FalaAdapterError("fala_runtime adapter requires runtime_ref")
-        return StepRunResult(
-            waiting=True,
-            output={
-                "runtime_ref": request.adapter.runtime_ref,
-                "status": "submitted",
-            },
+        raise FalaAdapterError(
+            "fala_runtime effectors cannot run standalone: they enqueue a bridge "
+            "delivery, which only the run-until-idle driver does (see "
+            "fala.driver.enqueue_fala_runtime_process)"
         )
 
 
-def create_step_adapter(kind: str) -> StepAdapter:
+def create_effector_adapter(kind: str) -> EffectorAdapter:
     if kind == "python_function":
-        return PythonFunctionStepAdapter()
+        return PythonFunctionEffectorAdapter()
     if kind == "subprocess":
-        return SubprocessStepAdapter()
-    if kind == "manual_gate":
-        return ManualGateStepAdapter()
+        return SubprocessEffectorAdapter()
+    if kind == "manual_homeostat":
+        return ManualHomeostatEffectorAdapter()
     if kind == "fala_runtime":
-        return FalaRuntimeStepAdapter()
-    raise FalaAdapterError(f"unknown step adapter kind: {kind!r}")
+        return AutonomousCorrelatorEffectorAdapter()
+    raise FalaAdapterError(f"unknown effector adapter kind: {kind!r}")
 
 
 def _load_ref(ref: str) -> Any:
@@ -177,15 +172,15 @@ def _load_ref(ref: str) -> Any:
         raise FalaAdapterError(f"cannot load python_function ref: {ref!r}") from exc
 
 
-def _coerce_result(value: Any) -> StepRunResult:
-    if isinstance(value, StepRunResult):
+def _coerce_result(value: Any) -> EffectorRunResult:
+    if isinstance(value, EffectorRunResult):
         return value
     if isinstance(value, Mapping):
-        return StepRunResult(output=dict(value))
-    raise FalaAdapterError("python_function adapter must return dict or StepRunResult")
+        return EffectorRunResult(output=dict(value))
+    raise FalaAdapterError("python_function adapter must return dict or EffectorRunResult")
 
 
-def _manifest(request: StepRunRequest) -> dict[str, Any]:
+def _manifest(request: EffectorRunRequest) -> dict[str, Any]:
     adapter = request.adapter.model_dump(mode="json")
     if adapter.get("env"):
         adapter["env"] = {
@@ -193,13 +188,24 @@ def _manifest(request: StepRunRequest) -> dict[str, Any]:
             for key, value in adapter["env"].items()
         }
     return {
-        "run_id": request.run_id,
         "process_id": request.process_id,
-        "carrier_id": request.carrier_id,
+        "impulse_id": request.impulse_id,
         "input": request.input,
         "config": request.config,
         "adapter": adapter,
     }
+
+
+# The only caller environment a subprocess effector sees by default. Anything
+# else must be named in the adapter's ``inherit_env`` allowlist (or set
+# explicitly via ``env``), so an effector cannot silently depend on ambient state
+# that a replay on another host would not have.
+_BASE_SUBPROCESS_ENV_KEYS = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ")
+
+
+def _base_subprocess_env(inherit_env: list[str]) -> dict[str, str]:
+    names = [*_BASE_SUBPROCESS_ENV_KEYS, *inherit_env]
+    return {name: os.environ[name] for name in names if name in os.environ}
 
 
 def _resolve_adapter_env(env: Mapping[str, str]) -> dict[str, str]:
@@ -259,12 +265,12 @@ def _load_output_result(path: Path) -> dict[str, Any]:
 
 
 __all__ = [
-    "FalaRuntimeStepAdapter",
-    "ManualGateStepAdapter",
-    "PythonFunctionStepAdapter",
-    "StepAdapter",
-    "StepRunRequest",
-    "StepRunResult",
-    "SubprocessStepAdapter",
-    "create_step_adapter",
+    "AutonomousCorrelatorEffectorAdapter",
+    "ManualHomeostatEffectorAdapter",
+    "PythonFunctionEffectorAdapter",
+    "EffectorAdapter",
+    "EffectorRunRequest",
+    "EffectorRunResult",
+    "SubprocessEffectorAdapter",
+    "create_effector_adapter",
 ]

@@ -2,27 +2,27 @@
 
 SQLite is the bundled reference runtime backend. It stores:
 
-- runs, carriers, carrier types, and carrier relations
-- observations, artifact metadata, processes, gates, and projections
+- runs, impulses, impulse types, and impulse relations
+- associations, reaction metadata, processes, homeostats, and projections
 - append-only runtime commands and runtime events
 - bridge inbox/outbox deliveries
 - runtime pools and delegation policies
 - schema migration state
 
 The backend initializes SQLite with WAL journal mode, foreign keys, and a busy
-timeout. Artifact bytes are not stored in SQLite by default; SQLite stores refs
+timeout. Reaction bytes are not stored in SQLite by default; SQLite stores refs
 and metadata.
 
 Run creation stores the run row, `run.create` command, and `run.created` event in
 one SQLite transaction.
 Run status changes store the `run.status.set` or `run.cancel` command, event,
 and run status update in one SQLite transaction.
-Carrier acceptance stores the carrier row, `carrier.accept` command, and
-`carrier.accepted` event in one SQLite transaction.
-Carrier type registration, carrier relation recording, observation recording,
-artifact recording, process scheduling, and process status transitions also
+Impulse acceptance stores the impulse row, `impulse.accept` command, and
+`impulse.accepted` event in one SQLite transaction.
+Impulse type registration, impulse relation recording, association recording,
+reaction recording, process scheduling, and process status transitions also
 commit their runtime command, event, and state change together.
-Gate creation and terminal transitions are committed the same way.
+Homeostat creation and terminal transitions are committed the same way.
 Projection save and rebuild commands commit their projection writes in the same
 transaction.
 Bridge outbox enqueue/deliver and inbox import commands commit their local
