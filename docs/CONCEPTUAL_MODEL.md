@@ -24,12 +24,13 @@ Core runtime records are domain-agnostic:
 - `Projection`: rebuildable read model derived from runtime state/events.
 
 Domain-specific mappings (e.g. arbitration cases, sensor samples) live in `fala.domain_packs.*` outside the core ontology.
-## Hierarchical regulation (kaskada)
+## Relationship to Takt
 
-Fala provides flat, observable conduction (CorrelationPath). Higher-level regulation — n-layer cascades of regulators with descending constraints (fala zstępująca) and ascending telemetry (fala wstępująca) — is expressed by the `takt` layer.
+Fala provides flat, observable conduction through `CorrelationPath`. Takt is a
+separate package with its own local `Wave` type and regulator prototype; it is
+not part of Fala's core runtime and is not required to use Fala.
 
-This follows the Polish cybernetic tradition:
-- Marian Mazur, *Cybernetyczna teoria układów samodzielnych* (1966) and *Jakościowa teoria informacji* (1970): waves of communicates flow up and down; the system reduces entropy while preserving its own structure.
-- Józef Kossecki: extensions to multi-level (wielopoziomowe) autonomous systems, where each level maintains its own homeostat while receiving constraints from above and reporting aggregated error signals upward.
-
-`takt` (CascadeRegulator + TaktSequencer + ProfilHomeostatyczny) is the concrete realization of this layered control over Fala's impulses, associations, and homeostats. It does not replace Fala; it orchestrates sequences of Fala-mediated interactions across a tree of StateNodes.
+An external adapter may connect a Takt-controlled plant to Fala, but such an
+adapter is optional and must map the current runtime contracts explicitly.
+This document does not claim that Fala implements hierarchical regulation or
+formal equivalence with any cybernetic theory.

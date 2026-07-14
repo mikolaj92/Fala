@@ -15,7 +15,6 @@ anywhere in the codebase; the right columns are the only terms in use.
 | needs (dependency edge)        | conduction                | Conductivity edge readying a dependent effector |
 | SQLiteRuntimeBackend / Storage | Correlator                | Internal organ registering states and associations |
 | FalaRuntime (facade)           | AutonomousCorrelator      | Execution facade of the autonomous system |
-| Cascade / hierarchical control | CascadeRegulator / TaktSequencer | n-layer regulation (Kossecki: wielopoziomowe układy samodzielne); descending constraints + ascending telemetry over correlation paths (Mazur) |
 
 All renames are **pure** (no deprecated aliases) and cover every surface:
 
