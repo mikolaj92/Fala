@@ -165,14 +165,24 @@ over this function; both share the same adapter dispatch, homeostat-wait handlin
 retry/fail transitions, and `fala_runtime` bridge enqueueing. The same
 entrypoint is exposed as `AutonomousCorrelator.run_until_idle`.
 
+The driver is **sequential**: one process per tick. Concurrent multi-run
+isolation (separate workspaces when several host threads each call
+`run_until_idle`) is a consumer concern. See
+[PROCESS_RUNTIME.md](PROCESS_RUNTIME.md#execution-model-what-fala-does-not-own).
+
 ## CorrelationPath Orchestration
 
 `fala.correlation_paths` executes a `CorrelationPathSpec` dependency graph over the process
 store:
 
 - `instantiate_correlation_path(service, run_id=..., correlation_path=..., effector_inputs=..., ...)`
-  schedules one process per correlation_path effector. Effectors with no `conduction` start `ready`;
-  effectors with `conduction` start `pending`, which is invisible to claim.
+  schedules one process per correlation_path effector. When `correlation_path_id`
+  is omitted, Fala uses `f"{run_id}:{correlation_path.id}"` so process ids
+  (`{correlation_path_id}:{effector_id}`) stay unique per run. Passing a fixed
+  id that drops `run_id` is allowed for multi-path-in-one-run layouts, but then
+  the consumer must keep those ids unique themselves. Effectors with no
+  `conduction` start `ready`; effectors with `conduction` start `pending`, which
+  is invisible to claim.
 - After each successful effector, the driver readies dependent effectors whose conduction
   have all succeeded, injecting each upstream effector's output into the dependent effector's
   input under `"conduction"` (readable via `fala.sdk.conduction`). Explicit re-evaluation
