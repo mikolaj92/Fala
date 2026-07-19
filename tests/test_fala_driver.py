@@ -334,7 +334,7 @@ class FalaDriverTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             result = asyncio.run(scenario(root))
-            self.assertTrue((root / "work" / "process_work").is_dir())
+            self.assertTrue((root / "work" / "run_work" / "process_work").is_dir())
 
         self.assertEqual(len(result.completed), 1)
 

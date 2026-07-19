@@ -94,9 +94,15 @@ class FileReactionStore:
         if target.exists():
             _ensure_blob_digest(target, digest)
         else:
-            temp = target.with_suffix(".tmp")
-            shutil.copyfile(source, temp)
-            os.replace(temp, target)
+            with tempfile.NamedTemporaryFile(
+                prefix=f"{target.name}.", suffix=".tmp", dir=target.parent, delete=False
+            ) as tmp:
+                temp = Path(tmp.name)
+            try:
+                shutil.copyfile(source, temp)
+                os.replace(temp, target)
+            finally:
+                temp.unlink(missing_ok=True)
         merged_metadata = dict(metadata or {})
         merged_metadata.update(
             {

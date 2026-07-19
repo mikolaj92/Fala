@@ -101,7 +101,9 @@ async def run_until_idle(
         ticks += 1
         try:
             adapter, effector_input, config = process_effector_request_parts(process)
-            effector_work_dir = work_root / process.id if work_root is not None else None
+            effector_work_dir = (
+                work_root / process.run_id / process.id if work_root is not None else None
+            )
             if effector_work_dir is not None:
                 effector_work_dir.mkdir(parents=True, exist_ok=True)
             request = EffectorRunRequest(
