@@ -15,6 +15,13 @@ The default runtime path is serverless and local:
 - No Redis, Postgres, Kafka, RabbitMQ, NATS, Docker, FastAPI, Uvicorn, or web
   server is required to run a local correlation path.
 
+`run_until_idle` drives processes **sequentially** (claim → execute → complete).
+Fala owns journaled process state and leases; it does not orchestrate concurrent
+multi-run job isolation for the host. Embedded consumers that start several
+drivers in parallel must keep process ids / work roots unique (the default
+correlation-path id already includes `run_id`). See
+[`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md#execution-model-what-fala-does-not-own).
+
 ## Shape
 
 The Fala architecture is built around these modules:

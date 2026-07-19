@@ -24,6 +24,32 @@ Fala owns:
 Adapters own execution only. They receive validated input from the runtime and
 return validated output for the runtime to commit.
 
+## Execution model (what Fala does *not* own)
+
+`run_until_idle` is a **sequential** claim → execute → complete loop. One
+driver invocation claims one ready process at a time under a worker lease,
+runs its adapter, commits the result, optionally advances the correlation
+path, then claims the next process. Fala is not a multi-job concurrency
+scheduler and does not isolate "concurrent runs" as a first-class feature.
+
+Implications for embedded consumers:
+
+- **Process identity is scoped by run.** The journal primary key is
+  `(run_id, process_id)`. Default correlation-path process ids are
+  `{run_id}:{path_spec_id}:{effector_id}` when `correlation_path_id` is omitted.
+- **Work directories follow `process.id`.** When a consumer passes
+  `work_dir` into `run_until_idle`, each subprocess effector gets
+  `work_dir / process.id`. That is scratch for one process, not a
+  cross-run concurrent workspace manager.
+- **Parallel drivers are the consumer's choice.** If the host starts several
+  `run_until_idle` loops at once (threads, processes, fleet workers) against
+  a shared `work_dir` or reaction store root, isolation is the consumer's
+  responsibility: keep process ids unique (prefer Fala's default run-scoped
+  correlation path ids; do not force a fixed `correlation_path_id` that
+  omits `run_id`), and/or give each driver its own work root.
+- **Leases are ownership and crash recovery**, not "orchestrate five document
+  jobs in parallel for me."
+
 ## Process State
 
 Current Impulse process statuses are:
