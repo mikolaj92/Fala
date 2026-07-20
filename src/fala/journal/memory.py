@@ -72,6 +72,8 @@ class InMemoryJournal:
         self._journal_seq = 0
         self._batches: list[JournalBatch] = []
         self._commands: dict[tuple[str, str], RuntimeCommand] = {}
+        self._commands_by_id: dict[tuple[str, str], RuntimeCommand] = {}
+        self._command_order: list[RuntimeCommand] = []
         self._events: dict[str, list[RuntimeEvent]] = {}
         self._event_seq: dict[str, int] = {}
         self._entities: dict[str, dict[str, dict[str, Any]]] = {}
@@ -121,6 +123,8 @@ class InMemoryJournal:
             events = self._assign_events(cmd, unit.events)
             apply_facts(self._entities, unit.facts, processes=self._processes)
             self._commands[ckey] = cmd
+            self._commands_by_id[(cmd.run_id, cmd.id)] = cmd
+            self._command_order.append(cmd)
             assigned_units.append(
                 CommandUnit(command=cmd, events=events, facts=list(unit.facts))
             )
@@ -148,6 +152,17 @@ class InMemoryJournal:
                     "run_id": run_id,
                     "command_id": command.id,
                     "sequence": seq,
+                    "actor": event.actor if event.actor is not None else command.actor,
+                    "correlation_id": (
+                        event.correlation_id
+                        if event.correlation_id is not None
+                        else command.correlation_id
+                    ),
+                    "causation_id": (
+                        event.causation_id
+                        if event.causation_id is not None
+                        else command.causation_id
+                    ),
                 }
             )
             self._events.setdefault(run_id, []).append(stored)
@@ -356,3 +371,81 @@ class InMemoryJournal:
         self._entities.setdefault("process", {})[process.id] = process.model_dump(
             mode="json"
         )
+
+    def upsert_process(self, process: Process) -> None:
+        """Replace process snapshot in the claimable/store maps (non-journaled)."""
+        self.seed_process(process)
+
+    def get_command(self, *, run_id: str, command_id: str) -> RuntimeCommand | None:
+        return self._commands_by_id.get((run_id, command_id))
+
+    def list_commands(
+        self,
+        *,
+        run_id: str,
+        command_type: str | None = None,
+        actor: str | None = None,
+        limit: int | None = None,
+    ) -> list[RuntimeCommand]:
+        items = [c for c in self._command_order if c.run_id == run_id]
+        if command_type is not None:
+            items = [c for c in items if c.command_type == command_type]
+        if actor is not None:
+            items = [c for c in items if c.actor == actor]
+        items = sorted(items, key=lambda c: (c.created_at, c.id))
+        if limit is not None:
+            items = items[:limit]
+        return items
+
+    def put_entity_body(self, entity: str, key: dict[str, str], body: dict[str, Any]) -> None:
+        """Non-journaled entity upsert into the authoritative entity maps."""
+        ek = _entity_key(entity, key)
+        self._entities.setdefault(entity, {})[ek] = body
+        if entity == "process" and "id" in key:
+            self._processes[key["id"]] = Process.model_validate(body)
+
+    def delete_entity(self, entity: str, key: dict[str, str]) -> None:
+        ek = _entity_key(entity, key)
+        bucket = self._entities.get(entity)
+        if bucket is not None:
+            bucket.pop(ek, None)
+        if entity == "process" and "id" in key:
+            self._processes.pop(key["id"], None)
+
+    def get_entity_body(self, entity: str, key: dict[str, str]) -> dict[str, Any] | None:
+        return self._entities.get(entity, {}).get(_entity_key(entity, key))
+
+    def list_entity_bodies(self, entity: str) -> list[tuple[str, dict[str, Any]]]:
+        return list(self._entities.get(entity, {}).items())
+
+    def clear_run_entities(self, run_id: str) -> dict[str, int]:
+        """Best-effort delete of run-scoped state (InMemory admin path)."""
+        counts: dict[str, int] = {}
+        # Processes
+        proc_ids = [pid for pid, p in self._processes.items() if p.run_id == run_id]
+        for pid in proc_ids:
+            self._processes.pop(pid, None)
+        counts["processes"] = len(proc_ids)
+
+        for entity, bucket in list(self._entities.items()):
+            removed = 0
+            for ek, body in list(bucket.items()):
+                body_run = body.get("run_id")
+                if body_run == run_id or (entity == "run" and body.get("id") == run_id):
+                    bucket.pop(ek, None)
+                    removed += 1
+            counts[entity] = counts.get(entity, 0) + removed
+
+        # Commands / events for run
+        cmd_keys = [k for k in self._commands if k[0] == run_id]
+        for k in cmd_keys:
+            self._commands.pop(k, None)
+        counts["runtime_commands"] = len(cmd_keys)
+        id_keys = [k for k in self._commands_by_id if k[0] == run_id]
+        for k in id_keys:
+            self._commands_by_id.pop(k, None)
+        self._command_order = [c for c in self._command_order if c.run_id != run_id]
+        ev_count = len(self._events.pop(run_id, []))
+        counts["runtime_events"] = ev_count
+        self._event_seq.pop(run_id, None)
+        return counts

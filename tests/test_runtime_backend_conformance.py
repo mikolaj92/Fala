@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from fala.journal import InMemoryJournal, JournalBackedBackend, SqliteJournal
 from fala.runtime_backend import (
     Impulse,
     ProcessStatus,
@@ -24,6 +25,22 @@ class CorrelatorConformanceTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp_dir:
                 backend = Correlator(Path(tmp_dir) / "runtime.sqlite")
                 await assert_runtime_backend_conformance(backend)
+
+        asyncio.run(scenario())
+
+    def test_sqlite_journal_backed_backend_satisfies_conformance_suite(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                journal = SqliteJournal(Path(tmp_dir) / "journal.sqlite")
+                backend = JournalBackedBackend(journal)
+                await assert_runtime_backend_conformance(backend)
+
+        asyncio.run(scenario())
+
+    def test_memory_journal_backed_backend_satisfies_conformance_suite(self) -> None:
+        async def scenario() -> None:
+            backend = JournalBackedBackend(InMemoryJournal())
+            await assert_runtime_backend_conformance(backend)
 
         asyncio.run(scenario())
 
