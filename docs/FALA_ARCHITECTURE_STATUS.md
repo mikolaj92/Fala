@@ -29,15 +29,15 @@ Composable operators may import these; composing a small flow does **not** requi
 
 | Layer | Responsibility | Module |
 | --- | --- | --- |
-| **ops maintenance** | run retention, journal maintain, reaction CAS GC, delete_run | `ops_maintenance.mojo` (canonical surface; delegates into store) |
-| **ops bridge** | outbox/inbox enqueue, import, claim/deliver/retry, budgets | `ops_bridge.mojo` (+ `bridge_transport` for local path delivery) |
-| **ops projections** | heavy projection rebuild (`run_summary`) | `ops_projections.mojo` |
+| **ops maintenance** | run retention, journal maintain, reaction CAS GC, delete_run | `ops_maintenance.mojo` (**bodies live here**) |
+| **ops bridge** | outbox/inbox enqueue, import, claim/deliver/retry, budgets | `ops_bridge.mojo` (**bodies live here**; + `bridge_transport`) |
+| **ops projections** | heavy projection rebuild (`run_summary`) | `ops_projections.mojo` (**bodies live here**) |
 | **CLI ops surface** | `ops maintain-journal`, `ops gc`, `ops projections rebuild`, `ops bridge *` (aliases keep old names) | `native_cli_surface` progressive disclosure |
 
-Implementations of ops may still share the SQLite connection object with
-`NativeDomainStore` (Mojo packaging / connection ownership). **Import and CLI
-surface** treat them as optional: Essential Fala code paths must not require
-`ops_*` modules.
+Ops free functions take `mut store: NativeDomainStore` and use the shared SQLite
+connection plus private store helpers (`_require_run`, `_text`,
+`_domain_command_start`, …). **Method bodies for retention/bridge/rebuild are
+not on `NativeDomainStore`.** Essential Fala code paths must not require `ops_*`.
 
 Hard rule: durable mutations on the **core path** go through **JournalPort**
 (batch/claim). Ops may touch sink tables (retention VACUUM, bridge rows, rebuild
