@@ -48,6 +48,10 @@ handoff; bridge is an optional envelope aid.
 
 ### Process host is core product
 
+The native process host targets **Darwin and Linux** (shared library
+`libfala_process_host.dylib` / `.so`). Windows is out of scope. Build is wired
+through `tools/mojo_sql_run.sh` when host smokes run.
+
 Effectors are the operational edge of the organ. The default edge is a
 **process**:
 

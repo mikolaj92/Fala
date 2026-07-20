@@ -58,45 +58,96 @@ def _blob(values: List[String], label: String) raises -> String:
     return result
 
 
-def _library_path() raises -> String:
-    """Find the packaged host beside bin/fala, then the source build."""
-    if not CompilationTarget.is_macos():
-        raise Error("fala native process host requires Darwin")
-    var size = alloc[UInt32](1)
-    size[] = UInt32(1)
-    var probe = alloc[UInt8](1)
-    var result = external_call["_NSGetExecutablePath", c_int](probe, size)
-    probe.free()
-    if result == 0:
-        size.free()
-        raise Error("fala process host: unable to determine executable path")
-    var buffer = alloc[UInt8](Int(size[]))
-    result = external_call["_NSGetExecutablePath", c_int](buffer, size)
-    if result != 0:
-        size.free()
-        buffer.free()
-        raise Error("fala process host: unable to determine executable path")
-    var raw = String(unsafe_from_utf8_ptr=buffer)
-    size.free()
-    buffer.free()
-    var raw_text = raw + "\0"
-    var canonical_buffer = alloc[UInt8](4096)
-    var canonical = external_call["realpath", UnsafePointer[UInt8, MutUntrackedOrigin]](raw_text.as_bytes().unsafe_ptr(), canonical_buffer)
-    var executable = raw
-    if Int(canonical) != 0:
-        executable = String(unsafe_from_utf8_ptr=canonical)
-    canonical_buffer.free()
+def _host_library_name() -> String:
+    """Shared library name for this POSIX target (Darwin dylib / Linux so)."""
+    if CompilationTarget.is_macos():
+        return "libfala_process_host.dylib"
+    return "libfala_process_host.so"
+
+
+def _directory_of(path: String) raises -> String:
     var slash = -1
     var index = 0
-    while index < executable.byte_length():
-        if executable[byte=index] == "/": slash = index
+    while index < path.byte_length():
+        if path[byte=index] == "/": slash = index
         index += 1
-    if slash <= 0: raise Error("fala process host: executable path has no directory")
-    var directory = String(executable[byte=0:slash])
-    var packaged = directory + "/../native/libfala_process_host.dylib"
-    if Path(packaged).exists(): return packaged
-    var source = (cwd() / Path("../../mojo/fala/native/libfala_process_host.dylib")).__fspath__()
-    if Path(source).exists(): return source
+    if slash <= 0:
+        raise Error("fala process host: path has no directory")
+    return String(path[byte=0:slash])
+
+
+def _realpath_string(path: String) raises -> String:
+    var raw_text = path + "\0"
+    var canonical_buffer = alloc[UInt8](4096)
+    var canonical = external_call["realpath", UnsafePointer[UInt8, MutUntrackedOrigin]](
+        raw_text.as_bytes().unsafe_ptr(), canonical_buffer
+    )
+    if Int(canonical) == 0:
+        canonical_buffer.free()
+        return path
+    var resolved = String(unsafe_from_utf8_ptr=canonical)
+    canonical_buffer.free()
+    return resolved
+
+
+def _executable_path() raises -> String:
+    """Resolve the current process executable (Darwin or Linux)."""
+    if CompilationTarget.is_macos():
+        var size = alloc[UInt32](1)
+        size[] = UInt32(1)
+        var probe = alloc[UInt8](1)
+        var result = external_call["_NSGetExecutablePath", c_int](probe, size)
+        probe.free()
+        if result == 0:
+            size.free()
+            raise Error("fala process host: unable to determine executable path")
+        var buffer = alloc[UInt8](Int(size[]))
+        result = external_call["_NSGetExecutablePath", c_int](buffer, size)
+        if result != 0:
+            size.free()
+            buffer.free()
+            raise Error("fala process host: unable to determine executable path")
+        var raw = String(unsafe_from_utf8_ptr=buffer)
+        size.free()
+        buffer.free()
+        return _realpath_string(raw)
+    # Linux / other POSIX: /proc/self/exe
+    var link = "/proc/self/exe\0"
+    var buffer = alloc[UInt8](4096)
+    var n = external_call["readlink", c_int](
+        CStr(unsafe_from_address=Int(link.as_bytes().unsafe_ptr())),
+        buffer,
+        c_int(4095),
+    )
+    if n < 0:
+        buffer.free()
+        raise Error("fala process host: unable to read /proc/self/exe (POSIX host requires Linux or Darwin)")
+    buffer[Int(n)] = 0
+    var raw = String(unsafe_from_utf8_ptr=buffer)
+    buffer.free()
+    return _realpath_string(raw)
+
+
+def _library_path() raises -> String:
+    """Find the packaged host beside the executable, then the source build tree.
+
+    Supported: Darwin (dylib) and Linux (so). Windows is out of scope.
+    """
+    if not CompilationTarget.is_macos() and not CompilationTarget.is_linux():
+        raise Error("fala native process host requires Darwin or Linux")
+    var lib_name = _host_library_name()
+    var executable = _executable_path()
+    var directory = _directory_of(executable)
+    var packaged = directory + "/../native/" + lib_name
+    if Path(packaged).exists():
+        return packaged
+    var source = (cwd() / Path("../../mojo/fala/native/" + lib_name)).__fspath__()
+    if Path(source).exists():
+        return source
+    # Prefer in-tree build next to sources when running from a worktree.
+    var tree = (cwd() / Path("mojo/fala/native/" + lib_name)).__fspath__()
+    if Path(tree).exists():
+        return tree
     return packaged
 def native_process_host_available() -> Bool:
     """Return whether the host loads and exposes the complete ABI."""

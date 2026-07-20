@@ -1368,14 +1368,28 @@ struct NativeJournal(Movable):
         actor: String,
         at: String,
         idempotency_key: String = "",
+        require_waiting_run: Bool = False,
     ) raises SQLiteError -> ProcessRow:
-        """Atomically reopen a terminal homeostat/process pair when budget remains."""
+        """Atomically reopen a terminal homeostat/process pair when budget remains.
+
+        When ``require_waiting_run`` is true (used by ``rearm_homeostat``), the
+        run must be in status waiting — not created/active/terminal.
+        """
         self._require_run(run_id)
         if homeostat_id == "" or process_id == "" or actor == "" or at == "":
             raise SQLiteError(code=1, message="journal: homeostat reopen requires ids, actor, and timestamp")
         var key = idempotency_key
         self.db.begin_immediate()
         try:
+            if require_waiting_run:
+                var run_stmt = self.db.query("SELECT status FROM runs WHERE id=?")
+                run_stmt.bind_text(1, run_id)
+                if not run_stmt.step():
+                    raise SQLiteError(code=1, message="journal: run not found")
+                var run_status = self._text(run_stmt, 0)
+                run_stmt.close()
+                if run_status != "waiting":
+                    raise SQLiteError(code=1, message="journal: homeostat rearm requires run status waiting")
             var homeostat = self.db.query("SELECT status,attempt,max_attempts FROM homeostats WHERE run_id=? AND id=?")
             homeostat.bind_text(1,run_id); homeostat.bind_text(2,homeostat_id)
             if not homeostat.step(): raise SQLiteError(code=1, message="journal: homeostat not found")
@@ -1413,5 +1427,6 @@ struct NativeJournal(Movable):
         except err:
             self.db.rollback(); var detail = String(err)
             if detail.find("homeostat reopen idempotency conflict") >= 0: raise err^
+            if detail.find("homeostat rearm requires run status waiting") >= 0: raise err^
             raise SQLiteError(code=1, message="journal: reopen homeostat process failed: " + detail)
         return self.get_process(run_id,process_id)

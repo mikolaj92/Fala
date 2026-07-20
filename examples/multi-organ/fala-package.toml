@@ -1,0 +1,34 @@
+# Multi-organ package sketch: Signals vocabulary + subprocess organ slot.
+# Effector `arbitrate` is intended for a Splot (or any) argv organ with its own journal.
+
+id = "multi-organ-demo"
+version = "0.1.0"
+title = "Signals + external organ composition"
+
+[[correlation_paths]]
+id = "signal_then_arbitrate"
+
+[[correlation_paths.effectors]]
+id = "ingest_signal"
+kind = "native_function"
+ref = "signals.ingest"
+
+[[correlation_paths.effectors]]
+id = "threshold_gate"
+kind = "manual_homeostat"
+# When EV is already satisfied, composers may skip this gate and use
+# regulation_decision() from the Signals pack instead of waiting on an operator.
+
+[[correlation_paths.effectors]]
+id = "arbitrate"
+kind = "subprocess"
+command = ["splot", "run", "--db", "child.sqlite"]
+# Child must use a journal path different from the parent Fala journal.
+
+[[correlation_paths.conduction]]
+from = "ingest_signal"
+to = "threshold_gate"
+
+[[correlation_paths.conduction]]
+from = "threshold_gate"
+to = "arbitrate"

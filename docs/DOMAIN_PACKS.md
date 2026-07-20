@@ -9,7 +9,8 @@ that map concepts onto Impulse runtime records.
 | --- | --- | --- |
 | **Splot** (vocabulary) | `mojo/fala/domain_packs/splot.mojo` | `pixi run splot-domain` |
 | **Splot engine** (host) | sibling product `Splot` 0.3+ via subprocess | `pixi run splot-integration` |
-| Signals | not yet ported (optional examples only) | — |
+| **Signals** (vocabulary) | `mojo/fala/domain_packs/signals.mojo` | `pixi run signals-domain` |
+| Multi-organ sketch | `examples/multi-organ/` | `pixi run multi-organ-example` |
 
 ## What packs provide
 
