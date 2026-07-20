@@ -1,6 +1,8 @@
 # SQLite Backend
 
-SQLite is the bundled reference runtime backend. It stores:
+SQLite is the bundled **reference journal sink** for Fala's event-first core
+(see [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md)). The `Correlator` /
+`SqliteJournal` path stores:
 
 - runs, impulses, impulse types, and impulse relations
 - associations, reaction metadata, processes, homeostats, and projections

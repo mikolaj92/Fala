@@ -1,19 +1,25 @@
 # Fala
 
-Fala is an embedded, SQLite-first runtime for observable correlation paths.
+Fala is an embedded, **event-first** runtime for observable correlation paths.
+The core executes process graphs and emits a durable **event stream** through a
+Journal port; SQLite is the bundled **reference sink**, not hard-wired into the
+execution engine.
 
 The core object is an `Impulse`: a typed information impulse that moves through
 process graphs. Fala records durable runs, impulses, impulse relations,
 associations, reactions, events, homeostats, projections, commands, bridge records,
-lineage, and audit data in local state.
+lineage, and audit data via the journal/backend.
 
 The default runtime path is serverless and local:
 
-- SQLite is the bundled reference backend.
+- SQLite is the bundled reference journal sink (`SqliteJournal` / `Correlator`).
+- In-memory and (later) JSONL sinks implement the same Journal Protocol.
 - The filesystem is the default reaction store.
-- The CLI is the primary operator interface.
+- The CLI is the primary operator interface (`--journal` preferred; `--db` alias).
 - No Redis, Postgres, Kafka, RabbitMQ, NATS, Docker, FastAPI, Uvicorn, or web
   server is required to run a local correlation path.
+
+Architecture: [`docs/EVENT_STREAM_CORE.md`](docs/EVENT_STREAM_CORE.md).
 
 `run_until_idle` drives processes **sequentially** (claim → execute → complete).
 Fala owns journaled process state and leases; it does not orchestrate concurrent
@@ -26,9 +32,9 @@ correlation-path id already includes `run_id`). See
 
 The Fala architecture is built around these modules:
 
-- `fala.runtime.AutonomousCorrelator`: embedded runtime facade.
-- `fala.runtime_backend.Correlator`: SQLite backend and command/event
-  store.
+- `fala.runtime.AutonomousCorrelator`: embedded runtime facade (`from_journal` / `open_journal`).
+- `fala.journal`: Journal Protocol, `InMemoryJournal`, `SqliteJournal`, `JournalBackedBackend`.
+- `fala.runtime_backend.Correlator`: SQLite reference backend (still the durable default).
 - `fala.runtime_backend.RuntimeBackendService`: transactional runtime service.
 - `fala.reactions.FileReactionStore`: filesystem reaction store.
 - `fala.models.FalaPackageSpec`: Impulse-first package schema.

@@ -1,6 +1,7 @@
 # Conceptual Model
 
-Fala is an embedded, SQLite-first runtime for observable information correlation paths.
+Fala is an embedded, event-first runtime for observable information correlation paths
+(SQLite is the reference journal sink).
 The core object is an `Impulse`: a typed information impulse moving through a
 run-scoped process graph.
 

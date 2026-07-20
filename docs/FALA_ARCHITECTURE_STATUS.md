@@ -1,7 +1,7 @@
 # Fala Architecture Status
 
-Fala is now defined as an embedded, SQLite-first runtime for observable
-information correlation_paths.
+Fala is now defined as an embedded, event-first runtime for observable
+information correlation_paths (SQLite remains the reference journal sink).
 
 The core ontology is Impulse-first:
 
@@ -25,9 +25,10 @@ The core ontology is Impulse-first:
 
 The default distribution is intentionally small:
 
-- SQLite is the bundled runtime backend.
+- Journal Protocol + SQLite reference sink (`SqliteJournal` / `Correlator`).
+- In-memory journal for tests and embedded isolation.
 - The filesystem is the bundled reaction store.
-- The CLI is the primary operator interface.
+- The CLI is the primary operator interface (`--journal`, `--db` alias).
 - Web/API servers, external queues, Redis, Postgres, Kafka, RabbitMQ, NATS,
   Docker, and object-storage SDKs are not core runtime requirements.
 
@@ -36,8 +37,10 @@ The default distribution is intentionally small:
 The migrated source tree keeps the core runtime in:
 
 - `src/fala/models.py`
+- `src/fala/journal/` (Protocol, sinks, JournalBackedBackend)
 - `src/fala/runtime_backend.py`
 - `src/fala/runtime.py`
+- `docs/EVENT_STREAM_CORE.md`
 - `src/fala/reactions.py`
 - `src/fala/adapters.py`
 - `src/fala/sdk/__init__.py`
