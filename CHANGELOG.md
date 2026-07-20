@@ -3,6 +3,48 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.4.0
+
+**Thin core, domain packs, and host/composition completeness** on the exclusive
+Mojo product line.
+
+### Core / architecture
+
+- Ops bodies extracted from `NativeDomainStore` into `ops_maintenance`,
+  `ops_projections`, and `ops_bridge` (real free-function implementations).
+- Essential vs optional layers documented (`FALA_ARCHITECTURE_STATUS`,
+  `JOURNALPORT_CORE_PATH`).
+- CLI progressive disclosure (`# core` / `# ops`) and `native_cli_help` split.
+- Process host **Darwin + Linux** (`.dylib` / `.so`, `/proc/self/exe`).
+- Multi-claim composition: `drive_ready_batch` / `claims_per_round`; multi-workspace
+  composition documented and smoked.
+- `rearm_homeostat` (#68): atomic re-open on a waiting run with attempt accounting.
+
+### Domain packs
+
+- **Signals** — essential-variable helpers (`signals.reading`, threshold homeostat).
+- **Takt** — cascade vocabulary for sibling **takt 0.2+** (`takt.cascade_request`,
+  plant layer / error signal / safety interlock / projection).
+- **Splot** pack remains; multi-organ examples (`examples/multi-organ/`,
+  `examples/takt-integration/`).
+
+### Docs
+
+- README leads with composer-of-single-purpose-processes mental model (#34).
+- Process runtime docs describe multi-claim and multi-workspace composition.
+
+### Proof
+
+```bash
+mise exec -- pixi run full-smoke
+mise exec -- pixi run extended-smoke
+# packs:
+mise exec -- pixi run splot-domain
+mise exec -- pixi run signals-domain
+mise exec -- pixi run takt-domain
+mise exec -- pixi run multi-organ-example
+```
+
 ## 0.3.0
 
 **First exclusive Mojo product release.**

@@ -1,6 +1,6 @@
 # Fala
 
-**Version 0.3.0** — first **exclusive Mojo** product release.
+**Version 0.4.0** — exclusive Mojo product; thin core + domain packs + POSIX host.
 
 ## Compose single-purpose processes
 

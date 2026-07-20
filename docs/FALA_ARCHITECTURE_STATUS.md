@@ -1,6 +1,6 @@
 # Fala Architecture Status
 
-**Product: 0.3.0** (exclusive Mojo) · **thin-core track** (#94–#100).
+**Product: 0.4.0** (exclusive Mojo) · thin core + ops extract + completeness track.
 
 Fala is an embedded, **event-first**, **Mojo-native** runtime for observable
 correlation paths. SQLite is the reference journal sink, not product identity.
