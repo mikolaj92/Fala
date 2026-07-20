@@ -7,6 +7,14 @@ from fala.native_cli_surface import _count, _word, _homeostat_domain_values, dis
 from fala.schema import initialize_native_schema
 from fala.domain import BridgeDelivery, EventRef, Impulse, RuntimeBudget, RuntimeRef, RunRef
 from fala.domain_store import NativeDomainStore
+from fala.ops_bridge import (
+    put_bridge_delivery, enqueue_bridge_delivery, list_bridge_deliveries,
+    put_inbox_delivery, import_bridge_delivery, import_inbox_delivery,
+    list_bridge_inbox, get_outbox_delivery, get_inbox_delivery,
+    list_bridge_records, list_outbox_records, list_inbox_records,
+    transition_bridge_delivery, claim_bridge_delivery, deliver_bridge_delivery,
+    retry_bridge_delivery,
+)
 from fala.sqlite import Connection
 
 
@@ -532,7 +540,7 @@ def main() raises:
     bridge_source.initialize()
     _seed_bridge_run(bridge_source, "bridge-source")
     var bridge_delivery = _bridge_delivery()
-    _ = bridge_source.put_bridge_delivery(bridge_delivery)
+    _ = put_bridge_delivery(bridge_source, bridge_delivery)
     bridge_source.close()
     var bridge_target = NativeDomainStore.open(bridge_target_path)
     bridge_target.initialize()
@@ -543,24 +551,24 @@ def main() raises:
     _check(_has(bridge_fresh, "\"ok\":true") and _has(bridge_fresh, "\"delivery_replayed\":false") and _has(bridge_fresh, "\"import_replayed\":false") and _has(bridge_fresh, "\"status\":\"delivered\"") and _has(bridge_fresh, "\"status\":\"imported\""), "fresh bridge delivery")
     var bridge_source_after = NativeDomainStore.open(bridge_source_path)
     bridge_source_after.initialize()
-    var source_rows = bridge_source_after.list_outbox_records("bridge-source")
+    var source_rows = list_outbox_records(bridge_source_after, "bridge-source")
     _check(len(source_rows) == 1 and source_rows[0].status == "delivered" and source_rows[0].attempts == 1, "source durable delivery state")
     bridge_source_after.close()
     var bridge_target_after = NativeDomainStore.open(bridge_target_path)
     bridge_target_after.initialize()
-    var target_rows = bridge_target_after.list_inbox_records("bridge-target")
+    var target_rows = list_inbox_records(bridge_target_after, "bridge-target")
     _check(len(target_rows) == 1 and target_rows[0].status == "imported" and target_rows[0].attempts == 1 and len(bridge_target_after.list_impulses("bridge-target")) == 1, "target durable import state")
     bridge_target_after.close()
     var bridge_replay = dispatch_native_command(bridge_command.replace("2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z"))
     _check(_has(bridge_replay, "\"ok\":true") and _has(bridge_replay, "\"delivery_replayed\":true") and _has(bridge_replay, "\"import_replayed\":true"), "bridge delivery replay flags")
     var bridge_source_replay = NativeDomainStore.open(bridge_source_path)
     bridge_source_replay.initialize()
-    var source_replay_rows = bridge_source_replay.list_outbox_records("bridge-source")
+    var source_replay_rows = list_outbox_records(bridge_source_replay, "bridge-source")
     _check(len(source_replay_rows) == 1 and source_replay_rows[0].attempts == 1, "source replay does not duplicate rows")
     bridge_source_replay.close()
     var bridge_target_replay = NativeDomainStore.open(bridge_target_path)
     bridge_target_replay.initialize()
-    var target_replay_rows = bridge_target_replay.list_inbox_records("bridge-target")
+    var target_replay_rows = list_inbox_records(bridge_target_replay, "bridge-target")
     var target_replay_impulses = bridge_target_replay.list_impulses("bridge-target")
     _check(len(target_replay_rows) == 1 and len(target_replay_impulses) == 1, "target replay does not duplicate rows")
     bridge_target_replay.close()

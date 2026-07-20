@@ -38,6 +38,7 @@ domain-maintenance = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_maintenanc
 domain-accept-impulse = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_accept_impulse.mojo"
 migration-smoke = "./tools/mojo_sql_run.sh mojo/smoke/migration.mojo"
 cli-smoke = "./tools/mojo_sql_run.sh mojo/smoke/cli.mojo 1"
+thin-core-layers = "./tools/mojo_sql_run.sh mojo/smoke/thin_core_layers.mojo 1"
 native-cli-semantics = "./tools/mojo_sql_run.sh mojo/smoke/native_cli_semantics.mojo 1"
 correlation-execution = "./tools/mojo_sql_run.sh mojo/smoke/correlation_execution.mojo 1"
 correlation-persistence = "./tools/mojo_sql_run.sh mojo/smoke/correlation_persistence.mojo 1"
@@ -56,7 +57,7 @@ splot-integration = "./tools/mojo_sql_run.sh mojo/smoke/splot_integration.mojo 1
 native-process-host = "./tools/mojo_sql_run.sh mojo/smoke/native_process_host.mojo 1"
 native-subprocess = "./tools/mojo_sql_run.sh mojo/smoke/native_subprocess.mojo 1"
 host-smoke = "pixi run native-process-host && pixi run native-subprocess"
-adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke && pixi run host-smoke"
+adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke && pixi run thin-core-layers && pixi run host-smoke"
 
 # Broader historical suite (fleet/runtime-policy intentionally absent)
 extended-adapter-smoke = "pixi run adapter-smoke && pixi run native-cli-semantics && pixi run correlation-execution && pixi run correlation-persistence && pixi run correlation-runtime && pixi run correlation-advance && pixi run native-driver && pixi run adapter-persistence && pixi run finalization && pixi run runtime-contracts && pixi run package-sdk-contracts && pixi run example-basic-native && pixi run bridge-transport && pixi run splot-domain"

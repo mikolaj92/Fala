@@ -14,6 +14,7 @@ from fala.domain import BridgeDelivery
 from fala.domain_store import NativeDomainStore
 from fala.json import canonical_json_text
 from fala.sqlite import SQLiteError
+from fala.ops_bridge import import_bridge_delivery, deliver_bridge_delivery, get_outbox_delivery, get_inbox_delivery
 
 
 def _json_quote(value: String) -> String:
@@ -165,22 +166,22 @@ def deliver_local_bridge(
             # Initialize both connections before reading the source row.  The
             # target import still commits first; no two-db transaction exists.
             target.initialize()
-            var current = source.get_outbox_delivery(source_run_id, delivery_id)
+            var current = get_outbox_delivery(source, source_run_id, delivery_id)
             var source_replay_payload = _bridge_operation_payload(delivery_id, "delivered", current.attempts if current.status == "delivered" else current.attempts + 1)
             var source_replayed = _exact_bridge_command(source, source_run_id, stable_delivery_key, "bridge.bridge_outbox.delivered", source_replay_payload)
             var target_run_id = current.target.run_id
             var import_attempts = current.attempts + 1
             try:
-                var prior_import = target.get_inbox_delivery(target_run_id, delivery_id)
+                var prior_import = get_inbox_delivery(target, target_run_id, delivery_id)
                 import_attempts = prior_import.attempts
             except err:
                 pass
             var import_replay_payload = _bridge_operation_payload(delivery_id, "imported", import_attempts)
             var imported_replayed = _exact_bridge_command(target, target_run_id, stable_import_key, "bridge.inbox.import", import_replay_payload)
-            var imported = target.import_bridge_delivery(current, stable_import_key)
+            var imported = import_bridge_delivery(target, current, stable_import_key)
             # Target import precedes source delivery: a source failure leaves a
             # durable inbox row that the next attempt can safely replay.
-            var delivered = source.deliver_bridge_delivery(
+            var delivered = deliver_bridge_delivery(source, 
                 "bridge_outbox",
                 source_run_id,
                 delivery_id,

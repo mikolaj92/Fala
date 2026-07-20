@@ -59,11 +59,18 @@ Ontology: [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md).
 | **Core** | Schedule processes, wire stdin/stdout-style effector I/O, advance correlation paths, enforce transition policy | SQL schemas, file locks, Datadog, S3 |
 | **Journal** | Accept atomic batches, assign sequences, claim under one lock | Effector business logic |
 | **Sink** | Materialize history (maps, tables, JSONL lines) | Correlation-path topology |
+| **Ops (optional)** | Retention, reaction GC, bridge outbox/inbox, heavy projection rebuild | Required for happy-path composition |
 
 Hard-wiring SQLite into the core coupled *supervision* with *storage*. That
 broke recursion (parent and child fighting one `.db`) and forced every
 deployment into one składowanie model. The Journal Protocol is the Unix
 fix: the engine emits facts; a sink listens.
+
+**Essential Fala** is organ + JournalPort + driver/host + local adapters +
+minimal run-to-idle/inspect CLI. Retention, maintain, reaction GC, bridge, and
+projection rebuild live in `ops_*` modules — see
+[`FALA_ARCHITECTURE_STATUS.md`](FALA_ARCHITECTURE_STATUS.md) and
+[`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md).
 
 ### Streams, not shared mutable files
 

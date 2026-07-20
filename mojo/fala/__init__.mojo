@@ -102,7 +102,19 @@ from .native_driver import (
 )
 from .correlation_advance import CorrelationAdvanceError, CorrelationAdvanceResult, CorrelationReactionMarker, advance_correlation, validate_correlation_advance_plan
 from .correlation_runtime import CorrelationRuntimeResult, run_correlation_path
-from .domain_store import NativeDomainStore, ImpulseAcceptanceResult, HomeostatTransitionResult, ProjectionRebuildResult
+from .domain_store import NativeDomainStore, ImpulseAcceptanceResult, HomeostatTransitionResult
+# Ops layers (optional — not Essential Fala merge-gate):
+from .ops_maintenance import (
+    RunDeleteCounts, RunRetentionPlan, ReactionGarbageCollectionPlan, JournalMaintenancePlan,
+    delete_run, run_retention, maintain_journal, collect_reaction_garbage,
+)
+from .ops_bridge import (
+    BridgeEnqueueResult, enqueue_bridge_delivery, import_bridge_delivery, import_inbox_delivery,
+    deliver_bridge_delivery, claim_bridge_delivery, transition_bridge_delivery,
+)
+from .ops_projections import (
+    ProjectionRebuildResult, rebuild_projection, rebuild_projections, rebuild_projections_with_command,
+)
 from .reaction_effects import (
     ReactionEffectResult, LocalReactionEffectResult,
     accumulate_reaction_effects, persist_reaction_effects,

@@ -39,7 +39,12 @@ These are merge-gate for any native land that claims “Fala works.”
 | **Host** | spawn and supervise **local** effectors: argv, cwd, env, timeout, stdin/out files |
 | **Adapter kinds (local)** | `native_function`, `subprocess`, `manual_homeostat` |
 | **Reaction store** | bytes outside the journal; metadata/refs inside |
-| **CLI** | operator surface for one journal (`--journal` / `--db`) |
+| **CLI (core)** | run/inspect one journal (`--journal` / `--db`) — not retention/bridge/rebuild |
+
+**Not** Essential Fala (optional ops): journal retention / maintain, reaction GC,
+bridge outbox/inbox, heavy projection rebuild (`ops_maintenance`, `ops_bridge`,
+`ops_projections`). Multi-Fala default remains **separate journals** + subprocess
+handoff; bridge is an optional envelope aid.
 
 ### Process host is core product
 
