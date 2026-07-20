@@ -27,7 +27,8 @@ The default runtime path is serverless and local:
   server is required to run a local correlation path.
 
 **Philosophy:** [`docs/UNIX_AND_CYBERNETICS.md`](docs/UNIX_AND_CYBERNETICS.md)  
-**Architecture:** [`docs/EVENT_STREAM_CORE.md`](docs/EVENT_STREAM_CORE.md) · [`docs/CYBERNETIC_MAPPING.md`](docs/CYBERNETIC_MAPPING.md)
+**Architecture:** [`docs/EVENT_STREAM_CORE.md`](docs/EVENT_STREAM_CORE.md) · [`docs/CYBERNETIC_MAPPING.md`](docs/CYBERNETIC_MAPPING.md)  
+**Mojo port (0.2.2 event-stream layering):** [`docs/MOJO_EVENT_STREAM_MIGRATION.md`](docs/MOJO_EVENT_STREAM_MIGRATION.md)
 
 `run_until_idle` drives processes **sequentially** (claim → execute → complete).
 Fala owns journaled process state and leases; it does not orchestrate concurrent
