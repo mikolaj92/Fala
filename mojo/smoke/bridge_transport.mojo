@@ -2,6 +2,7 @@ from std.pathlib import Path
 from fala.bridge_transport import deliver_local_bridge
 from fala.domain import BridgeDelivery, EventRef, Impulse, RuntimeBudget, RuntimeRef, RunRef
 from fala.domain_store import NativeDomainStore
+from fala.ops_bridge import import_bridge_delivery, get_outbox_delivery, put_bridge_delivery
 from fala.json import canonical_json_text
 from std.os import remove
 
@@ -68,7 +69,7 @@ def main() raises:
     source.initialize()
     _seed_run(source, "source-run")
     var first = _delivery("bridge-1", "impulse-1", "1")
-    _ = source.put_bridge_delivery(first)
+    _ = put_bridge_delivery(source, first)
     source.close()
 
     # Initialize target before delivery to prove target schema setup is explicit.
@@ -110,7 +111,7 @@ def main() raises:
         pass
     var source_for_file = NativeDomainStore.open(source_path)
     source_for_file.initialize()
-    var exported = source_for_file.get_outbox_delivery("source-run", "bridge-1")
+    var exported = get_outbox_delivery(source_for_file, "source-run", "bridge-1")
     var envelope = ""
     try:
         envelope = canonical_json_text(exported.to_json())
@@ -142,9 +143,9 @@ def main() raises:
     )
     # Prefer fields from on-disk envelope when present.
     _check(Path(file_path).read_text().find("\"id\"") >= 0, "file envelope written")
-    var imported_file = file_target.import_bridge_delivery(from_file, "bridge.file.import:bridge-1")
+    var imported_file = import_bridge_delivery(file_target, from_file, "bridge.file.import:bridge-1")
     _check(imported_file.status == "imported", "file handoff import status")
-    var replay_file = file_target.import_bridge_delivery(from_file, "bridge.file.import:bridge-1")
+    var replay_file = import_bridge_delivery(file_target, from_file, "bridge.file.import:bridge-1")
     _check(replay_file.attempts == imported_file.attempts, "file handoff import idempotent")
     file_target.close()
     try:

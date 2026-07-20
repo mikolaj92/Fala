@@ -9,7 +9,13 @@ from fala.native_driver import diagnose_waits, diagnose_wait_graph, observe_run_
 from fala.reactions import FileReactionStore, ReactionBlob
 from emberjson import Value, Object, to_string
 from std.pathlib import Path, cwd
-from fala.domain_store import NativeDomainStore, JournalMaintenancePlan, RunDeleteCounts, RunRetentionPlan, RunRetentionItem, ReactionGarbageCollectionPlan
+from fala.domain_store import NativeDomainStore
+from fala.ops_maintenance import (
+    JournalMaintenancePlan, RunDeleteCounts, RunRetentionPlan, RunRetentionItem,
+    ReactionGarbageCollectionPlan, collect_reaction_garbage, maintain_journal,
+)
+from fala.ops_projections import rebuild_projections
+from fala.ops_bridge import import_bridge_delivery, get_outbox_delivery, deliver_bridge_delivery
 from std.os import makedirs, remove
 from std.ffi import CStringSlice, c_int, external_call
 from fala.bridge_transport import deliver_local_bridge
@@ -1505,7 +1511,7 @@ def _gc(command: String) raises SQLiteError -> String:
     if _has_option(command, "--dry-run"): dry_run = True
     var store = NativeDomainStore.open(path)
     store.initialize()
-    var plan = store.collect_reaction_garbage(reaction_root, run_id, dry_run)
+    var plan = collect_reaction_garbage(store, reaction_root, run_id, dry_run)
     store.close()
     return _gc_json(plan)
 def _maintain_journal(command: String) raises SQLiteError -> String:
@@ -1523,7 +1529,7 @@ def _maintain_journal(command: String) raises SQLiteError -> String:
     var reaction_root = _flag(command, "--reaction-root", "")
     var store = NativeDomainStore.open(path)
     store.initialize()
-    var plan = store.maintain_journal(older_than_days, retention_keep_last, vacuum, dry_run, reaction_root)
+    var plan = maintain_journal(store, older_than_days, retention_keep_last, vacuum, dry_run, reaction_root)
     store.close()
     return _maintenance_json(plan)
 
@@ -1537,7 +1543,7 @@ def _projection_rebuild(command: String) raises SQLiteError -> String:
     var updated_at = _flag(command, "--now")
     var store = NativeDomainStore.open(path)
     store.initialize()
-    var rebuilt = store.rebuild_projections(run_id, names, updated_at)
+    var rebuilt = rebuild_projections(store, run_id, names, updated_at)
     store.close()
     var items = "["
     var first = True
@@ -1665,7 +1671,7 @@ def _bridge_export(command: String) raises SQLiteError -> String:
     if not lookup.step():
         lookup.close(); store.close(); return "{\"ok\":false,\"runtime\":\"mojo\",\"error\":{\"type\":\"not_found\",\"message\":\"bridge delivery not found\"}}"
     var run_id = lookup.column_text(0); lookup.close()
-    var row = store.get_outbox_delivery(run_id, delivery_id)
+    var row = get_outbox_delivery(store, run_id, delivery_id)
     var text = ""
     try:
         text = canonical_json_text(row.to_json())
@@ -1688,7 +1694,7 @@ def _bridge_import(command: String) raises SQLiteError -> String:
     except err: raise SQLiteError(code=2, message="invalid_json: malformed BridgeDelivery")
     var key = _flag(command, "--idempotency-key", "bridge.file.import:" + row.id)
     if key == "": raise SQLiteError(code=2, message="argument_error: idempotency key must not be empty")
-    var store = NativeDomainStore.open(db_path.__fspath__()); store.initialize(); var imported = store.import_bridge_delivery(row, key); store.close()
+    var store = NativeDomainStore.open(db_path.__fspath__()); store.initialize(); var imported = import_bridge_delivery(store, row, key); store.close()
     var serialized = ""
     try: serialized = imported.to_json()
     except err: raise SQLiteError(code=1, message="bridge import failed")
@@ -1749,6 +1755,14 @@ def dispatch_native_command(command: String) raises -> String:
     try:
         var first = _word(command, 0)
         var second = _word(command, 1)
+        # Progressive disclosure: `ops <cmd>...` is an alias for operator tools.
+        if first == "ops" and second != "":
+            var rest = second
+            var idx = 2
+            while idx < _count(command):
+                rest += " " + _word(command, idx)
+                idx += 1
+            return dispatch_native_command(rest)
         if first == "init": _validate(command, "init"); return _init(command)
         if first == "gc":
             _validate(command, "gc")
@@ -1862,7 +1876,45 @@ def dispatch_native_command(command: String) raises -> String:
 
 
 def cli_surface_help() -> String:
-    return "schema impulse\nschema model\nschema fala-package\ndb init\ndb migrate\ndb status\ndb schema\ndb vacuum\ndoctor\ncreate-run\nruns list\nruns inspect\nruns observe\nruns start\nruns wait\nruns complete\nruns fail\nruns request-cancel\nruns cancel\nruns timeout\nmaintain-journal\ncommands list\ncommands inspect\nevents list\nevents validate-schema\nprocesses list\nprocesses inspect\nimpulses list\nimpulses inspect\nimpulse-types list\nimpulse-types inspect\nimpulse-relations list\nimpulse-relations inspect\nrelations list\nrelations inspect\nassociations list\nassociations inspect\nreactions list\nreactions inspect\nhomeostats list\nhomeostats open\nhomeostats reopen\nhomeostats complete\nhomeostats cancel\nhomeostats expire\nhomeostat open (alias)\nhomeostat complete (alias)\nhomeostat cancel (alias)\nhomeostat expire (alias)\nprojections list\nprojections rebuild\nbridge list\nbridge export (native boundary)\nbridge import (native boundary)\ntrace\ndiagnose-waits\ninit (native boundary)\ngc (native boundary)\narchive-run (native boundary)\narchive-gc (native boundary)\nrun-until-idle (native boundary)\nreplay-execution (native boundary)\nexport (native boundary)"
+    # Happy-path (Essential Fala): one journal, run lifecycle, inspect.
+    # Ops (progressive disclosure): maintain-journal, gc, projections rebuild, bridge *.
+    var text = "# core — package/run/inspect one journal\n"
+    text += "schema impulse\nschema model\nschema fala-package\n"
+    text += "db init\ndb migrate\ndb status\ndb schema\ndoctor\n"
+    text += "create-run\n"
+    text += "runs list\nruns inspect\nruns observe\n"
+    text += "runs start\nruns wait\nruns complete\nruns fail\n"
+    text += "runs request-cancel\nruns cancel\nruns timeout\n"
+    text += "commands list\ncommands inspect\n"
+    text += "events list\nevents validate-schema\n"
+    text += "processes list\nprocesses inspect\n"
+    text += "impulses list\nimpulses inspect\n"
+    text += "impulse-types list\nimpulse-types inspect\n"
+    text += "impulse-relations list\nimpulse-relations inspect\n"
+    text += "relations list\nrelations inspect\n"
+    text += "associations list\nassociations inspect\n"
+    text += "reactions list\nreactions inspect\n"
+    text += "homeostats list\nhomeostats open\nhomeostats reopen\n"
+    text += "homeostats complete\nhomeostats cancel\nhomeostats expire\n"
+    text += "homeostat open (alias)\nhomeostat complete (alias)\n"
+    text += "homeostat cancel (alias)\nhomeostat expire (alias)\n"
+    text += "projections list\n"
+    text += "trace\ndiagnose-waits\n"
+    text += "# ops — optional operator tools (not required to compose a flow)\n"
+    text += "ops maintain-journal (alias: maintain-journal)\n"
+    text += "ops gc (alias: gc)\n"
+    text += "ops projections rebuild (alias: projections rebuild)\n"
+    text += "ops bridge list (alias: bridge list)\n"
+    text += "ops bridge deliver (alias: bridge deliver)\n"
+    text += "ops bridge export (alias: bridge export)\n"
+    text += "ops bridge import (alias: bridge import)\n"
+    text += "db vacuum\n"
+    text += "init (native boundary)\n"
+    text += "archive-run (native boundary)\narchive-gc (native boundary)\n"
+    text += "run-until-idle (native boundary)\nreplay-execution (native boundary)\n"
+    text += "export (native boundary)"
+    return text
+
 def dispatch_command(command: String) raises -> String:
     return dispatch_native_command(command)
 

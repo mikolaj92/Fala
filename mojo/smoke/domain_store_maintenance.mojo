@@ -1,4 +1,8 @@
 from fala.domain_store import NativeDomainStore
+from fala.ops_maintenance import (
+    delete_run, run_retention, maintain_journal, collect_reaction_garbage,
+)
+from fala.ops_projections import rebuild_projection, rebuild_projections_with_command
 from fala.domain import Impulse, ImpulseType, ImpulseRelation, Association, Reaction, Homeostat, Projection
 from fala.journal import EventInput
 from fala.reactions import FileReactionStore
@@ -117,28 +121,28 @@ def main() raises:
     var nullable_homeostats = store.list_homeostats("run-keep")
     _check(nullable_homeostats[0].find("\"impulse_id\":null") >= 0, "JSON nullable homeostat")
     _check(nullable_homeostats[0].find("\"attempt\":1") >= 0 and nullable_homeostats[0].find("\"max_attempts\":3") >= 0, "JSON homeostat attempts")
-    var retention = store.run_retention(
+    var retention = run_retention(store, 
         "2026-01-02T00:00:00Z", dry_run=True, keep_run_ids=List[String]()
     )
     _check(retention.candidate_count == 3, "retention candidate count")
     _check(retention.deleted_run_count == 0 and not retention.runs[0].deleted, "retention dry run")
-    var offset_retention = store.run_retention(
+    var offset_retention = run_retention(store, 
         "2025-12-31T23:30:00Z", dry_run=True, keep_run_ids=List[String]()
     )
     _check(offset_retention.candidate_count == 1 and offset_retention.runs[0].run_id == "run-offset", "offset timestamp retention")
-    var applied = store.run_retention(
+    var applied = run_retention(store, 
         "2025-12-31T23:30:00Z", dry_run=False, keep_run_ids=List[String]()
     )
     _check(applied.deleted_run_count == 1 and applied.runs[0].deleted, "retention deletion")
-    var maintenance = store.maintain_journal(older_than_days=1.0, vacuum=True, dry_run=True)
-    var first_projection = store.rebuild_projection("run-keep", "run_summary", "2026-01-02T00:00:00Z")
+    var maintenance = maintain_journal(store, older_than_days=1.0, vacuum=True, dry_run=True)
+    var first_projection = rebuild_projection(store, "run-keep", "run_summary", "2026-01-02T00:00:00Z")
     _check(first_projection.name == "run_summary", "run_summary projection name")
     _check(first_projection.data.find("\"impulse_count\":1") >= 0, "run_summary accounting")
     var event_stmt = store.db.query("INSERT INTO runtime_events (run_id,sequence,id,event_type,payload,created_at) VALUES (?,?,?,?,?,?)")
     event_stmt.bind_text(1, "run-keep"); event_stmt.bind_int(2, 1); event_stmt.bind_text(3, "event-maintain"); event_stmt.bind_text(4, "maintenance.test"); event_stmt.bind_text(5, "{}"); event_stmt.bind_text(6, "2026-01-02T00:00:01Z"); _ = event_stmt.step()
     var stale_projection = store.get_projection("run-keep", "run_summary")
     _check(stale_projection.stale, "projection staleness")
-    var rebuilt_projection = store.rebuild_projection("run-keep", "run_summary", "2026-01-02T00:00:02Z")
+    var rebuilt_projection = rebuild_projection(store, "run-keep", "run_summary", "2026-01-02T00:00:02Z")
     _check(not rebuilt_projection.stale and rebuilt_projection.source_event_sequence == 1, "projection rebuild watermark")
     _check(maintenance.dry_run and maintenance.retention.candidate_count == 2, "maintenance retention plan")
     _check(not maintenance.vacuumed, "maintenance dry-run vacuum")
@@ -291,12 +295,12 @@ def main() raises:
     _check(not projection_saved.replayed and store.get_projection("run-keep", "wrapper").name == "wrapper", "projection atomic save")
     var projection_replay = store.save_projection(projection_wrapper, "cmd-projection-save-2", "projection.save", "key-projection-save", "2026-01-01T00:00:20Z", replay_events)
     _check(projection_replay.replayed, "projection idempotent save")
-    var rebuild = store.rebuild_projections_with_command("run-keep", List[String](), "cmd-projection-rebuild", "projection.rebuild", "key-projection-rebuild", "2026-01-01T00:00:21Z", "2026-01-01T00:00:21Z", replay_events)
+    var rebuild = rebuild_projections_with_command(store, "run-keep", List[String](), "cmd-projection-rebuild", "projection.rebuild", "key-projection-rebuild", "2026-01-01T00:00:21Z", "2026-01-01T00:00:21Z", replay_events)
     _check(not rebuild.submission.replayed and len(rebuild.projections) == 1 and rebuild.projections[0].name == "run_summary", "projection atomic rebuild")
-    var rebuild_replay = store.rebuild_projections_with_command("run-keep", List[String](), "cmd-projection-rebuild-2", "projection.rebuild", "key-projection-rebuild", "2026-01-01T00:00:21Z", "2026-01-01T00:00:21Z", replay_events)
+    var rebuild_replay = rebuild_projections_with_command(store, "run-keep", List[String](), "cmd-projection-rebuild-2", "projection.rebuild", "key-projection-rebuild", "2026-01-01T00:00:21Z", "2026-01-01T00:00:21Z", replay_events)
     _check(rebuild_replay.submission.replayed and len(rebuild_replay.projections) == 1, "projection rebuild replay")
 
-    var deleted = store.delete_run("run-maintain")
+    var deleted = delete_run(store, "run-maintain")
     _check(deleted.runs == 1 and deleted.impulses == 1 and deleted.associations == 1, "row counts")
     var deleted_run_rejected = False
     try:
@@ -316,7 +320,7 @@ def main() raises:
     ))
     var persisted_reactions = store.list_reaction_records("run-keep", "", "text", -1)
     _check(len(persisted_reactions) >= 1, "reaction persistence rows available")
-    var gc_dry = store.maintain_journal(
+    var gc_dry = maintain_journal(store, 
         older_than_days=1.0, keep_last=1, vacuum=False, dry_run=True,
         reaction_root=reaction_root,
     )
@@ -325,7 +329,7 @@ def main() raises:
     _check(gc_dry.reaction_gc.bytes_reclaimed == 0, "maintenance GC dry-run reclaimed bytes")
     _check(gc_dry.reaction_gc.candidate_count == 1 and gc_dry.reaction_gc.kept_count == 1 and gc_dry.reaction_gc.candidates[0] == orphan_blob.digest, "maintenance GC candidates and counters")
     _check(reaction_store.resolve(orphan_blob.uri) != "", "dry-run preserves orphan")
-    var gc_plan = store.maintain_journal(
+    var gc_plan = maintain_journal(store, 
         older_than_days=1.0, keep_last=1, vacuum=False, dry_run=False,
         reaction_root=reaction_root,
     )
@@ -340,12 +344,12 @@ def main() raises:
     _check(reaction_store.resolve(referenced_blob.uri) != "", "referenced reaction preserved")
     var missing_run_rejected = False
     try:
-        _ = store.collect_reaction_garbage(reaction_root, "missing-run", True)
+        _ = collect_reaction_garbage(store, reaction_root, "missing-run", True)
     except err:
         missing_run_rejected = True
     _check(missing_run_rejected, "reaction GC validates run")
     _seed_run(store, "run-vacuum", "2000-01-01T00:00:00Z")
-    var applied_maintenance = store.maintain_journal(
+    var applied_maintenance = maintain_journal(store, 
         older_than_days=1.0, keep_last=1, vacuum=True, dry_run=False
     )
     _check(not applied_maintenance.dry_run, "maintenance apply mode")
@@ -353,13 +357,13 @@ def main() raises:
     _check(applied_maintenance.vacuumed, "maintenance vacuum")
     var vacuum_missing = False
     try:
-        _ = store.delete_run("run-vacuum")
+        _ = delete_run(store, "run-vacuum")
     except err:
         vacuum_missing = True
     _check(vacuum_missing, "maintenance deleted run")
     var rejected = False
     try:
-        _ = store.delete_run("missing-run")
+        _ = delete_run(store, "missing-run")
     except err:
         rejected = True
     _check(rejected, "unknown run rejected")

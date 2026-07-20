@@ -1,4 +1,11 @@
-"""Small native SQLite persistence surface for domain records."""
+"""Native SQLite domain records for Essential Fala + co-located sink helpers.
+
+Core path: accept_impulse, record_*, put/get/list domain rows, homeostat/save_projection.
+Operator ops (retention, GC, bridge, projection rebuild) are also methods here for
+storage access, but the **canonical import surface** for those APIs is:
+`ops_maintenance`, `ops_bridge`, `ops_projections` — not required for
+package → impulse → run_until_idle → JournalPort.
+"""
 
 from std.collections import List
 from std.pathlib import Path
