@@ -80,13 +80,17 @@ Splot arbitration cases and reviews are modeled in `fala.domain_packs.splot`; se
 - ReactionStore: the content store for reaction bytes. `FileReactionStore` is
   the local content-addressed default; SQLite keeps references and metadata.
 
-## SQLite-Only Core
+## Event-first core, SQLite reference sink
 
-Fala core ships the SQLite runtime backend. Non-SQLite storage or transport
-backends are external plugin work. The default Impulse-first path must run with
-only Python and SQLite.
-Use `fala db init --db .fala/state.sqlite`, `fala db migrate --db ...`, and
-`fala db status --db ...` for local schema setup and inspection.
+Fala core is **event-first**: execution and supervision emit command/event
+batches through a Journal port. SQLite is the bundled **reference sink**
+(`SqliteJournal` → `Correlator`). In-memory journals are first-class for tests.
+See [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md).
+
+The default Impulse-first path still runs with only Python and SQLite.
+Use `fala db init --journal .fala/state.sqlite` (or `--db` alias),
+`fala db migrate --journal ...`, and `fala db status --journal ...` for local
+schema setup and inspection.
 
 ## Impulse Package Schema
 

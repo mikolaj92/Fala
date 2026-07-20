@@ -160,7 +160,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init = subparsers.add_parser("init", help="Initialize a local Impulse runtime workspace.")
-    init.add_argument("--db", default=".fala/state.sqlite", help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(init, required=False, default=".fala/state.sqlite")
     init.add_argument("--reaction-root", default=".fala/reactions", help="Filesystem reaction store root.")
 
     schema = subparsers.add_parser("schema", help="Emit JSON Schema for an Impulse runtime contract.")
@@ -182,14 +182,14 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_runtime_db_arg(db_vacuum)
 
     gc = subparsers.add_parser("gc", help="Garbage-collect unreferenced filesystem reaction blobs.")
-    gc.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(gc)
     gc.add_argument("--reaction-root", default=".fala/reactions", help="Filesystem reaction store root.")
     gc.add_argument("--run-id", default=None)
     gc.add_argument("--older-than", default=None, help="Only collect blobs older than duration like 30d, 12h, 20m.")
     gc.add_argument("--dry-run", action="store_true")
 
     maintain_journal = subparsers.add_parser("maintain-journal", help="Run retention, reaction GC, and optional VACUUM in one operation.")
-    maintain_journal.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(maintain_journal)
     maintain_journal.add_argument("--reaction-root", default=".fala/reactions", help="Filesystem reaction store root.")
     maintain_journal.add_argument("--older-than-days", type=float, required=True)
     maintain_journal.add_argument("--keep-last", type=int, default=None)
@@ -198,7 +198,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     archive_run = subparsers.add_parser("archive-run", help="Write a portable run archive bundle.")
     archive_run.add_argument("run_id")
-    archive_run.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(archive_run)
     archive_run.add_argument("--out", required=True, help="Output .zip path.")
     archive_run.add_argument("--retention-days", type=int, default=None, help="Record archive retention period in archive metadata.")
 
@@ -207,7 +207,7 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_gc.add_argument("--dry-run", action="store_true")
 
     doctor = subparsers.add_parser("doctor", help="Check Impulse runtime readiness.")
-    doctor.add_argument("--db", default=".fala/state.sqlite", help="Impulse runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(doctor, required=False, default=".fala/state.sqlite")
     doctor.add_argument("--ensure-schema", action="store_true", help="Create/repair Impulse runtime schema before checking.")
     doctor.add_argument("--package", dest="packages", action="append", default=[], help="Fala package YAML path to validate. Repeatable.")
     doctor.add_argument("--output", default=None, help="Write JSON doctor report to this path instead of stdout envelope.")
@@ -481,7 +481,7 @@ def _build_parser() -> argparse.ArgumentParser:
     bridge_import.add_argument("--idempotency-key", default=None)
 
     run_until_idle = subparsers.add_parser("run-until-idle", help="Run ready Impulse processes until idle.")
-    run_until_idle.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(run_until_idle)
     run_until_idle.add_argument("--run-id", default=None)
     run_until_idle.add_argument("--all-runs", action="store_true")
     run_until_idle.add_argument("--worker-id", default="cli:run-until-idle")
@@ -490,7 +490,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_until_idle.add_argument("--work-dir", default=None)
 
     replay_execution = subparsers.add_parser("replay-execution", help="Replay or verify a recorded Impulse process execution.")
-    replay_execution.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(replay_execution)
     replay_execution.add_argument("--run-id", required=True)
     replay_execution.add_argument("--process-id", required=True)
     replay_execution.add_argument("--rerun", action="store_true", help="Rerun only if process metadata marks it deterministic.")
@@ -502,21 +502,21 @@ def _build_parser() -> argparse.ArgumentParser:
     replay_execution.add_argument("--work-dir", default=None)
 
     diagnose_waits = subparsers.add_parser("diagnose-waits", help="Diagnose Impulse waits and wait-graph deadlocks.")
-    diagnose_waits.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(diagnose_waits)
     diagnose_waits.add_argument("--run-id", required=True)
     diagnose_waits.add_argument("--impulse-id", default=None)
 
     trace = subparsers.add_parser("trace", help="Show Impulse runtime trace for one run.")
-    trace.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(trace)
     trace.add_argument("--run-id", required=True)
 
     export_html = subparsers.add_parser("export-html", help="Export a static Impulse runtime HTML report.")
-    export_html.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(export_html)
     export_html.add_argument("--run-id", required=True)
     export_html.add_argument("--out", required=True, help="Output HTML path.")
 
     export_bundle = subparsers.add_parser("export-bundle", help="Export a portable Impulse runtime debug bundle.")
-    export_bundle.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+    _add_runtime_db_arg(export_bundle)
     export_bundle.add_argument("--run-id", required=True)
     export_bundle.add_argument("--out", required=True, help="Output .zip path.")
 
@@ -524,7 +524,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
     if args.command == "init":
-        db_path = Path(_runtime_db_path(args.db))
+        db_path = Path(_cli_db_path(args))
         reaction_root = Path(args.reaction_root).expanduser()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         reaction_root.mkdir(parents=True, exist_ok=True)
@@ -545,7 +545,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         }
 
     if args.command == "db":
-        db_path = _runtime_db_path(args.db)
+        db_path = _cli_db_path(args)
         if args.db_command in {"init", "migrate"}:
             Correlator(db_path)
             return {
@@ -557,7 +557,8 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
             return _runtime_vacuum(db_path)
         return _runtime_doctor(
             argparse.Namespace(
-                db=args.db,
+                db=getattr(args, "db", None),
+                journal=getattr(args, "journal", None) or getattr(args, "db", None),
                 ensure_schema=args.ensure_schema,
                 packages=[],
                 output=None,
@@ -621,7 +622,7 @@ _RUNTIME_REQUIRED_TABLES = (
 async def _runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
     if args.command == "diagnose-waits":
         service = RuntimeBackendService(
-            Correlator(_runtime_db_path(args.db))
+            Correlator(_cli_db_path(args))
         )
         diagnostic = await service.diagnose_waits(
             run_id=args.run_id,
@@ -650,7 +651,7 @@ async def _runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
     if args.command == "replay-execution":
         return await _runtime_replay_execution(args)
 
-    backend = Correlator(_runtime_db_path(args.db))
+    backend = Correlator(_cli_db_path(args))
     if args.command == "create-run":
         run_data = {
             "title": args.title,
@@ -1280,7 +1281,7 @@ async def _runtime_run_until_idle(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--max-ticks must be greater than zero")
     if args.lease_seconds <= 0:
         raise ValueError("--lease-seconds must be greater than zero")
-    backend = Correlator(_runtime_db_path(args.db))
+    backend = Correlator(_cli_db_path(args))
     service = RuntimeBackendService(backend)
     result = await run_until_idle(
         service,
@@ -1302,7 +1303,7 @@ async def _runtime_run_until_idle(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _runtime_replay_execution(args: argparse.Namespace) -> dict[str, Any]:
-    backend = Correlator(_runtime_db_path(args.db))
+    backend = Correlator(_cli_db_path(args))
     process = await backend.get_process(
         run_id=args.run_id,
         process_id=args.process_id,
@@ -1436,7 +1437,7 @@ def _structural_diff(
 
 
 async def _runtime_gc(args: argparse.Namespace) -> dict[str, Any]:
-    backend = Correlator(_runtime_db_path(args.db))
+    backend = Correlator(_cli_db_path(args))
     store = FileReactionStore(args.reaction_root)
     cutoff = (
         time.time() - _parse_duration_seconds(args.older_than)
@@ -1498,7 +1499,7 @@ def _parse_duration_seconds(value: str) -> float:
 
 
 def _runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
-    db_path = Path(_runtime_db_path(args.db))
+    db_path = Path(_cli_db_path(args))
     packages = _runtime_package_reports(getattr(args, "packages", []))
     packages_ok = all(package["ok"] for package in packages)
     if args.ensure_schema:
@@ -1672,8 +1673,40 @@ def _write_runtime_doctor_report(
     }
 
 
-def _add_runtime_db_arg(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--db", required=True, help="Runtime SQLite DB path or sqlite:// URL.")
+def _add_runtime_db_arg(
+    parser: argparse.ArgumentParser,
+    *,
+    required: bool = True,
+    default: str | None = None,
+) -> None:
+    """Add ``--journal`` / ``--journal-path`` with ``--db`` as SQLite alias."""
+    parser.add_argument(
+        "--journal",
+        "--journal-path",
+        dest="journal",
+        default=None,
+        help="Journal path (SQLite file or sqlite:// URL). Preferred over --db.",
+    )
+    parser.add_argument(
+        "--db",
+        dest="db",
+        required=False,
+        default=default,
+        help="Alias for --journal (SQLite reference sink path or sqlite:// URL).",
+    )
+    if required and default is None:
+        # Enforce at resolve time so either flag satisfies the requirement.
+        parser.set_defaults(_journal_required=True)
+
+
+def _cli_db_path(args: argparse.Namespace) -> str:
+    """Resolve SQLite journal path from --journal or --db."""
+    raw = getattr(args, "journal", None) or getattr(args, "db", None)
+    if raw is None or raw == "":
+        if getattr(args, "_journal_required", False):
+            raise SystemExit("error: one of --journal / --journal-path / --db is required")
+        raise SystemExit("error: journal path not provided")
+    return _runtime_db_path(str(raw))
 
 
 def _add_runtime_db_run_args(parser: argparse.ArgumentParser) -> None:
@@ -1705,7 +1738,7 @@ def _runtime_vacuum(db_path: str) -> dict[str, Any]:
 
 
 async def _runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
-    backend = Correlator(_runtime_db_path(args.db))
+    backend = Correlator(_cli_db_path(args))
     run = await backend.get_run(run_id=args.run_id)
     events = await backend.list_events(run_id=args.run_id)
     impulses = await backend.list_impulses(run_id=args.run_id)
@@ -1758,7 +1791,7 @@ async def _runtime_trace(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _runtime_maintain_journal(args: argparse.Namespace) -> dict[str, Any]:
-    service = RuntimeBackendService(Correlator(_runtime_db_path(args.db)))
+    service = RuntimeBackendService(Correlator(_cli_db_path(args)))
     reaction_store = _runtime_reaction_store_from_root(Path(args.reaction_root))
     plan = await service.maintain_journal(
         older_than_days=args.older_than_days,
@@ -1821,7 +1854,11 @@ async def _runtime_export_bundle(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _runtime_archive_run(args: argparse.Namespace) -> dict[str, Any]:
-    trace_args = argparse.Namespace(db=args.db, run_id=args.run_id)
+    trace_args = argparse.Namespace(
+        db=getattr(args, "db", None),
+        journal=getattr(args, "journal", None),
+        run_id=args.run_id,
+    )
     result = await _runtime_trace(trace_args)
     trace = result["trace"]
     if trace["run"] is None:
