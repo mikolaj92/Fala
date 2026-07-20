@@ -15,7 +15,7 @@ This tree is a fresh 0.2.2-aligned bootstrap:
 
 - lifted pure modules from the historical `mojo` branch where useful
 - new `journal_port` + `memory_journal` (no `sqlite.fire`)
-- Python package under `src/fala` remains the 0.2.2 reference/oracle
+- Exclusive Mojo product; CPython engine removed
 
 See `docs/MOJO_EVENT_STREAM_MIGRATION.md`.
 

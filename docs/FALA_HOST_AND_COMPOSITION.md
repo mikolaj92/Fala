@@ -2,9 +2,8 @@
 
 **Status:** product decision (2026-07).
 
-**Single engine: Mojo.** There is no dual-runtime product. The historical
-CPython tree is archived at `legacy/python-engine/` (not packaged, not
-maintained). Process host, journal, driver, CLI: **Mojo only**.
+**Single engine: Mojo.** There is no dual-runtime product and no CPython
+engine tree. Process host, journal, driver, CLI: **Mojo only**.
 
 This document also separates **what every Fala is** from **removed** fleet
 machinery that historically lived under the name `fala_runtime`.

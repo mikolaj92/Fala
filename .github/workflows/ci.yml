@@ -16,21 +16,11 @@ jobs:
           test -d mojo/fala
           test -f mojo/fala/journal_port.mojo
           test -f mojo/fala/native_process_host.mojo
-          test -d legacy/python-engine
-          test -f legacy/python-engine/README.md
+          test -f mojo/fala/jsonl_journal.mojo
           test ! -d src/fala
-          # Fleet must not reappear as product adapter kind in Mojo validation.
+          test ! -d legacy/python-engine
+          # Fleet must not reappear as product adapter kind.
           ! grep -q 'AdapterKind.fala_runtime' mojo/fala/adapters.mojo
-          echo "layout ok: Mojo product, Python under legacy/"
-
-  # Optional: historical CPython oracle (not product gate).
-  legacy-python:
-    runs-on: ubuntu-latest
-    if: false  # enable only when validating oracle; not merge-gate
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v7
-      - name: Run legacy tests
-        working-directory: legacy/python-engine
-        run: |
-          echo "wire local pyproject if re-enabling"
+          ! grep -q 'def put_runtime_pool' mojo/fala/domain_store.mojo
+          ! grep -q 'def select_runtime' mojo/fala/runtime_policy.mojo
+          echo "layout ok: exclusive Mojo product"

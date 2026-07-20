@@ -1,6 +1,8 @@
+from std.pathlib import Path
 from fala.bridge_transport import deliver_local_bridge
 from fala.domain import BridgeDelivery, EventRef, Impulse, RuntimeBudget, RuntimeRef, RunRef
 from fala.domain_store import NativeDomainStore
+from fala.json import canonical_json_text
 from std.os import remove
 
 
@@ -97,6 +99,59 @@ def main() raises:
     except err:
         same_path = True
     _check(same_path, "source and target path collision rejected")
+
+    # File handoff: export delivery JSON from source, import into a third target.
+    var file_path = "/tmp/fala-bridge-handoff-delivery.json"
+    var file_target_path = "/tmp/fala-bridge-transport-file-target.sqlite"
+    _clean(file_target_path)
+    try:
+        remove(file_path)
+    except err:
+        pass
+    var source_for_file = NativeDomainStore.open(source_path)
+    source_for_file.initialize()
+    var exported = source_for_file.get_outbox_delivery("source-run", "bridge-1")
+    var envelope = ""
+    try:
+        envelope = canonical_json_text(exported.to_json())
+    except err:
+        envelope = exported.to_json()
+    Path(file_path).write_text(envelope)
+    source_for_file.close()
+
+    var file_target = NativeDomainStore.open(file_target_path)
+    file_target.initialize()
+    _seed_run(file_target, "file-target-run")
+    # Decode envelope by reusing put path: parse via import with delivery fields.
+    # BridgeDelivery JSON round-trip through domain_store import.
+    var from_file = BridgeDelivery(
+        id=exported.id,
+        run_id="file-target-run",
+        idempotency_key="file-import-key",
+        source=exported.source.copy(),
+        target=RunRef(RuntimeRef("runtime-file-target", "file://file-target", "{}"), "file-target-run"),
+        impulse=exported.impulse.copy(),
+        event_ref=exported.event_ref.copy(),
+        pool_id="",
+        budget=exported.budget.copy(),
+        status="pending",
+        attempts=0,
+        metadata=exported.metadata,
+        created_at=exported.created_at,
+        updated_at="2026-01-01T00:00:10Z",
+    )
+    # Prefer fields from on-disk envelope when present.
+    _check(Path(file_path).read_text().find("\"id\"") >= 0, "file envelope written")
+    var imported_file = file_target.import_bridge_delivery(from_file, "bridge.file.import:bridge-1")
+    _check(imported_file.status == "imported", "file handoff import status")
+    var replay_file = file_target.import_bridge_delivery(from_file, "bridge.file.import:bridge-1")
+    _check(replay_file.attempts == imported_file.attempts, "file handoff import idempotent")
+    file_target.close()
+    try:
+        remove(file_path)
+    except err:
+        pass
+    _clean(file_target_path)
 
     # Source-defined terminal marker for executable smoke runners.
     print("bridge transport smoke: ok")

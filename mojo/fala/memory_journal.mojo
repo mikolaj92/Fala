@@ -318,3 +318,43 @@ struct InMemoryJournal(Movable):
                 continue
             out.append(batch^)
         return out^
+
+    def import_stored_batch(mut self, batch: JournalBatch) raises:
+        """Rebuild index from a durable accepted batch (Jsonl reopen path).
+
+        Commands and events are restored as stored (sequences already assigned).
+        Does not re-run append_batch assignment logic.
+        """
+        if len(batch.units) < 1:
+            raise Error("import_stored_batch requires non-empty units")
+        var stored = batch.copy()
+        if stored.journal_seq <= 0:
+            self.journal_seq += 1
+            stored.journal_seq = self.journal_seq
+        elif stored.journal_seq > self.journal_seq:
+            self.journal_seq = stored.journal_seq
+        if stored.stream_id == "":
+            stored.stream_id = self.runtime_uri()
+        for unit_index in range(len(stored.units)):
+            var unit = stored.units[unit_index].copy()
+            var cmd = unit.command.copy()
+            var ckey = self._cmd_key(cmd.run_id, cmd.idempotency_key)
+            self.commands[ckey] = cmd.copy()
+            var bucket = List[EventRecord]()
+            if cmd.run_id in self.events_by_run:
+                bucket = self.events_by_run[cmd.run_id].copy()
+            var max_seq = 0
+            if cmd.run_id in self.event_seq_by_run:
+                max_seq = self.event_seq_by_run[cmd.run_id]
+            for ei in range(len(unit.events)):
+                var event = unit.events[ei].copy()
+                if event.run_id == "":
+                    event.run_id = cmd.run_id
+                if event.command_id == "":
+                    event.command_id = cmd.id
+                if event.sequence > max_seq:
+                    max_seq = event.sequence
+                bucket.append(event^)
+            self.events_by_run[cmd.run_id] = bucket^
+            self.event_seq_by_run[cmd.run_id] = max_seq
+        self.batches.append(stored^)

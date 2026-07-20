@@ -1,7 +1,7 @@
 [project]
 name = "fala"
 version = "0.2.2"
-description = "Event-first correlator — product engine is Mojo (mojo/fala). CPython archived under legacy/python-engine/."
+description = "Event-first correlator — product engine is Mojo only (mojo/fala)."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

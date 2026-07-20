@@ -2,11 +2,9 @@
 
 **Audience:** native Mojo is the **only** Fala engine.
 
-**Product decision:** do **not** keep a permanent dual engine (CPython + Mojo).
-CPython `src/fala` may remain briefly as a reference snapshot / oracle during
-land; it is **not** product identity and is not a second process host to
-maintain. After Mojo land, Python runtime is disposable (archive or delete) —
-effectors may still be external `python` **children** via OS process host.
+**Product decision:** exclusive **Mojo** engine. CPython runtime was **deleted**
+from the tree (not dual-engine). Effectors may still be external `python`
+**children** via the native process host (`kind: subprocess`).
 
 **Strategic order:**
 
@@ -67,29 +65,28 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 11. SqliteJournalPort + NativeJournal/schema lift — **done**
 11b. SqliteJournalPort leading-unit `append_batch` + `claim_next` — **done** (`sqlite-journal-port` smoke)
 12. SQLite create/schedule/claim/complete + migration matrix — **done**
-13. JsonlJournal + torn-line smoke — **done**
+13. JsonlJournal + torn-line + **full reopen rehydrate** — **done**
 14. TeeJournal — **done**
 15. CLI operator path on SQLite — **done**
-16. Historical breadth: domain_store, migration, correlation exec/persist/runtime/advance, native_driver, adapter persistence, finalization, runtime contracts/policy, package SDK — **done** (`extended-smoke`)
-17. native_cli_semantics / example_basic_native / bridge_transport — **done** (wired into `extended-smoke`)
-18. **Process host + subprocess** (children of Fala) — **done** (`host-smoke` in `adapter-smoke` / `full-smoke`)
-19. Bridge file export/import helpers for nested CLI children — nice (local deliver exists)
-20. RuntimePool / `fala_runtime` fleet — **removed** (smoke deleted; dead helpers may remain in domain_store)
-21. CPython engine — **archived** under `legacy/python-engine/` (not product)
-22. Domain packs / optional demos — under `examples/optional/` (not core)
+16. Historical breadth: domain_store, migration, correlation, native_driver, … — **done** (`extended-smoke`)
+17. native_cli_semantics / example_basic_native / bridge_transport — **done**
+18. **Process host + subprocess** — **done** (`host-smoke` in full-smoke)
+19. Bridge two-path deliver + **file handoff** in bridge smoke — **done**
+20. RuntimePool / fleet APIs — **removed** from domain_store + runtime_policy product path
+21. CPython engine — **deleted** (exclusive Mojo)
+22. Domain packs / optional demos — `examples/optional/` (not core)
 
-**Merge when:** items 1–18 green (organ + sinks + **local process host**).  
+**Merge when:** full + extended smoke green (exclusive Mojo).  
 
-**Proof today:**
-- `pixi run full-smoke` — includes host-smoke  
-- `pixi run extended-smoke` — full breadth without fleet
+**Proof:**
+- `pixi run full-smoke`
+- `pixi run extended-smoke`
 
 Companion docs:
 
-- Python design: [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md)
+- Event stream design: [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md)
 - Philosophy: [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md)
-- Mojo inventory (branch `mojo`): `docs/FULL_MOJO_PORT_PLAN.md`,
-  `docs/NATIVE_PARITY_MATRIX.md`
+- Host boundary: [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md)
 
 ---
 

@@ -5,7 +5,6 @@ from std.pathlib import Path
 from emberjson import Value, Object, to_string
 from fala.sqlite import Connection, Statement, SQLiteError
 from fala.schema import initialize_native_schema
-from fala.runtime_policy import parse_runtime_budget_json, validate_runtime_pool, validate_delegation_policy, select_runtime, RuntimeSelection
 from fala.json import canonical_json_text
 from fala.reactions import FileReactionStore, reaction_digest_or_empty
 
@@ -20,8 +19,6 @@ from fala.domain import (
     RuntimeRef,
     RunRef,
     EventRef,
-    RuntimePool,
-    DelegationPolicy,
     RuntimeBudget,
     BridgeDelivery,
     bridge_status_transition_allowed,
@@ -1361,155 +1358,6 @@ struct NativeDomainStore(Movable):
                 raise err^
             raise SQLiteError(code=1, message="domain store: inbox import failed")
         return self._get_bridge("bridge_inbox", row.run_id, row.id)
-
-    def put_runtime_pool(mut self, pool: RuntimePool) raises SQLiteError:
-        var validation = validate_runtime_pool(pool)
-        if not validation.is_ok():
-            raise SQLiteError(code=1, message="domain store: invalid runtime pool: " + validation.code + " at " + validation.path + ": " + validation.message)
-        self.db.begin()
-        try:
-            var stmt = self.db.query("INSERT INTO runtime_pools (id,runtimes_json,impulse_types,metadata) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET runtimes_json=excluded.runtimes_json,impulse_types=excluded.impulse_types,metadata=excluded.metadata")
-            stmt.bind_text(1, pool.id); stmt.bind_text(2, pool.runtimes); stmt.bind_text(3, pool.impulse_types); stmt.bind_text(4, pool.metadata)
-            _ = stmt.step(); self.db.commit()
-        except err:
-            self.db.rollback()
-            raise SQLiteError(code=1, message="domain store: put_runtime_pool failed")
-
-    def advance_runtime_pool_cursor(mut self, pool_id: String, next_index: Int) raises SQLiteError -> RuntimePool:
-        """Persist a round-robin cursor without changing pool membership."""
-        if pool_id == "": raise SQLiteError(code=1, message="domain store: runtime pool id must not be empty")
-        if next_index < 0: raise SQLiteError(code=1, message="domain store: runtime pool cursor must not be negative")
-        self.db.begin_immediate()
-        try:
-            var current = self.get_runtime_pool(pool_id)
-            var metadata_value: Value
-            try:
-                metadata_value = Value(parse_string=current.metadata)
-            except err:
-                raise SQLiteError(code=1, message="domain store: runtime pool metadata is invalid")
-            if not metadata_value.is_object(): raise SQLiteError(code=1, message="domain store: runtime pool metadata must be an object")
-            var metadata = metadata_value.object().copy()
-            metadata["round_robin_index"] = Value(next_index)
-            var metadata_json = String("")
-            try:
-                metadata_json = canonical_json_text(to_string(Value(metadata^)))
-            except err:
-                raise SQLiteError(code=1, message="domain store: runtime pool metadata serialization failed")
-            var updated = RuntimePool(current.id, current.runtimes, current.impulse_types, metadata_json)
-            var validation = validate_runtime_pool(updated)
-            if not validation.is_ok(): raise SQLiteError(code=1, message="domain store: invalid runtime pool cursor: " + validation.code)
-            var stmt = self.db.query("UPDATE runtime_pools SET metadata=? WHERE id=?")
-            stmt.bind_text(1, updated.metadata); stmt.bind_text(2, pool_id); _ = stmt.step(); stmt.close()
-            if self.db.changes() != 1: raise SQLiteError(code=1, message="domain store: runtime pool cursor update lost ownership")
-            self.db.commit()
-            return updated^
-        except err:
-            self.db.rollback()
-            raise SQLiteError(code=1, message="domain store: advance runtime pool cursor failed: " + String(err))
-    def select_runtime_and_advance(mut self, pool_id: String, impulse_type: String, policy: String = "", manual_runtime_id: String = "") raises SQLiteError -> RuntimeSelection:
-        """Select and advance round-robin under one SQLite write transaction."""
-        if pool_id == "": raise SQLiteError(code=1, message="domain store: runtime pool id must not be empty")
-        self.db.begin_immediate()
-        try:
-            var pool = self.get_runtime_pool(pool_id)
-            var selected: RuntimeSelection
-            try:
-                selected = select_runtime(pool, impulse_type, policy, manual_runtime_id)
-            except err:
-                raise SQLiteError(code=1, message="domain store: runtime selection failed: " + String(err))
-            if selected.policy == "round_robin":
-                var metadata_value: Value
-                try:
-                    metadata_value = Value(parse_string=pool.metadata)
-                except err:
-                    raise SQLiteError(code=1, message="domain store: runtime pool metadata is invalid")
-                if not metadata_value.is_object(): raise SQLiteError(code=1, message="domain store: runtime pool metadata must be an object")
-                var metadata = metadata_value.object().copy()
-                metadata["round_robin_index"] = Value(selected.next_index)
-                var metadata_json = String("")
-                try:
-                    metadata_json = canonical_json_text(to_string(Value(metadata^)))
-                except err:
-                    raise SQLiteError(code=1, message="domain store: runtime pool metadata serialization failed")
-                var updated = RuntimePool(pool.id, pool.runtimes, pool.impulse_types, metadata_json)
-                var validation = validate_runtime_pool(updated)
-                if not validation.is_ok(): raise SQLiteError(code=1, message="domain store: invalid runtime pool cursor: " + validation.code)
-                var stmt = self.db.query("UPDATE runtime_pools SET metadata=? WHERE id=?")
-                stmt.bind_text(1, updated.metadata); stmt.bind_text(2, pool_id); _ = stmt.step(); stmt.close()
-                if self.db.changes() != 1: raise SQLiteError(code=1, message="domain store: runtime pool selection lost ownership")
-            self.db.commit()
-            return selected^
-        except err:
-            self.db.rollback()
-            raise SQLiteError(code=1, message="domain store: select runtime failed: " + String(err))
-
-    def get_runtime_pool(mut self, pool_id: String) raises SQLiteError -> RuntimePool:
-        var stmt = self.db.query("SELECT id,runtimes_json,impulse_types,metadata FROM runtime_pools WHERE id=?")
-        stmt.bind_text(1, pool_id)
-        if not stmt.step():
-            stmt.close()
-            raise SQLiteError(code=1, message="domain store: runtime pool not found")
-        var row = RuntimePool(id=self._text(stmt, 0), runtimes=self._text(stmt, 1), impulse_types=self._text(stmt, 2), metadata=self._text(stmt, 3))
-        stmt.close()
-        return row^
-
-    def list_runtime_pools(mut self) raises SQLiteError -> List[RuntimePool]:
-        var result = List[RuntimePool]()
-        var stmt = self.db.query("SELECT id,runtimes_json,impulse_types,metadata FROM runtime_pools ORDER BY id ASC")
-        while stmt.step():
-            result.append(RuntimePool(id=self._text(stmt, 0), runtimes=self._text(stmt, 1), impulse_types=self._text(stmt, 2), metadata=self._text(stmt, 3))^)
-        stmt.close()
-        return result^
-
-    def put_delegation_policy(mut self, policy: DelegationPolicy) raises SQLiteError:
-        var validation = validate_delegation_policy(policy)
-        if not validation.is_ok():
-            raise SQLiteError(code=1, message="domain store: invalid delegation policy: " + validation.code + " at " + validation.path + ": " + validation.message)
-        _ = self.get_runtime_pool(policy.pool_id)
-        self.db.begin()
-        try:
-            var stmt = self.db.query("INSERT INTO delegation_policies (id,pool_id,impulse_types,budget,metadata) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET pool_id=excluded.pool_id,impulse_types=excluded.impulse_types,budget=excluded.budget,metadata=excluded.metadata")
-            stmt.bind_text(1, policy.id); stmt.bind_text(2, policy.pool_id); stmt.bind_text(3, policy.impulse_types); stmt.bind_text(4, policy.budget.to_json()); stmt.bind_text(5, policy.metadata)
-            _ = stmt.step(); self.db.commit()
-        except err:
-            self.db.rollback()
-            raise SQLiteError(code=1, message="domain store: put_delegation_policy failed")
-
-    def get_delegation_policy(mut self, policy_id: String) raises SQLiteError -> DelegationPolicy:
-        var stmt = self.db.query("SELECT id,pool_id,impulse_types,budget,metadata FROM delegation_policies WHERE id=?")
-        stmt.bind_text(1, policy_id)
-        if not stmt.step():
-            stmt.close()
-            raise SQLiteError(code=1, message="domain store: delegation policy not found")
-        var budget_json = self._text(stmt, 3)
-        var budget = RuntimeBudget()
-        try:
-            budget = parse_runtime_budget_json(budget_json)
-        except err:
-            stmt.close()
-            raise SQLiteError(code=1, message="domain store: invalid delegation policy budget")
-        var row = DelegationPolicy(id=self._text(stmt, 0), pool_id=self._text(stmt, 1), impulse_types=self._text(stmt, 2), budget=budget^, metadata=self._text(stmt, 4))
-        stmt.close()
-        return row^
-
-    def list_delegation_policies(mut self, pool_id: String = "") raises SQLiteError -> List[DelegationPolicy]:
-        var result = List[DelegationPolicy]()
-        var sql = "SELECT id,pool_id,impulse_types,budget,metadata FROM delegation_policies"
-        if pool_id != "": sql += " WHERE pool_id=?"
-        sql += " ORDER BY pool_id ASC, id ASC"
-        var stmt = self.db.query(sql)
-        if pool_id != "": stmt.bind_text(1, pool_id)
-        while stmt.step():
-            var budget_json = self._text(stmt, 3)
-            var budget = RuntimeBudget()
-            try:
-                budget = parse_runtime_budget_json(budget_json)
-            except err:
-                stmt.close()
-                raise SQLiteError(code=1, message="domain store: invalid delegation policy budget")
-            result.append(DelegationPolicy(id=self._text(stmt, 0), pool_id=self._text(stmt, 1), impulse_types=self._text(stmt, 2), budget=budget^, metadata=self._text(stmt, 4))^)
-        stmt.close()
-        return result^
 
     @staticmethod
     def _bridge_json_equal(left: String, right: String) raises SQLiteError -> Bool:
