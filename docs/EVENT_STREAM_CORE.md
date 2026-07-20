@@ -1154,6 +1154,7 @@ Each PR is independently reviewable. **Gate:** JournalBackedBackend (or Correlat
 | **Title** | `refactor: split runtime_backend monolith; optional stream.merged` |
 | **Depends on** | PR8 |
 | **Description** | Mechanical maintainability; not a success criterion for event-stream core. |
+| **Landed** | Domain models extracted to `fala.runtime_models` (re-exported from `runtime_backend`). Composition helpers in `fala.journal.stream` (`nest_child_batch`, `stream_merged_envelope`). |
 
 ### Dependency graph
 
