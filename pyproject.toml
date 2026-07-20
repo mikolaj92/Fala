@@ -1,7 +1,7 @@
 [project]
 name = "fala-runtime"
-version = "0.2.1"
-description = "Event-first runtime for observable correlation paths (SQLite reference sink)"
+version = "0.2.2"
+description = "Event-first runtime for observable correlation paths (Unix journals + cybernetic Impulse lexicon; SQLite reference sink)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

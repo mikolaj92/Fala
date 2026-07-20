@@ -2,11 +2,15 @@
 
 Fala starts from `Impulse`.
 
-The current Impulse-first path lives in `fala.runtime_backend`:
+Unix streams + cybernetic conduction (how Journal sinks meet Mazur/FALA
+lexicon): [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md).
 
-- `AutonomousCorrelator` in `fala.runtime` is the embedded core facade. It uses
-  `RuntimeBackendService` and does not import web, API, CLI, or HTTP-client
-  modules.
+The current Impulse-first path lives in `fala.runtime` / `fala.runtime_backend`
+/ `fala.journal`:
+
+- `AutonomousCorrelator` in `fala.runtime` is the embedded core facade
+  (`from_journal` / `open_journal`). It uses `RuntimeBackendService` and does
+  not import web, API, CLI, or HTTP-client modules.
 - `Run` records Impulse-first run metadata, lifecycle status, package/correlation-path
   identity, digests, and timestamps.
 - `Impulse` is the typed information unit moved by a run.

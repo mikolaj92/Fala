@@ -2,28 +2,45 @@
 
 | Field | Value |
 | --- | --- |
-| **Status** | Accepted design (rev 3 — design review complete, 0 open issues) |
+| **Status** | Accepted design — **implemented** on main (PR1–PR10, release 0.2.2) |
 | **Author** | Fala architecture discussion |
 | **Date** | 2026-07-20 |
 | **Path** | [`docs/EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md) |
-| **Related** | [`RUNTIME.md`](RUNTIME.md), [`SQLITE_BACKEND.md`](SQLITE_BACKEND.md), [`EVENTS_AND_REPLAY.md`](EVENTS_AND_REPLAY.md), [`MULTI_FALA_COMPOSITION.md`](MULTI_FALA_COMPOSITION.md), [`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md), [`FALA_ARCHITECTURE_STATUS.md`](FALA_ARCHITECTURE_STATUS.md), [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) |
+| **Related** | [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md), [`RUNTIME.md`](RUNTIME.md), [`SQLITE_BACKEND.md`](SQLITE_BACKEND.md), [`EVENTS_AND_REPLAY.md`](EVENTS_AND_REPLAY.md), [`MULTI_FALA_COMPOSITION.md`](MULTI_FALA_COMPOSITION.md), [`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md), [`FALA_ARCHITECTURE_STATUS.md`](FALA_ARCHITECTURE_STATUS.md), [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md), [`CYBERNETIC_MAPPING.md`](CYBERNETIC_MAPPING.md) |
 
 ---
 
 ## Overview
 
-Fala today is an **embedded, SQLite-first** runtime. Persistence is hard-wired into the core: `src/fala/runtime_backend.py` (~6990 lines) mixes domain models, the `RuntimeBackend` Protocol (**71** async methods), the SQLite `Correlator`, transactional helpers, and `RuntimeBackendService`. Docs still say **“SQLite-Only Core”** ([`RUNTIME.md`](RUNTIME.md), [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md), [`FALA_ARCHITECTURE_STATUS.md`](FALA_ARCHITECTURE_STATUS.md)).
+**Status on main (0.2.2):** the event-stream core is **landed**. This document
+remains the design record; operational philosophy lives in
+[`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md).
 
-This couples two unrelated responsibilities:
+**Historical problem (pre-0.2.2):** Fala was an **embedded, SQLite-first**
+runtime. Persistence was hard-wired into the core: `runtime_backend` mixed
+domain models, the `RuntimeBackend` Protocol, the SQLite `Correlator`,
+transactional helpers, and `RuntimeBackendService`. That coupled two unrelated
+responsibilities:
 
-1. **Graph / process execution & supervision** — what to run, order, stdin/stdout, in-tick state machines  
+1. **Graph / process execution & supervision** — what to run, order, effector I/O, in-tick state machines  
 2. **Persistence of logs and state** — where and how history is written and recovered  
 
-The coupling creates an **architectural risk** under recursion (parent Fala spawning child Fala against a shared `.db`: WAL + `busy_timeout=30000` + process-level `asyncio.Lock` cannot make multi-process writers safe), forced storage location in the public API (`--db`, `AutonomousCorrelator.sqlite`, `RuntimeBackendConfig.kind: Literal["sqlite"]`), and a future path-blocker for a Mojo (or other microscopic) supervisor that should not carry a SQLite driver.
+The coupling created recursion risk (parent and child fighting one `.db`),
+forced storage location in the public API, and blocked a future microscopic
+supervisor that should not carry a SQLite driver.
 
-**Proposed direction:** make the core **event-first**. A thin pure engine orchestrates correlation paths and effector I/O; durability is provided by a **Journal port** whose atomic unit is a **multi-command batch** matching today’s `BEGIN IMMEDIATE` transactions (including claim lease-reaping and correlation-path auto-advance). SQLite becomes the **reference sink** behind that port — not the DNA of the binary façade. Existing guarantees (command + event + state atomicity, idempotency, append-only logs, rebuildable projections, bridge records) are preserved at the Journal/sink boundary, not abandoned for fire-and-forget stderr.
+**Direction (implemented):** make the core **event-first**. A thin engine
+orchestrates correlation paths and effector I/O; durability is a **Journal
+port** whose atomic unit is a **multi-command batch** matching Correlator
+`BEGIN IMMEDIATE` transactions (including claim lease-reaping and
+correlation-path auto-advance). SQLite is the **reference sink** behind that
+port — not the DNA of the façade. Guarantees (command + event + state
+atomicity, idempotency, append-only logs, rebuildable projections, bridge
+records) live at the Journal/sink boundary, not as fire-and-forget stderr.
 
-Migration is evolutionary: batch Protocol + pure helpers → InMemory → SqliteJournal wrap → full backend conformance → constructors → driver URI → CLI/docs, with JSONL and stream polish off the critical path (see [PR Plan](#pr-plan)).
+Landed path: Protocol → pure helpers → InMemory → Sqlite wrap → full
+conformance → constructors → driver URI → CLI/docs → Jsonl/Tee →
+runtime_models + stream helpers (see [PR Plan](#pr-plan)).
 
 ---
 

@@ -4,6 +4,9 @@ This is the authoritative mapping for FALA (Functional Aggregate of Local
 Association). The left column is historical terminology that no longer exists
 anywhere in the codebase; the right columns are the only terms in use.
 
+How this lexicon meets Unix process composition and the Journal port:
+[`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md).
+
 | Old (accidental)               | New (Mazur/FALA)          | Meaning |
 |--------------------------------|---------------------------|---------|
 | Carrier (packet)               | Impulse                   | Packet of energy/information entering the receptor |
@@ -13,8 +16,9 @@ anywhere in the codebase; the right columns are the only terms in use.
 | Observation                    | Association               | Micro-registration of potential shifts within the memory system |
 | Gate                           | Homeostat                 | Defensive regulation checkpoint resisting external semantic noise |
 | needs (dependency edge)        | conduction                | Conductivity edge readying a dependent effector |
-| SQLiteRuntimeBackend / Storage | Correlator                | Internal organ registering states and associations |
+| SQLiteRuntimeBackend / Storage | Correlator                | Internal organ registering states and associations (durable via Journal sinks: SQLite reference, memory, JSONL) |
 | FalaRuntime (facade)           | AutonomousCorrelator      | Execution facade of the autonomous system |
+| (implicit shared DB file)      | Journal / separate sink   | Unix durability boundary; children never share the parent journal path |
 
 All renames are **pure** (no deprecated aliases) and cover every surface:
 
@@ -35,3 +39,7 @@ All renames are **pure** (no deprecated aliases) and cover every surface:
   `impulse_type` (schema version 6, see MIGRATIONS.md).
 - Contracts: `FALA_EFFECTOR_MANIFEST` / `FALA_EFFECTOR_OUTPUT_DIR` env vars,
   `fala-reaction://` URI scheme.
+- Journal port: `fala.journal` (`Journal`, `InMemoryJournal`, `SqliteJournal`,
+  `JsonlJournal`, `TeeJournal`, `JournalBackedBackend`); composition helpers in
+  `fala.journal.stream` (`stream.merged` export metadata only — semantic multi-Fala
+  merge remains bridge-based in v1).

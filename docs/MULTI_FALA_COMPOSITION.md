@@ -1,6 +1,8 @@
 # Multi-Fala Composition
 
 Fala composition uses references and bridge delivery, not global transactions.
+Each nested correlator should use a **separate Journal** (Unix recursion rule);
+see [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md).
 
 Core pieces:
 

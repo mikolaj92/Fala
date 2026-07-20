@@ -1,9 +1,16 @@
 # Fala
 
 Fala is an embedded, **event-first** runtime for observable correlation paths.
-The core executes process graphs and emits a durable **event stream** through a
-Journal port; SQLite is the bundled **reference sink**, not hard-wired into the
-execution engine.
+
+It combines two disciplines:
+
+- **Cybernetic** — Impulses conduct through `CorrelationPath`s of Effectors;
+  Associations, Reactions, and Homeostats name memory, footprint, and defensive
+  waits of an autonomous correlator (Mazur/Kossecki lexicon).
+- **Unix** — the core is a supervisor and **event-stream emitter**; durability
+  is a Journal port with pluggable sinks. SQLite is the **reference sink**, not
+  the identity of the engine. Children get separate journals; no shared `.db`
+  lock for nested Fala.
 
 The core object is an `Impulse`: a typed information impulse that moves through
 process graphs. Fala records durable runs, impulses, impulse relations,
@@ -13,13 +20,14 @@ lineage, and audit data via the journal/backend.
 The default runtime path is serverless and local:
 
 - SQLite is the bundled reference journal sink (`SqliteJournal` / `Correlator`).
-- In-memory and (later) JSONL sinks implement the same Journal Protocol.
+- In-memory and JSONL sinks implement the same Journal Protocol (`TeeJournal` optional).
 - The filesystem is the default reaction store.
 - The CLI is the primary operator interface (`--journal` preferred; `--db` alias).
 - No Redis, Postgres, Kafka, RabbitMQ, NATS, Docker, FastAPI, Uvicorn, or web
   server is required to run a local correlation path.
 
-Architecture: [`docs/EVENT_STREAM_CORE.md`](docs/EVENT_STREAM_CORE.md).
+**Philosophy:** [`docs/UNIX_AND_CYBERNETICS.md`](docs/UNIX_AND_CYBERNETICS.md)  
+**Architecture:** [`docs/EVENT_STREAM_CORE.md`](docs/EVENT_STREAM_CORE.md) · [`docs/CYBERNETIC_MAPPING.md`](docs/CYBERNETIC_MAPPING.md)
 
 `run_until_idle` drives processes **sequentially** (claim → execute → complete).
 Fala owns journaled process state and leases; it does not orchestrate concurrent
@@ -33,7 +41,8 @@ correlation-path id already includes `run_id`). See
 The Fala architecture is built around these modules:
 
 - `fala.runtime.AutonomousCorrelator`: embedded runtime facade (`from_journal` / `open_journal`).
-- `fala.journal`: Journal Protocol, `InMemoryJournal`, `SqliteJournal`, `JournalBackedBackend`.
+- `fala.journal`: Journal Protocol, `InMemoryJournal`, `SqliteJournal`, `JsonlJournal`, `TeeJournal`, `JournalBackedBackend`, stream helpers.
+- `fala.runtime_models`: Impulse-first domain models (re-exported from `runtime_backend`).
 - `fala.runtime_backend.Correlator`: SQLite reference backend (still the durable default).
 - `fala.runtime_backend.RuntimeBackendService`: transactional runtime service.
 - `fala.reactions.FileReactionStore`: filesystem reaction store.
@@ -64,14 +73,15 @@ uv run fala --help
 Create a local runtime database:
 
 ```bash
-uv run fala init --db .fala/state.sqlite --reaction-root .fala/reactions
+uv run fala init --journal .fala/state.sqlite --reaction-root .fala/reactions
+# --db remains a supported alias for --journal
 ```
 
 Create a run:
 
 ```bash
 uv run fala create-run \
-  --db .fala/state.sqlite \
+  --journal .fala/state.sqlite \
   --run-id run_local \
   --title "Local impulse run"
 ```
