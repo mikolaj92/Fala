@@ -42,7 +42,12 @@ New Fala runtime work should use `fala.runtime_backend` or
 `fala.runtime`. Impulse APIs use `impulse_id` and `impulse_type`.
 Web/API/client exports are outer surfaces and are loaded lazily from `fala`.
 
-Splot arbitration cases and reviews are modeled in `fala.domain_packs.splot`; see
+Splot arbitration cases and reviews are modeled in `fala.domain_packs.splot`;
+see [`SPLOT_DOMAIN_PACK.md`](SPLOT_DOMAIN_PACK.md). The arbitration **engine** is
+the sibling product Splot 0.3+ (hosted via subprocess — `pixi run splot-integration`).
+
+Effector adapters are Mojo-only: `subprocess`, `native_function`,
+`manual_homeostat`. There is no `python_function` adapter.
 
 ## Core Concepts
 
@@ -98,47 +103,34 @@ schema setup and inspection.
 
 ## Impulse Package Schema
 
-Fala package schema has a canonical model in `FalaPackageSpec` and a
-loader in `fala.yaml_loader.load_fala_package_yaml`. Impulse fields
-are parsed only by the Fala package loader.
+Packages are **TOML** (or equivalent JSON). Load with
+`load_package_toml` / `load_package_json` in Mojo. See
+`examples/correlation-paths/basic/fala-package.toml`.
 
-```yaml
-version: "2"
-id: example_correlation_path
+```toml
+version = "2"
+id = "example_correlation_path"
 
-impulse_types:
-  - id: input_text
-    media_types: [text/plain]
+[[impulse_types]]
+id = "input_text"
+media_types = ["text/plain"]
 
-association_kinds:
-  - id: text_stats
+[[capabilities]]
+id = "normalize"
+accepts_impulse_types = ["input_text"]
+emits_reaction_kinds = ["normalized_text"]
 
-reaction_kinds:
-  - id: normalized_text
-    media_types: [text/plain]
+[[correlation_paths]]
+id = "basic"
 
-capabilities:
-  - id: normalize
-    accepts_impulse_types: [input_text]
-    emits_reaction_kinds: [normalized_text]
-    emits_association_kinds: [text_stats]
+[[correlation_paths.effectors]]
+id = "normalize"
+capability = "normalize"
+adapter = { kind = "native_function", ref = "example.normalize" }
 
-correlation_paths:
-  - id: basic
-    effectors:
-      - id: normalize
-        capability: normalize
-        adapter:
-          kind: python_function
-          ref: examples.effectors.normalize_text
-
-runtime:
-  backend:
-    kind: sqlite
-    path: .fala/state.sqlite
-  reaction_store:
-    kind: filesystem
-    root: .fala/reactions
+[runtime.backend]
+kind = "sqlite"
+path = ".fala/state.sqlite"
 ```
 
 ## Embedded Driver
@@ -278,11 +270,13 @@ uv run fala export-bundle --db /tmp/fala-impulse.sqlite --run-id run_case --out 
 
 ## Local Examples
 
-Run the local-first Impulse runtime example:
-
 ```bash
-uv run python examples/runtime/local_first.py /tmp/fala-impulse.sqlite
-```
+# Native package + correlation path (Mojo)
+mise exec -- pixi run example-basic-native
 
-The example uses one local SQLite file and exercises an impulse, association,
-homeostat, and projection.
+# Splot vocabulary pack
+mise exec -- pixi run splot-domain
+
+# Fala hosts Splot engine (sibling Splot 0.3+)
+mise exec -- pixi run splot-integration
+```

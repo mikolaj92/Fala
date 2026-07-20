@@ -1,23 +1,16 @@
 # Native Fala core (Mojo)
 
-**Strategy:** port **core first** (event-stream + cybernetic pure organ +
-Journal). SQLite and other sinks are **adapters** added later.
+**Product version: 0.3.0** — exclusive Mojo engine.
 
 **Journal is core:** `JournalPort` types + `InMemoryJournal` ship with the
-engine. File/SQL/JSONL sinks are adapters that implement the same port.
+engine. File/SQL/JSONL sinks implement the same port (SQLite is the reference
+file sink).
 
-**Merge policy:** one land when **core + adapters** are done. Work order is
-still core-first (Journal/InMemory, then SQLite, then other sinks), but we do
-**not** merge a core-only PR and ship adapters later. Draft until the full
-checklist in `docs/MOJO_EVENT_STREAM_MIGRATION.md` is green.
+- Process host is core (`subprocess` adapters).
+- Packages: TOML / JSON only (no YAML).
+- Adapters: `subprocess`, `native_function`, `manual_homeostat`.
 
-This tree is a fresh 0.2.2-aligned bootstrap:
-
-- lifted pure modules from the historical `mojo` branch where useful
-- new `journal_port` + `memory_journal` (no `sqlite.fire`)
-- Exclusive Mojo product; CPython engine removed
-
-See `docs/MOJO_EVENT_STREAM_MIGRATION.md`.
+See `docs/FALA_ARCHITECTURE_STATUS.md` and root `CHANGELOG.md`.
 
 ## Setup
 

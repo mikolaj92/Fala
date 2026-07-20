@@ -501,7 +501,7 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
     var kind = _nonempty(_required(value, "kind", path), path + "/kind")
     if kind == "fala_runtime":
         _error("manifest.unsupported", path + "/kind", "fala_runtime is not part of Fala; use subprocess with a separate journal")
-    if kind != "subprocess" and kind != "native_function" and kind != "python_function" and kind != "manual_homeostat":
+    if kind != "subprocess" and kind != "native_function" and kind != "manual_homeostat":
         _error("manifest.unsupported", path + "/kind", "unsupported adapter kind")
     var reference = String("")
     var runtime_ref = String("")
@@ -550,7 +550,6 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
     if kind == "subprocess" and (reference != "" or runtime_ref != ""): _error("manifest.boundary", path, "subprocess adapter cannot define ref or runtime_ref")
     if kind == "native_function" and reference == "": _error("manifest.missing", path + "/ref", "native_function requires ref")
     if kind == "native_function" and (len(command) != 0 or runtime_ref != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0): _error("manifest.boundary", path, "native_function adapter has invalid boundary fields")
-    if kind == "python_function": _error("manifest.unsupported", path + "/kind", "python_function is not executable natively")
     if kind == "manual_homeostat" and (reference != "" or runtime_ref != "" or len(command) != 0 or cwd != "" or len(env) != 0 or len(inherit_env) != 0 or timeout != 0.0): _error("manifest.boundary", path, "manual_homeostat adapter has invalid boundary fields")
     if kind != "subprocess" and len(inherit_env) != 0: _error("manifest.boundary", path + "/inherit_env", "only subprocess adapters may inherit environment")
     return _AdapterData(kind=kind, reference=reference, runtime_ref=runtime_ref, command=command^, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=timeout)

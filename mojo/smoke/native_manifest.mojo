@@ -28,7 +28,7 @@ def _manifest(adapter: String) raises -> String:
 def main() raises:
     var valid = "/tmp/fala-native-manifest-smoke.json"
 
-    # Supported adapter kinds are exercised; python_function and fala_runtime are explicit rejections.
+    # Supported adapter kinds are exercised; unknown kinds and fala_runtime are rejections.
     _write(valid, _manifest("{\"kind\":\"subprocess\",\"command\":[\"echo\",\"ok\"]}"))
     var subprocess_manifest = load_package_json(valid)
     _check(subprocess_manifest.correlation_paths[0].effectors[0].adapter_kind == "subprocess", "subprocess adapter")
@@ -44,7 +44,7 @@ def main() raises:
     _expect_error(valid, "fala_runtime is not part of Fala")
     _write(valid, _manifest("{\"kind\":\"python_function\",\"ref\":\"py.fn\"}"))
     _expect_error(valid, "manifest.unsupported")
-    _expect_error(valid, "python_function is not executable natively")
+    _expect_error(valid, "unsupported adapter kind")
 
     # Config is required to be an object and is retained as JSON text.
     _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"config\":{\"limit\":2},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")

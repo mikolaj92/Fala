@@ -811,9 +811,9 @@ def main() raises:
     var manual_stored = journal.get_process("run-semantics", "manual-wait")
     _check(manual_result.waiting and manual_stored.status == "waiting" and manual_stored.lease_owner == "", "manual homeostat waiting lease clear")
 
-    # Unsupported/native-boundary failure retries, then exhausts on its final attempt.
+    # Unknown adapter kind fails preflight and is durably failed without effector output.
     _ = journal.schedule_process(
-        "run-semantics", "python-fail", "native", "2026-01-01T00:00:27Z",
+        "run-semantics", "unknown-fail", "native", "2026-01-01T00:00:27Z",
         "{}", "{}", "", 6, 2, "2026-01-01T00:00:27Z"
     )
     # Bounded drive selects strict priority/FIFO order and leaves lower work queued.
@@ -838,21 +838,21 @@ def main() raises:
     var drive_low_stored = journal.get_process("run-semantics", "drive-low")
     var drive_high_stored = journal.get_process("run-semantics", "drive-high")
     _check(bounded.ticks == 1 and bounded.process_id == "drive-high" and drive_high_stored.status == "succeeded" and drive_low_stored.status == "ready", "bounded strict priority drive")
-    var python_row = journal.get_process("run-semantics", "python-fail")
-    var python_result = drive_once(
-        journal, python_row, AdapterSpec.python_function("legacy.ref"),
-        "worker-python", "2026-01-01T00:00:27Z", "2026-01-01T00:01:00Z", registry
+    var unknown_row = journal.get_process("run-semantics", "unknown-fail")
+    var unknown_result = drive_once(
+        journal, unknown_row, AdapterSpec(AdapterKind("python_function")),
+        "worker-unknown", "2026-01-01T00:00:27Z", "2026-01-01T00:01:00Z", registry
     )
-    var python_failed = journal.get_process("run-semantics", "python-fail")
+    var unknown_failed = journal.get_process("run-semantics", "unknown-fail")
     _check(
-        python_result.failed
-            and python_result.ticks == 1
-            and python_result.error.code == "unsupported_python_function"
-            and python_failed.status == "failed"
-            and python_failed.attempt == 1
-            and python_failed.error_json.find("unsupported_python_function") >= 0
-            and python_result.failure_rows[0].status == "failed",
-        "unsupported python adapter durably fails before dispatch"
+        unknown_result.failed
+            and unknown_result.ticks == 1
+            and unknown_result.error.code == "invalid_adapter"
+            and unknown_failed.status == "failed"
+            and unknown_failed.attempt == 1
+            and unknown_failed.error_json.find("unknown adapter kind") >= 0
+            and unknown_result.failure_rows[0].status == "failed",
+        "unknown adapter kind durably fails before dispatch"
     )
     # This durable unsupported-transport assertion is hermetic: the semantics
     # smoke does not build or discover a process host from ambient artifacts.

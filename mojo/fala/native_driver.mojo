@@ -405,8 +405,6 @@ def _dispatch(request: EffectorRequest, registry: NativeFunctionRegistry) -> Eff
     if not preflight.is_ok(): return EffectorResult.failure(preflight)
     if request.adapter.kind == AdapterKind.manual_homeostat():
         return execute_manual_homeostat(request)
-    if request.adapter.kind == AdapterKind.python_function():
-        return EffectorResult.failure(AdapterError.unsupported_python_function(request.adapter.`ref`))
     if request.adapter.kind == AdapterKind.subprocess():
         return execute_subprocess(request)
     if request.adapter.kind == AdapterKind.native_function():
@@ -416,8 +414,8 @@ def _preflight_adapter(adapter: AdapterSpec) -> AdapterError:
     """Validate an adapter before claiming durable work.
 
     Unsupported transports must be reported without incrementing attempts or
-    acquiring a lease; only the native registry and manual homeostat paths are
-    executable in this runtime.
+    acquiring a lease; only the native registry, subprocess host, and manual
+    homeostat paths are executable in this runtime.
     """
     var validation = adapter.validate()
     if not validation.is_ok(): return validation.copy()
@@ -425,8 +423,6 @@ def _preflight_adapter(adapter: AdapterSpec) -> AdapterError:
         return AdapterError.subprocess_transport_unavailable()
     if adapter.timeout_seconds > 0.0 and adapter.kind != AdapterKind.subprocess():
         return AdapterError.timeout_unavailable()
-    if adapter.kind == AdapterKind.python_function():
-        return AdapterError.unsupported_python_function(adapter.`ref`)
     return AdapterError.none()
 
 struct AdapterBinding(Copyable, Movable):

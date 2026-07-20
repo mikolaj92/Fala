@@ -75,8 +75,10 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 20. RuntimePool / fleet APIs — **removed** from domain_store + runtime_policy product path
 21. CPython engine — **deleted** (exclusive Mojo)
 22. Domain pack **Splot** — **done** (`mojo/fala/domain_packs/splot.mojo`, `splot-domain` smoke)
-23. Signals domain pack — open (optional)
-24. Optional demos remain under `examples/optional/` where not promoted
+23. Splot engine host via subprocess — **done** (`splot-integration`, Splot 0.3.1+)
+24. `python_function` adapter — **removed** (unknown kind)
+25. Optional Python demos — **removed**
+26. Signals domain pack — open
 
 **Merge when:** full + extended smoke green (exclusive Mojo).  
 
@@ -125,7 +127,7 @@ This matches Python 0.2.2:
 | `InMemoryJournal` | **new** `memory_journal.mojo` | pure claim from `processes.mojo` |
 | Journal-backed in-memory backend (subset) | **new** map-backed mutators over memory journal | patterns from domain APIs, not SQL |
 | Driver claim→execute→complete | `native_driver.mojo` against **JournalPort**, not SQLite | **Reuse** loop; **rebind** store |
-| `python_function` → native registry | `adapters.mojo` / `NativeFunctionRegistry` | **Reuse** |
+| Effector adapters (subprocess / native / homeostat) | `adapters.mojo` / `NativeFunctionRegistry` | **Reuse** (no Python kind) |
 | Package load (TOML/JSON) | `package.mojo`, `toml.mojo` | **Reuse** |
 | Facade `from_journal` / `open_journal` | thin Mojo entrypoints | `kind=memory` first |
 

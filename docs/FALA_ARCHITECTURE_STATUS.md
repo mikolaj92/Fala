@@ -1,5 +1,7 @@
 # Fala Architecture Status
 
+**Product: 0.3.0** (exclusive Mojo).
+
 Fala is an embedded, **event-first**, **Mojo-native** runtime for observable
 correlation paths. SQLite is the reference journal sink, not product identity.
 
@@ -14,10 +16,11 @@ Philosophy: [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md) · Host boundar
 | `mojo/fala/` | **Only product engine** |
 | `mojo/smoke/` + `pixi.toml` | Proof gates (`full-smoke`, `extended-smoke`) |
 | `examples/correlation-paths/basic/` | Core package example (native_function + TOML) |
-| `examples/optional/` | Domain packs / demos — not core |
+| `examples/splot-integration/` | Host Splot 0.3+ via subprocess |
+| `examples/domain-packs/splot/` | Splot vocabulary package (TOML) |
 | `vendor/EmberJson`, `vendor/sqlite.fire` | Mojo dependencies |
 
-There is **no** `src/fala` CPython product package.
+There is **no** CPython product package and **no** optional Python demos.
 
 ## Core ontology
 
@@ -36,7 +39,8 @@ Process, Run, Homeostat, Projection, JournalPort, Effector adapters
 | Local bridge deliver + file handoff | DONE |
 | Fleet / RuntimePool / `fala_runtime` | REMOVED |
 | CPython engine | REMOVED |
-| Domain pack Splot | DONE (`domain_packs/splot`, outside organ identity) |
+| `python_function` adapter | REMOVED (unknown kind) |
+| Domain pack Splot | DONE (`domain_packs/splot` + `splot-integration`) |
 | Domain pack Signals | open |
 
 ## Proof

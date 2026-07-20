@@ -1,0 +1,33 @@
+{
+  "profile": "examples/fixtures/player_camera_director.profile.toml",
+  "candidates": [
+    {
+      "id": "cam_a",
+      "payload": {
+        "visibility": 0.95,
+        "face_angle": 0.8,
+        "sharpness": 0.7,
+        "occlusion": 0.1,
+        "available": true
+      }
+    },
+    {
+      "id": "cam_b",
+      "payload": {
+        "visibility": 0.7,
+        "face_angle": 0.5,
+        "sharpness": 0.6,
+        "occlusion": 0.3,
+        "available": true
+      }
+    },
+    {
+      "id": "cam_offline",
+      "payload": {
+        "visibility": 0.99,
+        "available": false
+      }
+    }
+  ],
+  "now": "2026-01-01T12:00:00Z"
+}

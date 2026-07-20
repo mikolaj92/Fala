@@ -1,11 +1,15 @@
 # Splot Arbitration Domain Pack (Mojo)
 
-`fala.domain_packs.splot` keeps arbitration behavior **outside** Fala core.
+`fala.domain_packs.splot` keeps arbitration **vocabulary** outside Fala core.
 Core provides impulses, commands, events, associations, homeostats, projections,
-and journal sinks. Splot defines arbitration-specific meaning on top — pure
-builders only; no scheduler logic.
+and journal sinks. This pack maps Splot-oriented names onto those records — pure
+builders only; no scheduler logic and no arbitration engine.
 
-## Concepts
+The **engine** (many signals → one decision) lives in the separate **Splot**
+product (v0.3+, exclusive Mojo). Fala hosts it as a subprocess effector; see
+[`examples/splot-integration/`](../examples/splot-integration/).
+
+## Concepts (domain pack)
 
 | Domain | Core mapping |
 | --- | --- |
@@ -28,21 +32,44 @@ builders only; no scheduler logic.
 - Helpers: `impulse_from_case`, `case_from_impulse`, `jurisdiction_association`,
   `review_homeostat`, `case_projection`
 
-## Package example
+## Package example (vocabulary)
 
 ```bash
 # Manifest (native TOML)
 examples/domain-packs/splot/fala-package.toml
 ```
 
+## Hosting the Splot engine (subprocess)
+
+Sibling checkout (default):
+
+```text
+~/Developer/OSS/Fala
+~/Developer/OSS/Splot   # v0.3.0+
+```
+
+```bash
+# Override if needed:
+# SPLOT_ROOT=/path/to/Splot
+
+mise exec -- pixi run splot-integration
+```
+
+Fala’s process host runs `Splot/tools/splot_step.sh` with the effector boundary
+(`FALA_EFFECTOR_*`). Splot writes `output/result.json` with a decision envelope
+(`status`, `selected_candidate_id`, …). There is no Python Splot path.
+
 ## Proof
 
 ```bash
-mise exec -- pixi run splot-domain
-# also included in extended-smoke
+mise exec -- pixi run splot-domain        # vocabulary pack
+mise exec -- pixi run splot-integration   # Fala host → Splot Mojo step
+# splot-domain is also in extended-smoke
 ```
 
 ## Boundary
 
-Core must not import Splot types except via optional pack consumers. Domain
-packs may depend on `fala.domain` records only.
+- Core must not import Splot **product** types; only optional pack consumers use
+  `fala.domain_packs.splot`.
+- Domain packs may depend on `fala.domain` records only.
+- Arbitration scoring/policy lives in Splot, not in Fala core or this pack.

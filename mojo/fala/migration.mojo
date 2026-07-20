@@ -88,7 +88,7 @@ def _legacy_adapter_kind(value: String) raises -> String:
     if kind == "manual_gate": kind = "manual_homeostat"
     if kind == "fala_runtime":
         raise Error("migration.unsupported at /adapter/kind: fala_runtime is not part of Fala; use subprocess with a separate journal")
-    if kind != "subprocess" and kind != "native_function" and kind != "python_function" and kind != "manual_homeostat":
+    if kind != "subprocess" and kind != "native_function" and kind != "manual_homeostat":
         raise Error("migration.unsupported at /adapter/kind: unknown legacy adapter kind '" + value + "'")
     return kind
 

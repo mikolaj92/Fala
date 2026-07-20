@@ -158,9 +158,9 @@ StateFact injection** from child into parent privileged tables.
 | Kind | Status |
 | --- | --- |
 | `subprocess` | **core** |
-| `native_function` | **core** (native/Mojo) |
+| `native_function` | **core** (Mojo registry) |
 | `manual_homeostat` | **core** |
-| `python_function` | CPython only |
+| `python_function` | **removed** |
 | `fala_runtime` | **removed** |
 
 See also [`MOJO_EVENT_STREAM_MIGRATION.md`](MOJO_EVENT_STREAM_MIGRATION.md).

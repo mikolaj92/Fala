@@ -17,7 +17,7 @@ from fala.sdk import (
     output_metadata,
     run_manifest_effector,
 )
-from fala.adapters import AdapterError
+from fala.adapters import AdapterError, AdapterKind, AdapterSpec
 from fala.errors import ValidationError
 
 
@@ -68,7 +68,8 @@ def main() raises:
     _expect_package_error("[]", "manifest.type at /: manifest must be a JSON object")
     _expect_package_error("{\"id\":\"pkg\",\"extra\":true,\"correlation_paths\":[]}", "manifest.unknown at /extra")
     _expect_package_error("{\"id\":\"pkg\",\"impulse_types\":[{\"id\":\"input\"}],\"capabilities\":[{\"id\":\"cap\",\"accepts_impulse_types\":[\"missing\"]}],\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"capability\":\"cap\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.dangling_reference")
-    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"python_function\",\"ref\":\"py.fn\"}}]}]}", "manifest.unsupported")
+    # Retired CPython kind is an unknown/unsupported adapter, not a special transport.
+    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"python_function\",\"ref\":\"py.fn\"}}]}]}", "unsupported adapter kind")
     _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":{}}", "manifest.type at /correlation_paths")
     _expect_package_error("{\"package\":\"pkg\",\"correlation_paths\":[]}", "manifest.unknown at /package")
     _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"pipeline\":\"path\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.unknown at /correlation_paths/0/pipeline")
@@ -121,16 +122,14 @@ adapter = { kind = "manual_homeostat" }
     var unavailable = run_manifest_effector()
     _check(unavailable.is_unavailable() and unavailable.code == "sdk.execution_unavailable", "SDK unavailable execution code")
 
-    # Native typed diagnostics expose stable code/path fields.  The Python error
-    # class taxonomy is intentionally not recreated; native adapters report their
-    # supported rejection codes instead.
+    # Native typed diagnostics expose stable code/path fields.
     var package_error = PackageManifestError("bad field", "manifest.type", "/id")
     _check(package_error.code == "manifest.type" and package_error.path == "/id" and package_error.__str__().find("manifest.type") >= 0, "typed package error")
     var sdk_error = SdkError("sdk.invalid_type", "/manifest", "expected JSON object")
     _check(sdk_error.code == "sdk.invalid_type" and sdk_error.path == "/manifest", "typed SDK error")
     var validation_error = ValidationError("validation.invalid", "/id", "invalid id")
     _check(validation_error.describe() == "validation.invalid at /id: invalid id", "typed validation error serialization")
-    var python_adapter = AdapterError.unsupported_python_function("py.fn")
-    _check(python_adapter.code == "unsupported_python_function" and not python_adapter.is_ok(), "native Python adapter rejection code")
+    var unknown_adapter = AdapterSpec(AdapterKind("python_function")).validate()
+    _check(unknown_adapter.code == "invalid_adapter" and not unknown_adapter.is_ok(), "retired adapter kind is invalid")
 
     print("package SDK contracts smoke ok")

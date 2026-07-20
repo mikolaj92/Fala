@@ -7,7 +7,8 @@ that map concepts onto Impulse runtime records.
 
 | Pack | Module | Proof |
 | --- | --- | --- |
-| **Splot** (arbitration) | `mojo/fala/domain_packs/splot.mojo` | `pixi run splot-domain` |
+| **Splot** (vocabulary) | `mojo/fala/domain_packs/splot.mojo` | `pixi run splot-domain` |
+| **Splot engine** (host) | sibling product `Splot` 0.3+ via subprocess | `pixi run splot-integration` |
 | Signals | not yet ported (optional examples only) | — |
 
 ## What packs provide

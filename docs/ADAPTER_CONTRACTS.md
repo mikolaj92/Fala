@@ -1,16 +1,14 @@
 # Adapter Contracts
 
-Supported effector adapters:
-
-**Core (every Fala):**
+Supported effector adapters (exclusive Mojo product):
 
 - `subprocess`: local command as an argument list — **primary child boundary**.
 - `native_function`: in-process registered callable (tests / embedded).
 - `manual_homeostat`: opens a durable manual homeostat and waits.
-- `python_function`: importable Python callable (**CPython host only**).
 
 **Removed:**
 
+- `python_function` — CPython importable callables (not part of the product).
 - `fala_runtime` (fleet/pool enqueue) — use `subprocess` + separate journal.
   See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
@@ -29,5 +27,4 @@ result is a JSON object, and commits runtime state itself. Effectors must not mu
 SQLite directly.
 
 `fala doctor --package` validates package adapter references where the runtime
-can check them locally, including importable `python_function` refs, subprocess
-working directories, and subprocess Python script paths.
+can check them locally (known kinds, subprocess command shape, env boundary).

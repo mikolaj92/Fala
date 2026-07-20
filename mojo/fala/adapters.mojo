@@ -22,13 +22,11 @@ struct AdapterKind(Copyable, Movable):
     def manual_homeostat() -> AdapterKind: return AdapterKind("manual_homeostat")
     @staticmethod
     def native_function() -> AdapterKind: return AdapterKind("native_function")
-    @staticmethod
-    def python_function() -> AdapterKind: return AdapterKind("python_function")
 
     def is_known(self) -> Bool:
         return (
             self.value == "subprocess" or self.value == "manual_homeostat"
-            or self.value == "native_function" or self.value == "python_function"
+            or self.value == "native_function"
         )
     def __eq__(self, other: Self) -> Bool: return self.value == other.value
     def __ne__(self, other: Self) -> Bool: return self.value != other.value
@@ -48,9 +46,6 @@ struct AdapterError(Copyable, Movable):
     @staticmethod
     def invalid(message: String) -> AdapterError:
         return AdapterError("invalid_adapter", message)
-    @staticmethod
-    def unsupported_python_function(value: String) -> AdapterError:
-        return AdapterError("unsupported_python_function", "python_function refs are unsupported by the native runtime: " + value + "; migrate to a typed native_function registry entry")
     @staticmethod
     def subprocess_transport_unavailable() -> AdapterError:
         return AdapterError("subprocess_transport_unavailable", "direct argv subprocess transport is not available in this Mojo build; provide a native process host")
@@ -280,11 +275,6 @@ struct AdapterSpec(Copyable, Movable):
         var spec = AdapterSpec(AdapterKind.native_function())
         spec.`ref` = value
         return spec^
-    @staticmethod
-    def python_function(value: String) -> AdapterSpec:
-        var spec = AdapterSpec(AdapterKind.python_function())
-        spec.`ref` = value
-        return spec^
 
     def validate(self) -> AdapterError:
         if self.kind.value == "fala_runtime":
@@ -301,7 +291,7 @@ struct AdapterSpec(Copyable, Movable):
             if self.cwd != "" or len(self.env) != 0 or len(self.inherit_env) != 0: return AdapterError.invalid("manual_homeostat does not accept cwd or environment")
             if self.timeout_seconds != 0.0: return AdapterError.invalid("manual_homeostat cannot define timeout_seconds")
             return AdapterError.none()
-        if self.kind == AdapterKind.python_function() or self.kind == AdapterKind.native_function():
+        if self.kind == AdapterKind.native_function():
             if self.`ref` == "": return AdapterError.invalid("function adapter requires ref")
             if len(self.command) != 0 or self.runtime_ref != "": return AdapterError.invalid("function adapter cannot define command or runtime_ref")
             if self.cwd != "" or len(self.env) != 0 or len(self.inherit_env) != 0: return AdapterError.invalid("function adapter does not accept cwd or environment")
@@ -603,16 +593,6 @@ def execute_manual_homeostat(request: EffectorRequest) -> EffectorResult:
     if not config_error.is_ok(): return EffectorResult.failure(config_error)
     if request.adapter.kind != AdapterKind.manual_homeostat(): return EffectorResult.failure(AdapterError.invalid("execute_manual_homeostat requires manual_homeostat adapter"))
     return EffectorResult(success=True, output_json="{\"status\":\"waiting\"}", stdout="", stderr="", returncode=0, waiting=True, homeostat_id="homeostat:" + request.process_id, metadata_json="{\"status\":\"open\"}", error=AdapterError())
-
-def execute_python_function(request: EffectorRequest) -> EffectorResult:
-    var validation = request.adapter.validate()
-    if not validation.is_ok(): return EffectorResult.failure(validation)
-    var input_error = _validate_json_text(request.input_json, "request.input_json")
-    if not input_error.is_ok(): return EffectorResult.failure(input_error)
-    var config_error = _validate_json_text(request.config_json, "request.config_json")
-    if not config_error.is_ok(): return EffectorResult.failure(config_error)
-    if request.adapter.kind != AdapterKind.python_function(): return EffectorResult.failure(AdapterError.invalid("execute_python_function requires python_function adapter"))
-    return EffectorResult.failure(AdapterError.unsupported_python_function(request.adapter.`ref`))
 
 def execute_native_function(request: EffectorRequest, registry: NativeFunctionRegistry) -> EffectorResult:
     var validation = request.adapter.validate()

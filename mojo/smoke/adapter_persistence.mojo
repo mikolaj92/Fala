@@ -120,9 +120,10 @@ def main() raises:
     var process = reopened.get_process("run-persist", "p-native")
     _check(process.status == "succeeded", "durable process completion")
     _ = reopened.create_run("run-unsupported", "created", "{}", "2026-01-01T00:00:02Z")
-    _ = reopened.schedule_process("run-unsupported", "p-unsupported", "python", "impulse", "{}", "{}", "", 1, 1, "2026-01-01T00:00:02Z")
+    _ = reopened.schedule_process("run-unsupported", "p-unsupported", "native", "impulse", "{}", "{}", "", 1, 1, "2026-01-01T00:00:02Z")
     var unsupported_bindings = List[AdapterBinding]()
-    unsupported_bindings.append(AdapterBinding("p-unsupported", AdapterSpec.python_function("unsupported.ref"), "run-unsupported"))
+    # Unknown adapter kinds fail preflight and are durably failed (no special Python transport).
+    unsupported_bindings.append(AdapterBinding("p-unsupported", AdapterSpec(AdapterKind("python_function")), "run-unsupported"))
     var unsupported_drive = drive_all_runs(reopened, unsupported_bindings, "worker-unsupported", "2026-01-01T00:00:02Z", "2026-01-01T00:01:00Z", registry)
     var unsupported_process = reopened.get_process("run-unsupported", "p-unsupported")
     _check(
@@ -130,11 +131,11 @@ def main() raises:
             and unsupported_drive.failed
             and unsupported_drive.ticks == 1
             and unsupported_drive.unsupported_mappings == 1
-            and unsupported_drive.error.code == "unsupported_python_function"
+            and unsupported_drive.error.code == "invalid_adapter"
             and unsupported_process.status == "failed"
             and unsupported_process.attempt == 1
             and unsupported_process.output_json == "{}"
-            and unsupported_process.error_json.find("unsupported_python_function") >= 0,
+            and unsupported_process.error_json.find("unknown adapter kind") >= 0,
         "unsupported binding is durably failed without output"
     )
     _ = reopened.schedule_process("run-unsupported", "p-timeout", "native", "impulse", "{}", "{}", "", 1, 1, "2026-01-01T00:00:02Z")

@@ -81,10 +81,9 @@ several sinks (e.g. SQLite + JSONL).
 ### Small tools, sharp edges
 
 - CLI is the primary operator interface (`--journal`, `--db` alias).
-- Effectors are adapters: `subprocess` and `native_function` (core host),
-  `manual_homeostat`, `python_function` on CPython. Subprocesses get manifests,
-  not open DB handles. Nested Fala = another process + separate journal, not a
-  peer mesh (`FALA_HOST_AND_COMPOSITION.md`).
+- Effectors are adapters: `subprocess`, `native_function`, `manual_homeostat`.
+  Subprocesses get manifests, not open DB handles. Nested Fala = another
+  process + separate journal, not a peer mesh (`FALA_HOST_AND_COMPOSITION.md`).
 - Reaction **bytes** live in a reaction store (filesystem by default);
   the journal holds metadata and refs only.
 - Tests prefer `InMemoryJournal`; production defaults to SQLite reference sink.

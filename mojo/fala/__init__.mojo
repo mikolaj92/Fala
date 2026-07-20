@@ -15,7 +15,7 @@ from .adapters import (
     EffectorRequest, EffectorResult, SubprocessBoundary,
     resolve_environment, redact_environment, adapter_manifest_json,
     adapter_result_json, adapter_spec_json, adapter_spec_from_json,
-    execute_python_function, execute_native_function, execute_subprocess,
+    execute_native_function, execute_subprocess,
 )
 from .native_package import (
     PackageManifestError, PackageEffector, PackageCorrelationPath,
@@ -112,7 +112,7 @@ from .bridge_transport import BridgeTransportResult, deliver_local_bridge, deliv
 from .native_cli_surface import cli_surface_help, dispatch_native_command, dispatch_command
 from .migration import MigrationReport, legacy_to_native_json, migrate_package_json
 
-# Event-stream core (0.2.2) — memory journal path without SQLite.
+# Event-stream core — memory journal path without SQLite.
 from .journal_port import (
     StateFact, CommandRecord, EventRecord, CommandUnit, JournalBatch,
     AppendResult, ClaimRequest, ClaimResult, leading_command, leading_idempotency_key,

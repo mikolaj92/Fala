@@ -3,7 +3,7 @@ from std.collections import List
 from fala.domain import Impulse
 from fala.domain_store import NativeDomainStore
 from fala.journal import NativeJournal, ProcessRow
-from fala.adapters import AdapterSpec, NativeFunctionRegistry
+from fala.adapters import AdapterKind, AdapterSpec, NativeFunctionRegistry
 from fala.native_driver import drive_once
 from fala.schema import initialize_native_schema
 
@@ -80,14 +80,14 @@ def main() raises:
     var cancel_events = journal.list_events("run-process", "", "process-retry", -1, 0, "process.cancelled")
     _check(len(retry_events) == 1 and len(cancel_events) == 1 and retry_events[0].sequence < cancel_events[0].sequence, "process event ordering is deterministic")
 
-    # Unsupported Python execution reports a typed adapter error and never fabricates output.
+    # Unknown adapter kinds report a typed adapter error and never fabricate output.
     _ = journal.create_run("run-unsupported", "active", "{}", "2026-01-01T00:03:00Z")
-    var unsupported_row = journal.schedule_process("run-unsupported", "process-python", "python_function", "2026-01-01T00:03:01Z", "{}", "{}", "", 0, 1, "2026-01-01T00:03:01Z")
+    var unsupported_row = journal.schedule_process("run-unsupported", "process-unknown", "native", "2026-01-01T00:03:01Z", "{}", "{}", "", 0, 1, "2026-01-01T00:03:01Z")
     var registry = NativeFunctionRegistry()
-    var unsupported = drive_once(journal, unsupported_row, AdapterSpec.python_function("tests.test_fala_driver._driver_double"), "worker-native", "2026-01-01T00:03:02Z", "2026-01-01T00:04:00Z", registry)
-    var unsupported_after = journal.get_process("run-unsupported", "process-python")
+    var unsupported = drive_once(journal, unsupported_row, AdapterSpec(AdapterKind("python_function")), "worker-native", "2026-01-01T00:03:02Z", "2026-01-01T00:04:00Z", registry)
+    var unsupported_after = journal.get_process("run-unsupported", "process-unknown")
     var unsupported_commands = journal.list_commands("run-unsupported", "process.fail", "", 0)
-    var unsupported_events = journal.list_events("run-unsupported", "", "process-python", -1, 0, "process.failed")
-    _check(unsupported.failed and unsupported.ticks == 1 and unsupported.error.code == "unsupported_python_function" and unsupported_after.status == "failed" and unsupported_after.attempt == 1 and unsupported_after.output_json == "{}" and unsupported_after.error_json.find("unsupported_python_function") >= 0 and len(unsupported_commands) == 1 and unsupported_commands[0].command_type == "process.fail" and len(unsupported_events) == 1 and unsupported_events[0].event_type == "process.failed", "unsupported execution has typed failure, claim, and durable failure event")
+    var unsupported_events = journal.list_events("run-unsupported", "", "process-unknown", -1, 0, "process.failed")
+    _check(unsupported.failed and unsupported.ticks == 1 and unsupported.error.code == "invalid_adapter" and unsupported_after.status == "failed" and unsupported_after.attempt == 1 and unsupported_after.output_json == "{}" and unsupported_after.error_json.find("unknown adapter kind") >= 0 and len(unsupported_commands) == 1 and unsupported_commands[0].command_type == "process.fail" and len(unsupported_events) == 1 and unsupported_events[0].event_type == "process.failed", "unsupported execution has typed failure, claim, and durable failure event")
 
     print("runtime contracts smoke ok")

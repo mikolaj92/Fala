@@ -332,7 +332,7 @@ struct EffectorAdapterSpec(Copyable, Movable):
     def create(kind: String, var command: List[String] = List[String](), `ref`: String = "", runtime_ref: String = "", cwd: String = "", var env: Dict[String, String] = Dict[String, String](), var inherit_env: List[String] = List[String](), timeout_seconds: Float64 = -1.0) raises -> EffectorAdapterSpec:
         if kind == "fala_runtime":
             raise Error("fala_runtime is not part of Fala; use subprocess with a separate journal")
-        if kind != "subprocess" and kind != "native_function" and kind != "python_function" and kind != "manual_homeostat":
+        if kind != "subprocess" and kind != "native_function" and kind != "manual_homeostat":
             raise Error("unknown effector adapter kind '" + kind + "'")
         if timeout_seconds == 0.0: raise Error("adapter timeout_seconds must be greater than 0 when provided")
         if timeout_seconds < -1.0: raise Error("adapter timeout_seconds must not be negative")
@@ -340,7 +340,7 @@ struct EffectorAdapterSpec(Copyable, Movable):
         if kind == "subprocess":
             if len(command) == 0: raise Error("subprocess adapter requires non-empty command")
             if `ref` != "" or runtime_ref != "": raise Error("subprocess adapter cannot define ref/runtime_ref")
-        elif kind == "native_function" or kind == "python_function":
+        elif kind == "native_function":
             _check_nonempty(`ref`, kind + " adapter ref")
             if len(command) != 0 or runtime_ref != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0: raise Error(kind + " adapter has invalid boundary fields")
         elif kind == "manual_homeostat":

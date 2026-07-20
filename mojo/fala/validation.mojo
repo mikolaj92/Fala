@@ -113,7 +113,7 @@ def validate_adapter_boundary(
 ) -> ValidationError:
     if kind == "fala_runtime":
         return _fail("unsupported_adapter_kind", "adapter.kind", "fala_runtime is not part of Fala; use subprocess with a separate journal")
-    if kind != "manual_homeostat" and kind != "native_function" and kind != "python_function" and kind != "subprocess":
+    if kind != "manual_homeostat" and kind != "native_function" and kind != "subprocess":
         return _fail("unknown_adapter_kind", "adapter.kind", "unknown adapter kind: " + kind)
     if timeout_seconds >= 0.0:
         var positive = validate_positive_number(timeout_seconds, "adapter.timeout_seconds")
@@ -136,14 +136,6 @@ def validate_adapter_boundary(
         if runtime_ref != "": return _fail("adapter_boundary", "adapter.runtime_ref", "native_function adapter cannot define runtime_ref")
         if cwd != "": return _fail("adapter_boundary", "adapter.cwd", "native_function adapter cannot define cwd")
         if env_count > 0: return _fail("adapter_boundary", "adapter.env", "native_function adapter cannot define env")
-        return _ok()
-    if kind == "python_function":
-        if adapter_ref == "":
-            return _fail("adapter_boundary", "adapter.ref", "python_function adapter requires ref")
-        if command != "": return _fail("adapter_boundary", "adapter.command", "python_function adapter cannot define command")
-        if runtime_ref != "": return _fail("adapter_boundary", "adapter.runtime_ref", "python_function adapter cannot define runtime_ref")
-        if cwd != "": return _fail("adapter_boundary", "adapter.cwd", "python_function adapter cannot define cwd")
-        if env_count > 0: return _fail("adapter_boundary", "adapter.env", "python_function adapter cannot define env")
         return _ok()
     if kind == "manual_homeostat":
         if command != "": return _fail("adapter_boundary", "adapter.command", "manual_homeostat adapter cannot define command")

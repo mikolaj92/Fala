@@ -70,30 +70,27 @@ go through backend/service operations and append runtime events.
 
 ## Adapter Kinds
 
-Fala package effectors declare adapters:
+Fala package effectors declare adapters (TOML):
 
-```yaml
-correlation_paths:
-  - id: basic
-    effectors:
-      - id: normalize
-        capability: normalize
-        adapter:
-          kind: python_function
-          ref: examples.effectors.normalize_text
+```toml
+[[correlation_paths]]
+id = "basic"
+
+[[correlation_paths.effectors]]
+id = "normalize"
+capability = "normalize"
+adapter = { kind = "native_function", ref = "example.normalize" }
 ```
 
 Supported adapter kinds:
 
-**Core local host**
-
-- `python_function`: importable Python function (CPython).
-- `native_function`: registered in-process callable (native / Mojo).
+- `native_function`: registered in-process callable (Mojo registry).
 - `subprocess`: local command as an argument list — **how Fala runs children**.
 - `manual_homeostat`: explicit operator homeostat.
 
-**Removed:** `fala_runtime` fleet adapter — nest another Fala with `subprocess`
-and a **separate journal** (see [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md)).
+**Removed:** `python_function` (CPython), `fala_runtime` (fleet). Nest another
+Fala with `subprocess` and a **separate journal**
+(see [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md)).
 
 Subprocess commands are lists, not shell strings. The runtime prepares input
 manifests, captures stdout/stderr, validates output manifests, and commits

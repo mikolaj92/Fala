@@ -1,5 +1,7 @@
 # Fala
 
+**Version 0.3.0** — first **exclusive Mojo** product release.
+
 **Product runtime: Mojo** (`mojo/fala`). One engine — organ + journal + **process host**.
 
 ```bash
@@ -8,8 +10,8 @@ mise exec -- pixi run full-smoke
 mise exec -- pixi run extended-smoke
 ```
 
-Exclusive Mojo product — no CPython engine in tree.
-No multi-runtime / fleet / `fala_runtime` peer mesh.
+Exclusive Mojo product — no CPython engine, no YAML packages, no
+`python_function` adapter. No multi-runtime / fleet / `fala_runtime` peer mesh.
 
 ---
 
@@ -38,8 +40,9 @@ The default runtime path is serverless and local:
   server is required to run a local correlation path.
 
 **Philosophy:** [`docs/UNIX_AND_CYBERNETICS.md`](docs/UNIX_AND_CYBERNETICS.md)  
-**Architecture:** [`docs/EVENT_STREAM_CORE.md`](docs/EVENT_STREAM_CORE.md) · [`docs/CYBERNETIC_MAPPING.md`](docs/CYBERNETIC_MAPPING.md)  
-**Mojo port (0.2.2 event-stream layering):** [`docs/MOJO_EVENT_STREAM_MIGRATION.md`](docs/MOJO_EVENT_STREAM_MIGRATION.md)
+**Architecture status:** [`docs/FALA_ARCHITECTURE_STATUS.md`](docs/FALA_ARCHITECTURE_STATUS.md)  
+**Adapters:** [`docs/ADAPTER_CONTRACTS.md`](docs/ADAPTER_CONTRACTS.md)  
+**Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
 
 `run_until_idle` drives processes **sequentially** (claim → execute → complete).
 Fala owns journaled process state and leases; it does not orchestrate concurrent
