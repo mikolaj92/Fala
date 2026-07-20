@@ -50,24 +50,26 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 
 **Core**
 
-1. JournalPort types + InMemoryJournal (bootstrap done)
-2. Pure status / processes / correlation
-3. Memory-backed mutators: run, impulse, process schedule/claim/complete
-4. Driver against JournalPort (memory)
-5. Package load + native_function for one full path
-6. Facade `open_journal` / `from_journal`
-7. CLI surface (memory paths at least)
-8. One end-to-end example on memory
-9. `core-smoke` green without `sqlite.fire`
+1. JournalPort types + InMemoryJournal — **done**
+2. Pure status / processes / correlation — **done** (smokes)
+3. Memory-backed mutators: run, impulse, process schedule/claim/complete — **done** (`MemoryRuntime`)
+4. Driver against JournalPort (memory) — **done** (`MemoryDriver` + e2e)
+5. Package load + native_function for one full path — open
+6. Facade `open_journal` / `from_journal` — open
+7. CLI surface (memory paths at least) — open
+8. One end-to-end example on memory — **done** (`core_memory_e2e`)
+9. `core-smoke` green without `sqlite.fire` — **done**
 
 **Adapters (same branch, before merge)**
 
-10. SqliteJournalPort over `NativeJournal` / schema / domain_store (from historical `mojo`)
-11. SQLite reopen/migrate/crash smokes
-12. Jsonl / Tee if in scope for this land
-13. Transports that are part of the accepted matrix for this land
+10. SqliteJournalPort + NativeJournal/schema lift — **partial** (schema reopen smoke)
+11. Full SQLite process/claim/domain smokes — open
+12. Jsonl / Tee — open
+13. Transports — open
 
 **Merge when:** full checklist green; draft PR converted to ready once.
+
+**Proof today:** `pixi run core-smoke` and `pixi run adapter-smoke` / `full-smoke`.
 
 Companion docs:
 
