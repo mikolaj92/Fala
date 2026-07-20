@@ -1,9 +1,14 @@
 # Fala host vs multi-runtime — product boundary
 
-**Status:** product decision (2026-07). Aligns Mojo land and Python naming.
+**Status:** product decision (2026-07).
 
-This document separates **what every Fala is** from **optional composition
-machinery** that historically lived under the overloaded name `fala_runtime`.
+**Single engine: Mojo.** There is no dual-runtime product. The historical
+CPython tree (`src/fala`) is not a second engine to maintain or port “for
+parity forever” — it is legacy reference until Mojo land; it is not required
+for Fala’s identity. Process host, journal, driver, CLI: **Mojo only**.
+
+This document also separates **what every Fala is** from **removed** fleet
+machinery that historically lived under the name `fala_runtime`.
 
 ---
 

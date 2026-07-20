@@ -1,23 +1,24 @@
 # Migrating Fala 0.2.2 onto Mojo — core first, sinks later
 
-**Audience:** native Mojo work after Python `main` 0.2.2 (event-stream core).
+**Audience:** native Mojo is the **only** Fala engine.
 
-**Strategic order (this is the product decision):**
+**Product decision:** do **not** keep a permanent dual engine (CPython + Mojo).
+CPython `src/fala` may remain briefly as a reference snapshot / oracle during
+land; it is **not** product identity and is not a second process host to
+maintain. After Mojo land, Python runtime is disposable (archive or delete) —
+effectors may still be external `python` **children** via OS process host.
+
+**Strategic order:**
 
 ```text
-1. Port CORE to Mojo          ← primary
-2. Port SQLite adapter        ← secondary (reference sink)
-3. Port other sinks/adapters  ← JSONL, Tee, transports, …
+1. CORE on Mojo               ← organ + JournalPort + InMemory
+2. SQLite adapter on Mojo     ← reference sink (not identity)
+3. Local process host         ← merge-gate (children of Fala)
+4. Other sinks                ← JSONL, Tee (no fleet / multi-runtime)
 ```
 
-**Chosen execution path (indifferent between rebase / rewrite):**  
-**Fresh branch `mojo-core-0.2.2` from `main` 0.2.2**, selectively lifting pure
-modules from historical `mojo`, then writing JournalPort + InMemory. No full
-rebase of the SQLite monolith. Existing `mojo` remains a quarry for the SQLite
-adapter phase (`NativeJournal`, `domain_store`, schema, CLI db).
-
-SQLite is **out of the core** in 0.2.2. The Mojo port must not re-glue it into
-the engine’s identity.
+**Branch:** `mojo-core-0.2.2` from `main` 0.2.2; historical `mojo` is quarry for
+SQLite/host code. SQLite stays a sink, not core identity.
 
 ### Bootstrap status
 
