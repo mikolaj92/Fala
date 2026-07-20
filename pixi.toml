@@ -15,9 +15,15 @@ core-journal-memory = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_jour
 core-correlation-pure = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_correlation_pure.mojo"
 core-memory-e2e = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_memory_e2e.mojo"
 core-smoke = "pixi run core-status && pixi run core-journal-memory && pixi run core-correlation-pure && pixi run core-memory-e2e"
+# Package / native_function (core adapter surface; may link process host symbols)
+native-function = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/native_function_registry.mojo"
+open-journal = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/open_journal.mojo'"
+jsonl-journal = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/jsonl_journal.mojo"
+package-manifest = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/native_manifest.mojo"
 # SQLite adapter (requires built vendor/sqlite.fire/native/libsqlite_fire.dylib)
 sqlite-schema = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/sqlite_schema.mojo'"
-adapter-smoke = "pixi run sqlite-schema"
+sqlite-claim = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/sqlite_claim.mojo'"
+adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run jsonl-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest"
 # Full land gate (core + adapters present so far)
 full-smoke = "pixi run core-smoke && pixi run adapter-smoke"
 json-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/json.mojo"
