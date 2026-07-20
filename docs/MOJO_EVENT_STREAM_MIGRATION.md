@@ -23,7 +23,7 @@ the engine’s identity.
 
 | Item | Status |
 | --- | --- |
-| Branch | `mojo-core-0.2.2` ([PR #93](https://github.com/mikolaj92/Fala/pull/93), **draft** until core complete) |
+| Branch | `mojo-core-0.2.2` ([PR #93](https://github.com/mikolaj92/Fala/pull/93), **draft** until core **and** adapters complete) |
 | Lifted pure | `status`, `processes`, `correlation`, `domain`, models, json, toml, validation |
 | New core | `journal_port.mojo`, `memory_journal.mojo` |
 | Proof | `pixi run core-smoke` (no sqlite.fire) |
@@ -31,24 +31,43 @@ the engine’s identity.
 
 ### Merge policy
 
-**Do not merge the Mojo core PR into `main` until the full core is ported
-and proven on memory.** Journal is **part of core** (Protocol + InMemory
-sink). SQLite is **not** a merge gate for core.
+**One land when the whole Mojo port is done** — core **and** adapters in the
+same integration branch / PR. Do **not** merge a partial core-only slice to
+`main`, and do **not** ship SQLite (or JSONL) as a follow-up merge after core.
 
-Core merge checklist:
+Build order inside the branch still matters (core before SQLite code paths),
+but **merge is atomic**:
 
-1. JournalPort types + InMemoryJournal (done in bootstrap)
-2. Pure status / processes / correlation (partially lifted)
+```text
+work order:   core → sqlite adapter → other adapters
+merge gate:   all of the above proven → one PR ready → merge
+```
+
+Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
+**adapters in the same delivery**, not separate release trains.
+
+#### Work-order checklist (inside the branch)
+
+**Core**
+
+1. JournalPort types + InMemoryJournal (bootstrap done)
+2. Pure status / processes / correlation
 3. Memory-backed mutators: run, impulse, process schedule/claim/complete
 4. Driver against JournalPort (memory)
 5. Package load + native_function for one full path
-6. Facade `open_journal` / `from_journal` (memory)
-7. CLI subset without SQLite
+6. Facade `open_journal` / `from_journal`
+7. CLI surface (memory paths at least)
 8. One end-to-end example on memory
-9. `pixi run core-smoke` green without `sqlite.fire`
+9. `core-smoke` green without `sqlite.fire`
 
-After that merge: SQLite adapter PR(s) reusing `NativeJournal` from historical
-`mojo`.
+**Adapters (same branch, before merge)**
+
+10. SqliteJournalPort over `NativeJournal` / schema / domain_store (from historical `mojo`)
+11. SQLite reopen/migrate/crash smokes
+12. Jsonl / Tee if in scope for this land
+13. Transports that are part of the accepted matrix for this land
+
+**Merge when:** full checklist green; draft PR converted to ready once.
 
 Companion docs:
 

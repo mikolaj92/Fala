@@ -6,9 +6,10 @@ Journal). SQLite and other sinks are **adapters** added later.
 **Journal is core:** `JournalPort` types + `InMemoryJournal` ship with the
 engine. File/SQL/JSONL sinks are adapters that implement the same port.
 
-**Merge policy:** the `mojo-core-0.2.2` PR stays open (draft) until the full
-core checklist in `docs/MOJO_EVENT_STREAM_MIGRATION.md` is green on memory —
-not when the first bootstrap commit lands.
+**Merge policy:** one land when **core + adapters** are done. Work order is
+still core-first (Journal/InMemory, then SQLite, then other sinks), but we do
+**not** merge a core-only PR and ship adapters later. Draft until the full
+checklist in `docs/MOJO_EVENT_STREAM_MIGRATION.md` is green.
 
 This tree is a fresh 0.2.2-aligned bootstrap:
 
