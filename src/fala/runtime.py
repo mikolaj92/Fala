@@ -912,9 +912,13 @@ class RunScope:
 
 
 def _default_impulse_reaction_root(backend: RuntimeBackend) -> Path:
+    if isinstance(backend, JournalBackedBackend):
+        journal = backend.journal
+        if isinstance(journal, SqliteJournal):
+            return Path(journal.path).expanduser().resolve().parent / "reactions"
     if isinstance(backend, Correlator):
         return backend.path.parent / "reactions"
     return Path(".fala") / "reactions"
 
 
-__all__ = ["AutonomousCorrelator", "RunScope"]
+__all__ = ["AutonomousCorrelator", "RunScope", "open_journal"]
