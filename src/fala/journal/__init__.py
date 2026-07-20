@@ -6,6 +6,7 @@ Types and Protocol only in this package for PR1. Sink implementations
 
 from __future__ import annotations
 
+from fala.journal.memory import InMemoryJournal, apply_facts
 from fala.journal.protocol import Journal
 from fala.journal.types import (
     KNOWN_STATE_FACT_ENTITIES,
@@ -26,10 +27,12 @@ __all__ = [
     "ClaimRequest",
     "ClaimResult",
     "CommandUnit",
+    "InMemoryJournal",
     "Journal",
     "JournalBatch",
     "StateFact",
     "StateFactOp",
+    "apply_facts",
     "leading_command",
     "leading_idempotency_key",
 ]
