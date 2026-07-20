@@ -101,6 +101,17 @@ from fala.yaml_loader import (
     fala_package_from_mapping,
     load_fala_package_yaml,
 )
+from fala.journal import (
+    AppendResult,
+    ClaimRequest,
+    ClaimResult,
+    CommandUnit,
+    Journal,
+    JournalBatch,
+    StateFact,
+    leading_command,
+    leading_idempotency_key,
+)
 
 __all__ = [
     "Reaction",
@@ -123,6 +134,13 @@ __all__ = [
     "RuntimeConfigSpec",
     "ImpulseType",
     "ImpulseTypeSpec",
+    "Journal",
+    "JournalBatch",
+    "CommandUnit",
+    "StateFact",
+    "AppendResult",
+    "ClaimRequest",
+    "ClaimResult",
     "WaitDiagnosticIssue",
     "WaitGraphDiagnostic",
     "FalaPackageSpec",
@@ -189,6 +207,8 @@ __all__ = [
     "find_correlation_path_effector_process",
     "correlation_path_effector_processes",
     "instantiate_correlation_path",
+    "leading_command",
+    "leading_idempotency_key",
     "load_fala_package_yaml",
     "process_error_text",
     "run_correlation_path",
