@@ -33,14 +33,20 @@ operator / environment
 | `fala-package.toml` | Correlation path: `ingest_signal` → `threshold_gate` → `arbitrate` |
 | `request.json` | Sample signal reading impulse payload |
 
-## Run (concept)
+## Load / proof
+
+Package validates with the same schema as other Fala packages (`adapter = { kind = ... }`,
+`conduction` on effectors):
 
 ```bash
-# From repo root, with host built:
-mise exec -- pixi run host-smoke   # proves subprocess host
-# Package is TOML-loadable via Fala package APIs; full end-to-end with a
-# live Splot binary depends on a Splot install on PATH (see splot-integration).
+# From repo root:
+mise exec -- pixi run multi-organ-example
+# asserts load_package_toml + three effectors (native_function, manual_homeostat, subprocess)
+# and that the subprocess command uses child.sqlite (separate journal).
 ```
+
+Full end-to-end with a live Splot binary still depends on a Splot install on PATH
+(see `examples/splot-integration/`).
 
 See also:
 

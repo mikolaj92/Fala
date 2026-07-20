@@ -1,34 +1,76 @@
-# Multi-organ package sketch: Signals vocabulary + subprocess organ slot.
-# Effector `arbitrate` is intended for a Splot (or any) argv organ with its own journal.
-
+# Multi-organ package: Signals vocabulary + external organ (subprocess) slot.
+# Child subprocess must use a journal path different from the parent Fala journal.
+version = "2"
 id = "multi-organ-demo"
-version = "0.1.0"
 title = "Signals + external organ composition"
+description = "Compose Signals EV vocabulary with a subprocess organ (e.g. Splot) and separate child journal."
+tags = ["example", "multi-organ", "signals", "splot"]
+
+[[impulse_types]]
+id = "signals.reading"
+title = "Signal reading"
+media_types = ["application/json"]
+value_schema = { type = "object", properties = { channel = { type = "string" }, value = { type = "number" } }, additionalProperties = true }
+
+[[association_kinds]]
+id = "signals.channel"
+title = "Signal channel"
+
+[[reaction_kinds]]
+id = "signals.reading"
+title = "Signal reading reaction"
+media_types = ["application/json"]
+
+[[reaction_kinds]]
+id = "splot.arbitration_result"
+title = "Arbitration result"
+media_types = ["application/json"]
+
+[[capabilities]]
+id = "ingest_signal"
+title = "Ingest signal reading"
+accepts_impulse_types = ["signals.reading"]
+emits_reaction_kinds = ["signals.reading"]
+emits_association_kinds = ["signals.channel"]
+
+[[capabilities]]
+id = "threshold_gate"
+title = "Essential-variable threshold gate"
+accepts_reaction_kinds = ["signals.reading"]
+emits_association_kinds = ["signals.channel"]
+
+[[capabilities]]
+id = "arbitrate"
+title = "External arbitration organ"
+accepts_reaction_kinds = ["signals.reading"]
+emits_reaction_kinds = ["splot.arbitration_result"]
 
 [[correlation_paths]]
 id = "signal_then_arbitrate"
+title = "Signal then external organ"
 
 [[correlation_paths.effectors]]
 id = "ingest_signal"
-kind = "native_function"
-ref = "signals.ingest"
+capability = "ingest_signal"
+adapter = { kind = "native_function", ref = "signals.ingest" }
 
 [[correlation_paths.effectors]]
 id = "threshold_gate"
-kind = "manual_homeostat"
-# When EV is already satisfied, composers may skip this gate and use
-# regulation_decision() from the Signals pack instead of waiting on an operator.
+capability = "threshold_gate"
+conduction = ["ingest_signal"]
+adapter = { kind = "manual_homeostat" }
 
 [[correlation_paths.effectors]]
 id = "arbitrate"
-kind = "subprocess"
-command = ["splot", "run", "--db", "child.sqlite"]
-# Child must use a journal path different from the parent Fala journal.
+capability = "arbitrate"
+conduction = ["threshold_gate"]
+# Nested organ: separate child journal (child.sqlite), not the parent --db path.
+adapter = { kind = "subprocess", command = ["splot", "run", "--db", "child.sqlite"] }
 
-[[correlation_paths.conduction]]
-from = "ingest_signal"
-to = "threshold_gate"
+[runtime.backend]
+kind = "sqlite"
+path = ".fala/parent-state.sqlite"
 
-[[correlation_paths.conduction]]
-from = "threshold_gate"
-to = "arbitrate"
+[runtime.reaction_store]
+kind = "filesystem"
+root = ".fala/reactions"
