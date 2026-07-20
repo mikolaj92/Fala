@@ -94,9 +94,9 @@ from .native_driver import (
     RunFinalizationResult, RunUntilIdleResult, RunBoundaryResult,
     DelegationCloseResult,
     persist_adapter_binding, load_adapter_bindings,
-    drive_once, drive_until_idle, drive_bound_queue, drive_all_runs,
+    drive_once, drive_until_idle, drive_ready_batch, drive_bound_queue, drive_all_runs,
     run_until_idle, diagnose_waits, diagnose_wait_graph,
-    resume_homeostat, cancel_homeostat, expire_homeostat, reopen_homeostat, transition_homeostat_terminal,
+    resume_homeostat, cancel_homeostat, expire_homeostat, reopen_homeostat, rearm_homeostat, transition_homeostat_terminal,
     finalize_run, observe_run_boundary, close_delegations,
     advance_after_terminal, drive_correlation_once, drive_correlation_until_idle,
 )
@@ -136,6 +136,17 @@ from .open_journal import open_journal_kind, open_memory_runtime, open_memory_dr
 from .jsonl_journal import JsonlJournal
 from .tee_journal import TeeJournal
 from .sqlite_journal_port import SqliteJournalPort
+from .domain_packs.signals import (
+    SIGNALS_DOMAIN_PACK_ID,
+    SIGNALS_READING,
+    SignalReading,
+    impulse_from_reading,
+    channel_association,
+    threshold_homeostat,
+    evaluate_essential_variable,
+    regulation_decision,
+    signal_projection,
+)
 from .domain_packs.splot import (
     SPLOT_DOMAIN_PACK_ID,
     SPLOT_ARBITRATION_CASE,

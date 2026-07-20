@@ -24,13 +24,25 @@ Fala owns:
 Adapters own execution only. They receive validated input from the runtime and
 return validated output for the runtime to commit.
 
-## Execution model (what Fala does *not* own)
+## Execution model
 
-`run_until_idle` is a **sequential** claim → execute → complete loop. One
-driver invocation claims one ready process at a time under a worker lease,
-runs its adapter, commits the result, optionally advances the correlation
-path, then claims the next process. Fala is not a multi-job concurrency
-scheduler and does not isolate "concurrent runs" as a first-class feature.
+Default: `run_until_idle` is a **claim → execute → complete** loop under one
+worker lease. By default it claims **one** ready process per outer step
+(`claims_per_round=1`).
+
+### Multi-claim (same journal)
+
+Pass `claims_per_round > 1` to `drive_until_idle`, or call `drive_ready_batch`
+with `max_claims`, to claim and drive several ready processes in one batch on
+the **same** journal. This is still one Fala / one lease owner — not a fleet —
+but it is first-class multi-claim composition for independent ready work.
+
+### Multi-workspace (separate journals)
+
+Unix-style parallel composition uses **multiple Fala instances**, each with
+its **own journal path** (or `MemoryDriver` with a distinct `stream_id`). Nested
+organs use subprocess + separate child journal (`FALA_HOST_AND_COMPOSITION.md`).
+Fala is not a multi-job cluster scheduler; it is a composable organ + journal.
 
 Implications for embedded consumers:
 
@@ -41,12 +53,10 @@ Implications for embedded consumers:
   `work_dir` into `run_until_idle`, each subprocess effector gets
   `work_dir / process.id`. That is scratch for one process, not a
   cross-run concurrent workspace manager.
-- **Parallel drivers are the consumer's choice.** If the host starts several
-  `run_until_idle` loops at once (threads, processes, fleet workers) against
-  a shared `work_dir` or reaction store root, isolation is the consumer's
-  responsibility: keep process ids unique (prefer Fala's default run-scoped
-  correlation path ids; do not force a fixed `correlation_path_id` that
-  omits `run_id`), and/or give each driver its own work root.
+- **Parallel workspaces are first-class composition.** Prefer separate journals
+  (or multi-claim batches) rather than fighting one shared DB. If the host
+  still starts several loops against a shared work root, isolation remains the
+  consumer's responsibility for process ids and reaction store paths.
 - **Leases are ownership and crash recovery**, not "orchestrate five document
   jobs in parallel for me."
 

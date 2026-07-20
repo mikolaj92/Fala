@@ -2,12 +2,29 @@
 
 **Version 0.3.0** — first **exclusive Mojo** product release.
 
+## Compose single-purpose processes
+
+Fala is a **composer of single-purpose processes**, not an application server.
+
+1. **Write small organs** (tools) with clear I/O — preferably argv + files/JSON.
+2. **Declare a correlation path** (TOML package): which effectors run, and how
+   outputs conduct into the next step.
+3. **Drive one journal** to idle: claim → execute → complete; recover from the
+   event stream. Nested work = another process + **its own journal**.
+
+```text
+you compose:   package → impulse → run_until_idle → journal
+Fala provides: organ loop + JournalPort + process host + adapters
+organs live:   native_function | subprocess (Splot, …) | homeostat gates
+```
+
 **Fala is a fully Mojo runtime.** There is no CPython engine, no YAML packages,
 and no multi-runtime fleet.
 
 It is an embedded, **event-first** correlator: impulses move through
 correlation paths of effectors; a journal records durable process state; a
-**process host** runs OS children. One engine — organ + journal + host.
+**process host** runs OS children (Darwin and Linux). One engine — organ +
+journal + host.
 
 ```text
 Impulse / package (TOML)
@@ -17,7 +34,7 @@ Impulse / package (TOML)
         │
         ├── native_function   (in-process Mojo registry)
         ├── subprocess        (OS child + FALA_EFFECTOR_*)
-        └── manual_homeostat  (wait for operator)
+        └── manual_homeostat  (wait for operator; rearm + EV regulation available)
         │
         ▼
   JournalPort  →  InMemory | SQLite | JSONL | Tee
@@ -32,6 +49,7 @@ Impulse / package (TOML)
 | --- | --- |
 | Local correlation paths | ingest → enrich → export as durable processes |
 | Host other Mojo tools | run Splot (or any argv child) as a subprocess effector |
+| Multi-organ composition | Signals vocabulary + Splot subprocess (`examples/multi-organ/`) |
 | Observable runs | journaled leases, retries, homeostats, projections |
 | Embedded / CLI | drive one run to idle without a web stack |
 

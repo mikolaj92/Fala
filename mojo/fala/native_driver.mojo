@@ -373,6 +373,25 @@ def expire_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: S
     return journal.transition_homeostat_process(run_id, homeostat_id, process_id, "expired", "timed_out", actor, at, "{}", error_json, "homeostat.expire:" + homeostat_id)
 def reopen_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, idempotency_key: String = "") raises SQLiteError -> ProcessRow:
     return journal.reopen_homeostat_process(run_id, homeostat_id, process_id, actor, at, idempotency_key)
+
+
+def rearm_homeostat(
+    mut journal: NativeJournal,
+    run_id: String,
+    homeostat_id: String,
+    process_id: String,
+    actor: String,
+    at: String,
+    idempotency_key: String = "",
+) raises SQLiteError -> ProcessRow:
+    """Atomically re-arm a terminal homeostat on a waiting run (#68).
+
+    Requires the run to be waiting; reopens the homeostat and resets the
+    succeeded/cancelled/timed_out process to waiting under one journal batch.
+    """
+    return journal.reopen_homeostat_process(
+        run_id, homeostat_id, process_id, actor, at, idempotency_key, require_waiting_run=True
+    )
 def transition_homeostat_terminal(
     mut journal: NativeJournal,
     plan: CorrelationInstantiationPlan,
@@ -963,15 +982,22 @@ def drive_until_idle(
     lease_expires_at: String,
     max_ticks: Int,
     registry: NativeFunctionRegistry,
+    claims_per_round: Int = 1,
 ) raises SQLiteError -> DriverResult:
     """Drive supplied adapters against durable rows until idle or bounded.
 
     Process rows are reloaded for the supplied run before every tick.  A
     durable row is executable only when its id is present in the caller's
     process/adapter mapping; rows discovered by the reload remain queued.
+
+    ``claims_per_round`` (default 1) is how many ready processes may be claimed
+    and executed in one outer loop iteration. Values > 1 enable multi-claim
+    composition inside a single journal (still one lease owner; not a fleet).
     """
     if max_ticks < 1:
         raise SQLiteError(code=1, message="driver: max_ticks must be greater than zero")
+    if claims_per_round < 1:
+        raise SQLiteError(code=1, message="driver: claims_per_round must be greater than zero")
     if worker_id == "":
         raise SQLiteError(code=1, message="driver: worker_id must not be empty")
     if now == "":
@@ -984,53 +1010,81 @@ def drive_until_idle(
     var aggregate = DriverResult(idle=True)
     var run_id = processes[0].run_id if len(processes) != 0 else ""
     while aggregate.ticks < max_ticks:
-        var durable = List[ProcessRow]()
-        if run_id != "": durable = journal.list_processes(run_id)
-        var best = -1
-        var best_supplied = -1
-        var index = 0
-        while index < len(durable):
-            var supplied = _supplied_process_index(processes, run_id, durable[index].id)
-            if supplied >= 0 and _row_claimable(durable[index], now):
-                if best < 0 or _row_before(durable[index], durable[best]):
-                    best = index
-                    best_supplied = supplied
-            index += 1
-        if best < 0: break
-        var candidate = durable[best].copy()
-        if candidate.status == "running" and candidate.lease_owner != "" and candidate.lease_expires_at <= now:
-            # Resolve the old owner's lease first.  This preserves one attempt
-            # per claim and emits the journal transition before re-claiming.
-            var maintained = maintain_process(
-                journal, candidate, candidate.lease_owner, now, now,
-                "{\"code\":\"lease_expired\",\"message\":\"process lease expired\"}",
+        var claimed_this_round = 0
+        while claimed_this_round < claims_per_round and aggregate.ticks < max_ticks:
+            var durable = List[ProcessRow]()
+            if run_id != "": durable = journal.list_processes(run_id)
+            var best = -1
+            var best_supplied = -1
+            var index = 0
+            while index < len(durable):
+                var supplied = _supplied_process_index(processes, run_id, durable[index].id)
+                if supplied >= 0 and _row_claimable(durable[index], now):
+                    if best < 0 or _row_before(durable[index], durable[best]):
+                        best = index
+                        best_supplied = supplied
+                index += 1
+            if best < 0: break
+            var candidate = durable[best].copy()
+            if candidate.status == "running" and candidate.lease_owner != "" and candidate.lease_expires_at <= now:
+                # Resolve the old owner's lease first.  This preserves one attempt
+                # per claim and emits the journal transition before re-claiming.
+                var maintained = maintain_process(
+                    journal, candidate, candidate.lease_owner, now, now,
+                    "{\"code\":\"lease_expired\",\"message\":\"process lease expired\"}",
+                )
+                if maintained.status == "failed":
+                    aggregate.failed = True
+                    aggregate.ticks += 1
+                    aggregate.process_id = candidate.id
+                    claimed_this_round += 1
+                    continue
+                candidate = journal.get_process(candidate.run_id, candidate.id)
+            var one = drive_once(
+                journal, candidate, adapters[best_supplied], worker_id, now, lease_expires_at, registry
             )
-            if maintained.status == "failed":
+            if one.ticks == 0 and not one.error.is_ok():
                 aggregate.failed = True
-                aggregate.ticks += 1
+                aggregate.idle = False
                 aggregate.process_id = candidate.id
-                continue
-            candidate = journal.get_process(candidate.run_id, candidate.id)
-        var one = drive_once(
-            journal, candidate, adapters[best_supplied], worker_id, now, lease_expires_at, registry
-        )
-        if one.ticks == 0 and not one.error.is_ok():
-            aggregate.failed = True
-            aggregate.idle = False
-            aggregate.process_id = candidate.id
-            aggregate.error = one.error.copy()
-            break
-        aggregate.ticks += one.ticks
-        for failure_row in one.failure_rows:
-            aggregate.failure_rows.append(failure_row.copy())
-        aggregate.completed = aggregate.completed or one.completed
-        aggregate.waiting = aggregate.waiting or one.waiting
-        aggregate.failed = aggregate.failed or one.failed
-        aggregate.timed_out = aggregate.timed_out or one.timed_out
-        aggregate.process_id = one.process_id
-        if not one.error.is_ok(): aggregate.error = one.error.copy()
+                aggregate.error = one.error.copy()
+                return aggregate^
+            aggregate.ticks += one.ticks
+            claimed_this_round += 1
+            for failure_row in one.failure_rows:
+                aggregate.failure_rows.append(failure_row.copy())
+            aggregate.completed = aggregate.completed or one.completed
+            aggregate.waiting = aggregate.waiting or one.waiting
+            aggregate.failed = aggregate.failed or one.failed
+            aggregate.timed_out = aggregate.timed_out or one.timed_out
+            aggregate.process_id = one.process_id
+            if not one.error.is_ok(): aggregate.error = one.error.copy()
+        if claimed_this_round == 0: break
     if aggregate.ticks != 0: aggregate.idle = aggregate.ticks < max_ticks
     return aggregate^
+
+
+def drive_ready_batch(
+    mut journal: NativeJournal,
+    processes: List[ProcessRow],
+    adapters: List[AdapterSpec],
+    worker_id: String,
+    now: String,
+    lease_expires_at: String,
+    max_claims: Int,
+    registry: NativeFunctionRegistry,
+) raises SQLiteError -> DriverResult:
+    """Claim and drive up to ``max_claims`` ready processes in one batch.
+
+    First-class multi-claim entry for composition; equivalent to one round of
+    ``drive_until_idle(..., claims_per_round=max_claims, max_ticks=max_claims)``.
+    """
+    if max_claims < 1:
+        raise SQLiteError(code=1, message="driver: max_claims must be greater than zero")
+    return drive_until_idle(
+        journal, processes, adapters, worker_id, now, lease_expires_at,
+        max_claims, registry, claims_per_round=max_claims,
+    )
 
 def run_until_idle(
     mut journal: NativeJournal,
