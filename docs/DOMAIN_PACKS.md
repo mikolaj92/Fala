@@ -1,23 +1,28 @@
 # Domain Packs
 
-Core Fala is domain-agnostic. Domain-specific objects should live in domain
-packs that map their concepts onto Impulse runtime records.
+Core Fala is domain-agnostic. Domain-specific objects live in **domain packs**
+that map concepts onto Impulse runtime records.
 
-Current packs:
+## Packs (Mojo)
 
-- `fala.domain_packs.signals`
-- `fala.domain_packs.splot`
+| Pack | Module | Proof |
+| --- | --- | --- |
+| **Splot** (arbitration) | `mojo/fala/domain_packs/splot.mojo` | `pixi run splot-domain` |
+| Signals | not yet ported (optional examples only) | — |
 
-Impulse-first examples:
+## What packs provide
 
-- `examples/domain-packs/signals`
-
-Domain packs may provide:
-
-- impulse builders and parsers
+- impulse builders / parsers
 - association helpers
+- homeostat helpers
 - projection helpers
-- package examples
-- migration guidance from prior domain-specific models
+- package manifests under `examples/domain-packs/`
 
-Core runtime code must not depend on domain-specific classes from packs.
+## Rules
+
+- Core runtime (`mojo/fala` organ, journal, driver, host) must **not** depend on
+  domain-specific classes for its identity.
+- Packs depend on public domain records only.
+- Product engine remains exclusive Mojo; packs are also Mojo.
+
+See [`SPLOT_DOMAIN_PACK.md`](SPLOT_DOMAIN_PACK.md).

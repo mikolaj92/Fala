@@ -74,7 +74,9 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 19. Bridge two-path deliver + **file handoff** in bridge smoke — **done**
 20. RuntimePool / fleet APIs — **removed** from domain_store + runtime_policy product path
 21. CPython engine — **deleted** (exclusive Mojo)
-22. Domain packs / optional demos — `examples/optional/` (not core)
+22. Domain pack **Splot** — **done** (`mojo/fala/domain_packs/splot.mojo`, `splot-domain` smoke)
+23. Signals domain pack — open (optional)
+24. Optional demos remain under `examples/optional/` where not promoted
 
 **Merge when:** full + extended smoke green (exclusive Mojo).  
 

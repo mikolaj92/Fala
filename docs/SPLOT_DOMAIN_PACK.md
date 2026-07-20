@@ -1,46 +1,48 @@
-# Splot Arbitration Domain Pack
+# Splot Arbitration Domain Pack (Mojo)
 
-`fala.domain_packs.splot` keeps arbitration behavior outside Fala core. Core
-Fala provides impulses, commands, events, associations, homeostats, projections, and
-SQLite persistence. Splot defines arbitration-specific meaning on top.
+`fala.domain_packs.splot` keeps arbitration behavior **outside** Fala core.
+Core provides impulses, commands, events, associations, homeostats, projections,
+and journal sinks. Splot defines arbitration-specific meaning on top — pure
+builders only; no scheduler logic.
 
-## Domain Concepts
+## Concepts
 
-- Impulse type: `splot.arbitration_case`
-- Case input: `SplotArbitrationCase`
-- Association: `splot.jurisdiction`
-- Homeostat: `splot.review`
-- Projection: `splot.case:{claim_id}`
-- Reactions: case payload entries such as claim statements, awards, evidence
-  bundles, or correspondence
+| Domain | Core mapping |
+| --- | --- |
+| Case | Impulse type `splot.arbitration_case` |
+| Jurisdiction | Association kind `splot.jurisdiction` |
+| Human review | Homeostat kind `splot.review` |
+| Case summary | Projection name `splot.case:{claim_id}` |
+| Decision report | Reaction kind `splot.decision_report` (package) |
 
-## Process Semantics
+## Process semantics (pack vocabulary)
 
-The pack encodes domain semantics without adding scheduler behavior to core:
+- `intake` — accept arbitration case impulse
+- `jurisdiction` — record admissibility associations
+- `triage` — open/complete review homeostats
+- `award_projection` — case summary projection
 
-- `intake`: accept arbitration case impulse and source reactions
-- `jurisdiction`: record jurisdiction and admissibility associations
-- `triage`: open or complete human review homeostats
-- `award_projection`: maintain case summary projection for operators
+## Mojo module
+
+- `mojo/fala/domain_packs/splot.mojo`
+- Helpers: `impulse_from_case`, `case_from_impulse`, `jurisdiction_association`,
+  `review_homeostat`, `case_projection`
+
+## Package example
+
+```bash
+# Manifest (native TOML)
+examples/domain-packs/splot/fala-package.toml
+```
+
+## Proof
+
+```bash
+mise exec -- pixi run splot-domain
+# also included in extended-smoke
+```
 
 ## Boundary
 
-Splot-specific rules belong in the domain pack. Fala core should not know about
-claimants, respondents, admissibility, awards, arbitration rules, or Splot case
-states. The pack uses public `AutonomousCorrelator` and `RuntimeBackend` APIs only.
-
-Run the local example:
-
-```bash
-uv run python examples/domain-packs/splot/local_arbitration.py /tmp/splot.sqlite
-```
-
-Validate the fala package manifest:
-
-```bash
-uv run fala schema fala-package
-uv run python - <<'PY'
-from fala import load_fala_package_yaml
-print(load_fala_package_yaml("examples/domain-packs/splot/fala-package.yaml").id)
-PY
-```
+Core must not import Splot types except via optional pack consumers. Domain
+packs may depend on `fala.domain` records only.

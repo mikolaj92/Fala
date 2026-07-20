@@ -36,7 +36,8 @@ Process, Run, Homeostat, Projection, JournalPort, Effector adapters
 | Local bridge deliver + file handoff | DONE |
 | Fleet / RuntimePool / `fala_runtime` | REMOVED |
 | CPython engine | REMOVED |
-| Domain packs in Mojo core | OUT OF SCOPE (optional examples only) |
+| Domain pack Splot | DONE (`domain_packs/splot`, outside organ identity) |
+| Domain pack Signals | open |
 
 ## Proof
 
