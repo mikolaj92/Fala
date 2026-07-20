@@ -1,47 +1,131 @@
-"""Native Fala core package (event-first, no SQLite dependency).
+"""Native Fala runtime package."""
 
-Production Mojo boundary for:
-- pure lifecycle policy (status, processes)
-- correlation planning (correlation)
-- JournalPort types + InMemoryJournal
-- shared models / JSON / validation
-
-SQLite and other sinks live as adapters in later phases — see
-docs/MOJO_EVENT_STREAM_MIGRATION.md.
-"""
-
-from .status import (
-    ProcessStatus,
-    RunStatus,
-    can_transition_process,
-    can_transition_run,
-    can_replay_terminal_process,
+from .native_process_host import (
+    ProcessHost, ProcessHostError, start as start_native_process,
+    native_process_host_available,
+    PROCESS_OK, PROCESS_INVALID_ARGUMENT, PROCESS_SYSTEM_ERROR,
+    PROCESS_TIMED_OUT, PROCESS_CANCELLED,
+    PROCESS_RUNNING, PROCESS_EXITED, PROCESS_SIGNALED,
+    PROCESS_STATUS_TIMED_OUT, PROCESS_STATUS_CANCELLED, PROCESS_STATUS_ERROR,
 )
+from .status import ProcessStatus, RunStatus, can_transition_process, can_transition_run
+from .json import JsonValue, parse_json, serialize_json, canonical_json_text
+from .adapters import (
+    AdapterKind, AdapterError, NativeFunctionRegistry, AdapterSpec,
+    EffectorRequest, EffectorResult, SubprocessBoundary,
+    resolve_environment, redact_environment, adapter_manifest_json,
+    adapter_result_json, adapter_spec_json, adapter_spec_from_json,
+    execute_python_function, execute_native_function, execute_subprocess,
+)
+from .native_package import (
+    PackageManifestError, PackageEffector, PackageCorrelationPath,
+    PackageManifest, load_package_json, serialize_package_json,
+    validate_package_json_text,
+)
+from .toml import parse_toml_value, parse_toml_json
+from .package import NativePackage, load_fala_package_json, load_package_toml, load_fala_package_toml
+from .journal import (
+    RunRow, RunRecord, CommandRow, CommandResult, EventRow, ProcessRow,
+    NativeJournal,
+)
+from .runs import RunLifecycleRecord, RunLifecycle
 from .processes import (
-    PROCESS_SCHEMA_VERSION,
-    ProcessRecord,
-    process_is_claimable,
-    ready_processes,
-    claim_process,
-    actor_can_transition,
-    transition_process,
-    retry_is_eligible,
-    retry_backoff_seconds,
-    retry_process,
-    expire_process,
+    PROCESS_SCHEMA_VERSION, ProcessRecord, process_is_claimable,
+    ready_processes, claim_process, actor_can_transition,
+    transition_process, retry_is_eligible, retry_backoff_seconds,
+    retry_process, expire_process,
 )
+from .correlation import (
+    EffectorNode, ConductionEdge, Readiness, CorrelationGraph,
+    effector_ids, conduction_edges, validate_graph, topological_order,
+    readiness, CorrelationInputField, CorrelationEffectorSpec,
+    CorrelationPathSpec, CorrelationProcessPlan, CorrelationInstantiationPlan,
+    CorrelationExecutionState, CorrelationConductionValue, CorrelationBlocked,
+    CorrelationAdvancePlan, CorrelationWaitDiagnostic,
+    validate_correlation_inputs,
+    validate_correlation_input_json, instantiate_correlation_path_plan,
+    instantiate_correlation_path, project_conduction,
+    advance_correlation_states, replay_safe_advance,
+)
+from .models import WaitDiagnosticIssue, WaitGraphDiagnostic
+from .models_native import (
+    RunStatus as NativeRunStatus, ProcessStatus as NativeProcessStatus,
+    HomeostatStatus as NativeHomeostatStatus,
+    Run as NativeRun, Impulse as NativeImpulse,
+    ImpulseType as NativeImpulseType, ImpulseRelation as NativeImpulseRelation,
+    RuntimeCommand as NativeRuntimeCommand, RuntimeEvent as NativeRuntimeEvent,
+    Association as NativeAssociation, Reaction as NativeReaction,
+    Process as NativeProcess, Homeostat as NativeHomeostat,
+    Projection as NativeProjection, RuntimeRef as NativeRuntimeRef,
+    RuntimeBudget as NativeRuntimeBudget, RuntimePool as NativeRuntimePool,
+    DelegationPolicy as NativeDelegationPolicy,
+)
+from .correlation_persistence import (
+    CorrelationPersistenceError, CorrelationPersistenceResult,
+    validate_correlation_persistence_plan, refresh_correlation_readiness,
+    persist_correlation_plan,
+)
+from .validation import (
+    is_valid_runtime_id, validate_runtime_id, validate_positive_number,
+    validate_optional_positive_number, validate_known_fields,
+    validate_unique_values, validate_unique_ids, validate_known_references,
+    validate_no_self_reference, validate_adapter_boundary, validate_acyclic,
+)
+from .errors import ValidationError
+from .reactions import (
+    FALA_REACTION_SCHEME, ReactionBlob, sha256_bytes, content_address_json,
+    is_fala_reaction_uri, digest_from_fala_reaction_uri,
+    reaction_digest_or_empty, put_bytes, resolve_uri, FileReactionStore,
+)
+from .schema import (
+    SCHEMA_VERSION, SCHEMA_SQL, table_names, initialize_schema,
+    SchemaStatus, schema_status, migrate_schema, initialize_native_schema,
+)
+from .domain import (
+    Impulse, ImpulseType, ImpulseRelation, Association, Reaction, Homeostat,
+    Projection, RuntimeRef, RunRef, EventRef, RuntimeBudget, RuntimePool,
+    DelegationPolicy,
+    BridgeDelivery
+)
+from .runtime_policy import (
+    RuntimePolicyError, RuntimeSelection, DelegationEnvelope,
+    parse_runtime_refs_json, validate_runtime_pool, validate_delegation_policy,
+    select_runtime, resolve_delegation_policy, merge_runtime_budgets,
+    budget_allows_request, parse_runtime_budget_json,
+    create_delegation_envelope, extract_delegation_envelope,
+)
+from .native_driver import (
+    DriverResult, AdapterBinding, AllRunDriverResult,
+    RunFinalizationResult, RunUntilIdleResult, RunBoundaryResult,
+    DelegationCloseResult,
+    persist_adapter_binding, load_adapter_bindings,
+    drive_once, drive_until_idle, drive_bound_queue, drive_all_runs,
+    run_until_idle, diagnose_waits, diagnose_wait_graph,
+    resume_homeostat, cancel_homeostat, expire_homeostat, reopen_homeostat, transition_homeostat_terminal,
+    finalize_run, observe_run_boundary, close_delegations,
+    advance_after_terminal, drive_correlation_once, drive_correlation_until_idle,
+)
+from .correlation_advance import CorrelationAdvanceError, CorrelationAdvanceResult, CorrelationReactionMarker, advance_correlation, validate_correlation_advance_plan
+from .correlation_runtime import CorrelationRuntimeResult, run_correlation_path
+from .domain_store import NativeDomainStore, ImpulseAcceptanceResult, HomeostatTransitionResult, ProjectionRebuildResult
+from .reaction_effects import (
+    ReactionEffectResult, LocalReactionEffectResult,
+    accumulate_reaction_effects, persist_reaction_effects,
+    materialize_local_reaction_effect,
+)
+from .bridge_transport import BridgeTransportResult, deliver_local_bridge, deliver_local_bridge_delivery
+from .native_cli_surface import cli_surface_help, dispatch_native_command, dispatch_command
+from .migration import MigrationReport, legacy_to_native_json, migrate_package_json
+
+# Event-stream core (0.2.2) — memory journal path without SQLite.
 from .journal_port import (
-    StateFact,
-    CommandRecord,
-    EventRecord,
-    CommandUnit,
-    JournalBatch,
-    AppendResult,
-    ClaimRequest,
-    ClaimResult,
-    leading_command,
-    leading_idempotency_key,
+    StateFact, CommandRecord, EventRecord, CommandUnit, JournalBatch,
+    AppendResult, ClaimRequest, ClaimResult, leading_command, leading_idempotency_key,
 )
 from .memory_journal import InMemoryJournal
-from .memory_runtime import MemoryRuntime, ProcessExtra, RunRow
+from .memory_runtime import MemoryRuntime, ProcessExtra, RunRow as MemoryRunRow
 from .memory_driver import MemoryDriver
+from .open_journal import open_journal_kind, open_memory_runtime, open_memory_driver, OpenedJournal
+from .jsonl_journal import JsonlJournal
+from .tee_journal import TeeJournal
+from .sqlite_journal_port import SqliteJournalPort

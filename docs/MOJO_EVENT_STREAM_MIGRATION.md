@@ -68,12 +68,15 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 13. JsonlJournal + torn-line smoke — **done**
 14. TeeJournal — **done**
 15. CLI operator path on SQLite — **done**
-16. Full historical matrix (native_cli_semantics breadth, domain_store maintenance, bridge transport host) — partial/open
-17. Subprocess / fala_runtime transport hosts as required — open
+16. Historical breadth: domain_store, migration, correlation exec/persist/runtime, native_driver, adapter persistence, finalization, runtime contracts — **done** (`extended-smoke`)
+17. native_cli_semantics / example_basic / bridge_transport / subprocess — partial (in tree; wire into extended as they stay green)
+18. Subprocess / fala_runtime host production readiness — open (typed unavailable still acceptable per matrix)
 
 **Merge when:** full checklist green; draft PR converted to ready once.
 
-**Proof today:** `pixi run full-smoke` (= core-smoke + adapter-smoke) — green.
+**Proof today:**
+- `pixi run full-smoke` — green  
+- `pixi run extended-smoke` — green
 
 Companion docs:
 

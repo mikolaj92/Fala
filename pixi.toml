@@ -9,27 +9,49 @@ mojo = "==1.0.0b3.dev2026071505"
 sqlite = ">=3.51"
 
 [tasks]
-# Core: no sqlite.fire required for these.
+# --- Core (no sqlite.fire) ---
 core-status = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_status.mojo"
 core-journal-memory = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_journal_memory.mojo"
 core-correlation-pure = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_correlation_pure.mojo"
 core-memory-e2e = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_memory_e2e.mojo"
 core-driver-registry = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_driver_registry.mojo"
 core-smoke = "pixi run core-status && pixi run core-journal-memory && pixi run core-correlation-pure && pixi run core-memory-e2e && pixi run core-driver-registry"
-# Package / native_function (core adapter surface; may link process host symbols)
+
+# --- Shared adapters (memory/jsonl/package) ---
 native-function = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/native_function_registry.mojo"
-open-journal = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/open_journal.mojo'"
 jsonl-journal = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/jsonl_journal.mojo"
 tee-journal = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/tee_journal.mojo"
 package-manifest = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/native_manifest.mojo"
-# SQLite adapter (requires built vendor/sqlite.fire/native/libsqlite_fire.dylib)
-_sql = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src "
-sqlite-schema = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/sqlite_schema.mojo'"
-sqlite-claim = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/sqlite_claim.mojo'"
-schema-migration = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/schema_migration.mojo'"
-cli-smoke = "bash -ceu 'test -s vendor/sqlite.fire/native/libsqlite_fire.dylib || make -C vendor/sqlite.fire/native; mkdir -p mojo/fala/native; test -s mojo/fala/native/libfala_process_host.dylib || cc -std=c11 -Wall -Wextra -dynamiclib -o mojo/fala/native/libfala_process_host.dylib mojo/fala/native_process_host.c; cd vendor/sqlite.fire && mojo run -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/cli.mojo'"
-adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run schema-migration && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run cli-smoke"
-# Full land gate (core + adapters present so far)
-full-smoke = "pixi run core-smoke && pixi run adapter-smoke"
 json-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/json.mojo"
 toml-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/toml.mojo"
+sdk-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/sdk.mojo"
+reaction-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/reaction.mojo"
+
+# --- SQLite adapter (sqlite.fire) ---
+open-journal = "./tools/mojo_sql_run.sh mojo/smoke/open_journal.mojo"
+sqlite-schema = "./tools/mojo_sql_run.sh mojo/smoke/sqlite_schema.mojo"
+sqlite-claim = "./tools/mojo_sql_run.sh mojo/smoke/sqlite_claim.mojo"
+schema-migration = "./tools/mojo_sql_run.sh mojo/smoke/schema_migration.mojo"
+domain-bridge = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_bridge.mojo"
+domain-maintenance = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_maintenance.mojo"
+domain-accept-impulse = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_accept_impulse.mojo"
+migration-smoke = "./tools/mojo_sql_run.sh mojo/smoke/migration.mojo"
+cli-smoke = "./tools/mojo_sql_run.sh mojo/smoke/cli.mojo 1"
+native-cli-semantics = "./tools/mojo_sql_run.sh mojo/smoke/native_cli_semantics.mojo 1"
+correlation-execution = "./tools/mojo_sql_run.sh mojo/smoke/correlation_execution.mojo 1"
+correlation-persistence = "./tools/mojo_sql_run.sh mojo/smoke/correlation_persistence.mojo 1"
+correlation-runtime = "./tools/mojo_sql_run.sh mojo/smoke/correlation_runtime.mojo 1"
+native-driver = "./tools/mojo_sql_run.sh mojo/smoke/native_driver.mojo 1"
+example-basic-native = "./tools/mojo_sql_run.sh mojo/smoke/example_basic_native.mojo 1"
+adapter-persistence = "./tools/mojo_sql_run.sh mojo/smoke/adapter_persistence.mojo 1"
+bridge-transport = "./tools/mojo_sql_run.sh mojo/smoke/bridge_transport.mojo 1"
+finalization = "./tools/mojo_sql_run.sh mojo/smoke/finalization.mojo 1"
+runtime-contracts = "./tools/mojo_sql_run.sh mojo/smoke/runtime_contracts.mojo 1"
+
+adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run schema-migration && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke"
+
+# Broader historical suite (may still have gaps; included in extended-smoke)
+extended-adapter-smoke = "pixi run adapter-smoke && pixi run native-cli-semantics && pixi run correlation-execution && pixi run correlation-persistence && pixi run correlation-runtime && pixi run native-driver && pixi run adapter-persistence && pixi run finalization && pixi run runtime-contracts"
+
+full-smoke = "pixi run core-smoke && pixi run adapter-smoke"
+extended-smoke = "pixi run core-smoke && pixi run extended-adapter-smoke"

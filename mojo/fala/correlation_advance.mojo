@@ -19,6 +19,7 @@ from fala.correlation import (
     CorrelationExecutionState,
     CorrelationInstantiationPlan,
     CorrelationProcessPlan,
+    CorrelationAdvancePlan,
     Readiness,
     diagnose_correlation_wait,
     advance_correlation_states,
