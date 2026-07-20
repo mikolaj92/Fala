@@ -196,4 +196,4 @@ cybernetic (each correlator is its own organ with its own memory).
 | [`MULTI_FALA_COMPOSITION.md`](MULTI_FALA_COMPOSITION.md) | Bridge, pools, delegation |
 | [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) | Sequential driver, isolation boundary |
 | [`SQLITE_BACKEND.md`](SQLITE_BACKEND.md) | Reference sink details |
-| [`MOJO_EVENT_STREAM_MIGRATION.md`](MOJO_EVENT_STREAM_MIGRATION.md) | How to layer 0.2.2 Journal port onto the native Mojo port |
+| [`MOJO_EVENT_STREAM_MIGRATION.md`](MOJO_EVENT_STREAM_MIGRATION.md) | Mojo port order: **core first**, SQLite adapter second, other sinks later |

@@ -1,306 +1,264 @@
-# Migrating Fala 0.2.2 event-stream architecture onto the Mojo port
+# Migrating Fala 0.2.2 onto Mojo — core first, sinks later
 
-**Audience:** native Mojo work on branch `mojo` (tip `4974d76`) after Python
-`main` 0.2.2 (`8a5cc5f`).
+**Audience:** native Mojo work after Python `main` 0.2.2 (event-stream core).
 
-**Goal:** keep everything already proven on Mojo, then layer the **event-first
-Journal port** (Unix sinks) on top of the existing cybernetic/SQLite organ —
-without a second full rewrite.
+**Strategic order (this is the product decision):**
+
+```text
+1. Port CORE to Mojo          ← primary
+2. Port SQLite adapter        ← secondary (reference sink)
+3. Port other sinks/adapters  ← JSONL, Tee, transports, …
+```
+
+SQLite is **out of the core** in 0.2.2. The Mojo port must not re-glue it into
+the engine’s identity. Existing work on branch `mojo` (SQLite-native
+`NativeJournal`) is valuable **material for the SQLite adapter**, not the
+definition of “native Fala.”
 
 Companion docs:
 
-- Python design (landed): [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md)
+- Python design: [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md)
 - Philosophy: [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md)
-- Mojo port plan (on `mojo` branch): `docs/FULL_MOJO_PORT_PLAN.md`
-- Parity matrix (on `mojo` branch): `docs/NATIVE_PARITY_MATRIX.md`
+- Mojo inventory (branch `mojo`): `docs/FULL_MOJO_PORT_PLAN.md`,
+  `docs/NATIVE_PARITY_MATRIX.md`
 
 ---
 
-## 1. Where the two trees stand
+## 0. Priority principle
 
-| Axis | `main` 0.2.2 (Python) | `mojo` branch (native) |
+| Layer | What it is | Mojo priority |
 | --- | --- | --- |
-| Product shape | Event-first core; SQLite = **reference sink** | Native Mojo runtime; SQLite = **the store** |
-| Oracle | Live package under `src/fala` | Frozen under `reference/fala` (pre–event-stream) |
-| Durability API | `Journal` Protocol + sinks | `NativeJournal` **is** SQLite TX API |
-| Pure policy | `runtime_pure.py` | `status.mojo`, `processes.mojo` |
-| Domain CRUD | `RuntimeBackend` / JournalBackedBackend | `NativeDomainStore` |
-| Correlation | `correlation_paths.py` | `correlation*.mojo` + persistence |
-| Driver / adapters | Python + subprocess | Native host + typed unavailable transports |
-| Proof | unittest + conformance | Pixi smokes + bounded differential oracle |
+| **Core** | Cybernetic organ + pure policy + Journal Protocol + InMemory sink + driver loop against the port | **First** |
+| **SQLite adapter** | `SqliteJournal` / `NativeJournal` + schema + domain tables | **Second** |
+| **Other adapters** | Jsonl, Tee, subprocess host, `fala_runtime` bridge transport, … | **Later** |
 
-**Merge-base** is pre–event-stream (`faa0015`). Mojo never saw:
+**Core must compile, test, and run a full correlation path with zero SQLite.**  
+Only then wire the SQLite sink as an optional/default production adapter.
 
-- `fala.journal` (types, memory, sqlite wrap, jsonl, tee, stream)
-- `runtime_pure` as a named module (logic exists natively elsewhere)
-- `from_journal` / `JournalConfig` / CLI `--journal`
-- `runtime_models` split
-- docs `UNIX_AND_CYBERNETICS.md` / 0.2.2 packaging
+This matches Python 0.2.2:
 
-Mojo **already has** most of what 0.2.2 *preserves* under the SQLite sink:
-
-- atomic command + event + state
-- idempotent append / replay
-- `claim_next_ready` with lease reaps
-- process transition matrix
-- correlation advance + pure planning
-- schema v6, bridge records, pools/policies (bounded)
-- CLI `db` surface, smokes, clean-install path
+- core: models, `runtime_pure`, journal types, `InMemoryJournal`, service/driver
+- adapter: `SqliteJournal` → `Correlator`
+- later: `JsonlJournal`, `TeeJournal`, network bridges
 
 ---
 
-## 2. Conceptual alignment (do not fight either design)
+## 1. What “core” means in Mojo terms
 
-```text
-                    ┌──────────────────────────────────────┐
-                    │  Cybernetic organ (unchanged intent) │
-                    │  Impulse · CorrelationPath · Process │
-                    │  Association · Reaction · Homeostat  │
-                    └──────────────────┬───────────────────┘
-                                       │ pure policy + mutators
-                                       ▼
-                    ┌──────────────────────────────────────┐
-                    │  Journal port (0.2.2 addition)       │
-                    │  append_batch / claim_next / load     │
-                    └──────────────────┬───────────────────┘
-                         ┌─────────────┼─────────────┐
-                         ▼             ▼             ▼
-                   InMemory*     SqliteJournal*   Jsonl*
-                         │             │
-                         │             ▼
-                         │     NativeJournal (KEEP)
-                         │     + DomainStore (KEEP)
-                         │     + schema (KEEP)
-```
+### In scope for Core Mojo (port first)
 
-\* New or thin wrappers on Mojo.  
-**Keep** = reuse current `mojo/fala/journal.mojo`, `domain_store.mojo`, `schema.mojo`.
-
-**Rule:** `NativeJournal` becomes the **SQLite sink implementation**, not the
-product identity. Cybernetic names stay; Unix stream boundary is added above
-the existing TX engine.
-
----
-
-## 3. What to reuse as-is (high confidence)
-
-| Mojo asset | Maps to 0.2.2 | Notes |
+| Python 0.2.2 | Mojo target | Reuse from branch `mojo` |
 | --- | --- | --- |
-| `mojo/fala/journal.mojo` (`NativeJournal`) | `SqliteJournal` + `Correlator` TX core | Rename in docs only; wrap with Journal Protocol |
-| `domain_store.mojo` | domain `put_*` / record paths | Stay SQLite authority for tables |
-| `schema.mojo` | schema v6 / migrations | Unchanged |
-| `status.mojo` | run/process transition predicates | Align with `runtime_pure` matrices |
-| `processes.mojo` (`process_is_claimable`, claim, retry, expire) | `runtime_pure` claim helpers | Already pure; keep as source of truth natively |
-| `correlation*.mojo` | `correlation_paths` pure + advance | Keep; wire through journal mutators |
-| `sqlite.mojo` + `vendor/sqlite.fire` | SQLite driver | Keep |
-| `json.mojo` + EmberJson | JSONL / payloads | Reuse for Jsonl sink |
-| `native_driver.mojo`, adapters, process host | driver / effectors | Keep; only source URI / multi-journal later |
-| `cli.mojo` | CLI | Add `--journal` alias; keep `--db` |
-| Pixi smokes + parity matrix | proof system | Extend matrix rows for Journal port |
-| `reference/fala` layout idea | oracle | **Refresh oracle** from main 0.2.2 (see §6) |
+| `runtime_models` / Impulse ontology | `domain.mojo`, `models_native.mojo` | **Reuse** typed structs |
+| `runtime_pure` | `status.mojo`, `processes.mojo` | **Reuse** transition/claim pure helpers |
+| `correlation_paths` pure planning | `correlation.mojo` | **Reuse** graph/advance pure |
+| `journal/types.py` + Protocol | **new** `journal_port.mojo` (types + trait) | — |
+| `InMemoryJournal` | **new** `memory_journal.mojo` | pure claim from `processes.mojo` |
+| Journal-backed in-memory backend (subset) | **new** map-backed mutators over memory journal | patterns from domain APIs, not SQL |
+| Driver claim→execute→complete | `native_driver.mojo` against **JournalPort**, not SQLite | **Reuse** loop; **rebind** store |
+| `python_function` → native registry | `adapters.mojo` / `NativeFunctionRegistry` | **Reuse** |
+| Package load (TOML/JSON) | `package.mojo`, `toml.mojo` | **Reuse** |
+| Facade `from_journal` / `open_journal` | thin Mojo entrypoints | `kind=memory` first |
 
----
+### Out of core (adapter phases)
 
-## 4. What must be added or reshaped
-
-### 4.1 Journal Protocol types (new, small)
-
-Port Python `fala/journal/types.py` → e.g. `mojo/fala/journal_port.mojo` (name
-avoids clash with existing `journal.mojo`):
-
-- `StateFact`, `CommandUnit`, `JournalBatch`, `AppendResult`
-- `ClaimRequest`, `ClaimResult`
-- helpers: leading command / leading idempotency key
-
-Wire format for JSONL can match Python:
-
-```text
-{"v":1,"kind":"journal_batch","batch":{...}}
-```
-
-### 4.2 Trait / protocol for sinks
-
-```text
-trait JournalPort:
-  fn runtime_uri(self) -> String
-  fn append_batch(mut self, batch: JournalBatch) raises -> AppendResult
-  fn claim_next(mut self, request: ClaimRequest) raises -> ClaimResult
-  fn get_command_by_idempotency(...)
-  fn list_events(...)
-  fn load(...)
-```
-
-Mojo naming: prefer `JournalPort` / `NativeJournalPort` so `NativeJournal`
-remains the SQLite engine type.
-
-### 4.3 Sinks
-
-| Sink | Strategy |
+| Piece | Phase |
 | --- | --- |
-| **SqliteJournalPort** | Thin adapter: leading unit → existing `NativeJournal` methods (`create_run`, `transition_process`, `claim_next_ready`, …). Non-leading units ignored as inputs (Correlator regenerates side effects) — same rule as Python PR4. |
-| **InMemoryJournalPort** | New module; reuses `processes.mojo` pure claim policy; maps under one lock. Critical for tests and nested Fala without file locks. |
-| **JsonlJournalPort** | New; durable line + fsync then index (port Python barrier order). Index can be InMemory. |
-| **TeeJournalPort** | Primary + secondaries; claim on primary only. |
+| `NativeJournal` + `schema.mojo` + SQL DDL | **SQLite adapter** |
+| `domain_store.mojo` SQL CRUD | **SQLite adapter** (or split: pure domain logic stays core, SQL rows stay adapter) |
+| `sqlite.fire` linkage | **SQLite adapter** |
+| CLI `db migrate/vacuum` against files | **SQLite adapter** (core CLI can run memory paths first) |
+| `JsonlJournal` / Tee | **Other sinks** |
+| Subprocess process host, bridge network | **Other adapters / transports** |
 
-### 4.4 Backend façade
-
-Python `JournalBackedBackend`:
-
-- SQLite → delegate to correlator  
-- Memory/JSONL → map-backed backend + journal batches  
-
-Mojo equivalent:
-
-- SQLite path: keep `NativeDomainStore` + `NativeJournal` as today, optionally
-  behind `JournalBacked` façade that exposes `runtime_uri`.
-- Memory/JSONL: implement only the subset needed for smokes first (run create,
-  accept impulse, schedule/claim/complete, list events), then grow toward
-  parity matrix — **do not block** SQLite production path on full memory
-  conformance.
-
-### 4.5 Constructors / CLI
-
-- `open_journal(kind, path)` / `from_journal` on the native façade
-- CLI: `--journal` preferred, `--db` alias (mirror Python 0.2.2)
-- Package config: optional `runtime.journal` alongside `backend`
-
-### 4.6 Stream composition (low priority)
-
-Port `journal/stream.py` helpers (`nest_child_batch`, `stream_merged_envelope`)
-as pure functions — no SQLite. Use for export/debug; v1 multi-Fala semantic
-merge stays bridge (already partially on Mojo).
-
-### 4.7 Docs on mojo branch
-
-- Import / link `UNIX_AND_CYBERNETICS.md` and this file after rebase.
-- Update `FULL_MOJO_PORT_PLAN.md` “SQLite-only production” language →
-  event-first core, SQLite reference sink.
-- Add NATIVE_PARITY_MATRIX rows for Journal port + memory/jsonl smokes.
-
----
-
-## 5. Recommended execution sequence (reuse-first)
-
-Do **not** rewrite `NativeJournal` from scratch. Sequence mirrors Python
-PR1–PR10 but skips work already done natively.
+### Mental model
 
 ```text
-M0  Rebase/merge strategy (§6)
-M1  JournalPort types + trait + smokes (no production call sites)
-M2  SqliteJournalPort wrap over NativeJournal (leading-unit dispatch)
-M3  InMemoryJournalPort + claim pure helpers from processes.mojo
-M4  Façade runtime_uri + open_journal; CLI --journal alias
-M5  JsonlJournalPort + fsync barrier smokes (+ optional Tee)
-M6  stream.merged helpers (pure)
-M7  Expand memory backend toward matrix; nested child journal smoke
-M8  Refresh reference oracle from main 0.2.2; extend differential
+┌─────────────────────────────────────────────────────────┐
+│  CORE (port first, no sqlite.fire required)             │
+│                                                         │
+│  Impulse ontology · pure status/claim · correlation     │
+│  JournalPort trait · InMemoryJournal · driver · CLI     │
+│  AutonomousCorrelator-equivalent façade                 │
+└────────────────────────────┬────────────────────────────┘
+                             │ JournalPort only
+           ┌─────────────────┼─────────────────┐
+           ▼                 ▼                 ▼
+    InMemory (core)   SqliteJournal      Jsonl / Tee
+    always available  (adapter #1)       (adapters #2+)
+           │                 │
+           │                 ▼
+           │          NativeJournal + DomainStore
+           │          (existing mojo/ code — REHOME)
 ```
-
-### Phase detail
-
-**M1 — types only**  
-Port structs + serialize/deserialize batch to JSON via EmberJson. Smoke:
-round-trip batch, multi-unit claim shape, leading-key helper.
-
-**M2 — SQLite wrap**  
-```text
-append_batch(leading=run.create)  → NativeJournal create-run TX
-append_batch(leading=process.*) → existing transition APIs
-claim_next → claim_next_ready
-```
-Acceptance: existing journal/process smokes still green when invoked through
-the wrap; non-leading units do not insert extra commands.
-
-**M3 — memory sink**  
-Reuse `process_is_claimable` / lease fail semantics from `processes.mojo`.
-Atomic multi-unit batch for reaps+claim. Smoke: claim order, lease reap,
-idempotent replay empty events.
-
-**M4 — product surface**  
-`runtime_uri` (`sqlite://`, `memory://`, `jsonl://`). CLI accepts `--journal`.
-No requirement to drop `--db`.
-
-**M5 — JSONL**  
-Write barrier: prepare → write line + fsync → update index. Torn-line repair
-on open. Reuse `json.mojo` / EmberJson.
-
-**M6–M8** — composition polish, broader memory parity, oracle refresh.
 
 ---
 
-## 6. Git / oracle strategy
+## 2. How to treat the existing `mojo` branch
 
-### Option A (recommended): rebase `mojo` onto `main` 0.2.2
+Branch `mojo` built **SQLite-first native**. That work is **not wasted**; it is
+mostly the future **SQLite adapter package**.
 
-```text
-main (0.2.2 docs + Python journal)
-   │
-   └── mojo rebased: keep mojo/*, tools/*, pixi; take docs from main;
-       move reference/fala refresh from main src/fala
-```
-
-Pros: single history, docs/philosophy aligned, oracle matches event-stream.  
-Cons: large rebase conflict surface (`reference/` vs old `src/`).
-
-### Option B: merge main into mojo
-
-Same content outcome; messier history.
-
-### Option C: dual-track (short term)
-
-Keep developing JournalPort on `mojo` without full oracle refresh; periodically
-cherry-pick docs from main. Accept temporary oracle drift.
-
-**Oracle refresh (required for honest differential):**  
-After rebase, replace `reference/fala` with a snapshot of `main`’s `src/fala`
-(0.2.2). Rebuild fixture producers against journal-aware APIs
-(`from_journal`, etc.). Keep five-scenario oracle at first; expand when
-memory/jsonl stabilize.
-
----
-
-## 7. Explicit non-goals for the first Mojo event-stream cut
-
-1. Full 71-method memory backend parity with Python conformance in one PR.
-2. Event remapping parent←child (Python also defers this; bridge stays v1).
-3. Dropping SQLite as default native production path.
-4. Reimplementing correlation/driver/adapters for the Journal port.
-5. Python interop in native binary.
-
----
-
-## 8. Risk register
-
-| Risk | Mitigation |
+| Existing module | After reframe |
 | --- | --- |
-| Name clash: existing `journal.mojo` vs Protocol | Use `journal_port.mojo` + keep `NativeJournal` |
-| Double implementation of claim policy | Single source: `processes.mojo`; SQLite SQL must stay consistent |
-| Rebase destroys smoke greenness | M2 wrap only after green baseline on rebased tip |
-| Oracle still 0.2.1 behavior | M8 reference refresh before claiming 0.2.2 parity |
-| JSONL multi-worker claim | Document single-process only (same as Python) |
+| `journal.mojo` (`NativeJournal`) | Lives under adapter layer; implements `JournalPort` |
+| `domain_store.mojo` | SQLite-backed domain materialization for that adapter |
+| `schema.mojo` | SQLite migrations for that adapter |
+| `status.mojo` / `processes.mojo` / `correlation.mojo` | **Promote to core** (already pure enough) |
+| `native_driver.mojo` | Core; depend on `JournalPort`, not `Connection` |
+| Pixi smokes that need `.sqlite` | Move to adapter test suite; core smokes use memory |
+
+**Do not** make “green on SQLite file” the gate for core port completion.  
+**Do** keep those smokes as the gate for the SQLite adapter phase.
 
 ---
 
-## 9. Success criteria (Mojo 0.2.2-class)
+## 3. Phased plan
 
-- [ ] Documented JournalPort + at least Sqlite + InMemory sinks
-- [ ] Production default still SQLite via wrap over `NativeJournal`
-- [ ] Existing Pixi smokes green; new smokes for memory + jsonl barrier
-- [ ] CLI `--journal` / `--db` alias
-- [ ] `runtime_uri` for nested/bridge identity
-- [ ] Docs: event-first + Unix/cybernetics language on mojo tree
-- [ ] `reference/fala` regenerated from Python 0.2.2 (or explicitly versioned)
+### Phase C0 — tree / rebase hygiene
+
+- Rebase or merge `main` 0.2.2 docs + oracle snapshot strategy.
+- Document boundary: `mojo/fala/core/` vs `mojo/fala/adapters/sqlite/` (or
+  equivalent naming). Exact directory split can be gradual.
+- Refresh `reference/fala` from Python 0.2.2 when differential needs it.
+
+### Phase C1 — Core: pure organ (no journal trait yet)
+
+**Goal:** cybernetic + pure policy compile and unit-smoke without SQLite.
+
+- Keep/trim: `status`, `processes`, `correlation` (pure only).
+- Smoke: transition matrix, claim eligibility, correlation readiness/fixed-point.
+- **Gate:** no link to `sqlite.fire` required for this smoke bundle.
+
+### Phase C2 — Core: JournalPort + InMemoryJournal
+
+**Goal:** event-stream core on Mojo.
+
+- Port batch types + trait from Python `fala/journal`.
+- Implement `InMemoryJournal` (append_batch, claim_next, load, replay).
+- Minimal map-backed backend: create_run, accept_impulse, schedule, claim,
+  complete, list_events (enough to drive one correlation path).
+- **Gate:** end-to-end path in memory — instantiate path → run_until_idle →
+  events present; reopen from memory snapshot/load if applicable.
+
+### Phase C3 — Core: driver + native_function + package
+
+**Goal:** real work without SQLite.
+
+- Bind `native_driver` to JournalPort/memory backend.
+- Package TOML + `NativeFunctionRegistry` effectors.
+- CLI subset: create-run, run-until-idle, events list against memory journal.
+- **Gate:** basic example (ingest/enrich/export or equivalent) fully native,
+  memory-only.
+
+### Phase S1 — SQLite adapter (first production sink)
+
+**Goal:** rehome existing `NativeJournal` / `domain_store` / `schema` as
+`JournalPort` implementation.
+
+- Thin wrap: leading unit → existing TX methods (same rule as Python PR4).
+- `runtime_uri = sqlite://…`
+- CLI `--journal` / `--db` for file path.
+- Move SQLite smokes here; prove reopen/crash/migration.
+- **Gate:** parity matrix rows for persistence; default local product path can
+  select SQLite adapter without core importing SQL.
+
+### Phase S2+ — Other adapters
+
+| Order | Adapter | Notes |
+| --- | --- | --- |
+| S2 | JsonlJournal | fsync-before-index; reuses EmberJson |
+| S3 | TeeJournal | primary + secondaries |
+| S4 | Subprocess transport | process host already started on `mojo` |
+| S5 | `fala_runtime` / bridge transport | persistence exists; host may still be unavailable |
+| S6 | stream.merged helpers | pure; export/debug only |
 
 ---
 
-## 10. Suggested first PR on `mojo` after rebase
+## 4. What to reuse vs rewrite
 
-**Title:** `feat(mojo): JournalPort types and SqliteJournalPort wrap`  
+### Reuse as core (high confidence)
 
-**Touches:** `journal_port.mojo` (types+trait), thin `sqlite_journal_port.mojo`,
-one smoke, docs pointer to this file.  
+- Pure transition / claim / retry policy (`status.mojo`, `processes.mojo`)
+- Pure correlation planning and advance (`correlation.mojo`)
+- Typed domain models (`domain.mojo`, `models_native.mojo`)
+- Adapter registry pattern, package/TOML loaders
+- Driver loop structure (rebind storage interface)
+- Pixi/toolchain, EmberJson for JSON payloads
 
-**Does not touch:** correlation, driver, process host, domain_store SQL.
+### Reuse as SQLite adapter (high confidence)
 
-That single PR proves the architecture without destabilizing the native
-foundation already paid for on `mojo`.
+- Entire `NativeJournal` TX engine
+- `domain_store` SQL mutators
+- `schema` migrations and doctor/db CLI bits
+- Existing process/claim SQL smokes
+- `sqlite.fire` vendor stack
+
+### Write new (core)
+
+- JournalPort trait + batch types
+- InMemoryJournal + memory materialization
+- Core façade that never imports SQLite
+- Core-only smoke entrypoints (no `.sqlite` path)
+
+### Write new (later adapters)
+
+- Jsonl / Tee
+- Any transport hosts still marked unavailable
+
+---
+
+## 5. Success criteria by milestone
+
+### Core Mojo “done enough”
+
+- [ ] Core package builds without `sqlite.fire`
+- [ ] InMemory journal drives claim/complete + correlation advance
+- [ ] At least one full example path green in memory
+- [ ] Public story: “native core is event-first”; SQLite not required to *be* Fala
+
+### SQLite adapter “done enough”
+
+- [ ] Implements JournalPort over existing NativeJournal
+- [ ] Schema migrate/reopen/crash smokes green
+- [ ] Default operator path can use SQLite file via `--journal`/`--db`
+- [ ] No core module imports Connection/SQL
+
+### Platform
+
+- [ ] Docs on mojo tree match 0.2.2 language (Unix + cybernetics)
+- [ ] Parity matrix distinguishes core vs adapter evidence
+
+---
+
+## 6. Anti-patterns (avoid)
+
+1. **Making SQLite the compile-time dependency of core** — regresses 0.2.2.
+2. **Rewriting NativeJournal before core JournalPort exists** — wrong order.
+3. **Blocking core on full 71-method SQL parity** — adapter breadth is S1+.
+4. **Driver talking to `Connection` directly** — must talk to JournalPort.
+5. **Treating Python `reference/` pre-0.2.2 as oracle for event-stream** —
+   refresh when claiming 0.2.2 parity.
+
+---
+
+## 7. Suggested first PRs (after rebase onto main)
+
+| PR | Title | Layer |
+| --- | --- | --- |
+| 1 | `feat(mojo-core): JournalPort types + trait` | Core |
+| 2 | `feat(mojo-core): InMemoryJournal + memory path smoke` | Core |
+| 3 | `feat(mojo-core): driver against JournalPort (memory)` | Core |
+| 4 | `feat(mojo-sqlite): SqliteJournalPort wrap NativeJournal` | Adapter |
+| 5 | `feat(mojo-sqlite): CLI --journal + db smokes rehomed` | Adapter |
+| 6+ | Jsonl, Tee, transports | Other |
+
+PR1–3 must not require a database file. PR4 is the first allowed SQL link.
+
+---
+
+## 8. One-line summary
+
+**Port the event-stream core (cybernetics + JournalPort + memory) to Mojo
+first; treat existing native SQLite work as the first adapter, then JSONL and
+the rest — the same layering Python 0.2.2 already proved.**
