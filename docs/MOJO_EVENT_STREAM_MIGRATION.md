@@ -71,13 +71,20 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 15. CLI operator path on SQLite — **done**
 16. Historical breadth: domain_store, migration, correlation exec/persist/runtime/advance, native_driver, adapter persistence, finalization, runtime contracts/policy, package SDK — **done** (`extended-smoke`)
 17. native_cli_semantics / example_basic_native / bridge_transport — **done** (wired into `extended-smoke`)
-18. Subprocess / fala_runtime / native process-host production readiness — **open** (typed unavailable still acceptable per matrix; `native_semantics` / host smokes not merge-gate)
+18. **Process host + subprocess** (children of Fala) — **open, merge-gate**  
+    Local host is **core product**, not multi-runtime. See
+    [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
+19. Bridge file export/import helpers for nested CLI children — nice (partial local deliver already exists)
+20. RuntimePool / `fala_runtime` fleet / multi-runtime selection — **out of land gate** (optional later package; not Fala identity)
 
-**Merge when:** full checklist green for core+adapters (items 1–17); item 18 is host-matrix follow-up, not a block on the atomic land if product accepts native_function + SQLite path as the land surface. Draft PR converted to ready once product confirms.
+**Merge when:** items 1–18 green (organ + sinks + **local process host**).  
+**Do not block land on** multi-runtime pools or network peer mesh.  
+Draft PR → ready once host smokes (`native_process_host`, `native_subprocess`, driver subprocess path) are green.
 
 **Proof today:**
 - `pixi run full-smoke` — green  
 - `pixi run extended-smoke` — green (includes example_basic_native + bridge_transport + correlation_advance + package_sdk + runtime_policy)
+- process host / subprocess smokes — **not yet** merge-green
 
 Companion docs:
 
@@ -94,7 +101,8 @@ Companion docs:
 | --- | --- | --- |
 | **Core** | Cybernetic organ + pure policy + Journal Protocol + InMemory sink + driver loop against the port | **First** |
 | **SQLite adapter** | `SqliteJournal` / `NativeJournal` + schema + domain tables | **Second** |
-| **Other adapters** | Jsonl, Tee, subprocess host, `fala_runtime` bridge transport, … | **Later** |
+| **Local host (product core)** | process host + `subprocess` / `native_function` execution | **Same land as core** (after organ + sinks) |
+| **Optional multi-runtime** | RuntimePool, fleet `fala_runtime`, network bridges | **Not land-gate** — see FALA_HOST_AND_COMPOSITION |
 
 **Core must compile, test, and run a full correlation path with zero SQLite.**  
 Only then wire the SQLite sink as an optional/default production adapter.

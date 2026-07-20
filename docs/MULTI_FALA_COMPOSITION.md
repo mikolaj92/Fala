@@ -1,28 +1,34 @@
 # Multi-Fala Composition
 
+> **Boundary (2026-07):** product composition of **separate Falas** is
+> **process host + separate journals + optional envelope handoff**.
+> Runtime **pools / fleet selection** are optional multi-runtime machinery,
+> not Fala identity. Canonical split:
+> [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
+
 Fala composition uses references and bridge delivery, not global transactions.
 Each nested correlator should use a **separate Journal** (Unix recursion rule);
 see [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md).
 
-Core pieces:
+## Default composition (core)
 
-- `RuntimeRef`: identifies another runtime.
-- `RunRef`: identifies a run in another runtime.
-- `EventRef`: identifies a source event.
-- `RuntimePool`: groups candidate runtimes.
-- `DelegationPolicy`: stores impulse type filters and bridge budget.
-- bridge outbox/inbox: durable local delivery records.
+1. Parent runs a **subprocess** effector (or CLI) with its own `--db` / journal.
+2. Child never shares the parent journal path.
+3. Results return via subprocess contract (`result.json`) and/or **bridge file**
+   export/import the parent explicitly performs.
 
-`fala_runtime` effectors enqueue bridge outbox deliveries. A `runtime_ref` may be a
-runtime URI or a local runtime pool id.
+No mutual discovery. No requirement that Falas “know about” each other.
 
-Runtime pool policies:
+## Historical / optional inventory
 
-- `manual` / `first`: choose the first runtime in the pool.
-- `least_busy`: choose the runtime with the lowest declared `metadata.load` or
-  `metadata.pending_processes`.
-- `round_robin`: rotate through runtimes and persist the cursor in pool
-  metadata.
+Pieces that exist in the tree for advanced ops (not required for one Fala):
+
+- `RuntimeRef` / `RunRef` / `EventRef`: typed ids in envelopes and records.
+- `RuntimePool` + policies (`manual` / `first` / `least_busy` / `round_robin`):
+  **multi-runtime selector** — optional control plane.
+- `DelegationPolicy`: impulse filters and bridge budgets when using pools.
+- adapter kind `fala_runtime`: enqueue to a URI or pool (fleet path).
+- bridge outbox/inbox rows: durable local delivery records for envelope ops.
 
 Bridge delivery modes:
 

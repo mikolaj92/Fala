@@ -83,18 +83,25 @@ correlation_paths:
           ref: examples.effectors.normalize_text
 ```
 
-Supported adapter kinds are:
+Supported adapter kinds:
 
-- `python_function`: importable Python function.
-- `subprocess`: local command as an argument list.
+**Core local host**
+
+- `python_function`: importable Python function (CPython).
+- `native_function`: registered in-process callable (native / Mojo).
+- `subprocess`: local command as an argument list — **how Fala runs children**.
 - `manual_homeostat`: explicit operator homeostat.
-- `fala_runtime`: delegation to another Fala runtime through bridge outbox.
-  `runtime_ref` may be a runtime URI or a local runtime pool id. Runtime pools
-  support `manual`, `first`, `least_busy`, and `round_robin` policies.
+
+**Optional multi-runtime (not required for one Fala)**
+
+- `fala_runtime`: historical delegation via bridge outbox / runtime pool.
+  Prefer nesting another Fala with `subprocess` and a **separate journal**.
+  See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
 Subprocess commands are lists, not shell strings. The runtime prepares input
 manifests, captures stdout/stderr, validates output manifests, and commits
-resulting events/reactions/associations transactionally.
+resulting events/reactions/associations transactionally. The process host is
+part of Fala product core, not an optional multi-runtime feature.
 
 ## Local Inspection
 

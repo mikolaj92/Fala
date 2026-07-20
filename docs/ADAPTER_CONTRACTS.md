@@ -2,10 +2,18 @@
 
 Supported effector adapters:
 
-- `python_function`: imports and calls a Python callable.
-- `subprocess`: runs a local command as an argument list.
+**Core (every Fala):**
+
+- `subprocess`: local command as an argument list — **primary child boundary**.
+- `native_function`: in-process registered callable (tests / embedded).
 - `manual_homeostat`: opens a durable manual homeostat and waits.
-- `fala_runtime`: enqueues bridge delivery to another Fala runtime or pool.
+- `python_function`: importable Python callable (**CPython host only**).
+
+**Optional multi-runtime (not product identity):**
+
+- `fala_runtime`: historical fleet/pool enqueue path; prefer nesting via
+  `subprocess` + separate journal. See
+  [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
 Subprocess effectors receive:
 

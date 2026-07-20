@@ -81,8 +81,10 @@ several sinks (e.g. SQLite + JSONL).
 ### Small tools, sharp edges
 
 - CLI is the primary operator interface (`--journal`, `--db` alias).
-- Effectors are adapters: `python_function`, `subprocess`, `manual_homeostat`,
-  `fala_runtime` — subprocesses get manifests, not open DB handles.
+- Effectors are adapters: `subprocess` and `native_function` (core host),
+  `manual_homeostat`, `python_function` on CPython. Subprocesses get manifests,
+  not open DB handles. Nested Fala = another process + separate journal, not a
+  peer mesh (`FALA_HOST_AND_COMPOSITION.md`).
 - Reaction **bytes** live in a reaction store (filesystem by default);
   the journal holds metadata and refs only.
 - Tests prefer `InMemoryJournal`; production defaults to SQLite reference sink.
@@ -151,23 +153,25 @@ Parent Fala  (journal J_p)
   │
   ├─ own Impulses / Processes / Events ──► J_p
   │
-  └─ fala_runtime effector
+  └─ subprocess effector  (process host — core Fala)
+        command points at child Fala CLI or any effector binary
         │
         ▼
-     Child Fala  (journal J_c, J_c ≠ J_p)
+     Child Fala  (journal J_c, J_c ≠ J_p)   # separate being
         │
         └─ events on J_c
               │
               ▼
-         bridge export / import  (or stream.merged envelope)
+         result.json / optional bridge file export
               │
               ▼
-         Parent inbox / outbox on J_p
+         Parent completes process / optional inbox import on J_p
 ```
 
-Zero shared SQLite lock between parent and child. Zero assumption that
-“the” database path is global. Composition stays Unix-shaped; autonomy stays
-cybernetic (each correlator is its own organ with its own memory).
+Zero shared SQLite lock between parent and child. Zero peer registry.
+Composition stays Unix-shaped; autonomy stays cybernetic (each correlator is
+its own organ with its own memory). Multi-runtime pools are optional ops
+machinery, not this picture.
 
 ---
 

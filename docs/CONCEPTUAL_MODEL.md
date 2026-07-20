@@ -39,13 +39,18 @@ Domain-specific mappings (arbitration cases, sensor samples, …) live in
 ## Architecture layers
 
 ```text
-AutonomousCorrelator  →  RuntimeBackendService  →  JournalBackedBackend
-                                                         │
-                                              Journal (memory | sqlite | jsonl)
+AutonomousCorrelator  →  driver (claim → host → complete)
+                              │
+                    ┌─────────┴─────────┐
+                    ▼                   ▼
+              Journal port         Process host
+         (memory|sqlite|jsonl)   (subprocess|native_fn)
 ```
 
 - **Cybernetic layer:** Impulses, conduction, effectors, homeostats, associations.
-- **Unix layer:** Journal Protocol, separate child journals, CLI streams, optional Tee.
+- **Unix layer:** Journal Protocol, **local process host**, separate child journals, CLI streams, optional Tee.
+- **Not identity:** multi-runtime pools / peer discovery — optional; see
+  [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
 See [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md) and
 [`CYBERNETIC_MAPPING.md`](CYBERNETIC_MAPPING.md).
