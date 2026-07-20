@@ -23,11 +23,32 @@ the engine’s identity.
 
 | Item | Status |
 | --- | --- |
-| Branch | `mojo-core-0.2.2` |
+| Branch | `mojo-core-0.2.2` ([PR #93](https://github.com/mikolaj92/Fala/pull/93), **draft** until core complete) |
 | Lifted pure | `status`, `processes`, `correlation`, `domain`, models, json, toml, validation |
 | New core | `journal_port.mojo`, `memory_journal.mojo` |
 | Proof | `pixi run core-smoke` (no sqlite.fire) |
 | SQLite | not in tree yet (adapter phase) |
+
+### Merge policy
+
+**Do not merge the Mojo core PR into `main` until the full core is ported
+and proven on memory.** Journal is **part of core** (Protocol + InMemory
+sink). SQLite is **not** a merge gate for core.
+
+Core merge checklist:
+
+1. JournalPort types + InMemoryJournal (done in bootstrap)
+2. Pure status / processes / correlation (partially lifted)
+3. Memory-backed mutators: run, impulse, process schedule/claim/complete
+4. Driver against JournalPort (memory)
+5. Package load + native_function for one full path
+6. Facade `open_journal` / `from_journal` (memory)
+7. CLI subset without SQLite
+8. One end-to-end example on memory
+9. `pixi run core-smoke` green without `sqlite.fire`
+
+After that merge: SQLite adapter PR(s) reusing `NativeJournal` from historical
+`mojo`.
 
 Companion docs:
 
