@@ -251,13 +251,13 @@ class JournalConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["sqlite", "memory"] = "sqlite"
+    kind: Literal["sqlite", "memory", "jsonl"] = "sqlite"
     path: str | None = None
 
     @model_validator(mode="after")
     def validate_path_for_sqlite(self) -> "JournalConfig":
-        if self.kind == "sqlite" and not self.path:
-            raise ValueError("journal.kind 'sqlite' requires path")
+        if self.kind in {"sqlite", "jsonl"} and not self.path:
+            raise ValueError(f"journal.kind {self.kind!r} requires path")
         return self
 
 

@@ -18,6 +18,7 @@ from fala.journal import (
     InMemoryJournal,
     Journal,
     JournalBackedBackend,
+    JsonlJournal,
     SqliteJournal,
 )
 from fala.models import CorrelationPathSpec, JournalConfig, RuntimeConfigSpec
@@ -52,7 +53,7 @@ def open_journal(
     config: JournalConfig | RuntimeConfigSpec | str | Path | Journal,
 ) -> Journal:
     """Open a Journal from config, path, or an existing Journal instance."""
-    if isinstance(config, (InMemoryJournal, SqliteJournal)):
+    if isinstance(config, (InMemoryJournal, SqliteJournal, JsonlJournal)):
         return config
     # Structural Journal Protocol instances (duck-typed)
     if hasattr(config, "append_batch") and hasattr(config, "claim_next"):
@@ -71,6 +72,9 @@ def open_journal(
         if config.kind == "sqlite":
             assert config.path is not None
             return SqliteJournal(config.path)
+        if config.kind == "jsonl":
+            assert config.path is not None
+            return JsonlJournal(config.path)
         raise ValueError(f"Unsupported journal kind: {config.kind!r}")
     # str | Path → sqlite path
     return SqliteJournal(config)

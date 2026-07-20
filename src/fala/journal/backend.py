@@ -14,6 +14,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from fala.journal.jsonl import JsonlJournal
 from fala.journal.memory import InMemoryJournal
 from fala.journal.sqlite import SqliteJournal
 from fala.journal.types import (
@@ -22,6 +23,8 @@ from fala.journal.types import (
     JournalBatch,
     StateFact,
 )
+
+# ClaimRequest imported for _JsonlJournalAsMemory
 from fala.runtime_backend import (
     Association,
     BridgeDelivery,
@@ -61,6 +64,23 @@ _HOMEOSTAT_TRANSITION_COMMANDS = {
     HomeostatStatus.cancelled: "homeostat.cancel",
     HomeostatStatus.expired: "homeostat.expire",
 }
+
+
+class _JsonlJournalAsMemory:
+    """Expose JsonlJournal index maps while routing append/claim to durable JSONL."""
+
+    def __init__(self, journal: JsonlJournal) -> None:
+        self._jsonl = journal
+        self._index = journal.index
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._index, name)
+
+    async def append_batch(self, batch: JournalBatch) -> Any:
+        return await self._jsonl.append_batch(batch)
+
+    async def claim_next(self, request: ClaimRequest, **kwargs: Any) -> Any:
+        return await self._jsonl.claim_next(request)
 
 
 def _now() -> datetime:
@@ -1814,12 +1834,22 @@ class JournalBackedBackend:
     - InMemoryJournal: uses :class:`InMemoryRuntimeBackend` maps + journal batches.
     """
 
-    def __init__(self, journal: InMemoryJournal | SqliteJournal) -> None:
+    def __init__(
+        self, journal: InMemoryJournal | SqliteJournal | JsonlJournal
+    ) -> None:
         self.journal = journal
         if isinstance(journal, SqliteJournal):
             self._backend: RuntimeBackend = journal.correlator
         elif isinstance(journal, InMemoryJournal):
             self._backend = InMemoryRuntimeBackend(journal)
+        elif isinstance(journal, JsonlJournal):
+            # Command-path durability via JsonlJournal.append_batch; entity maps
+            # live on the rebuilt memory index (same object identity for maps).
+            # InMemoryRuntimeBackend calls append_batch/claim_next on self._journal
+            # and reads _processes from it — bind a thin adapter.
+            self._backend = InMemoryRuntimeBackend(
+                _JsonlJournalAsMemory(journal)
+            )
         else:
             raise TypeError(
                 f"Unsupported journal type for JournalBackedBackend: {type(journal)!r}"

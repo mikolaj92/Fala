@@ -7,6 +7,7 @@ use SqliteJournal for multi-worker fleets. See docs/EVENT_STREAM_CORE.md.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -87,7 +88,17 @@ class InMemoryJournal:
         async with self._lock:
             return self._append_batch_unlocked(batch)
 
-    def _append_batch_unlocked(self, batch: JournalBatch) -> AppendResult:
+    def _append_batch_unlocked(
+        self,
+        batch: JournalBatch,
+        *,
+        before_commit: Callable[[JournalBatch], None] | None = None,
+    ) -> AppendResult:
+        """Append batch. Optional ``before_commit`` runs after prepare, before mutate.
+
+        Used by JsonlJournal so the durable barrier can run before the index
+        is updated (crash mid-write leaves index unchanged).
+        """
         if not batch.units:
             raise ValueError("JournalBatch.units must be non-empty")
         leading = batch.units[0].command
@@ -112,39 +123,81 @@ class InMemoryJournal:
                     f"{unit.command.idempotency_key!r} exists without leading key"
                 )
 
+        # Prepare assigned units without mutating authoritative maps yet.
+        pending_keys: set[tuple[str, str]] = set()
+        event_seq = dict(self._event_seq)
         assigned_units: list[CommandUnit] = []
         for unit in batch.units:
             cmd = unit.command
             ckey = (cmd.run_id, cmd.idempotency_key)
-            if ckey in self._commands:
+            if ckey in self._commands or ckey in pending_keys:
                 raise ValueError(
                     f"Duplicate command idempotency key within batch: {cmd.idempotency_key!r}"
                 )
-            events = self._assign_events(cmd, unit.events)
-            apply_facts(self._entities, unit.facts, processes=self._processes)
-            self._commands[ckey] = cmd
-            self._commands_by_id[(cmd.run_id, cmd.id)] = cmd
-            self._command_order.append(cmd)
+            pending_keys.add(ckey)
+            events, event_seq = self._assign_events_preview(cmd, unit.events, event_seq)
             assigned_units.append(
                 CommandUnit(command=cmd, events=events, facts=list(unit.facts))
             )
 
-        self._journal_seq += 1
+        next_seq = self._journal_seq + 1
         stored_batch = batch.model_copy(
             update={
-                "journal_seq": self._journal_seq,
+                "journal_seq": next_seq,
                 "units": assigned_units,
             }
         )
+        if before_commit is not None:
+            before_commit(stored_batch)
+
+        # Commit to authoritative maps only after durable barrier (if any).
+        for unit in assigned_units:
+            cmd = unit.command
+            ckey = (cmd.run_id, cmd.idempotency_key)
+            for event in unit.events:
+                self._events.setdefault(cmd.run_id, []).append(event)
+            apply_facts(self._entities, unit.facts, processes=self._processes)
+            self._commands[ckey] = cmd
+            self._commands_by_id[(cmd.run_id, cmd.id)] = cmd
+            self._command_order.append(cmd)
+        self._event_seq = event_seq
+        self._journal_seq = next_seq
         self._batches.append(stored_batch)
         return AppendResult(batch=stored_batch, replayed=False, units=assigned_units)
 
-    def _assign_events(
-        self, command: RuntimeCommand, events: list[RuntimeEvent]
-    ) -> list[RuntimeEvent]:
+    def import_stored_batch(self, batch: JournalBatch) -> None:
+        """Load a previously durable batch into the index (no re-numbering)."""
+        if not batch.units:
+            return
+        for unit in batch.units:
+            cmd = unit.command
+            ckey = (cmd.run_id, cmd.idempotency_key)
+            if ckey in self._commands:
+                continue
+            for event in unit.events:
+                self._events.setdefault(cmd.run_id, []).append(event)
+                if event.sequence is not None:
+                    self._event_seq[cmd.run_id] = max(
+                        self._event_seq.get(cmd.run_id, 0), event.sequence
+                    )
+            apply_facts(self._entities, unit.facts, processes=self._processes)
+            self._commands[ckey] = cmd
+            self._commands_by_id[(cmd.run_id, cmd.id)] = cmd
+            self._command_order.append(cmd)
+        if batch.journal_seq is not None:
+            self._journal_seq = max(self._journal_seq, batch.journal_seq)
+        self._batches.append(batch)
+
+    def _assign_events_preview(
+        self,
+        command: RuntimeCommand,
+        events: list[RuntimeEvent],
+        event_seq: dict[str, int],
+    ) -> tuple[list[RuntimeEvent], dict[str, int]]:
         run_id = command.run_id
-        seq = self._event_seq.get(run_id, 0)
+        seq = event_seq.get(run_id, 0)
         out: list[RuntimeEvent] = []
+        next_seq = dict(event_seq)
         for event in events:
             seq += 1
             stored = event.model_copy(
@@ -165,12 +218,27 @@ class InMemoryJournal:
                     ),
                 }
             )
-            self._events.setdefault(run_id, []).append(stored)
             out.append(stored)
-        self._event_seq[run_id] = seq
-        return out
+        next_seq[run_id] = seq
+        return out, next_seq
 
-    async def claim_next(self, request: ClaimRequest) -> ClaimResult:
+    def _assign_events(
+        self, command: RuntimeCommand, events: list[RuntimeEvent]
+    ) -> list[RuntimeEvent]:
+        assigned, next_seq = self._assign_events_preview(
+            command, events, dict(self._event_seq)
+        )
+        for event in assigned:
+            self._events.setdefault(command.run_id, []).append(event)
+        self._event_seq = next_seq
+        return assigned
+
+    async def claim_next(
+        self,
+        request: ClaimRequest,
+        *,
+        before_commit: Callable[[JournalBatch], None] | None = None,
+    ) -> ClaimResult:
         if request.lease_seconds <= 0:
             raise ValueError("lease_seconds must be greater than zero")
         if request.run_id is None and not request.all_runs:
@@ -297,7 +365,8 @@ class InMemoryJournal:
             for original, failed, _err in reaped_snapshots:
                 self._processes[original.id] = original
             append = self._append_batch_unlocked(
-                JournalBatch(run_id=batch_run_id, units=units)
+                JournalBatch(run_id=batch_run_id, units=units),
+                before_commit=before_commit,
             )
             process_out = claimed
             if claimed is not None:
