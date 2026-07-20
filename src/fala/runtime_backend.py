@@ -2568,13 +2568,11 @@ class Correlator:
                     f"SELECT * FROM processes WHERE {' AND '.join(expired_clauses)}",
                     expired_params,
                 ).fetchall()
+                from fala.runtime_pure import lease_expired_error
+
                 for expired_row in expired_rows:
                     expired = _process_from_row(expired_row)
-                    expired_error = {
-                        "type": "lease_expired",
-                        "message": "process lease expired with no attempts left",
-                        "lease_owner": expired.lease_owner,
-                    }
+                    expired_error = lease_expired_error(expired)
                     connection.execute(
                         """
                         UPDATE processes
@@ -2840,16 +2838,17 @@ class Correlator:
         available_at: datetime | None = None,
         input: dict[str, Any] | None = None,
     ) -> tuple[Process, CommandSubmission]:
-        expected_command_type = _PROCESS_TRANSITION_COMMANDS.get(status)
-        if expected_command_type is None:
-            raise ValueError(f"Unsupported process transition status: {status.value}")
-        if command.run_id != run_id:
-            raise ValueError("process transition command run_id must match run_id")
-        if command.command_type != expected_command_type:
-            raise ValueError(
-                f"transition to {status.value!r} requires command_type "
-                f"{expected_command_type!r}"
-            )
+        from fala.runtime_pure import (
+            validate_process_can_finish,
+            validate_process_can_ready,
+            validate_process_can_retry,
+            validate_process_can_wait,
+            validate_process_transition_command,
+        )
+
+        validate_process_transition_command(
+            run_id=run_id, status=status, command=command
+        )
 
         async with self._lock:
             connection = self._connect()
@@ -2903,23 +2902,7 @@ class Correlator:
                 }:
                     # waiting -> succeeded/failed closes a suspended effector from
                     # an external outcome (homeostat resolution, child-run boundary).
-                    if process.status not in {
-                        ProcessStatus.running,
-                        ProcessStatus.waiting,
-                    }:
-                        raise ValueError(
-                            f"Process {process_id!r} is not running or waiting: "
-                            f"{process.status.value}"
-                        )
-                    if (
-                        process.lease_owner is not None
-                        and command.actor != process.lease_owner
-                    ):
-                        raise ValueError(
-                            f"Process {process_id!r} lease is held by "
-                            f"{process.lease_owner!r}; actor "
-                            f"{command.actor!r} cannot finish it"
-                        )
+                    validate_process_can_finish(process, actor=command.actor)
                     stored_output = (
                         output or {}
                         if status == ProcessStatus.succeeded
@@ -3105,27 +3088,7 @@ class Correlator:
                             )
                             _append_runtime_events(connection, cancel_cmd, [cancel_evt])
                 elif status == ProcessStatus.retry_wait:
-                    if process.status not in {
-                        ProcessStatus.running,
-                        ProcessStatus.failed,
-                    }:
-                        raise ValueError(
-                            f"Process {process_id!r} cannot be retried from status: "
-                            f"{process.status.value}"
-                        )
-                    if (
-                        process.lease_owner is not None
-                        and command.actor != process.lease_owner
-                    ):
-                        raise ValueError(
-                            f"Process {process_id!r} lease is held by "
-                            f"{process.lease_owner!r}; actor "
-                            f"{command.actor!r} cannot retry it"
-                        )
-                    if process.attempt >= process.max_attempts:
-                        raise ValueError(
-                            f"Process {process_id!r} exhausted retry attempts"
-                        )
+                    validate_process_can_retry(process, actor=command.actor)
                     connection.execute(
                         """
                         UPDATE processes
@@ -3148,11 +3111,7 @@ class Correlator:
                         ),
                     )
                 elif status == ProcessStatus.waiting:
-                    if process.status != ProcessStatus.running:
-                        raise ValueError(
-                            f"Process {process_id!r} cannot wait from status: "
-                            f"{process.status.value}"
-                        )
+                    validate_process_can_wait(process)
                     connection.execute(
                         """
                         UPDATE processes
@@ -3172,11 +3131,7 @@ class Correlator:
                         ),
                     )
                 elif status == ProcessStatus.ready:
-                    if process.status != ProcessStatus.pending:
-                        raise ValueError(
-                            f"Process {process_id!r} cannot become ready from "
-                            f"status: {process.status.value}"
-                        )
+                    validate_process_can_ready(process)
                     ready_input = input if input is not None else process.input
                     reg = (ready_input or {}).get("regulation") or {}
                     ma_override = reg.get("max_attempts") if isinstance(reg, dict) else None
@@ -6008,13 +5963,10 @@ def _validate_run_status_transition(
     current: RunStatus,
     target: RunStatus,
 ) -> None:
-    if current in _TERMINAL_RUN_STATUSES:
-        raise ValueError(f"Run status {current.value!r} is terminal")
-    allowed = _RUN_STATUS_TRANSITIONS.get(current, set())
-    if target not in allowed:
-        raise ValueError(
-            f"Invalid run status transition: {current.value!r} -> {target.value!r}"
-        )
+    # Policy lives in runtime_pure (shared with InMemoryJournal).
+    from fala.runtime_pure import validate_run_status_transition
+
+    validate_run_status_transition(current, target)
 
 
 def _require_run_row(connection: sqlite3.Connection, run_id: str) -> None:
