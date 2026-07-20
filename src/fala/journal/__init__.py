@@ -6,6 +6,14 @@ See docs/EVENT_STREAM_CORE.md for batch, claim, and JournalBackedBackend.
 from __future__ import annotations
 
 from fala.journal.backend import InMemoryRuntimeBackend, JournalBackedBackend
+from fala.journal.jsonl import (
+    JsonlJournal,
+    TeeJournal,
+    append_line_durable,
+    decode_journal_line,
+    encode_journal_line,
+    repair_torn_jsonl,
+)
 from fala.journal.memory import InMemoryJournal, apply_facts
 from fala.journal.protocol import Journal
 from fala.journal.sqlite import SqliteJournal
@@ -33,10 +41,16 @@ __all__ = [
     "Journal",
     "JournalBackedBackend",
     "JournalBatch",
+    "JsonlJournal",
     "SqliteJournal",
     "StateFact",
     "StateFactOp",
+    "TeeJournal",
+    "append_line_durable",
     "apply_facts",
+    "decode_journal_line",
+    "encode_journal_line",
     "leading_command",
     "leading_idempotency_key",
+    "repair_torn_jsonl",
 ]
