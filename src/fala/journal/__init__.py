@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fala.journal.memory import InMemoryJournal, apply_facts
 from fala.journal.protocol import Journal
+from fala.journal.sqlite import SqliteJournal
 from fala.journal.types import (
     KNOWN_STATE_FACT_ENTITIES,
     AppendResult,
@@ -30,6 +31,7 @@ __all__ = [
     "InMemoryJournal",
     "Journal",
     "JournalBatch",
+    "SqliteJournal",
     "StateFact",
     "StateFactOp",
     "apply_facts",
