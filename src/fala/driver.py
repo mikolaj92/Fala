@@ -39,6 +39,21 @@ from fala.runtime_backend import (
 )
 
 
+def backend_runtime_uri(backend: RuntimeBackend) -> str:
+    """Resolve a durable runtime URI for bridge source/target refs."""
+    uri = getattr(backend, "runtime_uri", None)
+    if isinstance(uri, str) and uri:
+        return uri
+    if isinstance(backend, Correlator):
+        return f"sqlite://{backend.path.expanduser().resolve()}"
+    journal = getattr(backend, "journal", None)
+    if journal is not None:
+        juri = getattr(journal, "runtime_uri", None)
+        if isinstance(juri, str) and juri:
+            return juri
+    return "unknown://local"
+
+
 @dataclass(frozen=True)
 class RunUntilIdleResult:
     ok: bool
@@ -402,10 +417,6 @@ async def enqueue_fala_runtime_process(
         raise ValueError("fala_runtime process requires impulse_id")
 
     backend = service.backend
-    if not isinstance(backend, Correlator):
-        raise FalaConfigurationError(
-            "fala_runtime effectors require a SQLite-backed runtime service"
-        )
 
     impulse = await backend.get_impulse(
         run_id=process.run_id,
@@ -420,7 +431,7 @@ async def enqueue_fala_runtime_process(
     )
     source_runtime = RuntimeRef(
         id=str(request.config.get("source_runtime_id") or "local"),
-        uri=f"sqlite://{backend.path.expanduser().resolve()}",
+        uri=backend_runtime_uri(backend),
     )
     target_runtime, pool_id, budget = await resolve_fala_runtime_target(
         backend=backend,
@@ -682,6 +693,7 @@ def sqlite_db_path(target: str) -> str:
 __all__ = [
     "RunCorrelationPathResult",
     "RunUntilIdleResult",
+    "backend_runtime_uri",
     "close_delegations",
     "enqueue_fala_runtime_process",
     "process_error_text",
