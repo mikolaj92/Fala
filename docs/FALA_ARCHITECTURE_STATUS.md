@@ -93,6 +93,7 @@ or `ops_projections` to accept an impulse or drive a claim loop.
 | `python_function` adapter | REMOVED (unknown kind) |
 | Domain pack Splot | DONE (`domain_packs/splot` + `splot-integration`) |
 | Domain pack Signals | DONE (`domain_packs/signals` + `signals-domain` smoke) |
+| Domain pack Takt | DONE (`domain_packs/takt` + `takt-domain` smoke; engine in sibling takt 0.2+) |
 | Process host POSIX (Darwin + Linux) | DONE (Linux `.so` + `/proc/self/exe`; Darwin smoke) |
 | Multi-claim / multi-workspace composition | DONE (`drive_ready_batch`, `claims_per_round`, multi MemoryDriver) |
 | Homeostat rearm (#68) + EV regulation | DONE (`rearm_homeostat`, Signals `regulation_decision`) |

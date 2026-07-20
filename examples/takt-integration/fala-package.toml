@@ -1,0 +1,38 @@
+# Fala package: run Takt 0.2+ Mojo as a subprocess effector.
+# Requires sibling checkout: ../takt (or TAKT_ROOT).
+version = "2"
+id = "fala_takt_integration"
+title = "Fala hosts Takt cascade (Mojo)"
+
+[[impulse_types]]
+id = "takt.cascade_request"
+media_types = ["application/json"]
+
+[[association_kinds]]
+id = "takt.error_signal"
+
+[[reaction_kinds]]
+id = "takt.actuation"
+media_types = ["application/json"]
+
+[[capabilities]]
+id = "takt.cascade"
+accepts_impulse_types = ["takt.cascade_request"]
+emits_association_kinds = ["takt.error_signal"]
+emits_reaction_kinds = ["takt.actuation"]
+
+[[correlation_paths]]
+id = "cascade"
+
+[[correlation_paths.effectors]]
+id = "takt_step"
+capability = "takt.cascade"
+adapter = { kind = "subprocess", command = ["../takt/tools/takt_step.sh"] }
+
+[runtime.backend]
+kind = "sqlite"
+path = ".fala/takt-integration.sqlite"
+
+[runtime.reaction_store]
+kind = "filesystem"
+root = ".fala/reactions"
