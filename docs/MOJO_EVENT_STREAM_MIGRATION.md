@@ -68,15 +68,15 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 13. JsonlJournal + torn-line smoke — **done**
 14. TeeJournal — **done**
 15. CLI operator path on SQLite — **done**
-16. Historical breadth: domain_store, migration, correlation exec/persist/runtime, native_driver, adapter persistence, finalization, runtime contracts — **done** (`extended-smoke`)
-17. native_cli_semantics / example_basic / bridge_transport / subprocess — partial (in tree; wire into extended as they stay green)
-18. Subprocess / fala_runtime host production readiness — open (typed unavailable still acceptable per matrix)
+16. Historical breadth: domain_store, migration, correlation exec/persist/runtime/advance, native_driver, adapter persistence, finalization, runtime contracts/policy, package SDK — **done** (`extended-smoke`)
+17. native_cli_semantics / example_basic_native / bridge_transport — **done** (wired into `extended-smoke`)
+18. Subprocess / fala_runtime / native process-host production readiness — **open** (typed unavailable still acceptable per matrix; `native_semantics` / host smokes not merge-gate)
 
-**Merge when:** full checklist green; draft PR converted to ready once.
+**Merge when:** full checklist green for core+adapters (items 1–17); item 18 is host-matrix follow-up, not a block on the atomic land if product accepts native_function + SQLite path as the land surface. Draft PR converted to ready once product confirms.
 
 **Proof today:**
 - `pixi run full-smoke` — green  
-- `pixi run extended-smoke` — green
+- `pixi run extended-smoke` — green (includes example_basic_native + bridge_transport + correlation_advance + package_sdk + runtime_policy)
 
 Companion docs:
 

@@ -1,0 +1,80 @@
+version = "2"
+id = "basic_examples"
+title = "Basic Fala examples"
+description = "Neutral impulse correlation-path examples for Fala."
+tags = ["example"]
+
+[[impulse_types]]
+id = "source_payload"
+title = "Source payload"
+media_types = ["text/plain", "application/json"]
+value_schema = { type = "object", properties = { source = { type = "string" } }, additionalProperties = true }
+
+[[association_kinds]]
+id = "process_progress"
+title = "Process progress"
+
+[[reaction_kinds]]
+id = "source_payload"
+title = "Source payload reaction"
+media_types = ["text/plain", "application/json"]
+
+[[reaction_kinds]]
+id = "enriched_payload"
+title = "Enriched payload"
+media_types = ["application/json"]
+
+[[reaction_kinds]]
+id = "exported_payload"
+title = "Exported payload"
+media_types = ["application/json"]
+
+[[capabilities]]
+id = "ingest_source"
+title = "Ingest source"
+accepts_impulse_types = ["source_payload"]
+emits_reaction_kinds = ["source_payload"]
+emits_association_kinds = ["process_progress"]
+
+[[capabilities]]
+id = "enrich_source"
+title = "Enrich source"
+accepts_reaction_kinds = ["source_payload"]
+emits_reaction_kinds = ["enriched_payload"]
+emits_association_kinds = ["process_progress"]
+
+[[capabilities]]
+id = "export_source"
+title = "Export source"
+accepts_reaction_kinds = ["enriched_payload"]
+emits_reaction_kinds = ["exported_payload"]
+emits_association_kinds = ["process_progress"]
+
+[[correlation_paths]]
+id = "basic_enrichment"
+title = "Basic enrichment"
+
+[[correlation_paths.effectors]]
+id = "ingest"
+capability = "ingest_source"
+adapter = { kind = "native_function", ref = "example.basic.ingest" }
+
+[[correlation_paths.effectors]]
+id = "enrich"
+capability = "enrich_source"
+conduction = ["ingest"]
+adapter = { kind = "native_function", ref = "example.basic.enrich" }
+
+[[correlation_paths.effectors]]
+id = "export"
+capability = "export_source"
+conduction = ["enrich"]
+adapter = { kind = "native_function", ref = "example.basic.export" }
+
+[runtime.backend]
+kind = "sqlite"
+path = ".fala/state.sqlite"
+
+[runtime.reaction_store]
+kind = "filesystem"
+root = ".fala/reactions"
