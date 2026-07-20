@@ -10,10 +10,24 @@
 3. Port other sinks/adapters  ← JSONL, Tee, transports, …
 ```
 
+**Chosen execution path (indifferent between rebase / rewrite):**  
+**Fresh branch `mojo-core-0.2.2` from `main` 0.2.2**, selectively lifting pure
+modules from historical `mojo`, then writing JournalPort + InMemory. No full
+rebase of the SQLite monolith. Existing `mojo` remains a quarry for the SQLite
+adapter phase (`NativeJournal`, `domain_store`, schema, CLI db).
+
 SQLite is **out of the core** in 0.2.2. The Mojo port must not re-glue it into
-the engine’s identity. Existing work on branch `mojo` (SQLite-native
-`NativeJournal`) is valuable **material for the SQLite adapter**, not the
-definition of “native Fala.”
+the engine’s identity.
+
+### Bootstrap status
+
+| Item | Status |
+| --- | --- |
+| Branch | `mojo-core-0.2.2` |
+| Lifted pure | `status`, `processes`, `correlation`, `domain`, models, json, toml, validation |
+| New core | `journal_port.mojo`, `memory_journal.mojo` |
+| Proof | `pixi run core-smoke` (no sqlite.fire) |
+| SQLite | not in tree yet (adapter phase) |
 
 Companion docs:
 

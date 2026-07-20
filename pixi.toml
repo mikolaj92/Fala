@@ -1,0 +1,17 @@
+[workspace]
+name = "fala"
+version = "0.2.2"
+channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+platforms = ["osx-arm64"]
+
+[dependencies]
+mojo = "==1.0.0b3.dev2026071505"
+
+[tasks]
+# Core-first: no sqlite.fire required.
+core-status = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_status.mojo"
+core-journal-memory = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_journal_memory.mojo"
+core-smoke = "pixi run core-status && pixi run core-journal-memory"
+json-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/json.mojo"
+toml-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/toml.mojo"
+correlation-advance = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/correlation_advance.mojo"
