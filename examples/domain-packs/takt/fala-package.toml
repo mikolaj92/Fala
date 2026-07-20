@@ -1,0 +1,55 @@
+version = "2"
+id = "takt_cascade_basic"
+title = "Takt cascade basic vocabulary"
+description = "Impulse/association/homeostat/reaction kinds for Takt 0.2 cascade organ."
+
+[[impulse_types]]
+id = "takt.cascade_request"
+media_types = ["application/json"]
+value_schema = { type = "object", properties = { mode = { type = "string" }, plant_nodes = { type = "array" }, layers = { type = "array" } }, required = ["mode"] }
+
+[[association_kinds]]
+id = "takt.plant_layer"
+value_schema = { type = "object", properties = { layer = { type = "integer" }, tolerance = { type = "number" } }, required = ["layer"] }
+
+[[association_kinds]]
+id = "takt.error_signal"
+value_schema = { type = "object", properties = { node_id = { type = "string" }, aberration = { type = "number" }, confidence = { type = "number" } }, required = ["node_id"] }
+
+[[reaction_kinds]]
+id = "takt.actuation"
+media_types = ["application/json"]
+
+[[capabilities]]
+id = "takt.cascade"
+accepts_impulse_types = ["takt.cascade_request"]
+emits_association_kinds = ["takt.plant_layer", "takt.error_signal"]
+emits_reaction_kinds = ["takt.actuation"]
+
+[[capabilities]]
+id = "takt.interlock_review"
+accepts_impulse_types = ["takt.cascade_request"]
+emits_association_kinds = ["takt.error_signal"]
+
+[[correlation_paths]]
+id = "basic"
+
+[[correlation_paths.effectors]]
+id = "cascade"
+capability = "takt.cascade"
+# Host maps this to takt_step.sh when Takt is installed as a sibling product.
+adapter = { kind = "subprocess", command = ["../takt/tools/takt_step.sh"] }
+
+[[correlation_paths.effectors]]
+id = "interlock_review"
+capability = "takt.interlock_review"
+conduction = ["cascade"]
+adapter = { kind = "manual_homeostat" }
+
+[runtime.backend]
+kind = "sqlite"
+path = ".fala/takt.sqlite"
+
+[runtime.reaction_store]
+kind = "filesystem"
+root = ".fala/reactions"

@@ -52,6 +52,7 @@ runtime-contracts = "./tools/mojo_sql_run.sh mojo/smoke/runtime_contracts.mojo 1
 correlation-advance = "./tools/mojo_sql_run.sh mojo/smoke/correlation_advance.mojo 1"
 package-sdk-contracts = "./tools/mojo_sql_run.sh mojo/smoke/package_sdk_contracts.mojo 1"
 splot-domain = "./tools/mojo_sql_run.sh mojo/smoke/splot_domain_pack.mojo 1"
+takt-domain = "./tools/mojo_sql_run.sh mojo/smoke/takt_domain_pack.mojo 1"
 concurrency-composition = "./tools/mojo_sql_run.sh mojo/smoke/concurrency_composition.mojo 1"
 homeostat-rearm = "./tools/mojo_sql_run.sh mojo/smoke/homeostat_rearm.mojo 1"
 homeostat-regulation = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/homeostat_regulation.mojo"
@@ -66,7 +67,7 @@ host-smoke = "pixi run native-process-host && pixi run native-subprocess"
 adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke && pixi run thin-core-layers && pixi run host-smoke"
 
 # Broader historical suite (fleet/runtime-policy intentionally absent)
-extended-adapter-smoke = "pixi run adapter-smoke && pixi run native-cli-semantics && pixi run correlation-execution && pixi run correlation-persistence && pixi run correlation-runtime && pixi run correlation-advance && pixi run native-driver && pixi run adapter-persistence && pixi run finalization && pixi run runtime-contracts && pixi run package-sdk-contracts && pixi run example-basic-native && pixi run bridge-transport && pixi run splot-domain && pixi run concurrency-composition && pixi run homeostat-rearm && pixi run homeostat-regulation && pixi run signals-domain && pixi run multi-organ-example"
+extended-adapter-smoke = "pixi run adapter-smoke && pixi run native-cli-semantics && pixi run correlation-execution && pixi run correlation-persistence && pixi run correlation-runtime && pixi run correlation-advance && pixi run native-driver && pixi run adapter-persistence && pixi run finalization && pixi run runtime-contracts && pixi run package-sdk-contracts && pixi run example-basic-native && pixi run bridge-transport && pixi run splot-domain && pixi run concurrency-composition && pixi run homeostat-rearm && pixi run homeostat-regulation && pixi run signals-domain && pixi run multi-organ-example && pixi run takt-domain"
 
 full-smoke = "pixi run core-smoke && pixi run adapter-smoke"
 extended-smoke = "pixi run core-smoke && pixi run extended-adapter-smoke"
