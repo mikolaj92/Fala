@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from fala.adapters import (
-    AutonomousCorrelatorEffectorAdapter,
     ManualHomeostatEffectorAdapter,
     PythonFunctionEffectorAdapter,
     EffectorAdapter,
@@ -15,7 +14,6 @@ from fala.runtime import AutonomousCorrelator, RunScope, open_journal
 from fala.driver import (
     RunCorrelationPathResult,
     RunUntilIdleResult,
-    close_delegations,
     process_error_text,
     run_correlation_path,
     run_until_idle,
@@ -78,7 +76,6 @@ from fala.runtime_backend import (
     WaitDiagnosticIssue,
     WaitGraphDiagnostic,
     CommandSubmission,
-    DelegationPolicy,
     EventRef,
     Homeostat,
     HomeostatStatus,
@@ -93,7 +90,6 @@ from fala.runtime_backend import (
     RuntimeBudget,
     RuntimeCommand,
     RuntimeEvent,
-    RuntimePool,
     RuntimeRef,
     SQLITE_RUNTIME_SCHEMA_VERSION,
     Correlator,
@@ -155,9 +151,7 @@ __all__ = [
     "WaitGraphDiagnostic",
     "FalaPackageSpec",
     "CommandSubmission",
-    "DelegationPolicy",
     "EventRef",
-    "AutonomousCorrelatorEffectorAdapter",
     "FalaAdapterError",
     "FalaBackendError",
     "FalaBudgetExceeded",
@@ -201,7 +195,6 @@ __all__ = [
     "RuntimeRunRetentionPlan",
     "RuntimeCommand",
     "RuntimeEvent",
-    "RuntimePool",
     "RuntimeRef",
     "SQLITE_RUNTIME_SCHEMA_VERSION",
     "Correlator",
@@ -212,7 +205,6 @@ __all__ = [
     "advance_correlation_path",
     "advance_correlation_path_for_process",
     "fala_package_from_mapping",
-    "close_delegations",
     "create_effector_adapter",
     "find_correlation_path_effector_process",
     "correlation_path_effector_processes",

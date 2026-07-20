@@ -330,7 +330,9 @@ struct EffectorAdapterSpec(Copyable, Movable):
 
     @staticmethod
     def create(kind: String, var command: List[String] = List[String](), `ref`: String = "", runtime_ref: String = "", cwd: String = "", var env: Dict[String, String] = Dict[String, String](), var inherit_env: List[String] = List[String](), timeout_seconds: Float64 = -1.0) raises -> EffectorAdapterSpec:
-        if kind != "subprocess" and kind != "native_function" and kind != "python_function" and kind != "manual_homeostat" and kind != "fala_runtime":
+        if kind == "fala_runtime":
+            raise Error("fala_runtime is not part of Fala; use subprocess with a separate journal")
+        if kind != "subprocess" and kind != "native_function" and kind != "python_function" and kind != "manual_homeostat":
             raise Error("unknown effector adapter kind '" + kind + "'")
         if timeout_seconds == 0.0: raise Error("adapter timeout_seconds must be greater than 0 when provided")
         if timeout_seconds < -1.0: raise Error("adapter timeout_seconds must not be negative")
@@ -343,9 +345,6 @@ struct EffectorAdapterSpec(Copyable, Movable):
             if len(command) != 0 or runtime_ref != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0: raise Error(kind + " adapter has invalid boundary fields")
         elif kind == "manual_homeostat":
             if len(command) != 0 or `ref` != "" or runtime_ref != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0 or normalized_timeout != 0.0: raise Error("manual_homeostat adapter has invalid boundary fields")
-        else:
-            _check_nonempty(runtime_ref, "fala_runtime adapter runtime_ref")
-            if len(command) != 0 or `ref` != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0: raise Error("fala_runtime adapter has invalid boundary fields")
         if kind != "subprocess" and len(inherit_env) != 0: raise Error("only subprocess adapters may inherit environment")
         return EffectorAdapterSpec(kind=kind, command=command^, `ref`=`ref`, runtime_ref=runtime_ref, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=normalized_timeout)
 

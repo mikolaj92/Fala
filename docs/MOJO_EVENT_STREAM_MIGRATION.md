@@ -75,7 +75,7 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
     Local host is **core product**, not multi-runtime. See
     [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 19. Bridge file export/import helpers for nested CLI children — nice (partial local deliver already exists)
-20. RuntimePool / `fala_runtime` fleet / multi-runtime selection — **out of land gate** (optional later package; not Fala identity)
+20. RuntimePool / `fala_runtime` fleet — **removed from product surface** (do not port)
 
 **Merge when:** items 1–18 green (organ + sinks + **local process host**).  
 **Do not block land on** multi-runtime pools or network peer mesh.  
@@ -102,7 +102,7 @@ Companion docs:
 | **Core** | Cybernetic organ + pure policy + Journal Protocol + InMemory sink + driver loop against the port | **First** |
 | **SQLite adapter** | `SqliteJournal` / `NativeJournal` + schema + domain tables | **Second** |
 | **Local host (product core)** | process host + `subprocess` / `native_function` execution | **Same land as core** (after organ + sinks) |
-| **Optional multi-runtime** | RuntimePool, fleet `fala_runtime`, network bridges | **Not land-gate** — see FALA_HOST_AND_COMPOSITION |
+| **Removed (do not port)** | RuntimePool, fleet `fala_runtime` | see FALA_HOST_AND_COMPOSITION |
 
 **Core must compile, test, and run a full correlation path with zero SQLite.**  
 Only then wire the SQLite sink as an optional/default production adapter.

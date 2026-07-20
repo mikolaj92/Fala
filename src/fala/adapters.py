@@ -137,17 +137,6 @@ class ManualHomeostatEffectorAdapter:
         )
 
 
-class AutonomousCorrelatorEffectorAdapter:
-    async def run(self, request: EffectorRunRequest) -> EffectorRunResult:
-        if request.adapter.kind != "fala_runtime":
-            raise FalaAdapterError("fala_runtime adapter received wrong adapter kind")
-        raise FalaAdapterError(
-            "fala_runtime effectors cannot run standalone: they enqueue a bridge "
-            "delivery, which only the run-until-idle driver does (see "
-            "fala.driver.enqueue_fala_runtime_process)"
-        )
-
-
 def create_effector_adapter(kind: str) -> EffectorAdapter:
     if kind == "python_function":
         return PythonFunctionEffectorAdapter()
@@ -155,8 +144,6 @@ def create_effector_adapter(kind: str) -> EffectorAdapter:
         return SubprocessEffectorAdapter()
     if kind == "manual_homeostat":
         return ManualHomeostatEffectorAdapter()
-    if kind == "fala_runtime":
-        return AutonomousCorrelatorEffectorAdapter()
     raise FalaAdapterError(f"unknown effector adapter kind: {kind!r}")
 
 
@@ -265,7 +252,6 @@ def _load_output_result(path: Path) -> dict[str, Any]:
 
 
 __all__ = [
-    "AutonomousCorrelatorEffectorAdapter",
     "ManualHomeostatEffectorAdapter",
     "PythonFunctionEffectorAdapter",
     "EffectorAdapter",

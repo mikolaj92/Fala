@@ -89,51 +89,38 @@ That is operator/parent orchestration, not “Falas discover each other.”
 | Enqueue “work elsewhere” as a process that waits | **Re-express as local patterns** first: subprocess to another `fala` CLI, or `waiting` + external complete |
 | Bridge outbox/inbox rows on **this** journal | **Optional local surface** (export/import envelopes for one run) — not peer mesh |
 | `RuntimeRef` / `RunRef` as typed ids in envelopes | Keep as **envelope fields** when importing foreign ids; not a live directory of peers |
-| `RuntimePool`, `least_busy`, `round_robin`, delegation policy fleet | **`multi-runtime` package / optional layer** — not Fala identity |
-| Network transports between Falas | **Optional adapters** only when a deployment needs them |
+| `RuntimePool`, fleet policies, `fala_runtime` adapter | **Removed** from product surface |
+| Network peer mesh | **Out of Fala** |
 
-Rename guidance (implementation can lag docs):
-
-| Old name | Prefer |
+| Old name | Status |
 | --- | --- |
-| adapter `fala_runtime` (pool delegate) | demote to optional multi-runtime adapter, or delete from core packages |
-| “multi-Fala composition” as core DONE | split: **host + separate journals** = core; **pools** = optional |
-| process host “unavailable ok” | **not ok** for Mojo land |
+| adapter `fala_runtime` | **removed** — use `subprocess` + separate journal |
+| RuntimePool / create-pool CLI | **removed** |
+| process host | **merge-gate** for Mojo land |
 
 ---
 
-## Multi-runtime (optional, not assumed)
+## Multi-runtime — removed from product
 
-**Multi-runtime** means: more than one Fala address is known to a **selector**
-(pool policies, load metadata, shared operator control plane).
+**Removed from Fala product surface** (adapter, driver, CLI, public exports):
 
-That can be useful for ops (route this impulse type to machine B). It is
-**not** required for:
+- adapter kind `fala_runtime`
+- `RuntimePool` / `DelegationPolicy` operator APIs
+- pool policies (`least_busy`, `round_robin`, …)
+- `enqueue_fala_runtime_process` / fleet selection
 
-- recursion / nested autonomy
-- Unix composition
-- cybernetic “each organ has its own memory”
+Historical storage rows/tables may still exist in SQLite schema for
+compatibility; they are **not** part of Fala identity and must not be
+re-exposed as core features.
 
-If multi-runtime returns, it should be a **thin optional layer**:
+Nested composition is only:
 
 ```text
-multi-runtime (optional)
-  RuntimePool + selection policy
-  optional network bridge transport
-  adapter kind that enqueues to a selected URI
-       │
-       ▼ only talks to Fala via
-  public journal/CLI/bridge-file contracts
+subprocess (or CLI) → child process → separate journal
+optional bridge file / local two-path deliver when the operator chooses paths
 ```
 
-It must not re-enter core as identity, and must not force every Fala to hold
-a map of peers.
-
-### Why “multi-runtime inside Fala” felt contradictory
-
-Because it was: a being that must know other beings to exist. The product
-rule is the opposite — **each Fala is complete alone**. Composition is
-external (process tree, files, operator CLI), not an internal peer mesh.
+Each Fala is complete alone. No peer mesh.
 
 ---
 
@@ -160,23 +147,20 @@ StateFact injection** from child into parent privileged tables.
 | **Must** | Event-stream core + Journal sinks (memory/sqlite/jsonl/tee) |
 | **Must** | Driver + `native_function` path |
 | **Must** | **Process host + `subprocess` path green** (children of Fala) |
-| **Must not block on** | RuntimePool / least_busy / fala_runtime fleet adapter |
+| **Removed** | RuntimePool / `fala_runtime` / fleet — do not port |
 | **Nice** | Bridge file export/import for nested CLI children |
-| **Later package** | multi-runtime selection + network transports |
+
+## Adapter kinds (product)
+
+| Kind | Status |
+| --- | --- |
+| `subprocess` | **core** |
+| `native_function` | **core** (native/Mojo) |
+| `manual_homeostat` | **core** |
+| `python_function` | CPython only |
+| `fala_runtime` | **removed** |
 
 See also [`MOJO_EVENT_STREAM_MIGRATION.md`](MOJO_EVENT_STREAM_MIGRATION.md).
-
----
-
-## Python follow-through (when we rename, not before host works)
-
-1. Document adapter kinds: core = `native_function` | `subprocess` |
-   `manual_homeostat` | (`python_function` on CPython only).
-2. Move pool + `enqueue_fala_runtime_process` fleet path behind an optional
-   module or mark deprecated in core packages.
-3. Prefer examples that nest via `subprocess` + child `--db` / `--journal`.
-4. Keep bridge CLI for envelope ops; stop presenting pools as “how multi-Fala
-   works by default.”
 
 ---
 
@@ -185,5 +169,5 @@ See also [`MOJO_EVENT_STREAM_MIGRATION.md`](MOJO_EVENT_STREAM_MIGRATION.md).
 - [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md) — recursion without shared DB
 - [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) — process/host boundary
 - [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md) — effector I/O contract
-- [`MULTI_FALA_COMPOSITION.md`](MULTI_FALA_COMPOSITION.md) — historical pool/bridge inventory (to be slimmed)
+- [`MULTI_FALA_COMPOSITION.md`](MULTI_FALA_COMPOSITION.md) — composition without peer mesh
 - [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md) — journal + child journal rules

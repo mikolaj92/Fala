@@ -4,8 +4,7 @@ from fala.journal import RunRow, NativeJournal, EventInput, ProcessRow
 from fala.schema import initialize_native_schema, SCHEMA_VERSION, table_names, SchemaStatus, schema_status
 from fala.sqlite import Connection, Statement, SQLiteError
 from fala.json import parse_json, canonical_json_text
-from fala.runtime_policy import parse_runtime_refs_json, parse_runtime_budget_json
-from fala.domain import Impulse, Association, Reaction, RuntimePool, DelegationPolicy, RuntimeBudget, BridgeDelivery, EventRef, RuntimeRef, RunRef
+from fala.domain import Impulse, Association, Reaction, RuntimeBudget, BridgeDelivery, EventRef, RuntimeRef, RunRef
 from fala.native_driver import diagnose_waits, diagnose_wait_graph, observe_run_boundary
 from fala.reactions import FileReactionStore, ReactionBlob
 from emberjson import Value, Object, to_string
@@ -209,7 +208,7 @@ def _known_option(kind: String, item: String) -> Bool:
     if kind == "homeostat-domain-open" and (option == "--run-id" or option == "--homeostat-id" or option == "--impulse-id" or option == "--kind" or option == "--values-json" or option == "--metadata-json" or option == "--idempotency-key"): return True
     if kind == "homeostat-domain-transition" and (option == "--run-id" or option == "--homeostat-id" or option == "--value" or option == "--idempotency-key"): return True
     if kind == "run-observe" and (option == "--db" or option == "--run-id"): return True
-    if kind == "inspect" and (option == "--run-id" or option == "--pool-id" or option == "--impulse-type-id" or option == "--relation-id" or option == "--reaction-id" or option == "--association-id" or option == "--impulse-id" or option == "--process-id" or option == "--command-id"): return True
+    if kind == "inspect" and (option == "--run-id" or option == "--impulse-type-id" or option == "--relation-id" or option == "--reaction-id" or option == "--association-id" or option == "--impulse-id" or option == "--process-id" or option == "--command-id"): return True
     if kind == "commands-list" and (option == "--run-id" or option == "--command-type" or option == "--actor" or option == "--limit" or option == "--jsonl"): return True
     if kind == "events-list" and (option == "--run-id" or option == "--impulse-id" or option == "--after-sequence" or option == "--limit" or option == "--event-type" or option == "--process-id" or option == "--command-id" or option == "--actor" or option == "--jsonl"): return True
     if kind == "processes-list" and (option == "--run-id" or option == "--status" or option == "--impulse-id" or option == "--limit" or option == "--jsonl"): return True
@@ -221,7 +220,6 @@ def _known_option(kind: String, item: String) -> Bool:
     if kind == "homeostats-list" and (option == "--run-id" or option == "--impulse-id" or option == "--status" or option == "--kind" or option == "--limit" or option == "--jsonl"): return True
     if kind == "projections-list" and (option == "--run-id" or option == "--limit" or option == "--jsonl"): return True
     if kind == "bridge-list" and (option == "--run-id" or option == "--status" or option == "--box" or option == "--limit" or option == "--jsonl"): return True
-    if kind == "runtimes-list" and (option == "--run-id" or option == "--jsonl"): return True
     if kind == "rows" and (option == "--run-id" or option == "--impulse-id" or option == "--impulse-type" or option == "--status" or option == "--event-type" or option == "--process-id" or option == "--command-id" or option == "--command-type" or option == "--actor" or option == "--relation-type" or option == "--kind" or option == "--after-sequence" or option == "--limit" or option == "--box" or option == "--jsonl"): return True
     if kind == "trace" and option == "--run-id": return True
     if kind == "diagnose-waits" and (option == "--run-id" or option == "--impulse-id"): return True
@@ -231,8 +229,6 @@ def _known_option(kind: String, item: String) -> Bool:
     if kind == "maintenance" and (option == "--older-than-days" or option == "--keep-last" or option == "--reaction-root" or option == "--dry-run" or option == "--delete" or option == "--vacuum" or option == "--no-vacuum"): return True
     if kind == "gc" and (option == "--reaction-root" or option == "--run-id" or option == "--older-than" or option == "--dry-run" or option == "--delete"): return True
     if kind == "reaction-record" and (option == "--run-id" or option == "--reaction-root" or option == "--path" or option == "--kind" or option == "--reaction-id" or option == "--impulse-id" or option == "--media-type" or option == "--metadata-json" or option == "--idempotency-key" or option == "--now"): return True
-    if kind == "runtime-create-pool" and (option == "--pool-id" or option == "--runtime-json" or option == "--impulse-type" or option == "--policy" or option == "--metadata-json"): return True
-    if kind == "runtime-add-policy" and (option == "--pool-id" or option == "--policy-id" or option == "--impulse-type" or option == "--budget-json" or option == "--metadata-json"): return True
     if kind == "bridge-deliver" and (option == "--run-id" or option == "--delivery-id" or option == "--target-db" or option == "--idempotency-key" or option == "--import-idempotency-key" or option == "--now"): return True
     if kind == "bridge-export" and (option == "--delivery-id" or option == "--out"): return True
     if kind == "bridge-import" and (option == "--file" or option == "--idempotency-key"): return True
@@ -336,7 +332,7 @@ def _maintenance_integer(command: String, name: String, default: Int = -1) raise
 def _validate(command: String, kind: String, positional: Bool = False) raises SQLiteError:
     var index = 0
     var count = _count(command)
-    if kind == "run-list" or kind == "run-observe" or kind == "event-schema" or kind == "homeostat-list" or kind == "inspect" or kind == "rows" or kind == "commands-list" or kind == "events-list" or kind == "processes-list" or kind == "impulses-list" or kind == "impulse-types-list" or kind == "impulse-relations-list" or kind == "associations-list" or kind == "reactions-list" or kind == "homeostats-list" or kind == "projections-list" or kind == "bridge-list" or kind == "runtimes-list" or kind == "projection" or kind == "runtime-create-pool" or kind == "runtime-add-policy" or kind == "reaction-record" or kind == "bridge-deliver" or kind == "bridge-export" or kind == "bridge-import" or kind == "transition" or kind == "impulse-create" or kind == "process-schedule" or kind == "process-transition" or kind == "association-append" or kind == "homeostat-open" or kind == "homeostat-transition" or kind == "homeostat-domain-open" or kind == "homeostat-domain-transition": index = 2
+    if kind == "run-list" or kind == "run-observe" or kind == "event-schema" or kind == "homeostat-list" or kind == "inspect" or kind == "rows" or kind == "commands-list" or kind == "events-list" or kind == "processes-list" or kind == "impulses-list" or kind == "impulse-types-list" or kind == "impulse-relations-list" or kind == "associations-list" or kind == "reactions-list" or kind == "homeostats-list" or kind == "projections-list" or kind == "bridge-list" or kind == "projection" or kind == "reaction-record" or kind == "bridge-deliver" or kind == "bridge-export" or kind == "bridge-import" or kind == "transition" or kind == "impulse-create" or kind == "process-schedule" or kind == "process-transition" or kind == "association-append" or kind == "homeostat-open" or kind == "homeostat-transition" or kind == "homeostat-domain-open" or kind == "homeostat-domain-transition": index = 2
     elif kind == "doctor" or kind == "trace" or kind == "diagnose-waits": index = 1
     elif kind == "init": index = 1
     elif kind == "create" or kind == "schema" or kind == "maintenance" or kind == "gc": index = 1
@@ -351,7 +347,7 @@ def _validate(command: String, kind: String, positional: Bool = False) raises SQ
             var option = _option_base(item)
             if option == "--db": has_db_option = True
             var equals = item.find("=")
-            if (kind == "run-list" or kind == "rows" or kind == "homeostat-list" or kind == "commands-list" or kind == "events-list" or kind == "processes-list" or kind == "impulses-list" or kind == "impulse-types-list" or kind == "impulse-relations-list" or kind == "associations-list" or kind == "reactions-list" or kind == "homeostats-list" or kind == "projections-list" or kind == "bridge-list" or kind == "runtimes-list") and option == "--jsonl":
+            if (kind == "run-list" or kind == "rows" or kind == "homeostat-list" or kind == "commands-list" or kind == "events-list" or kind == "processes-list" or kind == "impulses-list" or kind == "impulse-types-list" or kind == "impulse-relations-list" or kind == "associations-list" or kind == "reactions-list" or kind == "homeostats-list" or kind == "projections-list" or kind == "bridge-list") and option == "--jsonl":
                 _ = _bool_option(command, "--jsonl")
                 index += 1
                 continue
@@ -383,13 +379,6 @@ def _validate(command: String, kind: String, positional: Bool = False) raises SQ
         var model = _word(command, 1)
         if model != "impulse" and model != "model" and model != "fala-package":
             raise SQLiteError(code=2, message="argument_error: unknown schema model " + model)
-    if kind == "runtime-create-pool":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--pool-id", "") == "": raise SQLiteError(code=2, message="argument_error: --pool-id is required")
-        if _flag(command, "--runtime-json", "") == "": raise SQLiteError(code=2, message="argument_error: --runtime-json is required")
-    if kind == "runtime-add-policy":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--pool-id", "") == "": raise SQLiteError(code=2, message="argument_error: --pool-id is required")
     if kind == "reaction-record":
         if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
         if _flag(command, "--run-id", "") == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
@@ -613,67 +602,6 @@ def _string_array(values: List[String]) -> String:
     result += "]"
     return result
 
-def _runtime_metadata(command: String) raises SQLiteError -> String:
-    var metadata = _flag(command, "--metadata-json", "{}")
-    try:
-        var canonical = canonical_json_text(metadata)
-        var parsed = parse_json(canonical)
-        if not parsed.value.is_object(): raise Error("metadata must be an object")
-        var policy = _flag(command, "--policy", "")
-        if policy != "":
-            if policy != "manual" and policy != "first" and policy != "least_busy" and policy != "round_robin":
-                raise Error("unknown policy")
-            var text = canonical
-            if text == "{}": text = "{\"policy\":" + _quote(policy) + "}"
-            else: text = String(text[byte=0:text.byte_length() - 1]) + ",\"policy\":" + _quote(policy) + "}"
-            canonical = canonical_json_text(text)
-        return canonical
-    except err:
-        raise SQLiteError(code=2, message="invalid_json")
-
-def _runtime_create_pool(command: String) raises SQLiteError -> String:
-    var pool_id = _flag(command, "--pool-id")
-    var runtime_values = _repeat_values(command, "--runtime-json")
-    if pool_id == "" or len(runtime_values) == 0:
-        raise SQLiteError(code=2, message="argument_error: --pool-id and --runtime-json are required")
-    var runtimes_json = "["
-    var first = True
-    for value in runtime_values:
-        if not first: runtimes_json += ","
-        first = False
-        try:
-            runtimes_json += canonical_json_text(value)
-        except err:
-            raise SQLiteError(code=2, message="invalid_json")
-    runtimes_json += "]"
-    try:
-        _ = parse_runtime_refs_json(runtimes_json)
-        runtimes_json = canonical_json_text(runtimes_json)
-    except err:
-        raise SQLiteError(code=2, message="invalid_json")
-    var pool_types = _string_array(_repeat_values(command, "--impulse-type"))
-    var metadata = _runtime_metadata(command)
-    var pool = RuntimePool(id=pool_id, runtimes=runtimes_json, impulse_types=pool_types, metadata=metadata)
-    var store = NativeDomainStore.open(_path(command)); store.initialize(); store.put_runtime_pool(pool); store.close()
-    return "{\"ok\":true,\"runtime\":\"mojo\",\"runtime_pool\":" + pool.to_json() + "}"
-
-def _runtime_add_policy(command: String) raises SQLiteError -> String:
-    var pool_id = _flag(command, "--pool-id")
-    if pool_id == "": raise SQLiteError(code=2, message="argument_error: --pool-id is required")
-    var policy_id = _flag(command, "--policy-id", "delegation_policy:" + pool_id)
-    var budget_json = _flag(command, "--budget-json", "{}")
-    var budget = RuntimeBudget()
-    try:
-        budget = parse_runtime_budget_json(budget_json)
-        budget_json = budget.to_json()
-    except err:
-        raise SQLiteError(code=2, message="invalid_json")
-    var metadata = _flag(command, "--metadata-json", "{}")
-    try: metadata = canonical_json_text(metadata)
-    except err: raise SQLiteError(code=2, message="invalid_json")
-    var policy = DelegationPolicy(id=policy_id, pool_id=pool_id, impulse_types=_string_array(_repeat_values(command, "--impulse-type")), budget=budget^, metadata=metadata)
-    var store = NativeDomainStore.open(_path(command)); store.initialize(); store.put_delegation_policy(policy); store.close()
-    return "{\"ok\":true,\"runtime\":\"mojo\",\"delegation_policy\":" + policy.to_json() + "}"
 def _init(command: String) raises SQLiteError -> String:
     var db_path = _path(command)
     var reaction_root = _flag(command, "--reaction-root", ".fala/reactions")
@@ -1082,31 +1010,6 @@ def _domain_inspect(path: String, resource: String, table: String, run_id: Strin
     stmt.close()
     connection.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"" + resource + "\":" + row + "}"
-
-def _runtime_inspect(path: String, pool_id: String) raises SQLiteError -> String:
-    if pool_id == "": raise SQLiteError(code=2, message="argument_error: --pool-id is required")
-    var connection = Connection(path)
-    initialize_native_schema(connection)
-    var pool_stmt = connection.query("SELECT id,runtimes_json,impulse_types,metadata FROM runtime_pools WHERE id=?")
-    pool_stmt.bind_text(1, pool_id)
-    if not pool_stmt.step():
-        pool_stmt.close()
-        connection.close()
-        return "{\"ok\":false,\"runtime\":\"mojo\",\"runtime_pool\":null}"
-    var pool = "{\"id\":" + _quote(_text(pool_stmt,0)) + ",\"runtimes\":" + _text(pool_stmt,1) + ",\"impulse_types\":" + _text(pool_stmt,2) + ",\"metadata\":" + _text(pool_stmt,3) + "}"
-    pool_stmt.close()
-    var policy_stmt = connection.query("SELECT id,pool_id,impulse_types,budget,metadata FROM delegation_policies WHERE pool_id=? ORDER BY pool_id ASC,id ASC")
-    policy_stmt.bind_text(1, pool_id)
-    var policies = "["
-    var first = True
-    while policy_stmt.step():
-        if not first: policies += ","
-        first = False
-        policies += "{\"id\":" + _quote(_text(policy_stmt,0)) + ",\"pool_id\":" + _quote(_text(policy_stmt,1)) + ",\"impulse_types\":" + _text(policy_stmt,2) + ",\"budget\":" + _text(policy_stmt,3) + ",\"metadata\":" + _text(policy_stmt,4) + "}"
-    policies += "]"
-    policy_stmt.close()
-    connection.close()
-    return "{\"ok\":true,\"runtime\":\"mojo\",\"runtime_pool\":" + pool + ",\"delegation_policies\":" + policies + "}"
 
 def _table(path: String, resource: String, table: String, run_id: String) raises SQLiteError -> String:
     var connection = Connection(path)
@@ -1875,9 +1778,7 @@ def dispatch_native_command(command: String) raises -> String:
         elif first == "runs" and second == "timeout": _validate(command, "transition"); return _transition(command, "timeout")
         elif first == "homeostats" and second == "list": _validate(command, "homeostats-list")
         elif first == "homeostats" and second == "inspect": return _error("unsupported_command")
-        if (first == "commands" or first == "events" or first == "processes" or first == "impulses" or first == "impulse-types" or first == "impulse-relations" or first == "relations" or first == "associations" or first == "reactions" or first == "projections" or first == "bridge" or first == "bridges" or first == "runtimes" or first == "runs") and second == "inspect": _validate(command, "inspect")
-        elif first == "runtimes" and second == "create-pool": _validate(command, "runtime-create-pool")
-        elif first == "runtimes" and second == "add-policy": _validate(command, "runtime-add-policy")
+        if (first == "commands" or first == "events" or first == "processes" or first == "impulses" or first == "impulse-types" or first == "impulse-relations" or first == "relations" or first == "associations" or first == "reactions" or first == "projections" or first == "bridge" or first == "bridges" or first == "runs") and second == "inspect": _validate(command, "inspect")
         if command == "commands list" or command.startswith("commands list "): _validate(command, "commands-list"); return _command_rows(_path(command), command)
         elif first == "reactions" and second == "record": _validate(command, "reaction-record")
         if command == "trace" or command.startswith("trace "): _validate(command, "trace"); return _trace(_path(command), command)
@@ -1891,7 +1792,6 @@ def dispatch_native_command(command: String) raises -> String:
         elif first == "maintain-journal": _validate(command, "maintenance")
         if command == "schema impulse": return "{\"ok\":true,\"runtime\":\"mojo\",\"schema\":\"impulse\"}"
         if command == "processes inspect" or command.startswith("processes inspect "): return _process_inspect(_path(command), _flag(command, "--run-id"), _flag(command, "--process-id"))
-        if command == "runtimes inspect" or command.startswith("runtimes inspect "): return _runtime_inspect(_path(command), _flag(command, "--pool-id"))
         if command == "impulse-types inspect" or command.startswith("impulse-types inspect "): return _domain_inspect(_path(command), "impulse_type", "impulse_types", _flag(command, "--run-id"), _flag(command, "--impulse-type-id"), "--impulse-type-id")
         if command == "impulse-relations inspect" or command.startswith("impulse-relations inspect ") or command == "relations inspect" or command.startswith("relations inspect "): return _domain_inspect(_path(command), "impulse_relation", "impulse_relations", _flag(command, "--run-id"), _flag(command, "--relation-id"), "--relation-id")
         if command == "reactions inspect" or command.startswith("reactions inspect "): return _domain_inspect(_path(command), "reaction", "reactions", _flag(command, "--run-id"), _flag(command, "--reaction-id"), "--reaction-id")
@@ -1946,12 +1846,6 @@ def dispatch_native_command(command: String) raises -> String:
             var bridges_table = "bridge_outbox"
             if _flag(command, "--box", "outbox") == "inbox": bridges_table = "bridge_inbox"
             return _rows(_path(command), "bridges", bridges_table, command)
-        if command == "runtimes list" or command.startswith("runtimes list "):
-            _validate(command, "runtimes-list")
-            if _flag(command, "--run-id") != "": return _error("argument_error", "--run-id is not supported for runtimes")
-            return _rows(_path(command), "runtimes", "runtime_pools", command)
-        if command == "runtimes create-pool" or command.startswith("runtimes create-pool "): return _runtime_create_pool(command)
-        if command == "runtimes add-policy" or command.startswith("runtimes add-policy "): return _runtime_add_policy(command)
         if command == "export" or command.startswith("export ") or command.startswith("export-html") or command.startswith("export-bundle"):
             return _error("native_boundary", "export requires a native file encoder")
         if command == "doctor" or command.startswith("doctor "):
@@ -1968,7 +1862,7 @@ def dispatch_native_command(command: String) raises -> String:
 
 
 def cli_surface_help() -> String:
-    return "schema impulse\nschema model\nschema fala-package\ndb init\ndb migrate\ndb status\ndb schema\ndb vacuum\ndoctor\ncreate-run\nruns list\nruns inspect\nruns observe\nruns start\nruns wait\nruns complete\nruns fail\nruns request-cancel\nruns cancel\nruns timeout\nmaintain-journal\ncommands list\ncommands inspect\nevents list\nevents validate-schema\nprocesses list\nprocesses inspect\nimpulses list\nimpulses inspect\nimpulse-types list\nimpulse-types inspect\nimpulse-relations list\nimpulse-relations inspect\nrelations list\nrelations inspect\nassociations list\nassociations inspect\nreactions list\nreactions inspect\nhomeostats list\nhomeostats open\nhomeostats reopen\nhomeostats complete\nhomeostats cancel\nhomeostats expire\nhomeostat open (alias)\nhomeostat complete (alias)\nhomeostat cancel (alias)\nhomeostat expire (alias)\nprojections list\nprojections rebuild\nbridge list\nbridge export (native boundary)\nbridge import (native boundary)\nruntimes list\nruntimes inspect\ntrace\ndiagnose-waits\ninit (native boundary)\ngc (native boundary)\narchive-run (native boundary)\narchive-gc (native boundary)\nrun-until-idle (native boundary)\nreplay-execution (native boundary)\nexport (native boundary)"
+    return "schema impulse\nschema model\nschema fala-package\ndb init\ndb migrate\ndb status\ndb schema\ndb vacuum\ndoctor\ncreate-run\nruns list\nruns inspect\nruns observe\nruns start\nruns wait\nruns complete\nruns fail\nruns request-cancel\nruns cancel\nruns timeout\nmaintain-journal\ncommands list\ncommands inspect\nevents list\nevents validate-schema\nprocesses list\nprocesses inspect\nimpulses list\nimpulses inspect\nimpulse-types list\nimpulse-types inspect\nimpulse-relations list\nimpulse-relations inspect\nrelations list\nrelations inspect\nassociations list\nassociations inspect\nreactions list\nreactions inspect\nhomeostats list\nhomeostats open\nhomeostats reopen\nhomeostats complete\nhomeostats cancel\nhomeostats expire\nhomeostat open (alias)\nhomeostat complete (alias)\nhomeostat cancel (alias)\nhomeostat expire (alias)\nprojections list\nprojections rebuild\nbridge list\nbridge export (native boundary)\nbridge import (native boundary)\ntrace\ndiagnose-waits\ninit (native boundary)\ngc (native boundary)\narchive-run (native boundary)\narchive-gc (native boundary)\nrun-until-idle (native boundary)\nreplay-execution (native boundary)\nexport (native boundary)"
 def dispatch_command(command: String) raises -> String:
     return dispatch_native_command(command)
 

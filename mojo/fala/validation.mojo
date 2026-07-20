@@ -111,7 +111,9 @@ def validate_adapter_boundary(
     inherit_env_count: Int,
     timeout_seconds: Float64,
 ) -> ValidationError:
-    if kind != "fala_runtime" and kind != "manual_homeostat" and kind != "native_function" and kind != "python_function" and kind != "subprocess":
+    if kind == "fala_runtime":
+        return _fail("unsupported_adapter_kind", "adapter.kind", "fala_runtime is not part of Fala; use subprocess with a separate journal")
+    if kind != "manual_homeostat" and kind != "native_function" and kind != "python_function" and kind != "subprocess":
         return _fail("unknown_adapter_kind", "adapter.kind", "unknown adapter kind: " + kind)
     if timeout_seconds >= 0.0:
         var positive = validate_positive_number(timeout_seconds, "adapter.timeout_seconds")
@@ -151,12 +153,7 @@ def validate_adapter_boundary(
         if env_count > 0: return _fail("adapter_boundary", "adapter.env", "manual_homeostat adapter cannot define env")
         if timeout_seconds >= 0.0: return _fail("adapter_boundary", "adapter.timeout_seconds", "manual_homeostat adapter cannot define timeout_seconds")
         return _ok()
-    if runtime_ref == "": return _fail("adapter_boundary", "adapter.runtime_ref", "fala_runtime adapter requires runtime_ref")
-    if command != "": return _fail("adapter_boundary", "adapter.command", "fala_runtime adapter cannot define command")
-    if adapter_ref != "": return _fail("adapter_boundary", "adapter.ref", "fala_runtime adapter cannot define ref")
-    if cwd != "": return _fail("adapter_boundary", "adapter.cwd", "fala_runtime adapter cannot define cwd")
-    if env_count > 0: return _fail("adapter_boundary", "adapter.env", "fala_runtime adapter cannot define env")
-    return _ok()
+    return _fail("unknown_adapter_kind", "adapter.kind", "unknown adapter kind: " + kind)
 
 
 def validate_acyclic(ids: List[String], dependencies: List[List[String]], path: String = "") -> ValidationError:

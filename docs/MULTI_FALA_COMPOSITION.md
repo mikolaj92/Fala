@@ -19,18 +19,19 @@ see [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md).
 
 No mutual discovery. No requirement that Falas “know about” each other.
 
-## Historical / optional inventory
+## Still available (not fleet)
 
-Pieces that exist in the tree for advanced ops (not required for one Fala):
+- `RuntimeRef` / `RunRef` / `EventRef`: typed ids in bridge envelopes.
+- bridge outbox/inbox rows + local deliver / file export-import when the
+  **operator names both sides** (no pool selection).
 
-- `RuntimeRef` / `RunRef` / `EventRef`: typed ids in envelopes and records.
-- `RuntimePool` + policies (`manual` / `first` / `least_busy` / `round_robin`):
-  **multi-runtime selector** — optional control plane.
-- `DelegationPolicy`: impulse filters and bridge budgets when using pools.
-- adapter kind `fala_runtime`: enqueue to a URI or pool (fleet path).
-- bridge outbox/inbox rows: durable local delivery records for envelope ops.
+## Removed from product
 
-Bridge delivery modes:
+- `RuntimePool`, pool policies, `DelegationPolicy` operator APIs
+- adapter kind `fala_runtime`
+- CLI `fala runtimes create-pool` / fleet selection
+
+Bridge delivery modes that remain:
 
 - local SQLite delivery: `fala bridge deliver --target-db ...`
 - file handoff: `fala bridge export --out delivery.json` and

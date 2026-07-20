@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 RUNTIME_ID_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 RuntimeId = Annotated[str, Field(pattern=RUNTIME_ID_PATTERN)]
 EffectorAdapterKind = Literal[
-    "fala_runtime",
     "manual_homeostat",
     "python_function",
     "subprocess",
@@ -167,19 +166,6 @@ class EffectorAdapterSpec(BaseModel):
                 raise ValueError("manual_homeostat adapter cannot define env")
             if self.timeout_seconds is not None:
                 raise ValueError("manual_homeostat adapter cannot define timeout_seconds")
-            return self
-
-        if self.kind == "fala_runtime":
-            if not self.runtime_ref:
-                raise ValueError("fala_runtime adapter requires runtime_ref")
-            if self.command is not None:
-                raise ValueError("fala_runtime adapter cannot define command")
-            if self.ref is not None:
-                raise ValueError("fala_runtime adapter cannot define ref")
-            if self.cwd is not None:
-                raise ValueError("fala_runtime adapter cannot define cwd")
-            if self.env:
-                raise ValueError("fala_runtime adapter cannot define env")
             return self
 
         return self

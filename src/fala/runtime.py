@@ -43,8 +43,6 @@ from fala.runtime_backend import (
     RuntimeBackend,
     RuntimeBackendService,
     RuntimeEvent,
-    DelegationPolicy,
-    RuntimePool,
     Correlator,
 )
 
@@ -778,35 +776,6 @@ class AutonomousCorrelator:
             dry_run=dry_run,
             reaction_store=reaction_store,
         )
-
-    async def save_runtime_pool(self, pool: RuntimePool) -> RuntimePool:
-        return await self.service.save_runtime_pool(pool)
-
-    async def get_runtime_pool(self, *, pool_id: str) -> RuntimePool | None:
-        return await self.service.get_runtime_pool(pool_id=pool_id)
-
-    async def list_runtime_pools(self) -> list[RuntimePool]:
-        return await self.service.list_runtime_pools()
-
-    async def save_delegation_policy(
-        self,
-        policy: DelegationPolicy,
-    ) -> DelegationPolicy:
-        return await self.service.save_delegation_policy(policy)
-
-    async def get_delegation_policy(
-        self,
-        *,
-        policy_id: str,
-    ) -> DelegationPolicy | None:
-        return await self.service.get_delegation_policy(policy_id=policy_id)
-
-    async def list_delegation_policies(
-        self,
-        *,
-        pool_id: str | None = None,
-    ) -> list[DelegationPolicy]:
-        return await self.service.list_delegation_policies(pool_id=pool_id)
 
     async def list_impulse_types(self, *, run_id: str) -> list[ImpulseType]:
         return await self.service.list_impulse_types(run_id=run_id)

@@ -197,8 +197,8 @@ def main() raises:
     var near_match = dispatch_native_command("runs starter --db " + path)
     _check(near_match == "{\"ok\":false,\"runtime\":\"mojo\",\"error\":{\"type\":\"unsupported_command\",\"message\":\"unsupported_command\"}}", "near-match command rejection")
 
-    var runtime_run_filter = dispatch_native_command("runtimes list --db " + path + " --run-id cli-run")
-    _check(runtime_run_filter == "{\"ok\":false,\"runtime\":\"mojo\",\"error\":{\"type\":\"argument_error\",\"message\":\"--run-id is not supported for runtimes\"}}", "runtime run-id rejection")
+    var runtime_list_removed = dispatch_native_command("runtimes list --db " + path)
+    _check(_has(runtime_list_removed, "unsupported_command"), "runtimes list is removed from product surface")
 
     var legacy_run_create = dispatch_native_command("runs create --db " + path)
     _check(_has(legacy_run_create, "\"type\":\"legacy_alias\"") and _has(legacy_run_create, "use create-run"), "legacy runs create alias")
@@ -328,8 +328,6 @@ def main() raises:
     relation_db.execute("INSERT INTO associations (run_id,id,kind,impulse_id,values_json,metadata,created_at) VALUES ('cli-run','assoc-demo','accepted','impulse-a','[{\"value\":1}]','{}','2026-01-01T00:00:00Z')")
     relation_db.execute("INSERT INTO reactions (run_id,id,kind,uri,impulse_id,media_type,size_bytes,content_hash,metadata,created_at) VALUES ('cli-run','reaction-demo','stored','memory://reaction-demo','impulse-a','text/plain',4,'hash-demo','{}','2026-01-01T00:00:00Z')")
     relation_db.execute("INSERT INTO homeostats (run_id,id,kind,impulse_id,status,values_json,metadata,attempt,max_attempts,created_at,updated_at) VALUES ('cli-run','homeostat-demo','manual','impulse-a','open','{}','{}',0,2,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
-    relation_db.execute("INSERT INTO runtime_pools (id,runtimes_json,impulse_types,metadata) VALUES ('pool-demo','[{\\\"id\\\":\\\"runtime-demo\\\",\\\"metadata\\\":{}}]','[\\\"demo\\\"]','{\\\"policy\\\":\\\"least_busy\\\"}')")
-    relation_db.execute("INSERT INTO delegation_policies (id,pool_id,impulse_types,budget,metadata) VALUES ('policy-demo','pool-demo','[\\\"demo\\\"]','{\\\"runtime_hops\\\":null}','{}')")
     relation_db.close()
     var relation_filter = dispatch_native_command("impulse-relations list --db " + path + " --run-id cli-run --impulse-id impulse-a")
     _check(_has(relation_filter, "rel-source") and _has(relation_filter, "rel-target") and not _has(relation_filter, "rel-other"), "impulse relation OR filtering")
@@ -393,14 +391,12 @@ def main() raises:
     _check(_has(missing_homeostat_db, "argument_error: missing value for --db"), "homeostat missing db value")
     var homeostat_unknown_option = dispatch_native_command("homeostat open --db " + path + " --run-id cli-run --homeostat-id homeostat-unknown --kind manual --unknown")
     _check(_has(homeostat_unknown_option, "argument_error") and _has(homeostat_unknown_option, "unknown argument --unknown"), "homeostat unknown option")
-    var created_pool = dispatch_native_command("runtimes create-pool --db " + path + " --pool-id pool-cli --runtime-json '{\"id\":\"runtime-cli\",\"metadata\":{}}' --runtime-json '{\"id\":\"runtime-cli-2\",\"metadata\":{}}' --impulse-type demo --policy least_busy --metadata-json '{\"source\":\"cli\"}'")
-    _check(_has(created_pool, "\"ok\":true") and _has(created_pool, "pool-cli") and _has(created_pool, "runtime-cli-2"), "runtime pool mutation")
-    var created_policy = dispatch_native_command("runtimes add-policy --db " + path + " --pool-id pool-cli --policy-id policy-cli --impulse-type demo --budget-json '{\"runtime_hops\":0}' --metadata-json '{\"source\":\"cli\"}'")
-    _check(_has(created_policy, "\"ok\":true") and _has(created_policy, "policy-cli") and _has(created_policy, "\"runtime_hops\":0"), "runtime policy mutation")
+    var created_pool = dispatch_native_command("runtimes create-pool --db " + path + " --pool-id pool-cli --runtime-json '{\"id\":\"runtime-cli\",\"metadata\":{}}'")
+    _check(_has(created_pool, "unsupported_command"), "runtime pool create is removed from product surface")
+    var created_policy = dispatch_native_command("runtimes add-policy --db " + path + " --pool-id pool-cli --policy-id policy-cli")
+    _check(_has(created_policy, "unsupported_command"), "runtime policy create is removed from product surface")
     var inspected_runtime = dispatch_native_command("runtimes inspect --db " + path + " --pool-id pool-demo")
-    _check(_has(inspected_runtime, "\"ok\":true") and _has(inspected_runtime, "\"id\":\"pool-demo\"") and _has(inspected_runtime, "\"policy-demo\""), "runtime pool inspection")
-    var missing_runtime = dispatch_native_command("runtimes inspect --db " + path + " --pool-id missing-pool")
-    _check(_has(missing_runtime, "\"ok\":false") and _has(missing_runtime, "\"runtime_pool\":null"), "missing runtime pool inspection")
+    _check(_has(inspected_runtime, "unsupported_command"), "runtime pool inspect is removed from product surface")
     var started = dispatch_native_command(
         "runs start --db " + path + " --run-id cli-run --now 2026-01-01T00:00:01Z"
     )
@@ -570,7 +566,7 @@ def main() raises:
     bridge_target_replay.close()
 
     var runtime_unknown = dispatch_native_command("runtimes create-pool --db " + path + " --pool-id pool-invalid --runtime-json '{\"id\":\"runtime-invalid\"}' --unknown value")
-    _check(_has(runtime_unknown, "argument_error") and _has(runtime_unknown, "--unknown"), "runtime unknown option rejection")
+    _check(_has(runtime_unknown, "unsupported_command"), "runtime pool commands remain unsupported")
     var unknown = dispatch_native_command("not-a-command")
     _check(_has(unknown, "unsupported_command"), "unknown command envelope")
     # Retain one deterministic machine-readable end marker for CI and callers.

@@ -24,14 +24,11 @@ struct AdapterKind(Copyable, Movable):
     def native_function() -> AdapterKind: return AdapterKind("native_function")
     @staticmethod
     def python_function() -> AdapterKind: return AdapterKind("python_function")
-    @staticmethod
-    def fala_runtime() -> AdapterKind: return AdapterKind("fala_runtime")
 
     def is_known(self) -> Bool:
         return (
             self.value == "subprocess" or self.value == "manual_homeostat"
             or self.value == "native_function" or self.value == "python_function"
-            or self.value == "fala_runtime"
         )
     def __eq__(self, other: Self) -> Bool: return self.value == other.value
     def __ne__(self, other: Self) -> Bool: return self.value != other.value
@@ -87,8 +84,8 @@ struct AdapterError(Copyable, Movable):
     def native_function_not_registered(value: String) -> AdapterError:
         return AdapterError("native_function_not_registered", "native_function ref is not registered: " + value)
     @staticmethod
-    def fala_runtime_unavailable() -> AdapterError:
-        return AdapterError("fala_runtime_unavailable", "fala_runtime delegation requires a durable native bridge host")
+    def unsupported_fala_runtime() -> AdapterError:
+        return AdapterError("unsupported_fala_runtime", "fala_runtime is not part of Fala; use subprocess with a separate journal")
     def is_ok(self) -> Bool: return self.code == ""
 
 comptime NativeFunction = def(String, String) thin raises -> String
@@ -288,13 +285,10 @@ struct AdapterSpec(Copyable, Movable):
         var spec = AdapterSpec(AdapterKind.python_function())
         spec.`ref` = value
         return spec^
-    @staticmethod
-    def fala_runtime(value: String) -> AdapterSpec:
-        var spec = AdapterSpec(AdapterKind.fala_runtime())
-        spec.runtime_ref = value
-        return spec^
 
     def validate(self) -> AdapterError:
+        if self.kind.value == "fala_runtime":
+            return AdapterError.unsupported_fala_runtime()
         if not self.kind.is_known(): return AdapterError.invalid("unknown adapter kind: " + self.kind.value)
         if self.timeout_seconds < 0.0: return AdapterError.invalid("timeout_seconds must not be negative")
         if not isfinite(self.timeout_seconds): return AdapterError.invalid("timeout_seconds must be finite")
@@ -311,11 +305,6 @@ struct AdapterSpec(Copyable, Movable):
             if self.`ref` == "": return AdapterError.invalid("function adapter requires ref")
             if len(self.command) != 0 or self.runtime_ref != "": return AdapterError.invalid("function adapter cannot define command or runtime_ref")
             if self.cwd != "" or len(self.env) != 0 or len(self.inherit_env) != 0: return AdapterError.invalid("function adapter does not accept cwd or environment")
-            return AdapterError.none()
-        if self.kind == AdapterKind.fala_runtime():
-            if self.runtime_ref == "": return AdapterError.invalid("fala_runtime requires runtime_ref")
-            if len(self.command) != 0 or self.`ref` != "": return AdapterError.invalid("fala_runtime cannot define command or ref")
-            if self.cwd != "" or len(self.env) != 0 or len(self.inherit_env) != 0: return AdapterError.invalid("fala_runtime does not accept cwd or environment")
             return AdapterError.none()
         return AdapterError.invalid("unknown adapter kind")
 

@@ -9,11 +9,10 @@ Supported effector adapters:
 - `manual_homeostat`: opens a durable manual homeostat and waits.
 - `python_function`: importable Python callable (**CPython host only**).
 
-**Optional multi-runtime (not product identity):**
+**Removed:**
 
-- `fala_runtime`: historical fleet/pool enqueue path; prefer nesting via
-  `subprocess` + separate journal. See
-  [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
+- `fala_runtime` (fleet/pool enqueue) — use `subprocess` + separate journal.
+  See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
 Subprocess effectors receive:
 

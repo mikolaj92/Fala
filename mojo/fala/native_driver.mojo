@@ -411,8 +411,6 @@ def _dispatch(request: EffectorRequest, registry: NativeFunctionRegistry) -> Eff
         return execute_subprocess(request)
     if request.adapter.kind == AdapterKind.native_function():
         return execute_native_function(request, registry)
-    if request.adapter.kind == AdapterKind.fala_runtime():
-        return EffectorResult.failure(AdapterError.fala_runtime_unavailable())
     return EffectorResult.failure(AdapterError.invalid("unknown adapter kind: " + request.adapter.kind.value))
 def _preflight_adapter(adapter: AdapterSpec) -> AdapterError:
     """Validate an adapter before claiming durable work.
@@ -429,8 +427,6 @@ def _preflight_adapter(adapter: AdapterSpec) -> AdapterError:
         return AdapterError.timeout_unavailable()
     if adapter.kind == AdapterKind.python_function():
         return AdapterError.unsupported_python_function(adapter.`ref`)
-    if adapter.kind == AdapterKind.fala_runtime():
-        return AdapterError.fala_runtime_unavailable()
     return AdapterError.none()
 
 struct AdapterBinding(Copyable, Movable):

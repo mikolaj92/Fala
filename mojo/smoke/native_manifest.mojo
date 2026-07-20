@@ -1,6 +1,5 @@
 from std.pathlib import Path
 from fala.native_package import load_package_json, serialize_package_json
-from fala.adapters import AdapterSpec
 
 
 def _check(condition: Bool, message: String) raises:
@@ -29,9 +28,7 @@ def _manifest(adapter: String) raises -> String:
 def main() raises:
     var valid = "/tmp/fala-native-manifest-smoke.json"
 
-    # Every known adapter kind is exercised; Python remains an explicit native rejection.
-    var runtime_spec = AdapterSpec.fala_runtime("runtime.main")
-    _check(runtime_spec.kind.value == "fala_runtime" and runtime_spec.runtime_ref == "runtime.main" and runtime_spec.validate().is_ok(), "fala_runtime adapter factory")
+    # Supported adapter kinds are exercised; python_function and fala_runtime are explicit rejections.
     _write(valid, _manifest("{\"kind\":\"subprocess\",\"command\":[\"echo\",\"ok\"]}"))
     var subprocess_manifest = load_package_json(valid)
     _check(subprocess_manifest.correlation_paths[0].effectors[0].adapter_kind == "subprocess", "subprocess adapter")
@@ -43,8 +40,8 @@ def main() raises:
     var manual_manifest = load_package_json(valid)
     _check(manual_manifest.correlation_paths[0].effectors[0].adapter_kind == "manual_homeostat", "manual_homeostat adapter")
     _write(valid, _manifest("{\"kind\":\"fala_runtime\",\"runtime_ref\":\"runtime.main\"}"))
-    var runtime_manifest = load_package_json(valid)
-    _check(runtime_manifest.correlation_paths[0].effectors[0].adapter_kind == "fala_runtime", "fala_runtime adapter")
+    _expect_error(valid, "manifest.unsupported")
+    _expect_error(valid, "fala_runtime is not part of Fala")
     _write(valid, _manifest("{\"kind\":\"python_function\",\"ref\":\"py.fn\"}"))
     _expect_error(valid, "manifest.unsupported")
     _expect_error(valid, "python_function is not executable natively")

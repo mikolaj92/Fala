@@ -92,16 +92,13 @@ Supported adapter kinds:
 - `subprocess`: local command as an argument list — **how Fala runs children**.
 - `manual_homeostat`: explicit operator homeostat.
 
-**Optional multi-runtime (not required for one Fala)**
-
-- `fala_runtime`: historical delegation via bridge outbox / runtime pool.
-  Prefer nesting another Fala with `subprocess` and a **separate journal**.
-  See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
+**Removed:** `fala_runtime` fleet adapter — nest another Fala with `subprocess`
+and a **separate journal** (see [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md)).
 
 Subprocess commands are lists, not shell strings. The runtime prepares input
 manifests, captures stdout/stderr, validates output manifests, and commits
 resulting events/reactions/associations transactionally. The process host is
-part of Fala product core, not an optional multi-runtime feature.
+part of Fala product core.
 
 ## Local Inspection
 

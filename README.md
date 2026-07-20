@@ -93,12 +93,6 @@ Record a local impulse correlation path:
 uv run python examples/runtime/local_first.py .fala/state.sqlite
 ```
 
-Bridge an Impulse between two local Fala runtimes:
-
-```bash
-uv run python examples/multi-fala/basic/local_bridge.py .fala/multi-fala-basic
-```
-
 Inspect recorded events:
 
 ```bash
@@ -185,8 +179,6 @@ uv run fala db vacuum --db .fala/state.sqlite
 
 uv run fala create-run --db .fala/state.sqlite --run-id run_local
 uv run fala runs list --db .fala/state.sqlite
-uv run fala runtimes create-pool --db .fala/state.sqlite --pool-id local_pool --policy round_robin --runtime-json '{"id":"target","uri":"sqlite:///tmp/target.sqlite"}'
-uv run fala runtimes add-policy --db .fala/state.sqlite --pool-id local_pool --impulse-type source_payload --budget-json '{"runtime_hops":1,"impulse_count":1}'
 uv run fala impulses list --db .fala/state.sqlite --run-id run_local
 uv run fala associations list --db .fala/state.sqlite --run-id run_local
 uv run fala processes list --db .fala/state.sqlite --run-id run_local

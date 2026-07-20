@@ -2,7 +2,7 @@ from std.os import remove
 from fala.journal import NativeJournal, ProcessRow, EventInput, CommandRow
 from fala.runs import RunLifecycle
 from fala.native_driver import drive_once, drive_until_idle, maintain_process, drive_all_runs, AdapterBinding, run_until_idle, diagnose_waits, observe_run_boundary, close_delegations, finalize_run
-from fala.adapters import AdapterSpec, NativeFunctionRegistry, EffectorResult, AdapterError, adapter_result_json
+from fala.adapters import AdapterKind, AdapterSpec, NativeFunctionRegistry, EffectorResult, AdapterError, adapter_result_json
 from fala.domain import Homeostat, RuntimeBudget
 from fala.status import ProcessStatus, RunStatus, can_replay_terminal_process
 
@@ -864,21 +864,23 @@ def main() raises:
         "{}", "{}", "", 5, 1, "2026-01-01T00:00:28Z"
     )
     _ = journal.schedule_process(
-        "run-semantics", "fala-runtime-unavailable", "native", "2026-01-01T00:00:29Z",
+        "run-semantics", "fala-runtime-removed", "native", "2026-01-01T00:00:29Z",
         "{}", "{}", "", 5, 1, "2026-01-01T00:00:29Z"
     )
     var subprocess_row = journal.get_process("run-semantics", "subprocess-unavailable")
-    var fala_runtime_row = journal.get_process("run-semantics", "fala-runtime-unavailable")
+    var fala_runtime_row = journal.get_process("run-semantics", "fala-runtime-removed")
     var subprocess_result = drive_once(
         journal, subprocess_row, AdapterSpec.subprocess(subprocess_command),
         "worker-subprocess", "2026-01-01T00:00:28Z", "2026-01-01T00:01:00Z", registry
     )
+    var fala_runtime_spec = AdapterSpec(AdapterKind("fala_runtime"))
+    fala_runtime_spec.runtime_ref = "runtime.native"
     var fala_runtime_result = drive_once(
-        journal, fala_runtime_row, AdapterSpec.fala_runtime("runtime.native"),
+        journal, fala_runtime_row, fala_runtime_spec,
         "worker-fala-runtime", "2026-01-01T00:00:29Z", "2026-01-01T00:01:00Z", registry
     )
     var subprocess_failed = journal.get_process("run-semantics", "subprocess-unavailable")
-    var fala_runtime_failed = journal.get_process("run-semantics", "fala-runtime-unavailable")
+    var fala_runtime_failed = journal.get_process("run-semantics", "fala-runtime-removed")
     _check(
         subprocess_result.failed
             and subprocess_result.ticks == 1
@@ -892,12 +894,12 @@ def main() raises:
     _check(
         fala_runtime_result.failed
             and fala_runtime_result.ticks == 1
-            and fala_runtime_result.error.code == "fala_runtime_unavailable"
+            and fala_runtime_result.error.code == "unsupported_fala_runtime"
             and fala_runtime_failed.status == "failed"
             and fala_runtime_failed.attempt == 1
-            and fala_runtime_failed.error_json.find("fala_runtime_unavailable") >= 0
+            and fala_runtime_failed.error_json.find("unsupported_fala_runtime") >= 0
             and fala_runtime_result.failure_rows[0].output_json == "{}",
-        "fala_runtime transport unavailable durably fails without output"
+        "fala_runtime is rejected as not part of Fala"
     )
     # All-run scanning uses only explicit run/process bindings and honors a
     # bounded tick budget without claiming the unbound row.

@@ -15,26 +15,19 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote, urlparse
 
-from fala.adapters import EffectorRunRequest, EffectorRunResult, create_effector_adapter
-from fala.errors import FalaConfigurationError, FalaDeadlockDetected
-from fala.correlation_paths import CorrelationPathInstance, advance_correlation_path_for_process, instantiate_correlation_path
-from fala.models import EffectorAdapterSpec, CorrelationPathSpec, new_id
+from fala.adapters import EffectorRunRequest, create_effector_adapter
+from fala.errors import FalaDeadlockDetected
+from fala.correlation_paths import CorrelationPathInstance, instantiate_correlation_path
+from fala.models import EffectorAdapterSpec, CorrelationPathSpec
 from fala.runtime_backend import (
-    BridgeDelivery,
     ProcessStatus,
     RunStatus,
-    Impulse,
-    EventRef,
     Homeostat,
     Process,
     WaitGraphDiagnostic,
     Run,
-    RunRef,
     RuntimeBackend,
     RuntimeBackendService,
-    RuntimeBudget,
-    RuntimePool,
-    RuntimeRef,
     Correlator,
 )
 
@@ -127,15 +120,7 @@ async def run_until_idle(
                 config=config,
                 work_dir=effector_work_dir,
             )
-            if adapter.kind == "fala_runtime":
-                result = await enqueue_fala_runtime_process(
-                    service=service,
-                    process=process,
-                    request=request,
-                    actor=worker_id,
-                )
-            else:
-                result = await create_effector_adapter(adapter.kind).run(request)
+            result = await create_effector_adapter(adapter.kind).run(request)
             if result.waiting:
                 if result.homeostat_id is not None:
                     await service.save_homeostat(
@@ -404,261 +389,6 @@ async def run_correlation_path(
     )
 
 
-async def enqueue_fala_runtime_process(
-    *,
-    service: RuntimeBackendService,
-    process: Process,
-    request: EffectorRunRequest,
-    actor: str,
-) -> EffectorRunResult:
-    if request.adapter.runtime_ref is None:
-        raise ValueError("fala_runtime adapter requires runtime_ref")
-    if process.impulse_id is None:
-        raise ValueError("fala_runtime process requires impulse_id")
-
-    backend = service.backend
-
-    impulse = await backend.get_impulse(
-        run_id=process.run_id,
-        impulse_id=process.impulse_id,
-    )
-    if impulse is None:
-        raise ValueError(f"Unknown impulse for fala_runtime process: {process.impulse_id!r}")
-
-    events = await backend.list_events(
-        run_id=process.run_id,
-        impulse_id=process.impulse_id,
-    )
-    source_runtime = RuntimeRef(
-        id=str(request.config.get("source_runtime_id") or "local"),
-        uri=backend_runtime_uri(backend),
-    )
-    target_runtime, pool_id, budget = await resolve_fala_runtime_target(
-        backend=backend,
-        impulse=impulse,
-        request=request,
-    )
-    delivery_id = str(
-        request.config.get("delivery_id")
-        or f"bridge:{process.run_id}:{process.id}"
-    )
-    # A retry must re-target the run already spawned by an earlier attempt;
-    # a fresh random id would orphan the child run behind the same delivery id.
-    # The spawned_runs budget is enforced inside the enqueue transaction by the
-    # backend (see _submit_bridge_delivery).
-    existing_delivery = next(
-        (
-            item
-            for item in await service.list_outbox_deliveries(run_id=process.run_id)
-            if item.id == delivery_id
-        ),
-        None,
-    )
-    target_run_id = str(
-        request.config.get("target_run_id")
-        or (
-            existing_delivery.target.run_id
-            if existing_delivery is not None
-            else new_id("run")
-        )
-    )
-    delivery = BridgeDelivery(
-        id=delivery_id,
-        run_id=process.run_id,
-        idempotency_key=f"bridge.enqueue:{process.id}:{process.attempt}",
-        source=RunRef(runtime=source_runtime, run_id=process.run_id),
-        target=RunRef(runtime=target_runtime, run_id=target_run_id),
-        impulse=impulse,
-        event_ref=EventRef(
-            runtime=source_runtime,
-            run_id=process.run_id,
-            event_id=events[-1].id if events else None,
-            sequence=events[-1].sequence if events else None,
-        ),
-        pool_id=pool_id,
-        budget=budget,
-        metadata={
-            "process_id": process.id,
-            "process_type": process.process_type,
-        },
-    )
-    outbox, submission = await service.enqueue_bridge_delivery(
-        delivery,
-        actor=actor,
-    )
-    return EffectorRunResult(
-        waiting=True,
-        output={
-            "status": "submitted",
-            "runtime_ref": request.adapter.runtime_ref,
-            "target_run_id": outbox.target.run_id,
-            "delivery_id": outbox.id,
-            "command_id": submission.command.id,
-            "replayed": submission.replayed,
-        },
-    )
-
-
-async def close_delegations(
-    service: RuntimeBackendService,
-    *,
-    run_id: str,
-    target_service: RuntimeBackendService,
-    actor: str,
-    advance_correlation_paths: bool = True,
-) -> list[Process]:
-    """Close delegation loops: finish waiting effectors whose child run ended.
-
-    For every waiting effector in ``run_id`` that recorded a bridge delivery (see
-    :func:`enqueue_fala_runtime_process`), observe the child run's
-    :class:`RunBoundary` in ``target_service``. When the child's derived status
-    is terminal, the delegating effector is completed (child completed) or failed
-    (any other terminal status) with the ``run.boundary`` association embedded
-    in its output or error, and its correlation_path is advanced so dependent effectors ready
-    up. Effectors whose child run is still in flight are left waiting.
-    """
-    closed: list[Process] = []
-    waiting = await service.list_processes(
-        run_id=run_id,
-        status=ProcessStatus.waiting,
-    )
-    for process in waiting:
-        output = process.output if isinstance(process.output, dict) else {}
-        target_run_id = output.get("target_run_id")
-        if not output.get("delivery_id") or not isinstance(target_run_id, str):
-            continue
-        try:
-            boundary = await target_service.observe_run(run_id=target_run_id)
-        except ValueError:
-            # Child run not delivered/imported yet: nothing to observe.
-            continue
-        if boundary.derived_status not in _TERMINAL_RUN_STATUSES:
-            continue
-        boundary_payload = boundary.model_dump(mode="json")
-        if boundary.derived_status == RunStatus.completed:
-            stored, _ = await service.complete_process(
-                run_id=run_id,
-                process_id=process.id,
-                output={**output, "run.boundary": boundary_payload},
-                idempotency_key=f"process.complete:{process.id}:{process.attempt}",
-                actor=actor,
-            )
-        else:
-            stored, _ = await service.fail_process(
-                run_id=run_id,
-                process_id=process.id,
-                error={
-                    "type": "DelegatedRunNotCompleted",
-                    "message": (
-                        f"delegated run {target_run_id!r} ended "
-                        f"{boundary.derived_status.value}"
-                    ),
-                    "run.boundary": boundary_payload,
-                },
-                idempotency_key=f"process.fail:{process.id}:{process.attempt}",
-                actor=actor,
-            )
-        closed.append(stored)
-        if advance_correlation_paths:
-            await advance_correlation_path_for_process(service, process=stored, actor=actor)
-    return closed
-
-
-async def resolve_fala_runtime_target(
-    *,
-    backend: RuntimeBackend,
-    impulse: Impulse,
-    request: EffectorRunRequest,
-) -> tuple[RuntimeRef, str | None, RuntimeBudget]:
-    assert request.adapter.runtime_ref is not None
-    configured_budget = request.config.get("budget")
-    pool = await backend.get_runtime_pool(pool_id=request.adapter.runtime_ref)
-    if pool is None:
-        return (
-            RuntimeRef(
-                id=str(
-                    request.config.get("target_runtime_id")
-                    or runtime_ref_id(request.adapter.runtime_ref)
-                ),
-                uri=request.adapter.runtime_ref,
-            ),
-            request.config.get("pool_id"),
-            RuntimeBudget.model_validate(configured_budget or {}),
-        )
-
-    if pool.impulse_types and impulse.impulse_type not in pool.impulse_types:
-        raise ValueError(
-            f"Runtime pool {pool.id!r} does not accept impulse type {impulse.impulse_type!r}"
-        )
-    if not pool.runtimes:
-        raise ValueError(f"Runtime pool {pool.id!r} has no runtimes")
-
-    policies = await backend.list_delegation_policies(pool_id=pool.id)
-    delegation_policy = next(
-        (
-            item
-            for item in policies
-            if not item.impulse_types or impulse.impulse_type in item.impulse_types
-        ),
-        None,
-    )
-    budget = RuntimeBudget.model_validate(
-        configured_budget
-        or (
-            delegation_policy.budget.model_dump(mode="json")
-            if delegation_policy is not None
-            else {}
-        )
-    )
-    pool_policy = str(request.config.get("pool_policy") or pool.metadata.get("policy") or "manual")
-    return await select_runtime_from_pool(backend, pool=pool, policy=pool_policy), pool.id, budget
-
-
-async def select_runtime_from_pool(
-    backend: RuntimeBackend,
-    *,
-    pool: RuntimePool,
-    policy: str,
-) -> RuntimeRef:
-    if policy in {"manual", "first"}:
-        return pool.runtimes[0]
-    if policy == "least_busy":
-        return min(pool.runtimes, key=_runtime_declared_load)
-    if policy == "round_robin":
-        index = _int_metadata(pool.metadata.get("round_robin_index"))
-        selected = pool.runtimes[index % len(pool.runtimes)]
-        metadata = {
-            **pool.metadata,
-            "round_robin_index": (index + 1) % len(pool.runtimes),
-        }
-        await backend.put_runtime_pool(pool.model_copy(update={"metadata": metadata}))
-        return selected
-    raise ValueError(f"Unknown runtime pool policy: {policy!r}")
-
-
-def _runtime_declared_load(runtime: RuntimeRef) -> float:
-    value = runtime.metadata.get("load", runtime.metadata.get("pending_processes", 0))
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Runtime {runtime.id!r} has invalid load metadata") from exc
-
-
-def _int_metadata(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("runtime pool round_robin_index metadata must be an integer") from exc
-
-
-def runtime_ref_id(value: str) -> str:
-    parsed = urlparse(value)
-    if parsed.scheme in {"sqlite", "sqlite3"}:
-        path = Path(sqlite_db_path(value))
-        return path.stem or "sqlite"
-    return value
-
-
 def process_effector_request_parts(
     process: Process,
 ) -> tuple[EffectorAdapterSpec, dict[str, Any], dict[str, Any]]:
@@ -694,14 +424,9 @@ __all__ = [
     "RunCorrelationPathResult",
     "RunUntilIdleResult",
     "backend_runtime_uri",
-    "close_delegations",
-    "enqueue_fala_runtime_process",
     "process_error_text",
     "process_effector_request_parts",
-    "resolve_fala_runtime_target",
     "run_correlation_path",
     "run_until_idle",
-    "runtime_ref_id",
-    "select_runtime_from_pool",
     "sqlite_db_path",
 ]

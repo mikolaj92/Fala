@@ -44,7 +44,6 @@ from fala.runtime_backend import ImpulseRelation
 from fala.runtime_backend import RunStatus
 from fala.runtime_backend import ImpulseType
 from fala.runtime_backend import CommandSubmission
-from fala.runtime_backend import DelegationPolicy
 from fala.runtime_backend import EventRef
 from fala.runtime_backend import Homeostat
 from fala.runtime_backend import HomeostatStatus
@@ -59,7 +58,6 @@ from fala.runtime_backend import RuntimeReactionStore
 from fala.runtime_backend import RuntimeBudget
 from fala.runtime_backend import RuntimeCommand
 from fala.runtime_backend import RuntimeEvent
-from fala.runtime_backend import RuntimePool
 from fala.runtime_backend import RuntimeRef
 from fala.runtime_backend import SQLITE_RUNTIME_SCHEMA_VERSION
 from fala.runtime_backend import Correlator
@@ -94,7 +92,6 @@ CONTRACT_MODELS: dict[str, type[BaseModel]] = {
     "run": Run,
     "run-ref": RunRef,
     "runtime-budget": RuntimeBudget,
-    "runtime-pool": RuntimePool,
     "runtime-ref": RuntimeRef,
 }
 
@@ -146,7 +143,6 @@ def _should_emit_json_error(args: argparse.Namespace) -> bool:
             "processes",
             "projections",
             "runs",
-            "runtimes",
             "run-until-idle",
             "replay-execution",
             "diagnose-waits",
@@ -265,29 +261,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_runtime_db_run_args(commands_inspect)
     commands_inspect.add_argument("--command-id", required=True)
-
-    runtimes = subparsers.add_parser("runtimes", help="Inspect Impulse runtime pools.")
-    runtime_subparsers = runtimes.add_subparsers(dest="runtime_command", required=True)
-    runtimes_list = runtime_subparsers.add_parser("list", help="List runtime pools.")
-    _add_runtime_db_arg(runtimes_list)
-    runtimes_list.add_argument("--jsonl", action="store_true")
-    runtimes_create = runtime_subparsers.add_parser("create-pool", help="Create or replace a runtime pool.")
-    _add_runtime_db_arg(runtimes_create)
-    runtimes_create.add_argument("--pool-id", required=True)
-    runtimes_create.add_argument("--runtime-json", action="append", required=True, help="RuntimeRef JSON object. Repeatable.")
-    runtimes_create.add_argument("--impulse-type", action="append", default=[])
-    runtimes_create.add_argument("--policy", choices=["manual", "first", "least_busy", "round_robin"], default=None)
-    runtimes_create.add_argument("--metadata-json", default="{}")
-    runtimes_policy = runtime_subparsers.add_parser("add-policy", help="Create or replace a delegation policy.")
-    _add_runtime_db_arg(runtimes_policy)
-    runtimes_policy.add_argument("--policy-id", default=None)
-    runtimes_policy.add_argument("--pool-id", required=True)
-    runtimes_policy.add_argument("--impulse-type", action="append", default=[])
-    runtimes_policy.add_argument("--budget-json", default="{}")
-    runtimes_policy.add_argument("--metadata-json", default="{}")
-    runtimes_inspect = runtime_subparsers.add_parser("inspect", help="Inspect one runtime pool.")
-    _add_runtime_db_arg(runtimes_inspect)
-    runtimes_inspect.add_argument("--pool-id", required=True)
 
     impulses = subparsers.add_parser("impulses", help="Inspect Impulse runtime impulses.")
     impulse_subparsers = impulses.add_subparsers(dest="impulse_command", required=True)
@@ -589,7 +562,6 @@ async def _run(args: argparse.Namespace) -> dict[str, Any] | None:
         "associations",
         "processes",
         "projections",
-        "runtimes",
         "run-until-idle",
         "replay-execution",
         "runs",
@@ -735,60 +707,6 @@ async def _runtime_command(args: argparse.Namespace) -> dict[str, Any] | None:
             commands,
             jsonl=args.jsonl,
         )
-    if args.command == "runtimes":
-        service = RuntimeBackendService(backend)
-        if args.runtime_command == "list":
-            pools = await backend.list_runtime_pools()
-            return _runtime_list_result(
-                "runtime_pools",
-                pools,
-                jsonl=args.jsonl,
-            )
-        if args.runtime_command == "create-pool":
-            metadata = _parse_json_object(args.metadata_json, "--metadata-json")
-            if args.policy is not None:
-                metadata["policy"] = args.policy
-            pool = RuntimePool(
-                id=args.pool_id,
-                runtimes=[
-                    RuntimeRef.model_validate(
-                        _parse_json_object(value, "--runtime-json")
-                    )
-                    for value in args.runtime_json
-                ],
-                impulse_types=args.impulse_type,
-                metadata=metadata,
-            )
-            stored = await service.save_runtime_pool(pool)
-            return {
-                "ok": True,
-                "runtime_pool": stored.model_dump(mode="json"),
-            }
-        if args.runtime_command == "add-policy":
-            policy_data = {
-                "pool_id": args.pool_id,
-                "impulse_types": args.impulse_type,
-                "budget": _parse_json_object(args.budget_json, "--budget-json"),
-                "metadata": _parse_json_object(args.metadata_json, "--metadata-json"),
-            }
-            if args.policy_id is not None:
-                policy_data["id"] = args.policy_id
-            stored = await service.save_delegation_policy(
-                DelegationPolicy.model_validate(policy_data)
-            )
-            return {
-                "ok": True,
-                "delegation_policy": stored.model_dump(mode="json"),
-            }
-        pool = await backend.get_runtime_pool(pool_id=args.pool_id)
-        policies = await backend.list_delegation_policies(pool_id=args.pool_id)
-        return {
-            "ok": pool is not None,
-            "runtime_pool": pool.model_dump(mode="json") if pool is not None else None,
-            "delegation_policies": [
-                policy.model_dump(mode="json") for policy in policies
-            ],
-        }
     if args.command == "impulses":
         if args.impulse_command == "create":
             impulse_data = {
@@ -1351,7 +1269,7 @@ async def _runtime_replay_execution(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     adapter, effector_input, config = _process_effector_request_parts(process)
-    if adapter.kind in {"manual_homeostat", "fala_runtime"}:
+    if adapter.kind == "manual_homeostat":
         return {
             **base,
             "ok": False,
