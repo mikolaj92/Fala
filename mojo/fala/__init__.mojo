@@ -43,3 +43,5 @@ from .journal_port import (
     leading_idempotency_key,
 )
 from .memory_journal import InMemoryJournal
+from .memory_runtime import MemoryRuntime, ProcessExtra, RunRow
+from .memory_driver import MemoryDriver
