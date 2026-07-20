@@ -11,7 +11,7 @@ from fala.adapters import (
     create_effector_adapter,
 )
 from fala.reactions import ReactionStore, FileReactionStore, MemoryReactionStore
-from fala.runtime import AutonomousCorrelator, RunScope
+from fala.runtime import AutonomousCorrelator, RunScope, open_journal
 from fala.driver import (
     RunCorrelationPathResult,
     RunUntilIdleResult,
@@ -53,6 +53,7 @@ from fala.models import (
     CorrelationPathSpec,
     EffectorSpec,
     ImpulseRelationSpec,
+    JournalConfig,
     RuntimeBackendConfig,
     RuntimeConfigSpec,
     ImpulseTypeSpec,
@@ -106,8 +107,11 @@ from fala.journal import (
     ClaimRequest,
     ClaimResult,
     CommandUnit,
+    InMemoryJournal,
     Journal,
+    JournalBackedBackend,
     JournalBatch,
+    SqliteJournal,
     StateFact,
     leading_command,
     leading_idempotency_key,
@@ -132,15 +136,21 @@ __all__ = [
     "RunStatus",
     "RuntimeBackendConfig",
     "RuntimeConfigSpec",
+    # JournalConfig exported with journal symbols above
     "ImpulseType",
     "ImpulseTypeSpec",
     "Journal",
+    "JournalBackedBackend",
     "JournalBatch",
+    "JournalConfig",
+    "InMemoryJournal",
+    "SqliteJournal",
     "CommandUnit",
     "StateFact",
     "AppendResult",
     "ClaimRequest",
     "ClaimResult",
+    "open_journal",
     "WaitDiagnosticIssue",
     "WaitGraphDiagnostic",
     "FalaPackageSpec",

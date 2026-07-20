@@ -14,7 +14,13 @@ from fala.correlation_paths import (
     advance_correlation_path,
     instantiate_correlation_path,
 )
-from fala.models import CorrelationPathSpec
+from fala.journal import (
+    InMemoryJournal,
+    Journal,
+    JournalBackedBackend,
+    SqliteJournal,
+)
+from fala.models import CorrelationPathSpec, JournalConfig, RuntimeConfigSpec
 from fala.runtime_backend import (
     RuntimeReactionStore,
     RuntimeJournalMaintenancePlan,
@@ -42,23 +48,68 @@ from fala.runtime_backend import (
 )
 
 
+def open_journal(
+    config: JournalConfig | RuntimeConfigSpec | str | Path | Journal,
+) -> Journal:
+    """Open a Journal from config, path, or an existing Journal instance."""
+    if isinstance(config, (InMemoryJournal, SqliteJournal)):
+        return config
+    # Structural Journal Protocol instances (duck-typed)
+    if hasattr(config, "append_batch") and hasattr(config, "claim_next"):
+        return config  # type: ignore[return-value]
+    if isinstance(config, RuntimeConfigSpec):
+        if config.journal is not None:
+            return open_journal(config.journal)
+        if config.backend is not None:
+            return open_journal(
+                JournalConfig(kind=config.backend.kind, path=config.backend.path)
+            )
+        raise ValueError("runtime config has neither journal nor backend")
+    if isinstance(config, JournalConfig):
+        if config.kind == "memory":
+            return InMemoryJournal()
+        if config.kind == "sqlite":
+            assert config.path is not None
+            return SqliteJournal(config.path)
+        raise ValueError(f"Unsupported journal kind: {config.kind!r}")
+    # str | Path → sqlite path
+    return SqliteJournal(config)
+
+
 class AutonomousCorrelator:
     """Impulse-first embedded runtime facade.
 
     This module is intentionally independent from HTTP, CLI, and web UI modules.
+    Prefer :meth:`from_journal` / :func:`open_journal`; :meth:`sqlite` remains
+    a compatibility shim.
     """
 
-    def __init__(self, backend: RuntimeBackend) -> None:
+    def __init__(self, backend: RuntimeBackend, *, journal: Journal | None = None) -> None:
         self.service = RuntimeBackendService(backend)
         self.backend = backend
+        self.journal = journal
+
+    @classmethod
+    def from_journal(cls, journal: Journal | JournalConfig | str | Path) -> "AutonomousCorrelator":
+        opened = open_journal(journal)
+        backend = JournalBackedBackend(opened)
+        return cls(backend, journal=opened)
 
     @classmethod
     def sqlite(cls, path: str | Path) -> "AutonomousCorrelator":
-        service = RuntimeBackendService.sqlite(path)
-        runtime = cls.__new__(cls)
-        runtime.service = service
-        runtime.backend = service.backend
-        return runtime
+        """Compatibility shim — equivalent to ``from_journal(path)`` for SQLite."""
+        return cls.from_journal(path)
+
+    @property
+    def runtime_uri(self) -> str:
+        if self.journal is not None:
+            return self.journal.runtime_uri
+        backend = self.backend
+        if isinstance(backend, Correlator):
+            return f"sqlite://{Path(backend.path).expanduser().resolve()}"
+        if isinstance(backend, JournalBackedBackend):
+            return backend.runtime_uri
+        return "unknown://"
 
     def scope(self, run_id: str) -> "RunScope":
         return RunScope(self, run_id)

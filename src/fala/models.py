@@ -243,6 +243,24 @@ class RuntimeBackendConfig(BaseModel):
     path: str
 
 
+class JournalConfig(BaseModel):
+    """Event-stream journal sink config (preferred over ``backend``).
+
+    ``backend`` remains a legacy alias for SQLite path configs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["sqlite", "memory"] = "sqlite"
+    path: str | None = None
+
+    @model_validator(mode="after")
+    def validate_path_for_sqlite(self) -> "JournalConfig":
+        if self.kind == "sqlite" and not self.path:
+            raise ValueError("journal.kind 'sqlite' requires path")
+        return self
+
+
 class ReactionStoreConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -253,8 +271,15 @@ class ReactionStoreConfig(BaseModel):
 class RuntimeConfigSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    backend: RuntimeBackendConfig
+    backend: RuntimeBackendConfig | None = None
+    journal: JournalConfig | None = None
     reaction_store: ReactionStoreConfig
+
+    @model_validator(mode="after")
+    def require_backend_or_journal(self) -> "RuntimeConfigSpec":
+        if self.backend is None and self.journal is None:
+            raise ValueError("runtime requires backend or journal")
+        return self
 
 
 class FalaPackageSpec(BaseModel):
@@ -431,6 +456,7 @@ __all__ = [
     "CorrelationPathSpec",
     "EffectorSpec",
     "ImpulseRelationSpec",
+    "JournalConfig",
     "RuntimeBackendConfig",
     "RuntimeConfigSpec",
     "ImpulseTypeSpec",
