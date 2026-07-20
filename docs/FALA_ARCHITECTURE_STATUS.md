@@ -37,7 +37,8 @@ The default distribution is intentionally small:
 The migrated source tree keeps the core runtime in:
 
 - `src/fala/models.py`
-- `src/fala/journal/` (Protocol, sinks, JournalBackedBackend)
+- `src/fala/journal/` (Protocol, sinks, JournalBackedBackend, stream helpers)
+- `src/fala/runtime_models.py` (domain models; re-exported from runtime_backend)
 - `src/fala/runtime_backend.py`
 - `src/fala/runtime.py`
 - `docs/EVENT_STREAM_CORE.md`
