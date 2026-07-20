@@ -1,19 +1,12 @@
 [project]
-name = "fala-runtime"
+name = "fala"
 version = "0.2.2"
-description = "Event-first runtime for observable correlation paths (Unix journals + cybernetic Impulse lexicon; SQLite reference sink)"
+description = "Event-first correlator — product engine is Mojo (mojo/fala). CPython archived under legacy/python-engine/."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = [
-  "jsonschema>=4.23.0",
-  "pydantic>=2.7.0",
-  "pyyaml>=6.0.0",
-]
-
-[project.scripts]
-fala = "fala.cli:main"
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/mikolaj92/Fala"
@@ -24,5 +17,6 @@ Issues = "https://github.com/mikolaj92/Fala/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Metadata-only project; product modules live under mojo/fala (Pixi/Mojo).
 [tool.hatch.build.targets.wheel]
-packages = ["src/fala"]
+only-include = ["README.md"]

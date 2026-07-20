@@ -1,7 +1,9 @@
-"""Pure native runtime-pool and delegation-policy helpers.
+"""Legacy fleet/pool helpers — NOT product surface.
 
-This boundary only validates JSON-shaped domain records and chooses an explicit
-RuntimeRef.  It never resolves adapters or performs transport I/O.
+Product Fala has no RuntimePool selection. This module remains only because
+`domain_store` still has unused pool table writers and bridge budgets share
+`parse_runtime_budget_json`. Do not re-export from package root. Prefer full
+deletion with schema cleanup.
 """
 
 from std.collections import List

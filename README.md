@@ -1,6 +1,17 @@
 # Fala
 
-Fala is an embedded, **event-first** runtime for observable correlation paths.
+**Product runtime: Mojo** (`mojo/fala`). One engine — organ + journal + **process host**.
+
+```bash
+# proof
+mise exec -- pixi run full-smoke
+mise exec -- pixi run extended-smoke
+```
+
+CPython implementation is archived under `legacy/python-engine/` (not maintained as product).
+No multi-runtime / fleet / `fala_runtime` peer mesh.
+
+---
 
 It combines two disciplines:
 

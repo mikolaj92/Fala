@@ -14,6 +14,11 @@ if [[ "$need_host" == "1" ]]; then
     || cc -std=c11 -Wall -Wextra -dynamiclib \
          -o "$root/mojo/fala/native/libfala_process_host.dylib" \
          "$root/mojo/fala/native_process_host.c"
+  # Effector fixture binary used by native_subprocess smoke (argv child).
+  test -x /tmp/fala-native-subprocess-fixture \
+    || cc -std=c11 -Wall -Wextra \
+         -o /tmp/fala-native-subprocess-fixture \
+         "$root/mojo/smoke/native_effector_fixture.c"
 fi
 
 case "$smoke" in

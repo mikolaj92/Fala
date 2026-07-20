@@ -72,20 +72,17 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 15. CLI operator path on SQLite — **done**
 16. Historical breadth: domain_store, migration, correlation exec/persist/runtime/advance, native_driver, adapter persistence, finalization, runtime contracts/policy, package SDK — **done** (`extended-smoke`)
 17. native_cli_semantics / example_basic_native / bridge_transport — **done** (wired into `extended-smoke`)
-18. **Process host + subprocess** (children of Fala) — **open, merge-gate**  
-    Local host is **core product**, not multi-runtime. See
-    [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
-19. Bridge file export/import helpers for nested CLI children — nice (partial local deliver already exists)
-20. RuntimePool / `fala_runtime` fleet — **removed from product surface** (do not port)
+18. **Process host + subprocess** (children of Fala) — **done** (`host-smoke` in `adapter-smoke` / `full-smoke`)
+19. Bridge file export/import helpers for nested CLI children — nice (local deliver exists)
+20. RuntimePool / `fala_runtime` fleet — **removed** (smoke deleted; dead helpers may remain in domain_store)
+21. CPython engine — **archived** under `legacy/python-engine/` (not product)
+22. Domain packs / optional demos — under `examples/optional/` (not core)
 
 **Merge when:** items 1–18 green (organ + sinks + **local process host**).  
-**Do not block land on** multi-runtime pools or network peer mesh.  
-Draft PR → ready once host smokes (`native_process_host`, `native_subprocess`, driver subprocess path) are green.
 
 **Proof today:**
-- `pixi run full-smoke` — green  
-- `pixi run extended-smoke` — green (includes example_basic_native + bridge_transport + correlation_advance + package_sdk + runtime_policy)
-- process host / subprocess smokes — **not yet** merge-green
+- `pixi run full-smoke` — includes host-smoke  
+- `pixi run extended-smoke` — full breadth without fleet
 
 Companion docs:
 

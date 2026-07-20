@@ -3,9 +3,8 @@
 **Status:** product decision (2026-07).
 
 **Single engine: Mojo.** There is no dual-runtime product. The historical
-CPython tree (`src/fala`) is not a second engine to maintain or port “for
-parity forever” — it is legacy reference until Mojo land; it is not required
-for Fala’s identity. Process host, journal, driver, CLI: **Mojo only**.
+CPython tree is archived at `legacy/python-engine/` (not packaged, not
+maintained). Process host, journal, driver, CLI: **Mojo only**.
 
 This document also separates **what every Fala is** from **removed** fleet
 machinery that historically lived under the name `fala_runtime`.
