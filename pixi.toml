@@ -31,6 +31,7 @@ reaction-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/reaction.mojo"
 open-journal = "./tools/mojo_sql_run.sh mojo/smoke/open_journal.mojo"
 sqlite-schema = "./tools/mojo_sql_run.sh mojo/smoke/sqlite_schema.mojo"
 sqlite-claim = "./tools/mojo_sql_run.sh mojo/smoke/sqlite_claim.mojo"
+sqlite-journal-port = "./tools/mojo_sql_run.sh mojo/smoke/sqlite_journal_port.mojo 1"
 schema-migration = "./tools/mojo_sql_run.sh mojo/smoke/schema_migration.mojo"
 domain-bridge = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_bridge.mojo"
 domain-maintenance = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_maintenance.mojo"
@@ -51,7 +52,7 @@ correlation-advance = "./tools/mojo_sql_run.sh mojo/smoke/correlation_advance.mo
 package-sdk-contracts = "./tools/mojo_sql_run.sh mojo/smoke/package_sdk_contracts.mojo 1"
 runtime-policy = "./tools/mojo_sql_run.sh mojo/smoke/runtime_policy.mojo 1"
 
-adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run schema-migration && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke"
+adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke"
 
 # Broader historical suite (subprocess/process-host matrix still open)
 extended-adapter-smoke = "pixi run adapter-smoke && pixi run native-cli-semantics && pixi run correlation-execution && pixi run correlation-persistence && pixi run correlation-runtime && pixi run correlation-advance && pixi run native-driver && pixi run adapter-persistence && pixi run finalization && pixi run runtime-contracts && pixi run runtime-policy && pixi run package-sdk-contracts && pixi run example-basic-native && pixi run bridge-transport"

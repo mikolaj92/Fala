@@ -64,6 +64,7 @@ Journal is **part of core** (Protocol + InMemory). SQLite/JSONL/Tee are
 **Adapters (same branch, before merge)**
 
 11. SqliteJournalPort + NativeJournal/schema lift — **done**
+11b. SqliteJournalPort leading-unit `append_batch` + `claim_next` — **done** (`sqlite-journal-port` smoke)
 12. SQLite create/schedule/claim/complete + migration matrix — **done**
 13. JsonlJournal + torn-line smoke — **done**
 14. TeeJournal — **done**
