@@ -201,17 +201,12 @@ def host_run_package(
         "lease_expires_at": "2099-01-01T00:00:00Z",
     }
     if inputs:
-        encoded: dict[str, Any] = {}
-        for key, value in inputs.items():
-            encoded[key] = value if isinstance(value, str) else json.dumps(value)
-        request["inputs"] = encoded
+        # Always JSON-encode field values (strings become "\"...\"").
+        request["inputs"] = {key: json.dumps(value) for key, value in inputs.items()}
     if effector_inputs:
         ei: dict[str, Any] = {}
         for step, payload in effector_inputs.items():
-            step_fields: dict[str, Any] = {}
-            for key, value in payload.items():
-                step_fields[key] = value if isinstance(value, str) else json.dumps(value)
-            ei[step] = step_fields
+            ei[step] = {key: json.dumps(value) for key, value in payload.items()}
         request["effector_inputs"] = ei
     if effector_configs:
         ec: dict[str, Any] = {}

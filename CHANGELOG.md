@@ -3,6 +3,10 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.7.3
+
+- host_run_package: always JSON-encode effector_inputs/inputs field values
+
 ## 0.7.2
 
 - host_run_package: load .json packages via load_package_json
