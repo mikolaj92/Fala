@@ -1,6 +1,10 @@
-"""Thin in-process Fala host API (memory path only).
+"""Thin in-process Fala host API.
 
-Heavy ops (SQLite multi-organ, bridge, projections, CLI) stay on subprocess/CLI.
+- **Memory path:** ``host_drive`` / ``open_memory`` (no sqlite.fire required).
+- **Durable path:** ``open_sqlite`` / ``host_run_package`` (optional SQLite journal
+  sink via sqlite.fire; auto-builds the native library on first use — #106).
+
+Heavy multi-organ CLI / bridge / projections stay on the Mojo CLI surface.
 """
 
 from __future__ import annotations
@@ -9,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from fala._build import ensure_native
+from fala._build import ensure_native, ensure_sqlite_fire_library
 
 
 def host_drive(
@@ -149,9 +153,14 @@ def _with_sqlite_cwd(fn):  # type: ignore[no-untyped-def]
 
 
 def open_sqlite(path: str | Path) -> dict[str, Any]:
-    """Probe-open a durable SQLite journal via the Mojo engine (creates if needed)."""
+    """Probe-open a durable SQLite journal via the Mojo engine (creates if needed).
+
+    Ensures ``libsqlite_fire`` is present (builds once if hatch-shipped sources
+    are available). Memory path does not call this.
+    """
     p = Path(path).expanduser().resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
+    ensure_sqlite_fire_library()
     native = ensure_native()
 
     def _call() -> dict[str, Any]:
@@ -179,7 +188,11 @@ def host_run_package(
     max_ticks: int = 32,
     worker_id: str = "python-host",
 ) -> dict[str, Any]:
-    """Drive one correlation path from a TOML package on a SQLite journal (Mojo)."""
+    """Drive one correlation path from a TOML package on a SQLite journal (Mojo).
+
+    Ensures ``libsqlite_fire`` for the durable journal sink before loading the
+    Mojo host (#106).
+    """
     from datetime import datetime, timezone
 
     db = Path(db_path).expanduser().resolve()
@@ -216,6 +229,7 @@ def host_run_package(
     if command_overrides:
         request["command_overrides"] = {k: list(v) for k, v in command_overrides.items()}
 
+    ensure_sqlite_fire_library()
     native = ensure_native()
 
     def _call() -> dict[str, Any]:
