@@ -36,8 +36,12 @@ result = fala.host_drive(
 ```
 
 Requires Mojo toolchain. Also: `fala.sdk` (pure-Python effector helpers),
-`fala.open_sqlite(path)` durable journal probe. No CPython RuntimeBackendService.
-Full multi-organ CLI remains primary for complex ops.
+`fala.open_sqlite(path)` / `fala.host_run_package(...)` durable journal path
+(optional SQLite sink via sqlite.fire; first use auto-runs
+`make -C vendor/sqlite.fire/native` when the shared library is missing — needs a
+C compiler + libsqlite3; set `FALA_SKIP_NATIVE_BUILD=1` to skip). Memory path
+does not need sqlite.fire. No CPython RuntimeBackendService. Full multi-organ
+CLI remains primary for complex ops.
 
  There is no CPython engine, no YAML packages,
 and no multi-runtime fleet.
@@ -127,6 +131,8 @@ Requires Pixi/Mojo (see `pixi.toml`):
 
 ```bash
 git submodule update --init --recursive
+# Optional: prebuild sqlite.fire for durable smokes (also auto-built on first
+# Python open_sqlite / host_run_package when the dylib/so is missing — #106).
 make -C vendor/sqlite.fire/native
 mise exec -- pixi install
 mise exec -- pixi run full-smoke

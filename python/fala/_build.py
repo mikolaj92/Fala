@@ -1,4 +1,10 @@
-"""Compile ``_native.mojo`` against the Mojo Fala core (memory host path)."""
+"""Compile Mojo ``_native`` and ensure the optional sqlite.fire shared library (#106).
+
+Memory path needs only the Mojo extension. Durable path (``open_sqlite`` /
+``host_run_package``) additionally needs ``libsqlite_fire`` under
+``vendor/sqlite.fire/native`` — hatch force-includes sources; this module builds
+the shared library on first use when it is missing.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +20,8 @@ from types import ModuleType
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _NATIVE_MOJO = _PACKAGE_DIR / "_native.mojo"
 _CACHE_DIR_NAME = "__mojocache__"
+_SKIP_NATIVE_BUILD_ENV = "FALA_SKIP_NATIVE_BUILD"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 def repo_root() -> Path:
@@ -28,6 +36,118 @@ def repo_root() -> Path:
     raise RuntimeError(
         "Cannot locate Fala Mojo sources. Set FALA_HOME to the Fala checkout."
     )
+
+
+def sqlite_fire_native_dir(root: Path | None = None) -> Path:
+    """Directory that holds Makefile + libsqlite_fire shared library."""
+    return (root or repo_root()) / "vendor" / "sqlite.fire" / "native"
+
+
+def sqlite_fire_library_name() -> str:
+    if sys.platform == "darwin":
+        return "libsqlite_fire.dylib"
+    if sys.platform.startswith("linux"):
+        return "libsqlite_fire.so"
+    raise RuntimeError(
+        f"fala durable SQLite host is POSIX-only (macOS/Linux); unsupported platform: {sys.platform}"
+    )
+
+
+def sqlite_fire_library_path(root: Path | None = None) -> Path:
+    return sqlite_fire_native_dir(root) / sqlite_fire_library_name()
+
+
+def _skip_native_build() -> bool:
+    return os.environ.get(_SKIP_NATIVE_BUILD_ENV, "").strip().lower() in _TRUTHY
+
+
+def _prepend_library_path(native_lib: Path) -> None:
+    if not native_lib.is_dir():
+        return
+    prefix = str(native_lib)
+    for key in ("DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"):
+        cur = os.environ.get(key, "")
+        parts = [p for p in cur.split(os.pathsep) if p]
+        if prefix not in parts:
+            os.environ[key] = prefix + (os.pathsep + cur if cur else "")
+
+
+def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
+    """Ensure ``libsqlite_fire`` exists for the durable SQLite journal sink (#106).
+
+    When the shared library is missing, runs ``make -C vendor/sqlite.fire/native``
+    once (sources are hatch force-included). Set ``FALA_SKIP_NATIVE_BUILD=1`` to
+    skip the build attempt (memory-path-only machines); durable APIs then fail
+    closed with an actionable error.
+
+    Returns the absolute path to the shared library.
+    """
+    root = root or repo_root()
+    native_dir = sqlite_fire_native_dir(root)
+    lib_path = sqlite_fire_library_path(root)
+
+    if lib_path.is_file():
+        _prepend_library_path(native_dir)
+        return lib_path
+
+    if _skip_native_build():
+        raise RuntimeError(
+            f"fala durable path requires {lib_path.name} at {lib_path}, but it is "
+            f"missing and {_SKIP_NATIVE_BUILD_ENV} is set. Unset the env var and "
+            f"retry, or build manually: make -C {native_dir}"
+        )
+
+    if not native_dir.is_dir():
+        raise RuntimeError(
+            f"sqlite.fire native sources missing at {native_dir}. "
+            "Fala install is incomplete (expected hatch force-include of "
+            "vendor/sqlite.fire)."
+        )
+    makefile = native_dir / "Makefile"
+    if not makefile.is_file():
+        raise RuntimeError(
+            f"sqlite.fire Makefile missing at {makefile}. "
+            "Fala install is incomplete."
+        )
+    if not (native_dir / "sqlite_fire.c").is_file():
+        raise RuntimeError(
+            f"sqlite.fire C sources missing under {native_dir}. "
+            "Fala install is incomplete."
+        )
+
+    make = shutil.which("make")
+    if make is None:
+        raise RuntimeError(
+            "fala: cannot build sqlite.fire native library: `make` not found on PATH. "
+            "Install a C toolchain (and libsqlite3), then retry, or run: "
+            f"make -C {native_dir}"
+        )
+    cc = shutil.which(os.environ.get("CC", "cc")) or shutil.which("clang") or shutil.which("gcc")
+    if cc is None:
+        raise RuntimeError(
+            "fala: cannot build sqlite.fire native library: no C compiler (`cc`/`clang`/`gcc`) "
+            f"on PATH. Install a C toolchain and libsqlite3, then: make -C {native_dir}"
+        )
+
+    proc = subprocess.run(
+        [make, "-C", str(native_dir)],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not lib_path.is_file():
+        raise RuntimeError(
+            "fala: failed to build sqlite.fire native library "
+            f"({lib_path.name}) under {native_dir}.\n"
+            "Durable Python host requires a C compiler and libsqlite3 "
+            f"(optional sink; memory path does not need this).\n"
+            f"Command: make -C {native_dir}\n"
+            f"exit={proc.returncode}\n"
+            f"stdout:\n{proc.stdout}\n"
+            f"stderr:\n{proc.stderr}"
+        )
+
+    _prepend_library_path(native_dir)
+    return lib_path
 
 
 def _source_hash(root: Path) -> str:
@@ -93,6 +213,12 @@ def _mojo_bin(env: dict[str, str]) -> str:
 
 
 def ensure_native() -> ModuleType:
+    """Build/load the Mojo Python extension (memory + durable host entrypoints).
+
+    Does **not** compile sqlite.fire by itself — call
+    :func:`ensure_sqlite_fire_library` from durable APIs so pure memory-path
+    users never require a C toolchain (#106).
+    """
     if not _NATIVE_MOJO.is_file():
         raise RuntimeError(f"missing {_NATIVE_MOJO}")
     root = repo_root()
@@ -125,14 +251,15 @@ def ensure_native() -> ModuleType:
             raise RuntimeError(
                 "fala native build failed:\n" + (proc.stderr or proc.stdout or "")
             )
-    # sqlite.fire native library must be loadable at import time.
-    native_lib = root / "vendor" / "sqlite.fire" / "native"
+    # If a previously built dylib exists, put it on the loader path (no build).
+    native_lib = sqlite_fire_native_dir(root)
     if native_lib.is_dir():
-        for key in ("DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"):
-            cur = os.environ.get(key, "")
-            prefix = str(native_lib)
-            if prefix not in cur.split(os.pathsep):
-                os.environ[key] = prefix + (os.pathsep + cur if cur else "")
+        _prepend_library_path(native_lib)
+
+    # Reuse a loaded module if the same .so is already mapped.
+    existing = sys.modules.get("fala._native")
+    if existing is not None:
+        return existing
 
     spec = importlib.util.spec_from_file_location("fala._native", so_path)
     if spec is None or spec.loader is None:

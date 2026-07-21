@@ -3,6 +3,17 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.7.5
+
+**Python durable host: sqlite.fire auto-build on first use (#106).**
+
+- `open_sqlite` / `host_run_package` call `ensure_sqlite_fire_library()` before the Mojo host:
+  if `libsqlite_fire.{dylib,so}` is missing under hatch-shipped `vendor/sqlite.fire/native`,
+  run `make -C native` once (fail-closed with toolchain / libsqlite3 diagnosis).
+- Memory path (`host_drive` / `open_memory`) still does **not** require sqlite.fire.
+- Escape hatch: `FALA_SKIP_NATIVE_BUILD=1` skips the build attempt (durable APIs fail closed).
+- Docs: SQLite remains an optional journal sink, not product identity.
+
 ## 0.7.4
 
 - host_run_package: encode inputs via Mojo to_string (fix double-encoding / invalid process error JSON)
