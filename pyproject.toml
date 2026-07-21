@@ -1,22 +1,49 @@
 [project]
 name = "fala"
-version = "0.4.0"
-description = "Event-first correlator — exclusive Mojo product (mojo/fala)."
+version = "0.5.0"
+description = "Event-first correlator — Mojo product + thin optional Python host binding."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = []
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Typing :: Typed",
+]
 
 [project.urls]
 Homepage = "https://github.com/mikolaj92/Fala"
 Repository = "https://github.com/mikolaj92/Fala"
 Issues = "https://github.com/mikolaj92/Fala/issues"
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# Metadata-only project; product modules live under mojo/fala (Pixi/Mojo).
 [tool.hatch.build.targets.wheel]
-only-include = ["README.md"]
+packages = ["python/fala"]
+force-include = { "mojo" = "mojo", "vendor/EmberJson" = "vendor/EmberJson" }
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "python/fala",
+  "mojo",
+  "vendor/EmberJson",
+  "examples",
+  "docs",
+  "tools",
+  "README.md",
+  "LICENSE",
+  "CHANGELOG.md",
+  "pixi.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+pythonpath = ["python"]

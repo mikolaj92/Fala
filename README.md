@@ -18,7 +18,27 @@ Fala provides: organ loop + JournalPort + process host + adapters
 organs live:   native_function | subprocess (Splot, …) | homeostat gates
 ```
 
-**Fala is a fully Mojo runtime.** There is no CPython engine, no YAML packages,
+**Fala is a fully Mojo runtime.**
+
+## Thin Python host binding (optional, memory path)
+
+```python
+import fala
+result = fala.host_drive(
+    run_id="run1",
+    impulse={"id": "imp1", "type": "case", "payload": {"n": 1}},
+    path={"id": "chain", "effectors": [
+        {"id": "root", "capability": "source"},
+        {"id": "leaf", "capability": "sink", "conduction": ["root"]},
+    ]},
+    outputs={"root": {"value": 42}, "leaf": {"done": True}},
+)
+```
+
+Requires Mojo toolchain. Full SQLite / multi-organ / CLI remain primary;
+this binding is a thin memory-path host only. No dual engine.
+
+ There is no CPython engine, no YAML packages,
 and no multi-runtime fleet.
 
 It is an embedded, **event-first** correlator: impulses move through

@@ -3,6 +3,19 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.5.0
+
+**Thin optional Python host binding** (memory path only).
+
+### Added
+- `python/fala/`: `host_drive`, `host_drive_json`, `open_memory` / `MemoryHost`
+- JIT `_native` extension over Mojo memory runtime (create_run → impulse → path → drive)
+- Python smoke tests
+
+### Unchanged
+- Exclusive Mojo product core; CLI / SQLite multi-organ / ops packs stay outside the binding
+- No dual engine; subprocess + CLI remain primary for full host composition
+
 ## 0.4.0
 
 **Thin core, domain packs, and host/composition completeness** on the exclusive
