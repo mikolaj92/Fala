@@ -3,6 +3,14 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.7.0
+
+**Python host: `host_run_package`** — durable SQLite + TOML package + path drive.
+
+### Added
+- `fala.host_run_package(db_path, package_path, path_id, …)` via Mojo `run_correlation_path`
+- Supports package adapters: `subprocess`, `native_function`, `manual_homeostat`
+
 ## 0.6.0
 
 **Python host: effector SDK + SQLite journal probe (still Mojo-only engine).**

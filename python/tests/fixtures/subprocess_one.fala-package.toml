@@ -1,0 +1,24 @@
+version = "2"
+id = "host_run_package_smoke"
+title = "host_run_package smoke"
+
+[[capabilities]]
+id = "ping"
+title = "Ping"
+
+[[correlation_paths]]
+id = "one_step"
+title = "One subprocess step"
+
+[[correlation_paths.effectors]]
+id = "ping"
+capability = "ping"
+adapter = { kind = "subprocess", command = ["/tmp/fala-native-subprocess-fixture", "success"], env = { SECRET = "smoke" } }
+
+[runtime.backend]
+kind = "sqlite"
+path = ".fala/smoke.sqlite"
+
+[runtime.reaction_store]
+kind = "filesystem"
+root = ".fala/reactions"

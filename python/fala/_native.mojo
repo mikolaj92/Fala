@@ -6,17 +6,26 @@ instantiate path → drive_until_idle (same shape as core memory e2e).
 SQLite / CLI / ops packs stay outside this binding.
 """
 
-from std.collections import List
+from std.collections import Dict, List
 from std.os import abort
 from std.python import PythonObject
 from std.python.bindings import PythonModuleBuilder
 
 from emberjson import Value, to_string
-from fala.correlation import CorrelationEffectorSpec, CorrelationPathSpec
+from fala.adapters import AdapterSpec, NativeFunctionRegistry
+from fala.correlation import (
+    CorrelationEffectorSpec,
+    CorrelationInputField,
+    CorrelationPathSpec,
+    instantiate_correlation_path,
+)
+from fala.correlation_runtime import run_correlation_path
 from fala.domain import Impulse
 from fala.journal import NativeJournal
 from fala.json import parse_json
 from fala.memory_driver import MemoryDriver
+from fala.native_driver import AdapterBinding
+from fala.package import load_package_toml
 
 
 def _obj_string(obj: Value, key: String, default: String = "") raises -> String:
@@ -153,12 +162,182 @@ def open_sqlite_journal(path: PythonObject) raises -> PythonObject:
     var out = "{\"ok\":true,\"kind\":\"sqlite\",\"path\":\"" + p + "\"}"
     return PythonObject(out)
 
+
+def host_run_package_json(request: PythonObject) raises -> PythonObject:
+    """Durable package run: SQLite journal + TOML package + path drive.
+
+    Request JSON::
+      {
+        "db_path": "/abs/path.sqlite",
+        "package_path": "/abs/fala-package.toml",
+        "path_id": "basic_enrichment",
+        "run_id": "run1",
+        "inputs": {"source": "\"hello\""},   // values already JSON-encoded strings
+        "max_ticks": 32,
+        "worker_id": "python-host",
+        "created_at": "2026-01-01T00:00:00Z",
+        "now": "2026-01-01T00:00:01Z",
+        "lease_expires_at": "2026-01-01T01:00:00Z"
+      }
+
+    Supports package effectors with adapter kind ``native_function`` (no-op
+    registry empty → fails if executed) or ``subprocess`` (process host).
+    """
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.host_run_package_json: root must be object")
+
+    var db_path = _obj_string(root, "db_path")
+    var package_path = _obj_string(root, "package_path")
+    var path_id = _obj_string(root, "path_id")
+    var run_id = _obj_string(root, "run_id", "run")
+    if db_path == "" or package_path == "" or path_id == "":
+        raise Error("fala.host_run_package_json: db_path, package_path, path_id required")
+
+    var max_ticks = _obj_int(root, "max_ticks", 32)
+    var worker_id = _obj_string(root, "worker_id", "python-host")
+    var created_at = _obj_string(root, "created_at", "2026-01-01T00:00:00Z")
+    var now = _obj_string(root, "now", "2026-01-01T00:00:01Z")
+    var lease = _obj_string(root, "lease_expires_at", "2026-01-01T01:00:00Z")
+
+    var manifest = load_package_toml(package_path)
+    var package_path_spec = manifest.correlation_paths[0].copy()
+    var found = False
+    for pth in manifest.correlation_paths:
+        if pth.id == path_id:
+            package_path_spec = pth.copy()
+            found = True
+            break
+    if not found:
+        raise Error("fala.host_run_package_json: path_id not in package: " + path_id)
+
+    var effectors = List[CorrelationEffectorSpec]()
+    for item in package_path_spec.effectors:
+        var spec = CorrelationEffectorSpec.create(
+            item.id,
+            item.capability,
+            item.conduction.copy(),
+            item.timeout_seconds,
+            item.config_json,
+            "{}",
+            "{}",
+            List[String](),
+        )
+        effectors.append(spec^)
+    var path = CorrelationPathSpec(
+        package_path_spec.id,
+        effectors^,
+        package_path_spec.allow_feedback_cycles,
+        package_path_spec.accumulate_upstream_reactions,
+    )
+
+    var inputs = List[CorrelationInputField]()
+    if "inputs" in root.object() and root.object()["inputs"].is_object():
+        for entry in root.object()["inputs"].object().items():
+            var v = entry.value.copy()
+            # Host encodes values as JSON text (Python side); pass through strings.
+            var vjson = String("")
+            if v.is_string():
+                vjson = v.string()
+            else:
+                vjson = to_string(v)
+            inputs.append(CorrelationInputField(key=entry.key, value_json=vjson))
+
+    var plan = instantiate_correlation_path(path, run_id, input_fields=inputs^)
+
+    # Map package effector id -> adapter from package
+    var kind_by_id = Dict[String, String]()
+    var cmd_by_id = Dict[String, List[String]]()
+    var ref_by_id = Dict[String, String]()
+    for item in package_path_spec.effectors:
+        kind_by_id[item.id] = item.adapter_kind
+        cmd_by_id[item.id] = item.adapter_command.copy()
+        ref_by_id[item.id] = item.adapter_ref
+
+    var bindings = List[AdapterBinding]()
+    for index in range(len(plan.processes)):
+        var proc = plan.processes[index].copy()
+        var eid = proc.effector_id
+        var kind = kind_by_id[eid]
+        var adapter = AdapterSpec.manual_homeostat()
+        if kind == "subprocess":
+            adapter = AdapterSpec.subprocess(cmd_by_id[eid].copy())
+            # timeouts / env from package effector
+            for pe in package_path_spec.effectors:
+                if pe.id == eid:
+                    adapter.timeout_seconds = pe.timeout_seconds
+                    adapter.env = pe.adapter_env.copy()
+                    adapter.inherit_env = pe.adapter_inherit_env.copy()
+                    adapter.cwd = pe.adapter_cwd
+                    break
+        elif kind == "native_function":
+            adapter = AdapterSpec.native_function(ref_by_id[eid])
+        elif kind == "manual_homeostat":
+            adapter = AdapterSpec.manual_homeostat()
+        else:
+            raise Error("fala.host_run_package_json: unsupported adapter kind: " + kind)
+        bindings.append(AdapterBinding(process_id=proc.id, adapter=adapter^, run_id=run_id))
+
+    var registry = NativeFunctionRegistry()
+    # Optional: host may not register native functions; native_function effectors then fail closed.
+
+    var journal = NativeJournal.open(db_path)
+    journal.initialize()
+    var result = run_correlation_path(
+        journal,
+        run_id,
+        plan,
+        bindings,
+        registry,
+        created_at,
+        worker_id,
+        now,
+        lease,
+        max_ticks,
+    )
+
+    var statuses = String("[")
+    var procs = journal.list_processes(run_id)
+    var i = 0
+    while i < len(procs):
+        if i > 0:
+            statuses += ","
+        statuses += (
+            "{\"id\":\""
+            + procs[i].id
+            + "\",\"status\":\""
+            + procs[i].status
+            + "\"}"
+        )
+        i += 1
+    statuses += "]"
+    journal.close()
+
+    var out = (
+        "{\"ok\":true,\"run_id\":\""
+        + run_id
+        + "\",\"run_status\":\""
+        + result.run_status
+        + "\",\"replayed\":"
+        + ("true" if result.replayed else "false")
+        + ",\"ticks\":"
+        + String(result.drive_result.ticks)
+        + ",\"processes\":"
+        + statuses
+        + "}"
+    )
+    return PythonObject(out)
+
+
 @export
 def PyInit__native() abi("C") -> PythonObject:
     try:
         var m = PythonModuleBuilder("_native")
         m.def_function[host_drive_json]("host_drive_json")
         m.def_function[open_sqlite_journal]("open_sqlite_journal")
+        m.def_function[host_run_package_json]("host_run_package_json")
         return m.finalize()
     except e:
         abort(String("fala._native init failed: ", e))

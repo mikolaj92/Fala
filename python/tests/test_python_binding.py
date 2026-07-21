@@ -86,3 +86,24 @@ def test_sdk_run_manifest_effector(tmp_path, monkeypatch) -> None:
     assert sdk.run_manifest_effector(handler) == 0
     result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
     assert result["values"]["echo"]["x"] == 1
+
+
+def test_host_run_package_subprocess(tmp_path) -> None:
+    import fala
+    from pathlib import Path
+
+    pkg = Path(__file__).resolve().parent / "fixtures" / "subprocess_one.fala-package.toml"
+    assert pkg.is_file()
+    db = tmp_path / "pkg.sqlite"
+    result = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="one_step",
+        run_id="pkg_smoke",
+        max_ticks=8,
+    )
+    assert result.get("ok") is True
+    assert result.get("run_status") in {"completed", "failed", "active", "waiting"}
+    # subprocess fixture success → completed
+    assert result.get("run_status") == "completed"
+    assert int(result.get("ticks") or 0) >= 1

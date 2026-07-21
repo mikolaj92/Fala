@@ -11,15 +11,23 @@ There is **no** CPython ``RuntimeBackendService`` engine. Orchestration is Mojo.
 from __future__ import annotations
 
 from fala import sdk as sdk
-from fala.host import MemoryHost, host_drive, host_drive_json, open_memory, open_sqlite
+from fala.host import (
+    MemoryHost,
+    host_drive,
+    host_drive_json,
+    host_run_package,
+    open_memory,
+    open_sqlite,
+)
 
 __all__ = [
     "MemoryHost",
     "host_drive",
     "host_drive_json",
+    "host_run_package",
     "open_memory",
     "open_sqlite",
     "sdk",
     "__version__",
 ]
-__version__ = "0.6.0"
+__version__ = "0.7.0"

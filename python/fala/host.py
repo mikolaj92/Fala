@@ -132,27 +132,90 @@ class MemoryHost:
         )
 
 
-def open_sqlite(path: str | Path) -> dict[str, Any]:
-    """Probe-open a durable SQLite journal via the Mojo engine (creates if needed)."""
+def _with_sqlite_cwd(fn):  # type: ignore[no-untyped-def]
+    """Run *fn* with cwd at vendor/sqlite.fire (dylib load path)."""
     import os
 
     from fala._build import repo_root
 
-    p = Path(path).expanduser().resolve()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    native = ensure_native()
-    # sqlite.fire loads ``native/libsqlite_fire.*`` relative to vendor/sqlite.fire
     sqlite_cwd = repo_root() / "vendor" / "sqlite.fire"
     prev = os.getcwd()
     try:
         if sqlite_cwd.is_dir():
             os.chdir(sqlite_cwd)
-        raw = native.open_sqlite_journal(str(p))
+        return fn()
     finally:
         os.chdir(prev)
-    if not isinstance(raw, str):
-        raw = str(raw)
-    out = json.loads(raw)
-    if not isinstance(out, dict) or not out.get("ok"):
-        raise RuntimeError(f"fala.open_sqlite failed: {raw!r}")
-    return out
+
+
+def open_sqlite(path: str | Path) -> dict[str, Any]:
+    """Probe-open a durable SQLite journal via the Mojo engine (creates if needed)."""
+    p = Path(path).expanduser().resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    native = ensure_native()
+
+    def _call() -> dict[str, Any]:
+        raw = native.open_sqlite_journal(str(p))
+        if not isinstance(raw, str):
+            raw = str(raw)
+        out = json.loads(raw)
+        if not isinstance(out, dict) or not out.get("ok"):
+            raise RuntimeError(f"fala.open_sqlite failed: {raw!r}")
+        return out
+
+    return _with_sqlite_cwd(_call)
+
+
+def host_run_package(
+    *,
+    db_path: str | Path,
+    package_path: str | Path,
+    path_id: str,
+    run_id: str = "run",
+    inputs: Mapping[str, Any] | None = None,
+    max_ticks: int = 32,
+    worker_id: str = "python-host",
+) -> dict[str, Any]:
+    """Drive one correlation path from a TOML package on a SQLite journal (Mojo)."""
+    from datetime import datetime, timezone
+
+    db = Path(db_path).expanduser().resolve()
+    pkg = Path(package_path).expanduser().resolve()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    if not pkg.is_file():
+        raise FileNotFoundError(f"fala package not found: {pkg}")
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    request: dict[str, Any] = {
+        "db_path": str(db),
+        "package_path": str(pkg),
+        "path_id": path_id,
+        "run_id": run_id,
+        "max_ticks": max_ticks,
+        "worker_id": worker_id,
+        "created_at": now,
+        "now": now,
+        "lease_expires_at": "2099-01-01T00:00:00Z",
+    }
+    if inputs:
+        # Encode non-string values as JSON text for the Mojo boundary.
+        encoded: dict[str, Any] = {}
+        for key, value in inputs.items():
+            if isinstance(value, str):
+                encoded[key] = value
+            else:
+                encoded[key] = json.dumps(value)
+        request["inputs"] = encoded
+
+    native = ensure_native()
+
+    def _call() -> dict[str, Any]:
+        raw = native.host_run_package_json(json.dumps(request))
+        if not isinstance(raw, str):
+            raw = str(raw)
+        out = json.loads(raw)
+        if not isinstance(out, dict):
+            raise RuntimeError(f"fala.host_run_package failed: {raw!r}")
+        return out
+
+    return _with_sqlite_cwd(_call)
