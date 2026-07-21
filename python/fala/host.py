@@ -173,6 +173,9 @@ def host_run_package(
     path_id: str,
     run_id: str = "run",
     inputs: Mapping[str, Any] | None = None,
+    effector_inputs: Mapping[str, Mapping[str, Any]] | None = None,
+    effector_configs: Mapping[str, Mapping[str, Any] | str] | None = None,
+    command_overrides: Mapping[str, Sequence[str]] | None = None,
     max_ticks: int = 32,
     worker_id: str = "python-host",
 ) -> dict[str, Any]:
@@ -198,14 +201,25 @@ def host_run_package(
         "lease_expires_at": "2099-01-01T00:00:00Z",
     }
     if inputs:
-        # Encode non-string values as JSON text for the Mojo boundary.
         encoded: dict[str, Any] = {}
         for key, value in inputs.items():
-            if isinstance(value, str):
-                encoded[key] = value
-            else:
-                encoded[key] = json.dumps(value)
+            encoded[key] = value if isinstance(value, str) else json.dumps(value)
         request["inputs"] = encoded
+    if effector_inputs:
+        ei: dict[str, Any] = {}
+        for step, payload in effector_inputs.items():
+            step_fields: dict[str, Any] = {}
+            for key, value in payload.items():
+                step_fields[key] = value if isinstance(value, str) else json.dumps(value)
+            ei[step] = step_fields
+        request["effector_inputs"] = ei
+    if effector_configs:
+        ec: dict[str, Any] = {}
+        for step, cfg in effector_configs.items():
+            ec[step] = cfg if isinstance(cfg, str) else json.dumps(cfg)
+        request["effector_configs"] = ec
+    if command_overrides:
+        request["command_overrides"] = {k: list(v) for k, v in command_overrides.items()}
 
     native = ensure_native()
 

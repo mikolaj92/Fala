@@ -3,6 +3,10 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.7.1
+
+- `host_run_package`: `effector_inputs`, `effector_configs`, `command_overrides`
+
 ## 0.7.0
 
 **Python host: `host_run_package`** — durable SQLite + TOML package + path drive.

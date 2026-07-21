@@ -245,7 +245,39 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
                 vjson = to_string(v)
             inputs.append(CorrelationInputField(key=entry.key, value_json=vjson))
 
-    var plan = instantiate_correlation_path(path, run_id, input_fields=inputs^)
+    # Optional per-effector authored inputs: { "parse": {"document_path": "..."} }
+    var per_inputs = Dict[String, List[CorrelationInputField]]()
+    if "effector_inputs" in root.object() and root.object()["effector_inputs"].is_object():
+        for entry in root.object()["effector_inputs"].object().items():
+            var fields = List[CorrelationInputField]()
+            var body = entry.value.copy()
+            if body.is_object():
+                for field in body.object().items():
+                    var fv = field.value.copy()
+                    var fjson = String("")
+                    if fv.is_string():
+                        fjson = fv.string()
+                    else:
+                        fjson = to_string(fv)
+                    fields.append(CorrelationInputField(key=field.key, value_json=fjson))
+            per_inputs[entry.key] = fields^
+
+    var per_configs = Dict[String, String]()
+    if "effector_configs" in root.object() and root.object()["effector_configs"].is_object():
+        for entry in root.object()["effector_configs"].object().items():
+            var cv = entry.value.copy()
+            if cv.is_string():
+                per_configs[entry.key] = cv.string()
+            else:
+                per_configs[entry.key] = to_string(cv)
+
+    var plan = instantiate_correlation_path(
+        path,
+        run_id,
+        input_fields=inputs^,
+        per_effector_inputs=per_inputs^,
+        per_effector_configs=per_configs^,
+    )
 
     # Map package effector id -> adapter from package
     var kind_by_id = Dict[String, String]()
@@ -256,6 +288,18 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         cmd_by_id[item.id] = item.adapter_command.copy()
         ref_by_id[item.id] = item.adapter_ref
 
+    # Optional command rewrites: { "ping": ["/usr/bin/python", "-m", "mod"] }
+    var rewrite = Dict[String, List[String]]()
+    if "command_overrides" in root.object() and root.object()["command_overrides"].is_object():
+        for entry in root.object()["command_overrides"].object().items():
+            var arr = entry.value.copy()
+            var cmd = List[String]()
+            if arr.is_array():
+                for item in arr.array():
+                    if item.is_string():
+                        cmd.append(item.string())
+            rewrite[entry.key] = cmd^
+
     var bindings = List[AdapterBinding]()
     for index in range(len(plan.processes)):
         var proc = plan.processes[index].copy()
@@ -263,8 +307,10 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         var kind = kind_by_id[eid]
         var adapter = AdapterSpec.manual_homeostat()
         if kind == "subprocess":
-            adapter = AdapterSpec.subprocess(cmd_by_id[eid].copy())
-            # timeouts / env from package effector
+            var command = cmd_by_id[eid].copy()
+            if eid in rewrite:
+                command = rewrite[eid].copy()
+            adapter = AdapterSpec.subprocess(command^)
             for pe in package_path_spec.effectors:
                 if pe.id == eid:
                     adapter.timeout_seconds = pe.timeout_seconds
