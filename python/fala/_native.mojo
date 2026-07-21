@@ -12,7 +12,11 @@ from std.python import PythonObject
 from std.python.bindings import PythonModuleBuilder
 
 from emberjson import Value, to_string
-from fala.adapters import AdapterSpec, NativeFunctionRegistry
+from fala.adapters import (
+    AdapterSpec,
+    NativeFunctionRegistry,
+    materialize_host_environment_into_adapter,
+)
 from fala.correlation import (
     CorrelationEffectorSpec,
     CorrelationInputField,
@@ -311,6 +315,15 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
                     adapter.inherit_env = pe.adapter_inherit_env.copy()
                     adapter.cwd = pe.adapter_cwd
                     break
+            # Bake host process env into adapter.env (inherit_env → literals).
+            if "host_environment" in root.object() and root.object()["host_environment"].is_object():
+                var host_env = Dict[String, String]()
+                for entry in root.object()["host_environment"].object().items():
+                    if entry.value.is_string():
+                        host_env[entry.key] = entry.value.string()
+                    else:
+                        host_env[entry.key] = to_string(entry.value.copy())
+                materialize_host_environment_into_adapter(adapter, host_env)
         elif kind == "native_function":
             adapter = AdapterSpec.native_function(ref_by_id[eid])
         elif kind == "manual_homeostat":

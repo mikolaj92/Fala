@@ -16,6 +16,13 @@
 
 extern char **environ;
 
+const char *fala_host_getenv(const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        return NULL;
+    }
+    return getenv(name);
+}
+
 struct fala_process_host {
     pid_t pid;
     fala_process_status status;

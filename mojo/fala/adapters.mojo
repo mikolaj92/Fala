@@ -219,7 +219,10 @@ def resolve_environment(spec: AdapterSpec, inherited: Dict[String, String] = Dic
             value = _lookup_environment(inherited, key)
         resolved[pair.key] = value^
     for key in spec.inherit_env:
-        if not _has_environment(inherited, key): raise Error("inherited environment key is not allowlisted: " + key)
+        # Key is already on the adapter allowlist (inherit_env); fail when the
+        # host process does not actually define it.
+        if not _has_environment(inherited, key):
+            raise Error("host environment missing for inherit_env key: " + key)
         resolved[key] = _lookup_environment(inherited, key)
     return resolved^
 
@@ -476,6 +479,41 @@ def _read_text_or_empty(path: String) -> String:
         return Path(path).read_text()
     except err:
         return ""
+
+def materialize_host_environment_into_adapter(
+    mut adapter: AdapterSpec, host_env: Dict[String, String]
+) raises:
+    """Resolve ambient host keys into ``adapter.env`` and clear ``inherit_env``.
+
+    The durable driver calls ``execute_subprocess`` without a live host map.
+    Python ``host_run_package`` therefore ships ``host_environment`` and this
+    helper bakes base + inherit_env (+ ``${env:}``) into explicit env values
+    before dispatch so child processes see PATH/LLM keys fail-closed.
+    """
+    if adapter.kind != AdapterKind.subprocess():
+        return
+    # Base ambient keys (PATH, HOME, …) when present on the host.
+    for key in _base_environment_keys():
+        if _has_environment(host_env, key) and not _has_environment(adapter.env, key):
+            adapter.env[key] = _lookup_environment(host_env, key)
+    # inherit_env allowlist → concrete env values (fail if host missing key).
+    for key in adapter.inherit_env:
+        if not _has_environment(host_env, key):
+            raise Error("host environment missing for inherit_env key: " + key)
+        adapter.env[key] = _lookup_environment(host_env, key)
+    # Resolve ${env:NAME} interpolations to literals when host provides NAME.
+    var resolved_env = Dict[String, String]()
+    for pair in adapter.env.items():
+        var value = pair.value.copy()
+        if value.startswith("${env:") and value.endswith("}"):
+            var ek = String(value[byte=6:value.byte_length() - 1])
+            if _has_environment(host_env, ek):
+                value = _lookup_environment(host_env, ek)
+            elif _has_environment(adapter.env, ek):
+                value = _lookup_environment(adapter.env, ek)
+        resolved_env[pair.key] = value^
+    adapter.env = resolved_env^
+    adapter.inherit_env = List[String]()
 
 def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, String] = Dict[String, String]()) -> EffectorResult:
     """Execute one direct-argv effector through the Darwin process host."""

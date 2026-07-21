@@ -54,6 +54,13 @@ typedef struct fala_process_options {
 
 void fala_process_options_init(fala_process_options *options);
 
+/*
+ * Host-process environment lookup for subprocess inherit_env resolution.
+ * Returns NULL when *name is unset; otherwise a pointer into the process
+ * environment (do not free). Empty string means the variable is set blank.
+ */
+const char *fala_host_getenv(const char *name);
+
 /* Starts one direct-argv child in its own process group. */
 fala_process_result fala_process_start(const fala_process_options *options,
                                        fala_process_host **out_process);

@@ -17,17 +17,19 @@ if [[ "$need_host" == "1" ]]; then
   mkdir -p "$root/mojo/fala/native"
   if [[ "$(uname -s)" == "Darwin" ]]; then
     host_lib="$root/mojo/fala/native/libfala_process_host.dylib"
-    if [[ ! -s "$host_lib" ]]; then
+    host_src="$root/mojo/fala/native_process_host.c"
+    if [[ ! -s "$host_lib" || "$host_src" -nt "$host_lib" ]]; then
       cc -std=c11 -Wall -Wextra -dynamiclib \
         -o "$host_lib" \
-        "$root/mojo/fala/native_process_host.c"
+        "$host_src"
     fi
   else
     host_lib="$root/mojo/fala/native/libfala_process_host.so"
-    if [[ ! -s "$host_lib" ]]; then
+    host_src="$root/mojo/fala/native_process_host.c"
+    if [[ ! -s "$host_lib" || "$host_src" -nt "$host_lib" ]]; then
       cc -std=c11 -Wall -Wextra -fPIC -shared \
         -o "$host_lib" \
-        "$root/mojo/fala/native_process_host.c"
+        "$host_src"
     fi
   fi
   # Effector fixture binary used by native_subprocess smoke (argv child).

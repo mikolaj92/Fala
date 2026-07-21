@@ -201,6 +201,8 @@ def host_run_package(
     if not pkg.is_file():
         raise FileNotFoundError(f"fala package not found: {pkg}")
 
+    import os
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     request: dict[str, Any] = {
         "db_path": str(db),
@@ -212,6 +214,9 @@ def host_run_package(
         "created_at": now,
         "now": now,
         "lease_expires_at": "2099-01-01T00:00:00Z",
+        # Ambient host env for subprocess inherit_env / base keys (#108 / v0.7.6).
+        # Mojo materializes these into adapter.env before dispatch.
+        "host_environment": dict(os.environ),
     }
     if inputs:
         # Native JSON types; Mojo host converts Values to value_json via to_string.

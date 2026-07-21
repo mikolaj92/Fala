@@ -21,6 +21,7 @@ comptime WaitFn = def(HostPtr) thin abi("C") -> c_int
 comptime StatusFn = def(HostPtr) thin abi("C") -> c_int
 comptime IntGetterFn = def(HostPtr) thin abi("C") -> c_int
 comptime ErrorFn = def(HostPtr) thin abi("C") -> CStr
+comptime HostGetEnvFn = def(CStr) thin abi("C") -> CStr
 
 comptime PROCESS_OK: Int = 0
 comptime PROCESS_INVALID_ARGUMENT: Int = 1
@@ -165,9 +166,39 @@ def native_process_host_available() -> Bool:
         _ = library.get_function[IntGetterFn]("fala_process_was_cancelled")
         _ = library.get_function[IntGetterFn]("fala_process_get_error_code")
         _ = library.get_function[ErrorFn]("fala_process_get_error_message")
+        _ = library.get_function[HostGetEnvFn]("fala_host_getenv")
         return True
     except:
         return False
+
+
+struct HostEnvValue(Copyable, Movable):
+    """Host getenv result: *present* distinguishes unset from empty string."""
+
+    var present: Int
+    var value: String
+
+    def __init__(out self, present: Int = 0, value: String = ""):
+        self.present = present
+        self.value = value
+
+
+def host_getenv(name: String) -> HostEnvValue:
+    """Look up *name* in the host process environment via the process-host ABI.
+
+    ``present == 1`` when set (value may be empty); ``present == 0`` when unset
+    or when the host library cannot be loaded.
+    """
+    try:
+        var library = OwnedDLHandle(_library_path())
+        var get_env = library.get_function[HostGetEnvFn]("fala_host_getenv")
+        var key = name + "\0"
+        var ptr = get_env(CStr(unsafe_from_address=Int(key.as_bytes().unsafe_ptr())))
+        if Int(ptr) == 0:
+            return HostEnvValue(0, "")
+        return HostEnvValue(1, String(unsafe_from_utf8_ptr=ptr))
+    except:
+        return HostEnvValue(0, "")
 
 struct ProcessHost(Movable):
     """Move-only owner for a native process and its loaded host library."""

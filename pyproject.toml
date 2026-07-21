@@ -1,6 +1,6 @@
 [project]
 name = "fala"
-version = "0.7.5"
+version = "0.7.6"
 description = "Event-first correlator — Mojo product + thin optional Python host binding."
 readme = "README.md"
 requires-python = ">=3.12"

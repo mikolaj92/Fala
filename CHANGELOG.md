@@ -3,6 +3,24 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.7.6
+
+**Subprocess `inherit_env` receives host process environment via Python host (#108).**
+
+- `host_run_package` ships `host_environment` (`dict(os.environ)`) in the Mojo
+  request JSON.
+- Before dispatch, `host_run_package_json` calls
+  `materialize_host_environment_into_adapter`: base keys (`PATH`, `HOME`,
+  `TMPDIR`, `LANG`, `LC_ALL`, `TZ`), each `inherit_env` key, and
+  `${env:NAME}` interpolations are baked into `adapter.env` as literals and
+  `inherit_env` is cleared — so the durable driver no longer needs a live host
+  map at `execute_subprocess` time.
+- Fail-closed when an `inherit_env` key is absent from the host process:
+  `host environment missing for inherit_env key: …`.
+- Python binding regression: `test_host_run_package_inherit_env_from_host_process`.
+- Also exports `fala_host_getenv` on the process-host C ABI (for future pure-Mojo
+  callers); the Python durable path does not depend on it.
+
 ## 0.7.5
 
 **Python durable host: sqlite.fire auto-build on first use (#106).**
