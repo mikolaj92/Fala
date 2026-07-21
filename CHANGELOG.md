@@ -3,6 +3,10 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.7.4
+
+- host_run_package: encode inputs via Mojo to_string (fix double-encoding / invalid process error JSON)
+
 ## 0.7.3
 
 - host_run_package: always JSON-encode effector_inputs/inputs field values

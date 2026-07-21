@@ -201,18 +201,18 @@ def host_run_package(
         "lease_expires_at": "2099-01-01T00:00:00Z",
     }
     if inputs:
-        # Always JSON-encode field values (strings become "\"...\"").
-        request["inputs"] = {key: json.dumps(value) for key, value in inputs.items()}
+        # Native JSON types; Mojo host converts Values to value_json via to_string.
+        request["inputs"] = dict(inputs)
     if effector_inputs:
-        ei: dict[str, Any] = {}
-        for step, payload in effector_inputs.items():
-            ei[step] = {key: json.dumps(value) for key, value in payload.items()}
-        request["effector_inputs"] = ei
+        request["effector_inputs"] = {
+            step: dict(payload) for step, payload in effector_inputs.items()
+        }
     if effector_configs:
-        ec: dict[str, Any] = {}
-        for step, cfg in effector_configs.items():
-            ec[step] = cfg if isinstance(cfg, str) else json.dumps(cfg)
-        request["effector_configs"] = ec
+        # Config objects stay objects; string configs pass through as JSON text.
+        request["effector_configs"] = {
+            step: (cfg if isinstance(cfg, str) else dict(cfg))
+            for step, cfg in effector_configs.items()
+        }
     if command_overrides:
         request["command_overrides"] = {k: list(v) for k, v in command_overrides.items()}
 

@@ -239,14 +239,10 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     var inputs = List[CorrelationInputField]()
     if "inputs" in root.object() and root.object()["inputs"].is_object():
         for entry in root.object()["inputs"].object().items():
-            var v = entry.value.copy()
-            # Host encodes values as JSON text (Python side); pass through strings.
-            var vjson = String("")
-            if v.is_string():
-                vjson = v.string()
-            else:
-                vjson = to_string(v)
-            inputs.append(CorrelationInputField(key=entry.key, value_json=vjson))
+            # to_string emits canonical JSON text for any Value (incl. strings).
+            inputs.append(
+                CorrelationInputField(key=entry.key, value_json=to_string(entry.value.copy()))
+            )
 
     # Optional per-effector authored inputs: { "parse": {"document_path": "..."} }
     var per_inputs = Dict[String, List[CorrelationInputField]]()
@@ -256,23 +252,17 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
             var body = entry.value.copy()
             if body.is_object():
                 for field in body.object().items():
-                    var fv = field.value.copy()
-                    var fjson = String("")
-                    if fv.is_string():
-                        fjson = fv.string()
-                    else:
-                        fjson = to_string(fv)
-                    fields.append(CorrelationInputField(key=field.key, value_json=fjson))
+                    fields.append(
+                        CorrelationInputField(
+                            key=field.key, value_json=to_string(field.value.copy())
+                        )
+                    )
             per_inputs[entry.key] = fields^
 
     var per_configs = Dict[String, String]()
     if "effector_configs" in root.object() and root.object()["effector_configs"].is_object():
         for entry in root.object()["effector_configs"].object().items():
-            var cv = entry.value.copy()
-            if cv.is_string():
-                per_configs[entry.key] = cv.string()
-            else:
-                per_configs[entry.key] = to_string(cv)
+            per_configs[entry.key] = to_string(entry.value.copy())
 
     var plan = instantiate_correlation_path(
         path,
