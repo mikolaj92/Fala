@@ -1,6 +1,6 @@
 # Fala
 
-**Version 0.4.0** — exclusive Mojo product; thin core + domain packs + POSIX host.
+**Version 0.6.0** — exclusive Mojo product; thin core + domain packs + POSIX host.
 
 ## Compose single-purpose processes
 
@@ -35,8 +35,9 @@ result = fala.host_drive(
 )
 ```
 
-Requires Mojo toolchain. Full SQLite / multi-organ / CLI remain primary;
-this binding is a thin memory-path host only. No dual engine.
+Requires Mojo toolchain. Also: `fala.sdk` (pure-Python effector helpers),
+`fala.open_sqlite(path)` durable journal probe. No CPython RuntimeBackendService.
+Full multi-organ CLI remains primary for complex ops.
 
  There is no CPython engine, no YAML packages,
 and no multi-runtime fleet.

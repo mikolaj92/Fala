@@ -1,6 +1,6 @@
 [project]
 name = "fala"
-version = "0.5.0"
+version = "0.6.0"
 description = "Event-first correlator — Mojo product + thin optional Python host binding."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -28,7 +28,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/fala"]
-force-include = { "mojo" = "mojo", "vendor/EmberJson" = "vendor/EmberJson" }
+force-include = { "mojo" = "mojo", "vendor/EmberJson" = "vendor/EmberJson", "vendor/sqlite.fire" = "vendor/sqlite.fire" }
 
 [tool.hatch.build.targets.sdist]
 include = [

@@ -6,6 +6,7 @@ Heavy ops (SQLite multi-organ, bridge, projections, CLI) stay on subprocess/CLI.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from fala._build import ensure_native
@@ -129,3 +130,29 @@ class MemoryHost:
             outputs=self._outputs or None,
             max_ticks=max_ticks,
         )
+
+
+def open_sqlite(path: str | Path) -> dict[str, Any]:
+    """Probe-open a durable SQLite journal via the Mojo engine (creates if needed)."""
+    import os
+
+    from fala._build import repo_root
+
+    p = Path(path).expanduser().resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    native = ensure_native()
+    # sqlite.fire loads ``native/libsqlite_fire.*`` relative to vendor/sqlite.fire
+    sqlite_cwd = repo_root() / "vendor" / "sqlite.fire"
+    prev = os.getcwd()
+    try:
+        if sqlite_cwd.is_dir():
+            os.chdir(sqlite_cwd)
+        raw = native.open_sqlite_journal(str(p))
+    finally:
+        os.chdir(prev)
+    if not isinstance(raw, str):
+        raw = str(raw)
+    out = json.loads(raw)
+    if not isinstance(out, dict) or not out.get("ok"):
+        raise RuntimeError(f"fala.open_sqlite failed: {raw!r}")
+    return out

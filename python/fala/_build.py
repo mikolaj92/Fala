@@ -35,6 +35,7 @@ def _source_hash(root: Path) -> str:
         list(_PACKAGE_DIR.glob("*.mojo"))
         + list((root / "mojo" / "fala").rglob("*.mojo"))
         + list((root / "vendor" / "EmberJson").rglob("*.mojo"))
+        + list((root / "vendor" / "sqlite.fire").rglob("*.mojo"))
     )
     h = hashlib.sha256()
     for p in paths:
@@ -114,6 +115,8 @@ def ensure_native() -> ModuleType:
             str(root / "mojo"),
             "-I",
             str(root / "vendor" / "EmberJson"),
+            "-I",
+            str(root / "vendor" / "sqlite.fire" / "src"),
             "-o",
             str(so_path),
         ]
@@ -122,6 +125,15 @@ def ensure_native() -> ModuleType:
             raise RuntimeError(
                 "fala native build failed:\n" + (proc.stderr or proc.stdout or "")
             )
+    # sqlite.fire native library must be loadable at import time.
+    native_lib = root / "vendor" / "sqlite.fire" / "native"
+    if native_lib.is_dir():
+        for key in ("DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"):
+            cur = os.environ.get(key, "")
+            prefix = str(native_lib)
+            if prefix not in cur.split(os.pathsep):
+                os.environ[key] = prefix + (os.pathsep + cur if cur else "")
+
     spec = importlib.util.spec_from_file_location("fala._native", so_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {so_path}")

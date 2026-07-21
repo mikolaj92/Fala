@@ -14,6 +14,7 @@ from std.python.bindings import PythonModuleBuilder
 from emberjson import Value, to_string
 from fala.correlation import CorrelationEffectorSpec, CorrelationPathSpec
 from fala.domain import Impulse
+from fala.journal import NativeJournal
 from fala.json import parse_json
 from fala.memory_driver import MemoryDriver
 
@@ -140,11 +141,24 @@ def host_drive_json(request: PythonObject) raises -> PythonObject:
     return PythonObject(out)
 
 
+
+
+def open_sqlite_journal(path: PythonObject) raises -> PythonObject:
+    """Open (create) a durable SQLite journal at path; close after probe."""
+    var p = String(py=path)
+    if p == "":
+        raise Error("fala.open_sqlite_journal: path required")
+    var journal = NativeJournal.open(p)
+    journal.close()
+    var out = "{\"ok\":true,\"kind\":\"sqlite\",\"path\":\"" + p + "\"}"
+    return PythonObject(out)
+
 @export
 def PyInit__native() abi("C") -> PythonObject:
     try:
         var m = PythonModuleBuilder("_native")
         m.def_function[host_drive_json]("host_drive_json")
+        m.def_function[open_sqlite_journal]("open_sqlite_journal")
         return m.finalize()
     except e:
         abort(String("fala._native init failed: ", e))

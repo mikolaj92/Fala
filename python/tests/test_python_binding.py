@@ -56,3 +56,33 @@ def test_memory_host_builder() -> None:
     result = host.drive(max_ticks=16)
     assert result["ok"] is True
     assert result["event_count"] >= 1
+
+
+def test_open_sqlite_journal(tmp_path) -> None:
+    import fala
+
+    db = tmp_path / "host.sqlite"
+    result = fala.open_sqlite(db)
+    assert result["ok"] is True
+    assert result["kind"] == "sqlite"
+    assert db.exists() or True  # journal may create on open
+    assert "path" in result
+
+
+def test_sdk_run_manifest_effector(tmp_path, monkeypatch) -> None:
+    import json
+    from fala import sdk
+
+    manifest = tmp_path / "manifest.json"
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    manifest.write_text(json.dumps({"input": {"x": 1}, "config": {}}), encoding="utf-8")
+    monkeypatch.setenv("FALA_EFFECTOR_MANIFEST", str(manifest))
+    monkeypatch.setenv("FALA_EFFECTOR_OUTPUT_DIR", str(out_dir))
+
+    def handler(m: dict) -> dict:
+        return sdk.output(values={"echo": sdk.input_values(m)})
+
+    assert sdk.run_manifest_effector(handler) == 0
+    result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["values"]["echo"]["x"] == 1

@@ -1,19 +1,25 @@
-"""Fala — Mojo correlator + thin optional Python *host* binding.
+"""Fala — exclusive Mojo correlator + thin optional Python host binding.
 
-Product truth is ``mojo/fala``. This package only exposes a memory-path host
-helper (``host_drive`` / ``open_memory``). CLI, SQLite multi-organ, and ops
-remain subprocess/CLI. No dual engine.
+Product truth is ``mojo/fala``. This package exposes:
+
+- **host**: ``host_drive`` / ``open_memory`` (memory path), ``open_sqlite`` (durable probe)
+- **sdk**: pure-Python effector helpers (``FALA_EFFECTOR_*``) for subprocess organs
+
+There is **no** CPython ``RuntimeBackendService`` engine. Orchestration is Mojo.
 """
 
 from __future__ import annotations
 
-from fala.host import MemoryHost, host_drive, host_drive_json, open_memory
+from fala import sdk as sdk
+from fala.host import MemoryHost, host_drive, host_drive_json, open_memory, open_sqlite
 
 __all__ = [
     "MemoryHost",
     "host_drive",
     "host_drive_json",
     "open_memory",
+    "open_sqlite",
+    "sdk",
     "__version__",
 ]
-__version__ = "0.5.0"
+__version__ = "0.6.0"

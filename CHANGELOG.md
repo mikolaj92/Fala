@@ -3,6 +3,20 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+## 0.6.0
+
+**Python host: effector SDK + SQLite journal probe (still Mojo-only engine).**
+
+### Added
+- `fala.sdk` — pure-Python `FALA_EFFECTOR_*` helpers (`run_manifest_effector`, `output`, …)
+  for subprocess organs; no CPython runtime engine
+- `fala.open_sqlite(path)` — open/create durable SQLite journal via Mojo `NativeJournal`
+- Build path includes `vendor/sqlite.fire` for native journal
+
+### Still not present
+- CPython `RuntimeBackendService` / full 0.2.1 API (intentionally removed from product)
+- Full `run_correlation_path` Python host (next: package drive with subprocess effectors)
+
 ## 0.5.0
 
 **Thin optional Python host binding** (memory path only).
