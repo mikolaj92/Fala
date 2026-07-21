@@ -25,7 +25,7 @@ from fala.journal import NativeJournal
 from fala.json import parse_json
 from fala.memory_driver import MemoryDriver
 from fala.native_driver import AdapterBinding
-from fala.package import load_package_toml
+from fala.package import load_package_json, load_package_toml
 
 
 def _obj_string(obj: Value, key: String, default: String = "") raises -> String:
@@ -203,6 +203,9 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     var lease = _obj_string(root, "lease_expires_at", "2026-01-01T01:00:00Z")
 
     var manifest = load_package_toml(package_path)
+    # JSON packages (Temida materializes YAML → JSON for Mojo host)
+    if package_path.find(".json") >= 0:
+        manifest = load_package_json(package_path)
     var package_path_spec = manifest.correlation_paths[0].copy()
     var found = False
     for pth in manifest.correlation_paths:
