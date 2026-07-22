@@ -22,7 +22,7 @@ from fala.native_driver import (
     drive_correlation_until_idle,
     finalize_run,
     load_adapter_bindings,
-    persist_adapter_binding,
+    persist_adapter_bindings,
 )
 from fala.sqlite import SQLiteError
 from fala.status import RunStatus
@@ -193,18 +193,31 @@ def run_correlation_path(
     var processes = List[ProcessRow]()
     var adapters = List[AdapterSpec]()
     var persisted_bindings = List[AdapterBinding]()
+    var first_host_drive = False
     if has_existing:
         persisted_bindings = load_adapter_bindings(journal, run_id)
-        if len(persisted_bindings) != len(plan.processes):
+        if len(persisted_bindings) == 0:
+            first_host_drive = existing_status == "created"
+            var existing_processes = journal.list_processes(run_id)
+            if len(existing_processes) != len(plan.processes):
+                first_host_drive = False
+            for process in existing_processes:
+                if process.status != "ready" and process.status != "pending":
+                    first_host_drive = False
+                if process.attempt != 0 or process.started_at != "" or process.finished_at != "" or process.lease_owner != "" or process.lease_expires_at != "":
+                    first_host_drive = False
+            if not first_host_drive:
+                raise SQLiteError(code=1, message="correlation runtime: missing persisted adapter bindings after execution started")
+        elif len(persisted_bindings) != len(plan.processes):
             raise SQLiteError(code=1, message="correlation runtime: persisted adapter bindings are incomplete")
+    if not has_existing or first_host_drive:
+        persist_adapter_bindings(journal, bindings, now)
     for item in plan.processes:
         var binding_index = _binding_index(bindings, run_id, item.id)
         var binding = bindings[binding_index].copy()
-        if has_existing:
+        if has_existing and not first_host_drive:
             binding_index = _binding_index(persisted_bindings, run_id, item.id)
             binding = persisted_bindings[binding_index].copy()
-        else:
-            persist_adapter_binding(journal, binding, now)
         var process = journal.get_process(run_id, item.id)
         processes.append(process^)
         adapters.append(binding.adapter.copy())

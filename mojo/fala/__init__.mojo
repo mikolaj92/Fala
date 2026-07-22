@@ -93,7 +93,7 @@ from .native_driver import (
     DriverResult, AdapterBinding, AllRunDriverResult,
     RunFinalizationResult, RunUntilIdleResult, RunBoundaryResult,
     DelegationCloseResult,
-    persist_adapter_binding, load_adapter_bindings,
+    persist_adapter_binding, persist_adapter_bindings, load_adapter_bindings,
     drive_once, drive_until_idle, drive_ready_batch, drive_bound_queue, drive_all_runs,
     run_until_idle, diagnose_waits, diagnose_wait_graph,
     resume_homeostat, cancel_homeostat, expire_homeostat, reopen_homeostat, rearm_homeostat, transition_homeostat_terminal,
