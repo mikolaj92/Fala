@@ -3,6 +3,20 @@
 Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
+
+## 0.7.7
+
+**Safe terminal-run deletion for Python hosts (#108).**
+
+- New public API: `fala.delete_terminal_run(db_path, run_id) -> dict`.
+- Native Mojo entrypoint `delete_terminal_run` validates terminal status
+  (`completed`, `failed`, `cancelled`, `timed_out`) after `BEGIN IMMEDIATE`
+  and before suspending append-only triggers; unknown / blank / active runs
+  fail closed with triggers restored.
+- Reuses the existing atomic run-scoped deletion transaction (no direct SQLite
+  deletes from Python).
+- `_native.delete_terminal_run_json` bridge + focused Python binding tests.
+
 ## 0.7.6
 
 **Subprocess `inherit_env` receives host process environment via Python host (#108).**

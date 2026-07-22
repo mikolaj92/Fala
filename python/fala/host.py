@@ -1,8 +1,9 @@
 """Thin in-process Fala host API.
 
 - **Memory path:** ``host_drive`` / ``open_memory`` (no sqlite.fire required).
-- **Durable path:** ``open_sqlite`` / ``host_run_package`` (optional SQLite journal
-  sink via sqlite.fire; auto-builds the native library on first use — #106).
+- **Durable path:** ``open_sqlite`` / ``host_run_package`` / ``delete_terminal_run``
+  (optional SQLite journal sink via sqlite.fire; auto-builds the native library
+  on first use — #106 / #108).
 
 Heavy multi-organ CLI / bridge / projections stay on the Mojo CLI surface.
 """
@@ -247,3 +248,49 @@ def host_run_package(
         return out
 
     return _with_sqlite_cwd(_call)
+
+
+def delete_terminal_run(db_path: str | Path, run_id: str) -> dict[str, Any]:
+    """Delete one terminal durable run via the Mojo store transaction.
+
+    Allowed statuses: ``completed``, ``failed``, ``cancelled``, ``timed_out``.
+    Blank / unknown / non-terminal runs raise ``ValueError`` or ``RuntimeError``
+    without durable writes; append-only triggers stay restored on failure.
+
+    Returns deterministic table counts including ``run_id`` and ``total``.
+    """
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise ValueError("fala.delete_terminal_run: run_id must not be blank")
+
+    db = Path(db_path).expanduser().resolve()
+    if not db.is_file():
+        raise FileNotFoundError(f"fala.delete_terminal_run: database not found: {db}")
+
+    ensure_sqlite_fire_library()
+    native = ensure_native()
+    request = {"db_path": str(db), "run_id": rid}
+
+    def _call() -> dict[str, Any]:
+        try:
+            raw = native.delete_terminal_run_json(json.dumps(request))
+        except Exception as exc:  # Mojo raises Error → Python exception
+            message = str(exc)
+            if "run_id must not be empty" in message:
+                raise ValueError("fala.delete_terminal_run: run_id must not be blank") from exc
+            if "unknown run" in message:
+                raise ValueError(f"fala.delete_terminal_run: unknown run: {rid}") from exc
+            if "not terminal" in message:
+                raise ValueError(
+                    f"fala.delete_terminal_run: run is not terminal: {rid}"
+                ) from exc
+            raise RuntimeError(f"fala.delete_terminal_run failed: {message}") from exc
+        if not isinstance(raw, str):
+            raw = str(raw)
+        out = json.loads(raw)
+        if not isinstance(out, dict) or not out.get("ok"):
+            raise RuntimeError(f"fala.delete_terminal_run failed: {raw!r}")
+        return out
+
+    return _with_sqlite_cwd(_call)
+

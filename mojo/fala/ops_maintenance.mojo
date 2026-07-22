@@ -193,13 +193,19 @@ def _contains_string(values: List[String], wanted: String) -> Bool:
             return True
     return False
 
-def delete_run(mut store: NativeDomainStore, run_id: String) raises SQLiteError -> RunDeleteCounts:
+def delete_run(
+    mut store: NativeDomainStore,
+    run_id: String,
+    terminal_only: Bool = False,
+) raises SQLiteError -> RunDeleteCounts:
     """Delete one run and every run-scoped row atomically.
 
     Append-only journal triggers are suspended only inside this transaction
     and recreated before commit. Unknown runs are rejected without writes.
-    Deletion order follows foreign-key dependencies and count fields follow
-    the schema table names for deterministic retention reporting.
+    When ``terminal_only`` is true, non-terminal statuses are rejected after
+    BEGIN IMMEDIATE and before trigger suspension. Deletion order follows
+    foreign-key dependencies and count fields follow the schema table names
+    for deterministic retention reporting.
     """
     var counts = RunDeleteCounts(run_id)
     store.db.begin_immediate()
@@ -207,7 +213,18 @@ def delete_run(mut store: NativeDomainStore, run_id: String) raises SQLiteError 
         # Lock the database before inspecting the run or suspending the
         # append-only triggers.  SQLite rolls back trigger DDL together
         # with the row deletes, so every failure restores both triggers.
-        store._require_run(run_id)
+        if run_id == "":
+            raise SQLiteError(code=1, message="domain store: run_id must not be empty")
+        var run = store.db.query("SELECT status FROM runs WHERE id=?")
+        run.bind_text(1, run_id)
+        if not run.step():
+            run.close()
+            raise SQLiteError(code=1, message="domain store: unknown run")
+        var status = store._text(run, 0)
+        run.close()
+        if terminal_only and not _contains_string(_default_retention_statuses(), status):
+            raise SQLiteError(code=1, message="domain store: run is not terminal")
+
         store.db.execute("DROP TRIGGER IF EXISTS runtime_events_no_delete")
         store.db.execute("DROP TRIGGER IF EXISTS runtime_commands_no_delete")
 
@@ -245,8 +262,23 @@ def delete_run(mut store: NativeDomainStore, run_id: String) raises SQLiteError 
         # Rollback includes the trigger drops, retaining the append-only
         # guards when a run is unknown or any delete fails.
         store.db.rollback()
+        # Preserve specific validation diagnostics for host callers.
+        var detail = String(err)
+        if detail.find("run_id must not be empty") >= 0:
+            raise SQLiteError(code=1, message="domain store: run_id must not be empty")
+        if detail.find("unknown run") >= 0:
+            raise SQLiteError(code=1, message="domain store: unknown run")
+        if detail.find("not terminal") >= 0:
+            raise SQLiteError(code=1, message="domain store: run is not terminal")
         raise SQLiteError(code=1, message="domain store: delete_run failed")
     return counts^
+
+
+def delete_terminal_run(mut store: NativeDomainStore, run_id: String) raises SQLiteError -> RunDeleteCounts:
+    """Delete one terminal run after BEGIN IMMEDIATE status validation."""
+    return delete_run(store, run_id, terminal_only=True)
+
+
 
 def run_retention(
     mut store: NativeDomainStore,

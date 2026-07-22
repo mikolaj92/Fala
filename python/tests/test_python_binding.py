@@ -181,3 +181,187 @@ root = "{rx}"
         or '"marker": "<redacted>"' in out_blob
     ), out_blob
     assert "path_prefix" in out_blob
+
+
+def _ensure_schema(db_path) -> None:
+    """Open journal probe then initialize full schema-v6 via native store."""
+    import json
+    from pathlib import Path
+
+    import fala
+    from fala._build import ensure_native, ensure_sqlite_fire_library
+    from fala.host import _with_sqlite_cwd
+
+    db = Path(db_path)
+    fala.open_sqlite(db)
+    ensure_sqlite_fire_library()
+    native = ensure_native()
+
+    def _call() -> None:
+        try:
+            native.delete_terminal_run_json(
+                json.dumps({"db_path": str(db.resolve()), "run_id": "__schema_probe__"})
+            )
+        except Exception as exc:
+            # Expected: unknown run after initialize creates tables.
+            if "unknown run" not in str(exc):
+                raise
+
+    _with_sqlite_cwd(_call)
+
+
+def _seed_run(db_path, run_id: str, status: str, *, with_rows: bool = True) -> None:
+    import sqlite3
+    from pathlib import Path
+
+    path = Path(db_path)
+    _ensure_schema(path)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        now = "2026-01-01T00:00:00Z"
+        conn.execute(
+            "INSERT INTO runs (id,status,metadata,created_at,updated_at,schema_version) "
+            "VALUES (?, ?, '{}', ?, ?, 6)",
+            (run_id, status, now, now),
+        )
+        if with_rows:
+            conn.execute(
+                "INSERT INTO impulses (id,run_id,impulse_type,payload,metadata,created_at,updated_at) "
+                "VALUES (?, ?, 'case', '{}', '{}', ?, ?)",
+                (f"{run_id}:imp", run_id, now, now),
+            )
+            conn.execute(
+                "INSERT INTO runtime_commands "
+                "(run_id,id,command_type,idempotency_key,actor,correlation_id,causation_id,payload,created_at) "
+                "VALUES (?, ?, 'seed', ?, '', '', '', '{}', ?)",
+                (run_id, f"{run_id}:cmd", f"{run_id}:key", now),
+            )
+            conn.execute(
+                "INSERT INTO runtime_events "
+                "(run_id,id,sequence,event_type,schema_version,payload,created_at) "
+                "VALUES (?, ?, 1, 'seeded', 1, '{}', ?)",
+                (run_id, f"{run_id}:evt", now),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _trigger_names(db_path) -> set[str]:
+    import sqlite3
+    from pathlib import Path
+
+    conn = sqlite3.connect(Path(db_path))
+    try:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"
+        ).fetchall()
+        return {row[0] for row in rows}
+    finally:
+        conn.close()
+
+
+def _count_run_rows(db_path, run_id: str) -> dict[str, int]:
+    import sqlite3
+    from pathlib import Path
+
+    conn = sqlite3.connect(Path(db_path))
+    try:
+        tables = (
+            "bridge_inbox",
+            "bridge_outbox",
+            "projections",
+            "homeostats",
+            "processes",
+            "reactions",
+            "associations",
+            "impulse_relations",
+            "impulse_types",
+            "impulses",
+            "runtime_events",
+            "runtime_commands",
+        )
+        counts: dict[str, int] = {}
+        for table in tables:
+            counts[table] = conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE run_id=?", (run_id,)
+            ).fetchone()[0]
+        counts["runs"] = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE id=?", (run_id,)
+        ).fetchone()[0]
+        return counts
+    finally:
+        conn.close()
+
+
+def test_delete_terminal_run_completed(tmp_path) -> None:
+    import fala
+
+    db = tmp_path / "terminal.sqlite"
+    _seed_run(db, "done-run", "completed")
+
+    result = fala.delete_terminal_run(db, "done-run")
+    assert result["ok"] is True
+    assert result["run_id"] == "done-run"
+    assert result["runs"] == 1
+    assert result["impulses"] == 1
+    assert result["runtime_events"] == 1
+    assert result["runtime_commands"] == 1
+    assert result["total"] == (
+        result["bridge_inbox"]
+        + result["bridge_outbox"]
+        + result["projections"]
+        + result["homeostats"]
+        + result["processes"]
+        + result["reactions"]
+        + result["associations"]
+        + result["impulse_relations"]
+        + result["impulse_types"]
+        + result["impulses"]
+        + result["runtime_events"]
+        + result["runtime_commands"]
+        + result["runs"]
+    )
+    assert result["total"] >= 4
+    assert _count_run_rows(db, "done-run")["runs"] == 0
+    triggers = _trigger_names(db)
+    assert "runtime_events_no_delete" in triggers
+    assert "runtime_commands_no_delete" in triggers
+
+
+def test_delete_terminal_run_rejects_active_without_writes(tmp_path) -> None:
+    import fala
+    import pytest
+
+    db = tmp_path / "active.sqlite"
+    _seed_run(db, "active-run", "active")
+    before = _count_run_rows(db, "active-run")
+    triggers_before = _trigger_names(db)
+
+    with pytest.raises(ValueError, match="not terminal"):
+        fala.delete_terminal_run(db, "active-run")
+
+    assert _count_run_rows(db, "active-run") == before
+    assert _trigger_names(db) == triggers_before
+    assert "runtime_events_no_delete" in triggers_before
+    assert "runtime_commands_no_delete" in triggers_before
+
+
+def test_delete_terminal_run_rejects_unknown(tmp_path) -> None:
+    import fala
+    import pytest
+
+    db = tmp_path / "unknown.sqlite"
+    _ensure_schema(db)
+    triggers_before = _trigger_names(db)
+    assert "runtime_events_no_delete" in triggers_before
+    assert "runtime_commands_no_delete" in triggers_before
+
+    with pytest.raises(ValueError, match="unknown run"):
+        fala.delete_terminal_run(db, "missing-run")
+
+    assert _trigger_names(db) == triggers_before
+
+    with pytest.raises(ValueError, match="blank"):
+        fala.delete_terminal_run(db, "   ")
