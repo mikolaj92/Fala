@@ -7,7 +7,7 @@ from std.collections import List
 from std.pathlib import Path, cwd
 from std.os import makedirs, remove
 from .json import canonical_json_text
-from .native_process_host import ProcessHost, start as start_native_process
+from .native_process_host import ProcessHost, host_getenv, start as start_native_process
 from .reactions import sha256_bytes
 
 struct AdapterKind(Copyable, Movable):
@@ -537,7 +537,9 @@ def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, Str
             return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
     else:
         try:
-            root = (cwd() / Path(".fala-effector-" + sha256_bytes(request.process_id + ":" + request.impulse_id))).__fspath__()
+            var effector_root = host_getenv("FALA_EFFECTOR_ROOT")
+            var base = Path(effector_root.value) if effector_root.present == 1 and effector_root.value != "" else cwd()
+            root = (base / Path(".fala-effector-" + sha256_bytes(request.process_id + ":" + request.impulse_id))).__fspath__()
         except err:
             return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
     var boundary = SubprocessBoundary(request.adapter.command, root)

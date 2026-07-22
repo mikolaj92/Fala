@@ -898,7 +898,7 @@ def drive_once(
         impulse_id=claimed.impulse_id,
         input_json=_request_input_json(claimed.input_json),
         config_json=_effective_config_json(claimed.input_json, claimed.metadata),
-        work_dir=adapter.cwd,
+        work_dir="",
     )
     var result = _dispatch(request, registry)
     if result.waiting:
