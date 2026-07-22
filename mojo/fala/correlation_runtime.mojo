@@ -21,6 +21,7 @@ from fala.native_driver import (
     RunUntilIdleResult,
     drive_correlation_until_idle,
     finalize_run,
+    load_adapter_bindings,
     persist_adapter_binding,
 )
 from fala.sqlite import SQLiteError
@@ -191,10 +192,19 @@ def run_correlation_path(
     _ = persist_correlation_plan(journal, plan, created_at)
     var processes = List[ProcessRow]()
     var adapters = List[AdapterSpec]()
+    var persisted_bindings = List[AdapterBinding]()
+    if has_existing:
+        persisted_bindings = load_adapter_bindings(journal, run_id)
+        if len(persisted_bindings) != len(plan.processes):
+            raise SQLiteError(code=1, message="correlation runtime: persisted adapter bindings are incomplete")
     for item in plan.processes:
         var binding_index = _binding_index(bindings, run_id, item.id)
         var binding = bindings[binding_index].copy()
-        persist_adapter_binding(journal, binding, now)
+        if has_existing:
+            binding_index = _binding_index(persisted_bindings, run_id, item.id)
+            binding = persisted_bindings[binding_index].copy()
+        else:
+            persist_adapter_binding(journal, binding, now)
         var process = journal.get_process(run_id, item.id)
         processes.append(process^)
         adapters.append(binding.adapter.copy())
