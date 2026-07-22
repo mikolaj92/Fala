@@ -476,49 +476,64 @@ def _binding_from_metadata(metadata: String, process_id: String, run_id: String)
         raise SQLiteError(code=1, message="driver: invalid adapter binding metadata")
 
 
-def persist_adapter_binding(mut journal: NativeJournal, binding: AdapterBinding, at: String) raises SQLiteError:
-    """Persist one explicit mapping inside the durable process metadata envelope.
-
-    Replays of the same mapping are idempotent; a different mapping for the
-    same durable process is a conflict and is never silently overwritten.
-    """
-    if binding.run_id == "" or binding.process_id == "" or at == "":
-        raise SQLiteError(code=2, message="driver: binding run_id, process_id, and timestamp must not be empty")
-    var validation = binding.adapter.validate()
-    if not validation.is_ok(): raise SQLiteError(code=2, message=validation.message)
-    var encoded = ""
-    try:
-        encoded = adapter_spec_json(binding.adapter)
-    except err:
-        raise SQLiteError(code=2, message="driver: encode adapter binding failed")
-    var row = journal.get_process(binding.run_id, binding.process_id)
-    var marker_state = _binding_metadata_state(row.metadata)
-    if marker_state < 0:
-        raise SQLiteError(code=1, message="driver: existing adapter binding metadata is invalid")
-    var has_existing = marker_state > 0
-    var existing_encoded = ""
-    if has_existing:
+def persist_adapter_bindings(mut journal: NativeJournal, bindings: List[AdapterBinding], at: String) raises SQLiteError:
+    """Atomically persist a complete explicit adapter-binding set."""
+    if len(bindings) == 0 or at == "":
+        raise SQLiteError(code=2, message="driver: bindings and timestamp must not be empty")
+    var encoded = List[String]()
+    for binding in bindings:
+        if binding.run_id == "" or binding.process_id == "":
+            raise SQLiteError(code=2, message="driver: binding run_id and process_id must not be empty")
+        var validation = binding.adapter.validate()
+        if not validation.is_ok():
+            raise SQLiteError(code=2, message=validation.message)
         try:
-            var parsed = Value(parse_string=row.metadata)
-            existing_encoded = adapter_spec_json(adapter_spec_from_json(to_string(parsed.object()["__adapter_binding"].copy())))
+            encoded.append(adapter_spec_json(binding.adapter))
         except err:
-            raise SQLiteError(code=1, message="driver: existing adapter binding metadata is invalid")
-        if existing_encoded != encoded:
-            raise SQLiteError(code=1, message="driver: adapter binding conflict for process")
-        return
+            raise SQLiteError(code=2, message="driver: encode adapter binding failed")
+    journal.db.begin_immediate()
     try:
-        var metadata = _metadata_with_binding(row.metadata, encoded)
-        journal.db.begin()
-        var stmt = journal.db.query("UPDATE processes SET metadata=?,updated_at=? WHERE run_id=? AND id=?")
-        stmt.bind_text(1, metadata); stmt.bind_text(2, at); stmt.bind_text(3, binding.run_id); stmt.bind_text(4, binding.process_id)
-        _ = stmt.step()
-        if journal.db.changes() != 1:
-            journal.db.rollback()
-            raise SQLiteError(code=1, message="driver: process not found for adapter binding")
+        for index in range(len(bindings)):
+            var binding = bindings[index].copy()
+            var row = journal.get_process(binding.run_id, binding.process_id)
+            var marker_state = _binding_metadata_state(row.metadata)
+            if marker_state < 0:
+                raise SQLiteError(code=1, message="driver: existing adapter binding metadata is invalid")
+            if marker_state > 0:
+                var existing_binding = _binding_from_metadata(row.metadata, binding.process_id, binding.run_id)
+                var existing_encoded = ""
+                try:
+                    existing_encoded = adapter_spec_json(existing_binding.adapter)
+                except err:
+                    raise SQLiteError(code=1, message="driver: existing adapter binding metadata is invalid")
+                if existing_encoded != encoded[index]:
+                    raise SQLiteError(code=1, message="driver: adapter binding conflict for process")
+                continue
+            var metadata = ""
+            try:
+                metadata = _metadata_with_binding(row.metadata, encoded[index])
+            except err:
+                raise SQLiteError(code=1, message="driver: process metadata is invalid")
+            var stmt = journal.db.query("UPDATE processes SET metadata=?,updated_at=? WHERE run_id=? AND id=?")
+            stmt.bind_text(1, metadata)
+            stmt.bind_text(2, at)
+            stmt.bind_text(3, binding.run_id)
+            stmt.bind_text(4, binding.process_id)
+            _ = stmt.step()
+            stmt.close()
+            if journal.db.changes() != 1:
+                raise SQLiteError(code=1, message="driver: process not found for adapter binding")
         journal.db.commit()
     except err:
         journal.db.rollback()
-        raise SQLiteError(code=1, message="driver: persist adapter binding failed")
+        raise SQLiteError(code=1, message="driver: persist adapter bindings failed: " + String(err))
+
+
+def persist_adapter_binding(mut journal: NativeJournal, binding: AdapterBinding, at: String) raises SQLiteError:
+    """Persist one explicit mapping through the atomic batch boundary."""
+    var bindings = List[AdapterBinding]()
+    bindings.append(binding.copy())
+    persist_adapter_bindings(journal, bindings^, at)
 
 
 def _binding_metadata_state(metadata: String) -> Int:

@@ -4,6 +4,17 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.9
+
+**First host drive accepts a durably staged correlation plan (#112).**
+
+- `run_correlation_path` now distinguishes a staged, never-driven plan with no
+  adapter bindings from a damaged replay and atomically persists its complete
+  binding set before execution.
+- Partial binding sets and missing bindings after execution evidence remain
+  fail-closed; complete persisted bindings stay authoritative across restart.
+
+
 ## 0.7.7
 
 **Safe terminal-run deletion for Python hosts (#108).**

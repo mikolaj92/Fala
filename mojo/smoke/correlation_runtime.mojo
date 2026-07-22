@@ -9,7 +9,9 @@ from fala import (
     NativeFunctionRegistry,
     NativeJournal,
     instantiate_correlation_path,
+    load_adapter_bindings,
     persist_adapter_binding,
+    persist_adapter_bindings,
     persist_correlation_plan,
     run_correlation_path,
 )
@@ -119,6 +121,98 @@ def main() raises:
     _check(first.drive_result.ticks == 2 and first.drive_result.stopped_reason == "idle", "bounded native DAG drained")
     var first_rows = journal.list_processes("runtime-run")
     _check(len(first_rows) == 2 and first_rows[0].status == "succeeded" and first_rows[1].status == "succeeded", "both process rows succeeded")
+    # A producer may durably create the run and plan before the native host's
+    # first drive. Zero bindings means the host has not bound the plan yet.
+    var first_host_plan = instantiate_correlation_path(correlation_path, "first-host-run")
+    var first_host_bindings = _bindings("first-host-run", first_host_plan.correlation_path_id)
+    _ = journal.create_run("first-host-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _ = persist_correlation_plan(journal, first_host_plan, "2026-01-01T00:00:00Z")
+    var first_host_drive = run_correlation_path(
+        journal,
+        "first-host-run",
+        first_host_plan,
+        first_host_bindings,
+        registry,
+        "2026-01-01T00:00:00Z",
+        "runtime-worker",
+        "2026-01-01T00:00:01Z",
+        "2026-01-01T00:01:00Z",
+        4,
+    )
+    _check(first_host_drive.run_status == "completed", "first host drive binds an existing unbound plan")
+    # A mid-batch lookup failure must roll back earlier binding writes.
+    var rollback_plan = instantiate_correlation_path(correlation_path, "rollback-run")
+    var rollback_bindings = _bindings("rollback-run", rollback_plan.correlation_path_id)
+    _ = journal.create_run("rollback-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _ = persist_correlation_plan(journal, rollback_plan, "2026-01-01T00:00:00Z")
+    rollback_bindings[1].process_id = "missing-process"
+    var rollback_rejected = False
+    try:
+        persist_adapter_bindings(journal, rollback_bindings, "2026-01-01T00:00:00Z")
+    except err:
+        rollback_rejected = True
+    _check(rollback_rejected, "mid-batch missing process is rejected")
+    var bindings_after_rollback = load_adapter_bindings(journal, "rollback-run")
+    _check(len(bindings_after_rollback) == 0, "mid-batch failure rolls back the first binding")
+    # Any non-zero incomplete binding set proves a partial prior host write and
+    # must remain fail-closed rather than mixing old and current bindings.
+    var partial_plan = instantiate_correlation_path(correlation_path, "partial-binding-run")
+    var partial_bindings = _bindings("partial-binding-run", partial_plan.correlation_path_id)
+    _ = journal.create_run("partial-binding-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _ = persist_correlation_plan(journal, partial_plan, "2026-01-01T00:00:00Z")
+    persist_adapter_binding(journal, partial_bindings[0], "2026-01-01T00:00:00Z")
+    var partial_rejected = False
+    var partial_diagnostic = ""
+    try:
+        var partial_drive = run_correlation_path(
+            journal,
+            "partial-binding-run",
+            partial_plan,
+            partial_bindings,
+            registry,
+            "2026-01-01T00:00:00Z",
+            "runtime-worker",
+            "2026-01-01T00:00:01Z",
+            "2026-01-01T00:01:00Z",
+            4,
+        )
+        _ = partial_drive
+    except err:
+        partial_rejected = True
+        partial_diagnostic = String(err)
+    _check(partial_rejected and partial_diagnostic.find("persisted adapter bindings are incomplete") >= 0, "partial persisted bindings fail closed")
+    # Zero bindings after any execution evidence is corruption, not first drive.
+    var missing_after_start_plan = instantiate_correlation_path(correlation_path, "missing-after-start-run")
+    var missing_after_start_bindings = _bindings("missing-after-start-run", missing_after_start_plan.correlation_path_id)
+    _ = journal.create_run("missing-after-start-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _ = persist_correlation_plan(journal, missing_after_start_plan, "2026-01-01T00:00:00Z")
+    var touched = journal.db.query("UPDATE processes SET attempt=1,started_at=?,updated_at=? WHERE run_id=? AND id=?")
+    touched.bind_text(1, "2026-01-01T00:00:01Z")
+    touched.bind_text(2, "2026-01-01T00:00:01Z")
+    touched.bind_text(3, "missing-after-start-run")
+    touched.bind_text(4, missing_after_start_plan.correlation_path_id + ":root")
+    _ = touched.step()
+    touched.close()
+    var missing_after_start_rejected = False
+    var missing_after_start_diagnostic = ""
+    try:
+        var missing_after_start_drive = run_correlation_path(
+            journal,
+            "missing-after-start-run",
+            missing_after_start_plan,
+            missing_after_start_bindings,
+            registry,
+            "2026-01-01T00:00:00Z",
+            "runtime-worker",
+            "2026-01-01T00:00:02Z",
+            "2026-01-01T00:01:00Z",
+            4,
+        )
+        _ = missing_after_start_drive
+    except err:
+        missing_after_start_rejected = True
+        missing_after_start_diagnostic = String(err)
+    _check(missing_after_start_rejected and missing_after_start_diagnostic.find("missing persisted adapter bindings after execution started") >= 0, "zero bindings after execution evidence fail closed")
     # Persist a non-terminal run before simulating a host restart.
     var resume_plan = instantiate_correlation_path(correlation_path, "resume-run")
     var persisted_resume_bindings = _bindings("resume-run", resume_plan.correlation_path_id)
