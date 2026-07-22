@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -985,7 +986,7 @@ class Correlator:
         return connection
 
     def _init_schema(self) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
@@ -1006,14 +1007,14 @@ class Correlator:
                     started_at TEXT,
                     finished_at TEXT
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS schema_migrations (
                     id TEXT PRIMARY KEY,
                     version INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     applied_at TEXT NOT NULL
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS impulses (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1024,7 +1025,7 @@ class Correlator:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, id)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS impulse_types (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1037,7 +1038,7 @@ class Correlator:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, id)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS impulse_relations (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1052,7 +1053,7 @@ class Correlator:
                     FOREIGN KEY (run_id, target_impulse_id)
                         REFERENCES impulses (run_id, id)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS runtime_commands (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1066,7 +1067,7 @@ class Correlator:
                     PRIMARY KEY (run_id, id),
                     UNIQUE (run_id, idempotency_key)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS runtime_events (
                     run_id TEXT NOT NULL,
                     sequence INTEGER NOT NULL,
@@ -1086,7 +1087,7 @@ class Correlator:
                     FOREIGN KEY (run_id, command_id)
                         REFERENCES runtime_commands (run_id, id)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS associations (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1097,7 +1098,7 @@ class Correlator:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, id)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS reactions (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1113,7 +1114,7 @@ class Correlator:
                     FOREIGN KEY (run_id, impulse_id)
                         REFERENCES impulses (run_id, id)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS processes (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1139,7 +1140,7 @@ class Correlator:
                     FOREIGN KEY (run_id, impulse_id)
                         REFERENCES impulses (run_id, id)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS homeostats (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1152,7 +1153,7 @@ class Correlator:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, id)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS projections (
                     run_id TEXT NOT NULL,
                     name TEXT NOT NULL,
@@ -1163,7 +1164,7 @@ class Correlator:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, name)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS bridge_outbox (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1182,7 +1183,7 @@ class Correlator:
                     PRIMARY KEY (run_id, id),
                     UNIQUE (run_id, idempotency_key)
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS bridge_inbox (
                     run_id TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1201,19 +1202,19 @@ class Correlator:
                     PRIMARY KEY (run_id, id),
                     UNIQUE (run_id, idempotency_key)
                 );
-
+        
                 CREATE INDEX IF NOT EXISTS idx_runtime_events_impulse
                     ON runtime_events (run_id, impulse_id, sequence);
                 CREATE INDEX IF NOT EXISTS idx_runs_status
                     ON runs (status, updated_at);
-
+        
                 CREATE TABLE IF NOT EXISTS runtime_pools (
                     id TEXT PRIMARY KEY,
                     runtimes_json TEXT NOT NULL,
                     impulse_types TEXT NOT NULL,
                     metadata TEXT NOT NULL
                 );
-
+        
                 CREATE TABLE IF NOT EXISTS delegation_policies (
                     id TEXT PRIMARY KEY,
                     pool_id TEXT NOT NULL,
@@ -1223,10 +1224,10 @@ class Correlator:
                     FOREIGN KEY (pool_id)
                         REFERENCES runtime_pools (id)
                 );
-
+        
                 CREATE INDEX IF NOT EXISTS idx_delegation_policies_pool
                     ON delegation_policies (pool_id, id);
-
+        
                 CREATE INDEX IF NOT EXISTS idx_impulse_relations_source
                     ON impulse_relations (run_id, source_impulse_id, relation_type);
                 CREATE INDEX IF NOT EXISTS idx_impulse_relations_target
@@ -1263,19 +1264,19 @@ class Correlator:
                 BEGIN
                     SELECT RAISE(ABORT, 'runtime_events is append-only');
                 END;
-
+        
                 CREATE TRIGGER IF NOT EXISTS runtime_events_no_delete
                 BEFORE DELETE ON runtime_events
                 BEGIN
                     SELECT RAISE(ABORT, 'runtime_events is append-only');
                 END;
-
+        
                 CREATE TRIGGER IF NOT EXISTS runtime_commands_no_update
                 BEFORE UPDATE ON runtime_commands
                 BEGIN
                     SELECT RAISE(ABORT, 'runtime_commands is append-only');
                 END;
-
+        
                 CREATE TRIGGER IF NOT EXISTS runtime_commands_no_delete
                 BEFORE DELETE ON runtime_commands
                 BEGIN
@@ -1355,7 +1356,7 @@ class Correlator:
 
     async def put_run(self, run: Run) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 connection.execute(
                     """
                     INSERT INTO runs (
@@ -1492,7 +1493,7 @@ class Correlator:
                 connection.close()
 
     async def get_run(self, *, run_id: str) -> Run | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM runs WHERE id = ?",
                 (run_id,),
@@ -1517,7 +1518,7 @@ class Correlator:
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(sql, params).fetchall()
         return [_run_from_row(row) for row in rows]
 
@@ -1560,7 +1561,7 @@ class Correlator:
     async def vacuum(self) -> dict[str, Any]:
         before_size = self.path.stat().st_size if self.path.exists() else 0
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 before_pages = int(connection.execute("PRAGMA page_count").fetchone()[0])
                 before_free = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
                 connection.execute("VACUUM")
@@ -1580,7 +1581,7 @@ class Correlator:
 
     async def put_runtime_pool(self, pool: RuntimePool) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 connection.execute(
                     """
                     INSERT INTO runtime_pools (
@@ -1596,7 +1597,7 @@ class Correlator:
                 connection.commit()
 
     async def get_runtime_pool(self, *, pool_id: str) -> RuntimePool | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM runtime_pools WHERE id = ?",
                 (pool_id,),
@@ -1604,7 +1605,7 @@ class Correlator:
         return _runtime_pool_from_row(row) if row is not None else None
 
     async def list_runtime_pools(self) -> list[RuntimePool]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM runtime_pools
@@ -1615,7 +1616,7 @@ class Correlator:
 
     async def put_delegation_policy(self, policy: DelegationPolicy) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 connection.execute(
                     """
                     INSERT INTO delegation_policies (
@@ -1636,7 +1637,7 @@ class Correlator:
         *,
         policy_id: str,
     ) -> DelegationPolicy | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM delegation_policies WHERE id = ?",
                 (policy_id,),
@@ -1657,13 +1658,13 @@ class Correlator:
         if clauses:
             sql += f" WHERE {' AND '.join(clauses)}"
         sql += " ORDER BY pool_id ASC, id ASC"
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(sql, params).fetchall()
         return [_delegation_policy_from_row(row) for row in rows]
 
     async def put_impulse_type(self, impulse_type: ImpulseType) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, impulse_type.run_id)
                 connection.execute(
                     """
@@ -1758,7 +1759,7 @@ class Correlator:
         run_id: str,
         impulse_type_id: str,
     ) -> ImpulseType | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM impulse_types WHERE run_id = ? AND id = ?",
                 (run_id, impulse_type_id),
@@ -1766,7 +1767,7 @@ class Correlator:
         return _impulse_type_from_row(row) if row is not None else None
 
     async def list_impulse_types(self, *, run_id: str) -> list[ImpulseType]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM impulse_types
@@ -1779,7 +1780,7 @@ class Correlator:
 
     async def put_impulse(self, impulse: Impulse) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, impulse.run_id)
                 connection.execute(
                     """
@@ -1861,7 +1862,7 @@ class Correlator:
                 connection.close()
 
     async def get_impulse(self, *, run_id: str, impulse_id: str) -> Impulse | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM impulses WHERE run_id = ? AND id = ?",
                 (run_id, impulse_id),
@@ -1888,13 +1889,13 @@ class Correlator:
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(sql, params).fetchall()
         return [_impulse_from_row(row) for row in rows]
 
     async def put_impulse_relation(self, relation: ImpulseRelation) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, relation.run_id)
                 connection.execute(
                     """
@@ -1988,7 +1989,7 @@ class Correlator:
         run_id: str,
         relation_id: str,
     ) -> ImpulseRelation | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM impulse_relations WHERE run_id = ? AND id = ?",
                 (run_id, relation_id),
@@ -2010,7 +2011,7 @@ class Correlator:
         if relation_type is not None:
             clauses.append("relation_type = ?")
             params.append(relation_type)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM impulse_relations
@@ -2066,7 +2067,7 @@ class Correlator:
     async def get_command_by_idempotency(
         self, *, run_id: str, idempotency_key: str
     ) -> RuntimeCommand | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 """
                 SELECT * FROM runtime_commands
@@ -2079,7 +2080,7 @@ class Correlator:
     async def get_command(
         self, *, run_id: str, command_id: str
     ) -> RuntimeCommand | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 """
                 SELECT * FROM runtime_commands
@@ -2113,7 +2114,7 @@ class Correlator:
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(sql, params).fetchall()
         return [_command_from_row(row) for row in rows]
 
@@ -2141,13 +2142,13 @@ class Correlator:
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(sql, params).fetchall()
         return [_event_from_row(row) for row in rows]
 
     async def put_association(self, association: Association) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, association.run_id)
                 connection.execute(
                     """
@@ -2240,7 +2241,7 @@ class Correlator:
         if impulse_id is not None:
             clauses.append("impulse_id = ?")
             params.append(impulse_id)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM associations
@@ -2253,7 +2254,7 @@ class Correlator:
 
     async def put_reaction(self, reaction: Reaction) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, reaction.run_id)
                 connection.execute(
                     """
@@ -2335,7 +2336,7 @@ class Correlator:
                 connection.close()
 
     async def get_reaction(self, *, run_id: str, reaction_id: str) -> Reaction | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM reactions WHERE run_id = ? AND id = ?",
                 (run_id, reaction_id),
@@ -2357,7 +2358,7 @@ class Correlator:
         if kind is not None:
             clauses.append("kind = ?")
             params.append(kind)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM reactions
@@ -2370,7 +2371,7 @@ class Correlator:
 
     async def put_process(self, process: Process) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, process.run_id)
                 connection.execute(
                     """
@@ -2474,7 +2475,7 @@ class Correlator:
                 connection.close()
 
     async def get_process(self, *, run_id: str, process_id: str) -> Process | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM processes WHERE run_id = ? AND id = ?",
                 (run_id, process_id),
@@ -2496,7 +2497,7 @@ class Correlator:
         if impulse_id is not None:
             clauses.append("impulse_id = ?")
             params.append(impulse_id)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM processes
@@ -3385,7 +3386,7 @@ class Correlator:
 
     async def put_homeostat(self, homeostat: Homeostat) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, homeostat.run_id)
                 connection.execute(
                     """
@@ -3473,7 +3474,7 @@ class Correlator:
                 connection.close()
 
     async def get_homeostat(self, *, run_id: str, homeostat_id: str) -> Homeostat | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM homeostats WHERE run_id = ? AND id = ?",
                 (run_id, homeostat_id),
@@ -3697,7 +3698,7 @@ class Correlator:
         if status is not None:
             clauses.append("status = ?")
             params.append(status.value)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM homeostats
@@ -3710,7 +3711,7 @@ class Correlator:
 
     async def put_projection(self, projection: Projection) -> None:
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, projection.run_id)
                 _upsert_projection_row(connection, projection)
                 connection.commit()
@@ -3763,7 +3764,7 @@ class Correlator:
                 connection.close()
 
     async def get_projection(self, *, run_id: str, name: str) -> Projection | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT * FROM projections WHERE run_id = ? AND name = ?",
                 (run_id, name),
@@ -3771,7 +3772,7 @@ class Correlator:
         return _projection_from_row(row) if row is not None else None
 
     async def list_projections(self, *, run_id: str) -> list[Projection]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM projections
@@ -3799,7 +3800,7 @@ class Correlator:
 
         rebuilt: list[Projection] = []
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, run_id)
                 for name in requested:
                     projection = _build_run_summary_projection(connection, run_id)
@@ -4009,7 +4010,7 @@ class Correlator:
     ) -> None:
         _require_bridge_table(table)
         async with self._lock:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 _require_run_row(connection, delivery.run_id)
                 _upsert_bridge_delivery_row(connection, table, delivery)
                 connection.commit()
@@ -4101,7 +4102,7 @@ class Correlator:
         delivery_id: str,
     ) -> BridgeDelivery | None:
         _require_bridge_table(table)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 f"SELECT * FROM {table} WHERE run_id = ? AND id = ?",
                 (run_id, delivery_id),
@@ -4121,7 +4122,7 @@ class Correlator:
         if status is not None:
             clauses.append("status = ?")
             params.append(status.value)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             rows = connection.execute(
                 f"""
                 SELECT * FROM {table}
