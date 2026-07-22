@@ -9,6 +9,8 @@ from fala import (
     NativeFunctionRegistry,
     NativeJournal,
     instantiate_correlation_path,
+    persist_adapter_binding,
+    persist_correlation_plan,
     run_correlation_path,
 )
 
@@ -117,10 +119,35 @@ def main() raises:
     _check(first.drive_result.ticks == 2 and first.drive_result.stopped_reason == "idle", "bounded native DAG drained")
     var first_rows = journal.list_processes("runtime-run")
     _check(len(first_rows) == 2 and first_rows[0].status == "succeeded" and first_rows[1].status == "succeeded", "both process rows succeeded")
+    # Persist a non-terminal run before simulating a host restart.
+    var resume_plan = instantiate_correlation_path(correlation_path, "resume-run")
+    var persisted_resume_bindings = _bindings("resume-run", resume_plan.correlation_path_id)
+    _ = journal.create_run("resume-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _ = persist_correlation_plan(journal, resume_plan, "2026-01-01T00:00:00Z")
+    for binding in persisted_resume_bindings:
+        persist_adapter_binding(journal, binding, "2026-01-01T00:00:00Z")
     journal.close()
 
     var reopened = NativeJournal.open(path)
     reopened.initialize()
+    # Replay uses the durable adapter contract even when the restarted host
+    # resolves different current adapter settings.
+    var changed_resume_bindings = List[AdapterBinding]()
+    changed_resume_bindings.append(AdapterBinding(resume_plan.correlation_path_id + ":root", AdapterSpec.native_function("native.changed"), "resume-run"))
+    changed_resume_bindings.append(AdapterBinding(resume_plan.correlation_path_id + ":leaf", AdapterSpec.native_function("native.changed"), "resume-run"))
+    var resumed = run_correlation_path(
+        reopened,
+        "resume-run",
+        resume_plan,
+        changed_resume_bindings,
+        registry,
+        "2026-01-01T00:00:00Z",
+        "restarted-worker",
+        "2026-01-01T00:00:02Z",
+        "2026-01-01T00:01:00Z",
+        4,
+    )
+    _check(resumed.run_status == "completed" and resumed.drive_result.ticks == 2, "non-terminal replay drives persisted bindings")
     var replay = run_correlation_path(
         reopened,
         "runtime-run",
