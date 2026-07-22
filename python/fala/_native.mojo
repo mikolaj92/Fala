@@ -1,9 +1,10 @@
-"""Python extension: thin in-process Fala *host* surface (memory path).
+"""Python extension: thin in-process Fala *host* surface.
 
-Not a full runtime re-export. One JSON helper runs create_run → impulse →
-instantiate path → drive_until_idle (same shape as core memory e2e).
+Not a full runtime re-export. JSON helpers cover:
+- memory path: create_run → impulse → instantiate path → drive_until_idle
+- durable path: open_sqlite probe, package drive, terminal-run deletion
 
-SQLite / CLI / ops packs stay outside this binding.
+Heavy multi-organ CLI / bridge / projections stay on the Mojo CLI surface.
 """
 
 from std.collections import Dict, List
@@ -30,6 +31,9 @@ from fala.json import parse_json
 from fala.memory_driver import MemoryDriver
 from fala.native_driver import AdapterBinding
 from fala.package import load_package_json, load_package_toml
+from fala.domain_store import NativeDomainStore
+from fala.ops_maintenance import RunDeleteCounts, delete_terminal_run
+
 
 
 def _obj_string(obj: Value, key: String, default: String = "") raises -> String:
@@ -383,6 +387,102 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     return PythonObject(out)
 
 
+def _quote_json(value: String) -> String:
+    var result = "\""
+    for i in range(value.byte_length()):
+        var ch = value[byte=i]
+        if ch == "\"":
+            result += "\\\""
+        elif ch == "\\":
+            result += "\\\\"
+        elif ch == "\n":
+            result += "\\n"
+        elif ch == "\r":
+            result += "\\r"
+        elif ch == "\t":
+            result += "\\t"
+        else:
+            result += String(ch)
+    result += "\""
+    return result
+
+
+def _delete_counts_json(run_id: String, counts: RunDeleteCounts) -> String:
+    return (
+        "{\"ok\":true"
+        + ",\"run_id\":"
+        + _quote_json(run_id)
+        + ",\"bridge_inbox\":"
+        + String(counts.bridge_inbox)
+        + ",\"bridge_outbox\":"
+        + String(counts.bridge_outbox)
+        + ",\"projections\":"
+        + String(counts.projections)
+        + ",\"homeostats\":"
+        + String(counts.homeostats)
+        + ",\"processes\":"
+        + String(counts.processes)
+        + ",\"reactions\":"
+        + String(counts.reactions)
+        + ",\"associations\":"
+        + String(counts.associations)
+        + ",\"impulse_relations\":"
+        + String(counts.impulse_relations)
+        + ",\"impulse_types\":"
+        + String(counts.impulse_types)
+        + ",\"impulses\":"
+        + String(counts.impulses)
+        + ",\"runtime_events\":"
+        + String(counts.runtime_events)
+        + ",\"runtime_commands\":"
+        + String(counts.runtime_commands)
+        + ",\"runs\":"
+        + String(counts.runs)
+        + ",\"total\":"
+        + String(counts.total())
+        + "}"
+    )
+
+
+def delete_terminal_run_json(request: PythonObject) raises -> PythonObject:
+    """Delete one terminal durable run via NativeDomainStore transaction.
+
+    Request JSON::
+      {"db_path": "/abs/path.sqlite", "run_id": "run-1"}
+
+    Rejects blank run IDs, unknown runs, and non-terminal statuses. Status
+    check and deletion share one BEGIN IMMEDIATE transaction.
+    """
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.delete_terminal_run_json: root must be object")
+
+    var db_path = _obj_string(root, "db_path")
+    var run_id = _obj_string(root, "run_id")
+    if db_path == "":
+        raise Error("fala.delete_terminal_run_json: db_path required")
+    if run_id == "":
+        raise Error("domain store: run_id must not be empty")
+
+    var store = NativeDomainStore.open(db_path)
+    var out = String("")
+    try:
+        store.initialize()
+        var counts = delete_terminal_run(store, run_id)
+        out = _delete_counts_json(run_id, counts)
+        store.close()
+    except err:
+        try:
+            store.close()
+        except close_err:
+            pass
+        # Surface storage diagnostics as Error for the Python host.
+        raise Error(String(err))
+    return PythonObject(out)
+
+
 @export
 def PyInit__native() abi("C") -> PythonObject:
     try:
@@ -390,6 +490,7 @@ def PyInit__native() abi("C") -> PythonObject:
         m.def_function[host_drive_json]("host_drive_json")
         m.def_function[open_sqlite_journal]("open_sqlite_journal")
         m.def_function[host_run_package_json]("host_run_package_json")
+        m.def_function[delete_terminal_run_json]("delete_terminal_run_json")
         return m.finalize()
     except e:
         abort(String("fala._native init failed: ", e))

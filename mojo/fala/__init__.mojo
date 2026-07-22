@@ -106,7 +106,7 @@ from .domain_store import NativeDomainStore, ImpulseAcceptanceResult, HomeostatT
 # Ops layers (optional — not Essential Fala merge-gate):
 from .ops_maintenance import (
     RunDeleteCounts, RunRetentionPlan, ReactionGarbageCollectionPlan, JournalMaintenancePlan,
-    delete_run, run_retention, maintain_journal, collect_reaction_garbage,
+    delete_run, delete_terminal_run, run_retention, maintain_journal, collect_reaction_garbage,
 )
 from .ops_bridge import (
     BridgeEnqueueResult, enqueue_bridge_delivery, import_bridge_delivery, import_inbox_delivery,
