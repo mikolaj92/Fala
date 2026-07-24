@@ -171,16 +171,81 @@ root = "{rx}"
     ).fetchone()
     assert row is not None
     assert row[0] == "succeeded", row
-    # Child env values are redacted in process output_json when they appear in
-    # the payload; a redacted marker proves the host env key was inherited.
+    # Structured output_json must keep control values intact (#120). Inheritance
+    # is proven by the unredacted marker from the host env, not by redaction.
     out_blob = row[2] or "{}"
     assert '"marker"' in out_blob
-    assert (
-        "from-host-ok" in out_blob
-        or '"marker":"<redacted>"' in out_blob
-        or '"marker": "<redacted>"' in out_blob
-    ), out_blob
+    assert "from-host-ok" in out_blob, out_blob
+    assert "<redacted>" not in out_blob, out_blob
     assert "path_prefix" in out_blob
+
+
+def test_host_run_package_preserves_digest_with_env_substring(tmp_path, monkeypatch) -> None:
+    """Env values must not substring-redact digests inside result.json (#120)."""
+    import json
+    import sqlite3
+    import sys
+    from pathlib import Path
+
+    import fala
+
+    # Short ambient value that appears inside the digest below.
+    monkeypatch.setenv("LMPROVIDER_TIMEOUT", "300")
+    digest = "bbdacd10d0c00730099c2965d5689f5a448fbd45966acf82c904dff020ae23a1"
+    work = tmp_path / "digest"
+    work.mkdir()
+    rx = work / "reactions"
+    rx.mkdir()
+    db = work / "f.sqlite"
+    step = work / "step.py"
+    step.write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "out = Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'])\n"
+        f"digest = {digest!r}\n"
+        "payload = {\n"
+        "  'uri': f'fala-reaction://sha256/{digest}',\n"
+        "  'sha256': digest,\n"
+        "}\n"
+        "(out / 'result.json').write_text(json.dumps({'values': payload, 'reactions': [{'kind': 'source_docx', 'uri': payload['uri'], 'metadata': {'sha256': digest}}]}))\n",
+        encoding="utf-8",
+    )
+    pkg = work / "pkg.toml"
+    pkg.write_text(
+        f"""version = "2"
+id = "digest_smoke"
+[[capabilities]]
+id = "step"
+[[correlation_paths]]
+id = "path"
+[[correlation_paths.effectors]]
+id = "step"
+capability = "step"
+adapter = {{ kind = "subprocess", command = ["{sys.executable}", "{step}"], inherit_env = ["LMPROVIDER_TIMEOUT"] }}
+[runtime.backend]
+kind = "sqlite"
+path = "{db}"
+[runtime.reaction_store]
+kind = "filesystem"
+root = "{rx}"
+""",
+        encoding="utf-8",
+    )
+    result = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="path",
+        run_id="digest-smoke",
+        max_ticks=8,
+    )
+    assert result.get("ok") is True, result
+    assert result.get("run_status") == "completed", result
+    out_blob = sqlite3.connect(db).execute(
+        "select output_json from processes"
+    ).fetchone()[0]
+    assert digest in out_blob, out_blob
+    assert f"fala-reaction://sha256/{digest}" in out_blob, out_blob
+    assert "<redacted>" not in out_blob, out_blob
 
 
 def _ensure_schema(db_path) -> None:

@@ -4,6 +4,15 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.12
+
+**Preserve structured subprocess output under env redaction (#120).**
+
+- `execute_subprocess` no longer runs env substring redaction over `result.json`.
+- Redaction remains on stdout/stderr/error detail only, so reaction digests and
+  URIs that collide with ambient env values stay durable and resolvable.
+- Python binding regression covers a sha256 digest containing an env fragment.
+
 ## 0.7.11
 
 **Serialize and atomically publish the Mojo Python extension cache (#119).**

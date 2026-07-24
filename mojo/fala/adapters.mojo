@@ -617,7 +617,10 @@ def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, Str
     try:
         var parsed = Value(parse_string=output_text)
         if not parsed.is_object(): return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_invalid_result("result.json must contain an object"))
-        var output = redact_environment(canonical_json_text(output_text), environment)
+        # Keep structured effector output intact: env substring redaction is for
+        # operator-facing streams only. Redacting result.json corrupts digests/URIs
+        # (e.g. sha256 fragments that collide with short env values) — #120.
+        var output = canonical_json_text(output_text)
         var metadata = "{\"pid\":" + String(pid) + ",\"signal\":" + String(signal) + "}"
         var success_result = EffectorResult(success=True, output_json=output, stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json=metadata, error=AdapterError.none())
         return success_result^
