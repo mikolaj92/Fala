@@ -14,7 +14,11 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from fala._build import ensure_native, ensure_sqlite_fire_library
+from fala._build import (
+    ensure_native,
+    ensure_process_host_library,
+    ensure_sqlite_fire_library,
+)
 
 
 def host_drive(
@@ -191,8 +195,8 @@ def host_run_package(
 ) -> dict[str, Any]:
     """Drive one correlation path from a TOML package on a SQLite journal (Mojo).
 
-    Ensures ``libsqlite_fire`` for the durable journal sink before loading the
-    Mojo host (#106).
+    Ensures both native libraries required by the durable subprocess path before
+    loading the Mojo host.
     """
     from datetime import datetime, timezone
 
@@ -235,6 +239,7 @@ def host_run_package(
     if command_overrides:
         request["command_overrides"] = {k: list(v) for k, v in command_overrides.items()}
 
+    ensure_process_host_library()
     ensure_sqlite_fire_library()
     native = ensure_native()
 

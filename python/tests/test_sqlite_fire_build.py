@@ -1,4 +1,4 @@
-"""Unit tests for sqlite.fire first-use build (#106) — no Mojo required."""
+"""Unit tests for first-use native library builds — no Mojo required."""
 
 from __future__ import annotations
 
@@ -32,6 +32,18 @@ $(SHARED):
     (native / "Makefile").write_text(makefile, encoding="utf-8")
     (native / "sqlite_fire.c").write_text("/* stub */\n", encoding="utf-8")
     (native / "sqlite_fire.h").write_text("/* stub */\n", encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture()
+def fake_process_host_root(tmp_path: Path) -> Path:
+    source_dir = tmp_path / "mojo" / "fala"
+    source_dir.mkdir(parents=True)
+    (tmp_path / "vendor" / "EmberJson").mkdir(parents=True)
+    (source_dir / "native_process_host.c").write_text(
+        "int fala_process_host_stub(void) { return 0; }\n", encoding="utf-8"
+    )
+    (source_dir / "native_process_host.h").write_text("/* stub */\n", encoding="utf-8")
     return tmp_path
 
 
@@ -85,6 +97,49 @@ def test_memory_path_does_not_require_sqlite_fire_env(
     assert _skip_native_build() is True
     monkeypatch.delenv("FALA_SKIP_NATIVE_BUILD", raising=False)
     assert _skip_native_build() is False
+
+
+def test_ensure_process_host_builds_packaged_sibling(
+    fake_process_host_root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from fala._build import ensure_process_host_library, process_host_library_path
+
+    monkeypatch.delenv("FALA_SKIP_NATIVE_BUILD", raising=False)
+    monkeypatch.chdir(tmp_path)
+    lib = ensure_process_host_library(fake_process_host_root)
+    assert lib == process_host_library_path(fake_process_host_root)
+    assert lib.is_file()
+    assert lib.parent == fake_process_host_root / "mojo" / "fala" / "native"
+    assert ensure_process_host_library(fake_process_host_root) == lib
+
+
+def test_ensure_process_host_rebuilds_when_source_is_newer(
+    fake_process_host_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fala._build import ensure_process_host_library
+
+    monkeypatch.delenv("FALA_SKIP_NATIVE_BUILD", raising=False)
+    lib = ensure_process_host_library(fake_process_host_root)
+    before = lib.stat().st_mtime_ns
+    source = fake_process_host_root / "mojo" / "fala" / "native_process_host.c"
+    source.write_text("int fala_process_host_stub(void) { return 1; }\n", encoding="utf-8")
+    source.touch()
+
+    rebuilt = ensure_process_host_library(fake_process_host_root)
+
+    assert rebuilt == lib
+    assert lib.stat().st_mtime_ns > before
+
+
+def test_process_host_source_changes_native_cache_hash(
+    fake_process_host_root: Path,
+) -> None:
+    from fala._build import _source_hash
+
+    before = _source_hash(fake_process_host_root)
+    source = fake_process_host_root / "mojo" / "fala" / "native_process_host.c"
+    source.write_text("int fala_process_host_stub(void) { return 1; }\n", encoding="utf-8")
+    assert _source_hash(fake_process_host_root) != before
 
 
 def test_mojo_env_discovers_repo_pixi_without_caller_env(
