@@ -1,9 +1,8 @@
-"""Compile Mojo ``_native`` and ensure the optional sqlite.fire shared library (#106).
+"""Build the native libraries required by the optional Mojo Python host.
 
-Memory path needs only the Mojo extension. Durable path (``open_sqlite`` /
-``host_run_package``) additionally needs ``libsqlite_fire`` under
-``vendor/sqlite.fire/native`` — hatch force-includes sources; this module builds
-the shared library on first use when it is missing.
+Memory paths need only the Mojo extension. Durable package execution additionally
+needs ``libsqlite_fire`` and the direct-argv process host. Hatch force-includes
+their sources; this module builds missing shared libraries on first use.
 """
 
 from __future__ import annotations
@@ -56,6 +55,24 @@ def sqlite_fire_library_name() -> str:
 
 def sqlite_fire_library_path(root: Path | None = None) -> Path:
     return sqlite_fire_native_dir(root) / sqlite_fire_library_name()
+
+
+def process_host_native_dir(root: Path | None = None) -> Path:
+    return (root or repo_root()) / "mojo" / "fala" / "native"
+
+
+def process_host_library_name() -> str:
+    if sys.platform == "darwin":
+        return "libfala_process_host.dylib"
+    if sys.platform.startswith("linux"):
+        return "libfala_process_host.so"
+    raise RuntimeError(
+        f"fala subprocess host is POSIX-only (macOS/Linux); unsupported platform: {sys.platform}"
+    )
+
+
+def process_host_library_path(root: Path | None = None) -> Path:
+    return process_host_native_dir(root) / process_host_library_name()
 
 
 def _skip_native_build() -> bool:
@@ -155,12 +172,63 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
     return lib_path
 
 
+def ensure_process_host_library(root: Path | None = None) -> Path:
+    """Build or refresh the packaged direct-argv process-host library."""
+    root = root or repo_root()
+    native_dir = process_host_native_dir(root)
+    lib_path = process_host_library_path(root)
+    source_dir = root / "mojo" / "fala"
+    source = source_dir / "native_process_host.c"
+    header = source_dir / "native_process_host.h"
+    if not source.is_file() or not header.is_file():
+        raise RuntimeError(
+            f"Fala process-host sources missing under {source_dir}. Installation is incomplete."
+        )
+    newest_source = max(source.stat().st_mtime_ns, header.stat().st_mtime_ns)
+    if lib_path.is_file() and lib_path.stat().st_mtime_ns >= newest_source:
+        return lib_path
+    if _skip_native_build():
+        raise RuntimeError(
+            f"fala subprocess path requires a current {lib_path.name} at {lib_path}, "
+            f"but it is missing or stale and {_SKIP_NATIVE_BUILD_ENV} is set"
+        )
+    cc = (
+        shutil.which(os.environ.get("CC", "cc"))
+        or shutil.which("clang")
+        or shutil.which("gcc")
+    )
+    if cc is None:
+        raise RuntimeError(
+            "fala: cannot build the subprocess host: no C compiler (`cc`/`clang`/`gcc`) on PATH"
+        )
+    native_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = lib_path.with_suffix(lib_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    command = [cc, "-std=c11", "-Wall", "-Wextra"]
+    if sys.platform == "darwin":
+        command.append("-dynamiclib")
+    else:
+        command.extend(("-fPIC", "-shared"))
+    command.extend(("-o", str(temp_path), str(source)))
+    proc = subprocess.run(command, capture_output=True, text=True, check=False)
+    if proc.returncode != 0 or not temp_path.is_file():
+        temp_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            "fala: failed to build the subprocess host "
+            f"({lib_path.name})\nCommand: {' '.join(command)}\n"
+            f"exit={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        )
+    os.replace(temp_path, lib_path)
+    return lib_path
+
+
 def _source_hash(root: Path) -> str:
     paths = sorted(
         list(_PACKAGE_DIR.glob("*.mojo"))
         + list((root / "mojo" / "fala").rglob("*.mojo"))
         + list((root / "vendor" / "EmberJson").rglob("*.mojo"))
         + list((root / "vendor" / "sqlite.fire").rglob("*.mojo"))
+        + list((root / "mojo" / "fala").glob("native_process_host.[ch]"))
     )
     h = hashlib.sha256()
     for p in paths:

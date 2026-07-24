@@ -4,6 +4,17 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## Unreleased
+
+**Python package subprocess execution restores its native process host (#116).**
+
+- `host_run_package` now builds the packaged direct-argv process-host ABI before
+  durable dispatch, refreshing it atomically when its C source or header changes.
+- Clean wheels remain platform-neutral and ship the C sources; the first durable
+  subprocess run builds `libfala_process_host` for the installed platform.
+- Memory-only hosts remain free of the process-host and C-toolchain requirement.
+
+
 ## 0.7.9
 
 **First host drive accepts a durably staged correlation plan (#112).**
