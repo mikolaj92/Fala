@@ -4,7 +4,7 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
-## Unreleased
+## 0.7.10
 
 **Python package subprocess execution restores its native process host (#116).**
 
