@@ -35,7 +35,9 @@ $(SHARED):
     return tmp_path
 
 
-def test_ensure_sqlite_fire_builds_when_missing(fake_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_sqlite_fire_builds_when_missing(
+    fake_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from fala._build import ensure_sqlite_fire_library, sqlite_fire_library_path
 
     monkeypatch.delenv("FALA_SKIP_NATIVE_BUILD", raising=False)
@@ -83,3 +85,49 @@ def test_memory_path_does_not_require_sqlite_fire_env(
     assert _skip_native_build() is True
     monkeypatch.delenv("FALA_SKIP_NATIVE_BUILD", raising=False)
     assert _skip_native_build() is False
+
+
+def test_mojo_env_discovers_repo_pixi_without_caller_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fala._build import _mojo_env
+
+    toolchain = tmp_path / ".pixi" / "envs" / "default"
+    (toolchain / "bin").mkdir(parents=True)
+    (toolchain / "bin" / "mojo").write_text("", encoding="utf-8")
+    (toolchain / "lib" / "mojo").mkdir(parents=True)
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    monkeypatch.delenv("MODULAR_MOJO_MAX_DRIVER_PATH", raising=False)
+    monkeypatch.delenv("MOJO", raising=False)
+
+    env = _mojo_env(tmp_path)
+
+    assert env["MODULAR_MOJO_MAX_DRIVER_PATH"] == str(toolchain / "bin" / "mojo")
+    assert env["PATH"].split(":", maxsplit=1)[0] == str(toolchain / "bin")
+    assert env["DYLD_LIBRARY_PATH"].split(":", maxsplit=1)[0] == str(toolchain / "lib")
+
+
+def test_preload_mojo_runtime_loads_cached_extension_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fala import _build
+
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    suffix = ".dylib" if _build.sys.platform == "darwin" else ".so"
+    libraries = [
+        lib_dir / f"libKGENCompilerRTShared{suffix}",
+        lib_dir / f"libAsyncRTMojoBindings{suffix}",
+    ]
+    for library in libraries:
+        library.write_bytes(b"")
+    loaded: list[str] = []
+    monkeypatch.setattr(
+        _build.ctypes,
+        "CDLL",
+        lambda path, *, mode: loaded.append(path),
+    )
+
+    _build._preload_mojo_runtime(tmp_path)
+
+    assert loaded == [str(library) for library in libraries]

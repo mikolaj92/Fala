@@ -8,6 +8,7 @@ the shared library on first use when it is missing.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import importlib.util
 import os
@@ -106,8 +107,7 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
     makefile = native_dir / "Makefile"
     if not makefile.is_file():
         raise RuntimeError(
-            f"sqlite.fire Makefile missing at {makefile}. "
-            "Fala install is incomplete."
+            f"sqlite.fire Makefile missing at {makefile}. Fala install is incomplete."
         )
     if not (native_dir / "sqlite_fire.c").is_file():
         raise RuntimeError(
@@ -122,7 +122,11 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
             "Install a C toolchain (and libsqlite3), then retry, or run: "
             f"make -C {native_dir}"
         )
-    cc = shutil.which(os.environ.get("CC", "cc")) or shutil.which("clang") or shutil.which("gcc")
+    cc = (
+        shutil.which(os.environ.get("CC", "cc"))
+        or shutil.which("clang")
+        or shutil.which("gcc")
+    )
     if cc is None:
         raise RuntimeError(
             "fala: cannot build sqlite.fire native library: no C compiler (`cc`/`clang`/`gcc`) "
@@ -133,6 +137,7 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
         [make, "-C", str(native_dir)],
         capture_output=True,
         text=True,
+        check=False,
     )
     if proc.returncode != 0 or not lib_path.is_file():
         raise RuntimeError(
@@ -168,34 +173,77 @@ def _source_hash(root: Path) -> str:
     return h.hexdigest()[:16]
 
 
-def _mojo_env() -> dict[str, str]:
+def _mojo_toolchain_root(env: dict[str, str], root: Path) -> Path | None:
+    """Resolve the Mojo toolchain without requiring caller-owned env setup."""
+    driver = env.get("MODULAR_MOJO_MAX_DRIVER_PATH") or env.get("MOJO")
+    package_root = env.get("MODULAR_MOJO_MAX_PACKAGE_ROOT")
+    candidates = [
+        Path(driver).expanduser().resolve().parent.parent if driver else None,
+        Path(package_root).expanduser().resolve() if package_root else None,
+        Path(env["CONDA_PREFIX"]).expanduser().resolve()
+        if env.get("CONDA_PREFIX")
+        else None,
+        root / ".pixi" / "envs" / "default",
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "bin" / "mojo").is_file():
+            return candidate
+    return None
+
+
+def _preload_mojo_runtime(toolchain_root: Path) -> None:
+    """Make Mojo runtime dylibs available before importing a cached extension."""
+    lib_dir = toolchain_root / "lib"
+    _prepend_library_path(lib_dir)
+    suffix = ".dylib" if sys.platform == "darwin" else ".so"
+    for stem in ("libKGENCompilerRTShared", "libAsyncRTMojoBindings"):
+        library = lib_dir / f"{stem}{suffix}"
+        if library.is_file():
+            ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL)
+
+
+def _mojo_env(root: Path) -> dict[str, str]:
     env = dict(os.environ)
     try:
-        from mojo._package_root import get_package_root  # type: ignore[import-not-found]
+        from mojo._package_root import (  # type: ignore[import-not-found]
+            get_package_root,
+        )
         from mojo.run import _sdk_default_env  # type: ignore[import-not-found]
 
-        root = get_package_root()
-        if root is not None:
-            return {**_sdk_default_env(), **env}
-    except Exception:
-        pass
-    candidates = [
-        Path(env["CONDA_PREFIX"]) if env.get("CONDA_PREFIX") else None,
-        Path.home() / "Developer" / "OSS" / "Fala" / ".pixi" / "envs" / "default",
-    ]
-    for root in candidates:
-        if root is None:
-            continue
-        mojo_bin = root / "bin" / "mojo"
-        import_path = root / "lib" / "mojo"
-        if mojo_bin.is_file() and import_path.is_dir():
-            env.setdefault("MODULAR_MAX_PACKAGE_ROOT", str(root))
-            env.setdefault("MODULAR_MOJO_MAX_PACKAGE_ROOT", str(root))
-            env.setdefault("MODULAR_MOJO_MAX_DRIVER_PATH", str(mojo_bin))
+        package_root = get_package_root()
+        if package_root is not None:
+            sdk_env = _sdk_default_env()
+            sdk_env.update(env)
+            sdk_env.setdefault("MODULAR_MOJO_MAX_PACKAGE_ROOT", str(package_root))
+            return sdk_env
+    except (AttributeError, ImportError, OSError, TypeError) as exc:
+        if os.environ.get("FALA_DEBUG_TOOLCHAIN"):
+            print(
+                f"fala: optional Mojo package discovery failed: {exc}", file=sys.stderr
+            )
+    toolchain_root = _mojo_toolchain_root(env, root)
+    if toolchain_root is not None:
+        mojo_bin = toolchain_root / "bin" / "mojo"
+        import_path = toolchain_root / "lib" / "mojo"
+        env.setdefault("MODULAR_MAX_PACKAGE_ROOT", str(toolchain_root))
+        env.setdefault("MODULAR_MOJO_MAX_PACKAGE_ROOT", str(toolchain_root))
+        env.setdefault("MODULAR_MOJO_MAX_DRIVER_PATH", str(mojo_bin))
+        if import_path.is_dir():
             env.setdefault("MODULAR_MOJO_MAX_IMPORT_PATH", str(import_path))
-            env["PATH"] = str(root / "bin") + os.pathsep + env.get("PATH", "")
-            break
+        env["PATH"] = str(toolchain_root / "bin") + os.pathsep + env.get("PATH", "")
+        _prepend_env_path(env, toolchain_root / "lib")
     return env
+
+
+def _prepend_env_path(env: dict[str, str], path: Path) -> None:
+    if not path.is_dir():
+        return
+    prefix = str(path)
+    for key in ("DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"):
+        current = env.get(key, "")
+        parts = [part for part in current.split(os.pathsep) if part]
+        if prefix not in parts:
+            env[key] = prefix + (os.pathsep + current if current else "")
 
 
 def _mojo_bin(env: dict[str, str]) -> str:
@@ -206,10 +254,10 @@ def _mojo_bin(env: dict[str, str]) -> str:
     found = shutil.which("mojo", path=env.get("PATH"))
     if found:
         return found
-    fala = Path.home() / "Developer" / "OSS" / "Fala" / ".pixi" / "envs" / "default" / "bin" / "mojo"
-    if fala.is_file():
-        return str(fala)
-    raise RuntimeError("mojo executable not found")
+    raise RuntimeError(
+        "mojo executable not found; set FALA_HOME to a Fala checkout and run "
+        "`mise exec -- pixi install` there"
+    )
 
 
 def ensure_native() -> ModuleType:
@@ -229,7 +277,7 @@ def ensure_native() -> ModuleType:
     if not so_path.is_file():
         for old in cache_dir.glob("_native.hash-*.so"):
             old.unlink(missing_ok=True)
-        env = _mojo_env()
+        env = _mojo_env(root)
         mojo = _mojo_bin(env)
         cmd = [
             mojo,
@@ -246,12 +294,15 @@ def ensure_native() -> ModuleType:
             "-o",
             str(so_path),
         ]
-        proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             raise RuntimeError(
                 "fala native build failed:\n" + (proc.stderr or proc.stdout or "")
             )
-    # If a previously built dylib exists, put it on the loader path (no build).
+    env = _mojo_env(root)
+    toolchain_root = _mojo_toolchain_root(env, root)
+    if toolchain_root is not None:
+        _preload_mojo_runtime(toolchain_root)
     native_lib = sqlite_fire_native_dir(root)
     if native_lib.is_dir():
         _prepend_library_path(native_lib)
