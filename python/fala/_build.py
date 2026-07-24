@@ -8,12 +8,17 @@ their sources; this module builds missing shared libraries on first use.
 from __future__ import annotations
 
 import ctypes
+import fcntl
 import hashlib
 import importlib.util
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 
@@ -22,6 +27,12 @@ _NATIVE_MOJO = _PACKAGE_DIR / "_native.mojo"
 _CACHE_DIR_NAME = "__mojocache__"
 _SKIP_NATIVE_BUILD_ENV = "FALA_SKIP_NATIVE_BUILD"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+_NATIVE_BUILD_LOCK = threading.Lock()
+
+
+def _is_source_hash_path(path: Path) -> bool:
+    """Skip temp effector workdirs and other non-source junk under vendor trees."""
+    return not any(part.startswith(".fala-effector-") for part in path.parts)
 
 
 def repo_root() -> Path:
@@ -224,11 +235,15 @@ def ensure_process_host_library(root: Path | None = None) -> Path:
 
 def _source_hash(root: Path) -> str:
     paths = sorted(
-        list(_PACKAGE_DIR.glob("*.mojo"))
-        + list((root / "mojo" / "fala").rglob("*.mojo"))
-        + list((root / "vendor" / "EmberJson").rglob("*.mojo"))
-        + list((root / "vendor" / "sqlite.fire").rglob("*.mojo"))
-        + list((root / "mojo" / "fala").glob("native_process_host.[ch]"))
+        path
+        for path in (
+            list(_PACKAGE_DIR.glob("*.mojo"))
+            + list((root / "mojo" / "fala").rglob("*.mojo"))
+            + list((root / "vendor" / "EmberJson").rglob("*.mojo"))
+            + list((root / "vendor" / "sqlite.fire").rglob("*.mojo"))
+            + list((root / "mojo" / "fala").glob("native_process_host.[ch]"))
+        )
+        if _is_source_hash_path(path)
     )
     h = hashlib.sha256()
     for p in paths:
@@ -239,6 +254,125 @@ def _source_hash(root: Path) -> str:
         h.update(rel.encode())
         h.update(p.read_bytes())
     return h.hexdigest()[:16]
+
+
+@contextmanager
+def _cross_process_lock(lock_path: Path) -> Iterator[None]:
+    """Serialize native builds across processes and threads (#119)."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with _NATIVE_BUILD_LOCK, lock_path.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+def _build_native_extension(root: Path, so_path: Path) -> None:
+    """Build the Mojo extension to a unique temp path and publish atomically."""
+    env = _mojo_env(root)
+    mojo = _mojo_bin(env)
+    so_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f"{so_path.stem}.",
+        suffix=".tmp.so",
+        dir=so_path.parent,
+    )
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        cmd = [
+            mojo,
+            "build",
+            str(_NATIVE_MOJO),
+            "--emit",
+            "shared-lib",
+            "-I",
+            str(root / "mojo"),
+            "-I",
+            str(root / "vendor" / "EmberJson"),
+            "-I",
+            str(root / "vendor" / "sqlite.fire" / "src"),
+            "-o",
+            str(temp_path),
+        ]
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+        if proc.returncode != 0 or not temp_path.is_file() or temp_path.stat().st_size == 0:
+            raise RuntimeError(
+                "fala native build failed:\n" + (proc.stderr or proc.stdout or "")
+            )
+        os.replace(temp_path, so_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _prune_stale_native_artifacts(cache_dir: Path, keep: Path) -> None:
+    """Drop superseded cache entries only after the current artifact is published."""
+    for old in cache_dir.glob("_native.hash-*.so"):
+        if old.resolve() == keep.resolve():
+            continue
+        if old.name.endswith(".tmp.so"):
+            continue
+        old.unlink(missing_ok=True)
+    for old in cache_dir.glob("_native.hash-*.tmp.so"):
+        # Leftover crash debris; never touch the live artifact.
+        if old.resolve() == keep.resolve():
+            continue
+        old.unlink(missing_ok=True)
+
+
+def _ensure_native_artifact(root: Path | None = None) -> Path:
+    """Return the published native extension path, building once under lock (#119)."""
+    if not _NATIVE_MOJO.is_file():
+        raise RuntimeError(f"missing {_NATIVE_MOJO}")
+    active_root = root if root is not None else repo_root()
+    digest = _source_hash(active_root)
+    cache_dir = _PACKAGE_DIR / _CACHE_DIR_NAME
+    cache_dir.mkdir(exist_ok=True)
+    so_path = cache_dir / f"_native.hash-{digest}.so"
+    lock_path = cache_dir / "ensure_native.lock"
+
+    if not so_path.is_file():
+        with _cross_process_lock(lock_path):
+            # Re-check under the lock so losers never rebuild.
+            if not so_path.is_file():
+                _build_native_extension(active_root, so_path)
+            _prune_stale_native_artifacts(cache_dir, so_path)
+    return so_path
+
+
+def ensure_native() -> ModuleType:
+    """Build/load the Mojo Python extension (memory + durable host entrypoints).
+
+    Does **not** compile sqlite.fire by itself — call
+    :func:`ensure_sqlite_fire_library` from durable APIs so pure memory-path
+    users never require a C toolchain (#106).
+
+    Concurrent callers share one cross-process lock and only the winner builds.
+    Failed builds leave any previously published artifact intact (#119).
+    """
+    root = repo_root()
+    so_path = _ensure_native_artifact(root)
+
+    env = _mojo_env(root)
+    toolchain_root = _mojo_toolchain_root(env, root)
+    if toolchain_root is not None:
+        _preload_mojo_runtime(toolchain_root)
+    native_lib = sqlite_fire_native_dir(root)
+    if native_lib.is_dir():
+        _prepend_library_path(native_lib)
+
+    # Reuse a loaded module if the same .so is already mapped.
+    existing = sys.modules.get("fala._native")
+    if existing is not None:
+        return existing
+
+    spec = importlib.util.spec_from_file_location("fala._native", so_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {so_path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["fala._native"] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _mojo_toolchain_root(env: dict[str, str], root: Path) -> Path | None:
@@ -272,6 +406,21 @@ def _preload_mojo_runtime(toolchain_root: Path) -> None:
 
 def _mojo_env(root: Path) -> dict[str, str]:
     env = dict(os.environ)
+    # A toolchain under the requested root is authoritative. Package discovery
+    # may otherwise leak the caller's installed SDK into tests or another Fala
+    # checkout and compile against the wrong Mojo version.
+    root_toolchain = root / ".pixi" / "envs" / "default"
+    if (root_toolchain / "bin" / "mojo").is_file():
+        mojo_bin = root_toolchain / "bin" / "mojo"
+        import_path = root_toolchain / "lib" / "mojo"
+        env["MODULAR_MAX_PACKAGE_ROOT"] = str(root_toolchain)
+        env["MODULAR_MOJO_MAX_PACKAGE_ROOT"] = str(root_toolchain)
+        env["MODULAR_MOJO_MAX_DRIVER_PATH"] = str(mojo_bin)
+        if import_path.is_dir():
+            env["MODULAR_MOJO_MAX_IMPORT_PATH"] = str(import_path)
+        env["PATH"] = str(root_toolchain / "bin") + os.pathsep + env.get("PATH", "")
+        _prepend_env_path(env, root_toolchain / "lib")
+        return env
     try:
         from mojo._package_root import (  # type: ignore[import-not-found]
             get_package_root,
@@ -326,64 +475,3 @@ def _mojo_bin(env: dict[str, str]) -> str:
         "mojo executable not found; set FALA_HOME to a Fala checkout and run "
         "`mise exec -- pixi install` there"
     )
-
-
-def ensure_native() -> ModuleType:
-    """Build/load the Mojo Python extension (memory + durable host entrypoints).
-
-    Does **not** compile sqlite.fire by itself — call
-    :func:`ensure_sqlite_fire_library` from durable APIs so pure memory-path
-    users never require a C toolchain (#106).
-    """
-    if not _NATIVE_MOJO.is_file():
-        raise RuntimeError(f"missing {_NATIVE_MOJO}")
-    root = repo_root()
-    digest = _source_hash(root)
-    cache_dir = _PACKAGE_DIR / _CACHE_DIR_NAME
-    cache_dir.mkdir(exist_ok=True)
-    so_path = cache_dir / f"_native.hash-{digest}.so"
-    if not so_path.is_file():
-        for old in cache_dir.glob("_native.hash-*.so"):
-            old.unlink(missing_ok=True)
-        env = _mojo_env(root)
-        mojo = _mojo_bin(env)
-        cmd = [
-            mojo,
-            "build",
-            str(_NATIVE_MOJO),
-            "--emit",
-            "shared-lib",
-            "-I",
-            str(root / "mojo"),
-            "-I",
-            str(root / "vendor" / "EmberJson"),
-            "-I",
-            str(root / "vendor" / "sqlite.fire" / "src"),
-            "-o",
-            str(so_path),
-        ]
-        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
-        if proc.returncode != 0:
-            raise RuntimeError(
-                "fala native build failed:\n" + (proc.stderr or proc.stdout or "")
-            )
-    env = _mojo_env(root)
-    toolchain_root = _mojo_toolchain_root(env, root)
-    if toolchain_root is not None:
-        _preload_mojo_runtime(toolchain_root)
-    native_lib = sqlite_fire_native_dir(root)
-    if native_lib.is_dir():
-        _prepend_library_path(native_lib)
-
-    # Reuse a loaded module if the same .so is already mapped.
-    existing = sys.modules.get("fala._native")
-    if existing is not None:
-        return existing
-
-    spec = importlib.util.spec_from_file_location("fala._native", so_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {so_path}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["fala._native"] = mod
-    spec.loader.exec_module(mod)
-    return mod

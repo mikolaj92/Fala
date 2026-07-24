@@ -4,6 +4,19 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.11
+
+**Serialize and atomically publish the Mojo Python extension cache (#119).**
+
+- `ensure_native()` now takes a cross-process file lock, builds into a unique temp
+  path, and publishes with `os.replace`; concurrent callers build once per digest.
+- Failed builds no longer delete a previously published `_native.hash-*.so`.
+- Durable Python hosts install a temporary `FALA_EFFECTOR_ROOT` when unset so
+  `.fala-effector-*` workdirs no longer accumulate under `vendor/sqlite.fire`.
+- `_source_hash` ignores leftover `.fala-effector-*` paths.
+- Regression tests cover concurrent publish, failed-build retention, atomic
+  builder publish, and effector-root placement.
+
 ## 0.7.10
 
 **Python package subprocess execution restores its native process host (#116).**

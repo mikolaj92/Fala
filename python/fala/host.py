@@ -11,6 +11,8 @@ Heavy multi-organ CLI / bridge / projections stay on the Mojo CLI surface.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -142,18 +144,34 @@ class MemoryHost:
 
 
 def _with_sqlite_cwd(fn):  # type: ignore[no-untyped-def]
-    """Run *fn* with cwd at vendor/sqlite.fire (dylib load path)."""
-    import os
+    """Run *fn* with cwd at vendor/sqlite.fire (dylib load path).
 
+    Subprocess effectors without an explicit ``FALA_EFFECTOR_ROOT`` create
+    ``.fala-effector-*`` workdirs under cwd. Durable hosts chdir into the
+    package vendor tree for dylib discovery, so when the env root is unset we
+    install a process-local temporary root for the duration of *fn* and clean
+    it up afterward (#119). An already-configured root is preserved as-is.
+    """
     from fala._build import repo_root
 
     sqlite_cwd = repo_root() / "vendor" / "sqlite.fire"
     prev = os.getcwd()
+    previous_effector_root = os.environ.get("FALA_EFFECTOR_ROOT")
+    owned_root: tempfile.TemporaryDirectory[str] | None = None
     try:
         if sqlite_cwd.is_dir():
             os.chdir(sqlite_cwd)
+        if previous_effector_root is None or not previous_effector_root.strip():
+            owned_root = tempfile.TemporaryDirectory(prefix="fala-effectors-")
+            os.environ["FALA_EFFECTOR_ROOT"] = owned_root.name
         return fn()
     finally:
+        if previous_effector_root is None:
+            os.environ.pop("FALA_EFFECTOR_ROOT", None)
+        else:
+            os.environ["FALA_EFFECTOR_ROOT"] = previous_effector_root
+        if owned_root is not None:
+            owned_root.cleanup()
         os.chdir(prev)
 
 
