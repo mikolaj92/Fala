@@ -5,6 +5,11 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 smoke="${1:?smoke path under mojo/smoke or absolute}"
 need_host="${2:-0}"
 
+if [ ! -d "$root/vendor/sqlite.fire" ]; then
+  echo "sqlite.fire missing under vendor/. Cloning dynamically via git..." >&2
+  git clone --depth 1 https://github.com/mikolaj92/sqlite.fire.git "$root/vendor/sqlite.fire"
+fi
+
 # sqlite.fire native (platform-specific name from its Makefile)
 if [[ "$(uname -s)" == "Darwin" ]]; then
   sqlite_lib="$root/vendor/sqlite.fire/native/libsqlite_fire.dylib"
@@ -12,7 +17,6 @@ else
   sqlite_lib="$root/vendor/sqlite.fire/native/libsqlite_fire.so"
 fi
 test -s "$sqlite_lib" || make -C "$root/vendor/sqlite.fire/native"
-
 if [[ "$need_host" == "1" ]]; then
   mkdir -p "$root/mojo/fala/native"
   if [[ "$(uname -s)" == "Darwin" ]]; then

@@ -18,7 +18,7 @@ def _splot_root() raises -> String:
     # Default: sibling checkout next to Fala.
     # When run via mojo_sql_run, cwd is vendor/sqlite.fire.
     var here = cwd().__fspath__()
-    if here.find("sqlite.fire") >= 0:
+    if here.find("vendor/sqlite.fire") >= 0:
         return here + "/../../../Splot"
     return here + "/../Splot"
 
@@ -29,7 +29,7 @@ def _fala_pixi_prefix() raises -> String:
     if conda.byte_length() > 0:
         return conda
     var here = cwd().__fspath__()
-    if here.find("sqlite.fire") >= 0:
+    if here.find("vendor/sqlite.fire") >= 0:
         return here + "/../../.pixi/envs/default"
     return here + "/.pixi/envs/default"
 

@@ -1,6 +1,3 @@
-[submodule "vendor/sqlite.fire"]
-	path = vendor/sqlite.fire
-	url = https://github.com/mikolaj92/sqlite.fire.git
 [submodule "vendor/EmberJson"]
 	path = vendor/EmberJson
 	url = https://github.com/bgreni/EmberJson.git

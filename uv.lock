@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "fala"
-version = "0.7.12"
+version = "0.7.13"
 source = { editable = "." }
 
 [package.optional-dependencies]

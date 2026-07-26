@@ -21,6 +21,8 @@ CLI, journal/driver contracts).
 - Docs: residual “workflow tyrant” notes replaced by peer / Unix parent–child
   language (`UNIX_AND_CYBERNETICS`, `RUNTIME`, `CONCEPTUAL_MODEL`, README).
 - Smoke: `peer-to-peer` added to `core-smoke`.
+- De-vendoring: `sqlite.fire` removed from Git submodules and Hatch packaging.
+- Automated dev/test setup: `sqlite.fire` source repository is dynamically cloned from GitHub to local gitignored `vendor/sqlite.fire/` on first test/build run (via Pixi, Python `_build.py`, or `mojo_sql_run.sh`).
 
 
 ## 0.7.12
@@ -53,7 +55,7 @@ CLI, journal/driver contracts).
   durable dispatch, refreshing it atomically when its C source or header changes.
 - Clean wheels remain platform-neutral and ship the C sources; the first durable
   subprocess run builds `libfala_process_host` for the installed platform.
-- Memory-only hosts remain free of the process-host and C-toolchain requirement.
+- Memory-only hosts remain free of the process-host C-toolchain requirement, though Mojo module builds automatically clone `sqlite.fire` sources once for compiler layout visibility.
 
 
 ## 0.7.9
@@ -103,9 +105,9 @@ CLI, journal/driver contracts).
 **Python durable host: sqlite.fire auto-build on first use (#106).**
 
 - `open_sqlite` / `host_run_package` call `ensure_sqlite_fire_library()` before the Mojo host:
-  if `libsqlite_fire.{dylib,so}` is missing under hatch-shipped `vendor/sqlite.fire/native`,
-  run `make -C native` once (fail-closed with toolchain / libsqlite3 diagnosis).
-- Memory path (`host_drive` / `open_memory`) still does **not** require sqlite.fire.
+  if `libsqlite_fire.{dylib,so}` is missing under gitignored `vendor/sqlite.fire/native`,
+  run `make` once (fail-closed with toolchain / libsqlite3 diagnosis).
+- Memory path (`host_drive` / `open_memory`) still does **not** run durable SQLite loops.
 - Escape hatch: `FALA_SKIP_NATIVE_BUILD=1` skips the build attempt (durable APIs fail closed).
 - Docs: SQLite remains an optional journal sink, not product identity.
 

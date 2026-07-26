@@ -53,7 +53,7 @@ materializations) and are documented as non-core in
 | `examples/correlation-paths/basic/` | Core package example (native_function + TOML) |
 | `examples/splot-integration/` | Host Splot 0.3+ via subprocess (organ outside Fala) |
 | `examples/domain-packs/splot/` | Splot vocabulary package (TOML) |
-| `vendor/EmberJson`, `vendor/sqlite.fire` | Mojo dependencies |
+| `vendor/EmberJson` | Mojo dependency (sqlite.fire is gitignored dev-dependency) |
 
 There is **no** CPython product package and **no** optional Python demos.
 

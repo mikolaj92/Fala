@@ -1,6 +1,6 @@
 """Thin in-process Fala host API.
 
-- **Memory path:** ``host_drive`` / ``open_memory`` (no sqlite.fire required).
+- **Memory path:** ``host_drive`` / ``open_memory`` (Mojo native extension auto-builds on first use, which dynamically pulls sqlite.fire sources).
 - **Durable path:** ``open_sqlite`` / ``host_run_package`` / ``delete_terminal_run``
   (optional SQLite journal sink via sqlite.fire; auto-builds the native library
   on first use — #106 / #108).
@@ -178,8 +178,8 @@ def _with_sqlite_cwd(fn):  # type: ignore[no-untyped-def]
 def open_sqlite(path: str | Path) -> dict[str, Any]:
     """Probe-open a durable SQLite journal via the Mojo engine (creates if needed).
 
-    Ensures ``libsqlite_fire`` is present (builds once if hatch-shipped sources
-    are available). Memory path does not call this.
+    Ensures ``libsqlite_fire`` is present (automatically builds once, dynamically
+    cloning the source repository from GitHub if needed). Memory path does not call this.
     """
     p = Path(path).expanduser().resolve()
     p.parent.mkdir(parents=True, exist_ok=True)

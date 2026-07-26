@@ -78,13 +78,15 @@ def test_ensure_sqlite_fire_missing_sources_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from fala._build import ensure_sqlite_fire_library
+    import shutil
 
     monkeypatch.delenv("FALA_SKIP_NATIVE_BUILD", raising=False)
+    monkeypatch.setattr(shutil, "which", lambda x: None if x == "git" else "/usr/bin/make")
     (tmp_path / "mojo" / "fala").mkdir(parents=True)
     (tmp_path / "vendor" / "EmberJson").mkdir(parents=True)
     with pytest.raises(RuntimeError) as excinfo:
         ensure_sqlite_fire_library(tmp_path)
-    assert "native sources missing" in str(excinfo.value)
+    assert "sources missing" in str(excinfo.value)
 
 
 def test_memory_path_does_not_require_sqlite_fire_env(

@@ -7,9 +7,14 @@ command -v mojo >/dev/null || {
     exit 2
 }
 
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ ! -d "$root/vendor/sqlite.fire" ]; then
+  echo "sqlite.fire missing under vendor/. Cloning dynamically via git..." >&2
+  git clone --depth 1 https://github.com/mikolaj92/sqlite.fire.git "$root/vendor/sqlite.fire"
+fi
+
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/fala-native-fixtures.XXXXXX")
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
-
 for fixture in schema-impulse schema-model run-lifecycle correlation-conduction retry-backoff cli-parser manifest-validation runtime-policy reaction-accumulation wait-diagnosis bridge-persistence; do
     case "$fixture" in
         schema-impulse) input='{"operation":"schema","model":"impulse"}' ;;
@@ -26,7 +31,7 @@ for fixture in schema-impulse schema-model run-lifecycle correlation-conduction 
     esac
     input_path="$tmpdir/$fixture.json"
     printf '%s' "$input" >"$input_path"
-    output=$(mojo run -I mojo -I vendor/EmberJson -I vendor/sqlite.fire/src tests/native_fixture_producer.mojo "$fixture" "$input_path")
+    output=$(mojo run -I "$root/mojo" -I "$root/vendor/EmberJson" -I "$root/vendor/sqlite.fire/src" "$root/tests/native_fixture_producer.mojo" "$fixture" "$input_path")
     case "$output" in
         \{*\}) ;;
         *)

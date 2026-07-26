@@ -12,3 +12,6 @@ mojo/fala/native/
 
 python/fala/__mojocache__/
 .venv-pybind/
+
+vendor/sqlite.fire/
+

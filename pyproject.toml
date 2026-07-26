@@ -28,7 +28,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/fala"]
-force-include = { "mojo" = "mojo", "vendor/EmberJson" = "vendor/EmberJson", "vendor/sqlite.fire" = "vendor/sqlite.fire" }
+force-include = { "mojo" = "mojo", "vendor/EmberJson" = "vendor/EmberJson" }
 
 [tool.hatch.build.targets.sdist]
 include = [

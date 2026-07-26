@@ -1,8 +1,9 @@
 """Build the native libraries required by the optional Mojo Python host.
 
 Memory paths need only the Mojo extension. Durable package execution additionally
-needs ``libsqlite_fire`` and the direct-argv process host. Hatch force-includes
-their sources; this module builds missing shared libraries on first use.
+needs ``libsqlite_fire`` and the direct-argv process host. Mojo extension build
+dynamically clones sqlite.fire sources from GitHub (gitignored in vendor/);
+this module builds missing shared libraries on first use.
 """
 
 from __future__ import annotations
@@ -52,7 +53,6 @@ def repo_root() -> Path:
 def sqlite_fire_native_dir(root: Path | None = None) -> Path:
     """Directory that holds Makefile + libsqlite_fire shared library."""
     return (root or repo_root()) / "vendor" / "sqlite.fire" / "native"
-
 
 def sqlite_fire_library_name() -> str:
     if sys.platform == "darwin":
@@ -105,8 +105,8 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
     """Ensure ``libsqlite_fire`` exists for the durable SQLite journal sink (#106).
 
     When the shared library is missing, runs ``make -C vendor/sqlite.fire/native``
-    once (sources are hatch force-included). Set ``FALA_SKIP_NATIVE_BUILD=1`` to
-    skip the build attempt (memory-path-only machines); durable APIs then fail
+    once (sources are dynamically cloned if missing). Set ``FALA_SKIP_NATIVE_BUILD=1``
+    to skip the build attempt (memory-path-only machines); durable APIs then fail
     closed with an actionable error.
 
     Returns the absolute path to the shared library.
@@ -126,12 +126,7 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
             f"retry, or build manually: make -C {native_dir}"
         )
 
-    if not native_dir.is_dir():
-        raise RuntimeError(
-            f"sqlite.fire native sources missing at {native_dir}. "
-            "Fala install is incomplete (expected hatch force-include of "
-            "vendor/sqlite.fire)."
-        )
+    _ensure_sqlite_fire_sources(root)
     makefile = native_dir / "Makefile"
     if not makefile.is_file():
         raise RuntimeError(
@@ -142,7 +137,6 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
             f"sqlite.fire C sources missing under {native_dir}. "
             "Fala install is incomplete."
         )
-
     make = shutil.which("make")
     if make is None:
         raise RuntimeError(
@@ -267,8 +261,30 @@ def _cross_process_lock(lock_path: Path) -> Iterator[None]:
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
+def _ensure_sqlite_fire_sources(root: Path) -> None:
+    source_dir = root / "vendor" / "sqlite.fire"
+    if not source_dir.is_dir():
+        git = shutil.which("git")
+        if git is not None:
+            try:
+                subprocess.run(
+                    [git, "clone", "--depth", "1", "https://github.com/mikolaj92/sqlite.fire.git", str(source_dir)],
+                    check=True,
+                    capture_output=True,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"sqlite.fire directory missing at {source_dir} and auto-clone failed: {e}. "
+                    "Please checkout https://github.com/mikolaj92/sqlite.fire.git manually."
+                ) from e
+        else:
+            raise RuntimeError(
+                f"sqlite.fire native sources missing at {source_dir} and `git` not found on PATH. "
+                "Fala extension build requires sqlite.fire."
+            )
 def _build_native_extension(root: Path, so_path: Path) -> None:
     """Build the Mojo extension to a unique temp path and publish atomically."""
+    _ensure_sqlite_fire_sources(root)
     env = _mojo_env(root)
     mojo = _mojo_bin(env)
     so_path.parent.mkdir(parents=True, exist_ok=True)
