@@ -37,9 +37,9 @@ Requires Mojo toolchain. Also: `fala.sdk` (pure-Python effector helpers),
 `fala.open_sqlite(path)` / `fala.host_run_package(...)` durable journal path
 (optional SQLite sink via sqlite.fire; first-use auto-clones the Git repository and
 runs `make -C vendor/sqlite.fire/native` when missing — needs a C compiler + libsqlite3;
-set `FALA_SKIP_NATIVE_BUILD=1` to skip). Python expansion builds require `sqlite.fire`
-source for compiling the Mojo module extension. No CPython RuntimeBackendService.
-Full multi-organ CLI remains primary for complex ops.
+set `FALA_SKIP_NATIVE_BUILD=1` to skip). Python native builds dynamically resolve
+both `EmberJson` and `sqlite.fire` sources (gitignored in `vendor/`).
+No CPython RuntimeBackendService. Full multi-organ CLI remains primary for complex ops.
 
  There is no CPython engine, no YAML packages,
 and no multi-runtime fleet.
@@ -98,7 +98,7 @@ mojo/fala/      engine (organ, journal, driver, host, packages, CLI)
 mojo/smoke/     gates
 examples/       TOML packages (basic, splot vocabulary, splot-integration)
 docs/           architecture & contracts
-vendor/         EmberJson (sqlite.fire is gitignored dev-dependency)
+vendor/         EmberJson, sqlite.fire (gitignored dynamically-cloned dependencies)
 tools/          mojo_sql_run.sh, native smokes
 ```
 
@@ -124,12 +124,9 @@ Details: [`docs/ADAPTER_CONTRACTS.md`](docs/ADAPTER_CONTRACTS.md).
 Requires Pixi/Mojo (see `pixi.toml`):
 
 ```bash
-git submodule update --init --recursive # Fetches EmberJson
-# sqlite.fire is managed dynamically by Pixi/scripts; to build it runs:
-pixi run setup-sqlite-fire
-mise exec -- pixi install
+# vendor dependencies (EmberJson, sqlite.fire) are managed dynamically by Pixi/scripts;
+# to clone and run the smoke gateway:
 mise exec -- pixi run full-smoke
-mise exec -- pixi run extended-smoke
 ```
 
 Smaller gates:

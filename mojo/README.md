@@ -15,8 +15,7 @@ See `docs/FALA_ARCHITECTURE_STATUS.md` and root `CHANGELOG.md`.
 ## Setup
 
 ```bash
-git submodule update --init --recursive
-mise exec -- pixi install --locked   # or: pixi install --locked
+# Dependencies (EmberJson, sqlite.fire) are managed dynamically. To run tests:
 mise exec -- pixi run core-smoke
 ```
 

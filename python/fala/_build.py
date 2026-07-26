@@ -41,9 +41,7 @@ def repo_root() -> Path:
     if env:
         return Path(env).expanduser().resolve()
     for candidate in (_PACKAGE_DIR.parents[2], _PACKAGE_DIR.parent, Path.cwd()):
-        if (candidate / "mojo" / "fala").is_dir() and (
-            candidate / "vendor" / "EmberJson"
-        ).is_dir():
+        if (candidate / "mojo" / "fala").is_dir():
             return candidate.resolve()
     raise RuntimeError(
         "Cannot locate Fala Mojo sources. Set FALA_HOME to the Fala checkout."
@@ -261,6 +259,28 @@ def _cross_process_lock(lock_path: Path) -> Iterator[None]:
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
+def _ensure_ember_json_sources(root: Path) -> None:
+    source_dir = root / "vendor" / "EmberJson"
+    if not source_dir.is_dir():
+        git = shutil.which("git")
+        if git is not None:
+            try:
+                subprocess.run(
+                    [git, "clone", "--depth", "1", "https://github.com/bgreni/EmberJson.git", str(source_dir)],
+                    check=True,
+                    capture_output=True,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"EmberJson directory missing at {source_dir} and auto-clone failed: {e}. "
+                    "Please checkout https://github.com/bgreni/EmberJson.git manually."
+                ) from e
+        else:
+            raise RuntimeError(
+                f"EmberJson sources missing at {source_dir} and `git` not found on PATH. "
+                "Fala extension build requires EmberJson."
+            )
+
 def _ensure_sqlite_fire_sources(root: Path) -> None:
     source_dir = root / "vendor" / "sqlite.fire"
     if not source_dir.is_dir():
@@ -284,7 +304,6 @@ def _ensure_sqlite_fire_sources(root: Path) -> None:
             )
 def _build_native_extension(root: Path, so_path: Path) -> None:
     """Build the Mojo extension to a unique temp path and publish atomically."""
-    _ensure_sqlite_fire_sources(root)
     env = _mojo_env(root)
     mojo = _mojo_bin(env)
     so_path.parent.mkdir(parents=True, exist_ok=True)
@@ -341,6 +360,8 @@ def _ensure_native_artifact(root: Path | None = None) -> Path:
     if not _NATIVE_MOJO.is_file():
         raise RuntimeError(f"missing {_NATIVE_MOJO}")
     active_root = root if root is not None else repo_root()
+    _ensure_ember_json_sources(active_root)
+    _ensure_sqlite_fire_sources(active_root)
     digest = _source_hash(active_root)
     cache_dir = _PACKAGE_DIR / _CACHE_DIR_NAME
     cache_dir.mkdir(exist_ok=True)

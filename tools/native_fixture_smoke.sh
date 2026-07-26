@@ -8,6 +8,11 @@ command -v mojo >/dev/null || {
 }
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ ! -d "$root/vendor/EmberJson" ]; then
+  echo "EmberJson missing under vendor/. Cloning dynamically via git..." >&2
+  git clone --depth 1 https://github.com/bgreni/EmberJson.git "$root/vendor/EmberJson"
+fi
+
 if [ ! -d "$root/vendor/sqlite.fire" ]; then
   echo "sqlite.fire missing under vendor/. Cloning dynamically via git..." >&2
   git clone --depth 1 https://github.com/mikolaj92/sqlite.fire.git "$root/vendor/sqlite.fire"

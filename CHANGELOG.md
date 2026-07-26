@@ -21,8 +21,8 @@ CLI, journal/driver contracts).
 - Docs: residual “workflow tyrant” notes replaced by peer / Unix parent–child
   language (`UNIX_AND_CYBERNETICS`, `RUNTIME`, `CONCEPTUAL_MODEL`, README).
 - Smoke: `peer-to-peer` added to `core-smoke`.
-- De-vendoring: `sqlite.fire` removed from Git submodules and Hatch packaging.
-- Automated dev/test setup: `sqlite.fire` source repository is dynamically cloned from GitHub to local gitignored `vendor/sqlite.fire/` on first test/build run (via Pixi, Python `_build.py`, or `mojo_sql_run.sh`).
+- De-vendoring: Both `EmberJson` and `sqlite.fire` removed from Git submodules and Hatch packaging. Entire `vendor/` directory is gitignored.
+- Automated dev/test setup: Dependencies are dynamically cloned from GitHub to local gitignored `vendor/` directory on first test/build/smoke run (managed by Pixi tasks, Python `_build.py`, or Mojo runner scripts).
 
 
 ## 0.7.12
