@@ -93,8 +93,10 @@ def main() raises:
             conduction=_one("root"),
         )
     )
-    var cancelled = advance_correlation_states(path, dead_states)
-    if len(cancelled.cancelled) != 1:
-        raise Error("leaf should cancel on dead upstream")
+    var advanced_failed = advance_correlation_states(path, dead_states)
+    if len(advanced_failed.cancelled) != 0:
+        raise Error("leaf should not cancel on failed upstream in peer conduction mode")
+    if len(advanced_failed.readied) != 1:
+        raise Error("leaf should become ready under peer conduction with failed upstream's payload")
 
     print("core correlation pure smoke ok")

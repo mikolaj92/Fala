@@ -15,7 +15,8 @@ core-journal-memory = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_jour
 core-correlation-pure = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_correlation_pure.mojo"
 core-memory-e2e = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_memory_e2e.mojo"
 core-driver-registry = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_driver_registry.mojo"
-core-smoke = "pixi run core-status && pixi run core-journal-memory && pixi run core-correlation-pure && pixi run core-memory-e2e && pixi run core-driver-registry"
+peer-to-peer = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/peer_to_peer.mojo"
+core-smoke = "pixi run core-status && pixi run core-journal-memory && pixi run core-correlation-pure && pixi run core-memory-e2e && pixi run core-driver-registry && pixi run peer-to-peer"
 
 # --- Shared adapters (memory/jsonl/package) ---
 native-function = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/native_function_registry.mojo"

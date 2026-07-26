@@ -4,6 +4,25 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.13
+
+**Peer conduction replaces central dead-upstream tyranny.**
+
+- Correlation advance readies dependents when every declared upstream is
+  terminal (`succeeded` / `failed` / `cancelled` / `timed_out`), not only on
+  all-success.
+- Failed / cancelled / timed-out upstreams conduct their error payload under
+  `conduction`; Fala no longer auto-cancels dependents with `dead_upstream`.
+- Feedback cycles are first-class (no `allow_feedback_cycles` opt-in); cycles
+  wait with a typed diagnosis.
+- Durable paths (`advance_correlation`, `refresh_correlation_readiness`,
+  memory runtime, journal child apply) share the peer rule.
+- Removed `cancel_correlation_dead` and ready-only correlation child apply.
+- Docs: residual “workflow tyrant” notes replaced by peer / Unix parent–child
+  language (`UNIX_AND_CYBERNETICS`, `RUNTIME`, `CONCEPTUAL_MODEL`, README).
+- Smoke: `peer-to-peer` added to `core-smoke`.
+
+
 ## 0.7.12
 
 **Preserve structured subprocess output under env redaction (#120).**

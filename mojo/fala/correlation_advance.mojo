@@ -244,6 +244,8 @@ def _states(plan: CorrelationInstantiationPlan, rows: List[ProcessRow]) raises -
                 _validate_projected_schema(_project_output(output_value, item.output_schema_json), Value(parse_string=item.output_schema_json), "/processes/" + item.id + "/output_json")
             except err:
                 raise Error("correlation.advance.invalid_output at /processes/" + item.id + "/output_json: succeeded output is invalid")
+        elif row.status == "failed" or row.status == "cancelled" or row.status == "timed_out":
+            output = row.error_json
         states.append(CorrelationExecutionState(process_id=row.id, effector_id=item.effector_id, status=row.status, attempt=row.attempt, max_attempts=row.max_attempts, output_json=output, input_json=row.input_json, reactions_json="{}", conduction=item.conduction.copy()))
     return states^
 
@@ -465,7 +467,11 @@ def _ancestor_effectors(plan: CorrelationInstantiationPlan, effector_id: String)
 
 
 def _merged_input(item: CorrelationProcessPlan, plan: CorrelationInstantiationPlan, states: List[CorrelationExecutionState]) raises -> String:
-    """Merge succeeded upstream outputs under conduction, preserving authored keys."""
+    """Merge terminal upstream payloads under conduction, preserving authored keys.
+
+    Succeeded upstreams are schema-projected. Failed / cancelled / timed_out
+    upstreams conduct their error payload as an object without success schema.
+    """
     var authored = Value(parse_string=item.input_json)
     if not authored.is_object():
         raise Error("correlation.advance.invalid_input at /processes/" + item.id + "/input_json: expected JSON object")
@@ -486,17 +492,30 @@ def _merged_input(item: CorrelationProcessPlan, plan: CorrelationInstantiationPl
     for value in values:
         var output = Value(parse_string=value.output_json)
         var source_plan_index = -1
+        var upstream_status = ""
+        for candidate_index in range(len(states)):
+            if states[candidate_index].effector_id == value.upstream_effector_id:
+                upstream_status = states[candidate_index].status
+                break
         for candidate_index in range(len(plan.processes)):
             if plan.processes[candidate_index].effector_id == value.upstream_effector_id:
                 source_plan_index = candidate_index
                 break
         if source_plan_index < 0:
             raise Error("correlation.advance.unknown_upstream: " + value.upstream_effector_id)
-        var projected = _project_output(output, plan.processes[source_plan_index].output_schema_json)
-        _validate_projected_schema(projected, Value(parse_string=plan.processes[source_plan_index].output_schema_json), "/processes/" + item.id + "/conduction/" + value.upstream_effector_id)
-        if not projected.is_object():
-            raise Error("correlation.advance.invalid_output at /processes/" + item.id + "/conduction/" + value.upstream_effector_id + ": expected JSON object")
-        conduction[value.upstream_effector_id] = projected^
+        if upstream_status == "succeeded":
+            var projected = _project_output(output, plan.processes[source_plan_index].output_schema_json)
+            _validate_projected_schema(projected, Value(parse_string=plan.processes[source_plan_index].output_schema_json), "/processes/" + item.id + "/conduction/" + value.upstream_effector_id)
+            if not projected.is_object():
+                raise Error("correlation.advance.invalid_output at /processes/" + item.id + "/conduction/" + value.upstream_effector_id + ": expected JSON object")
+            conduction[value.upstream_effector_id] = projected^
+        else:
+            if not output.is_object():
+                var wrapped = Object(capacity=1)
+                wrapped["error"] = output.copy()
+                conduction[value.upstream_effector_id] = Value(wrapped^)
+            else:
+                conduction[value.upstream_effector_id] = output^
     merged["conduction"] = Value(conduction^)
     var metadata = Value(parse_string=item.metadata_json)
     var marker_regulation = Object(capacity=0)
@@ -638,7 +657,6 @@ def advance_correlation(mut journal: NativeJournal, plan: CorrelationInstantiati
     var all_promoted = List[CorrelationProcessPlan]()
     var last_conduction = List[CorrelationConductionValue]()
     var last_blocked = List[CorrelationBlocked]()
-    var all_cancelled = List[CorrelationBlocked]()
     var last_diagnostic = CorrelationWaitDiagnostic(List[String](), False, "", "")
     var changed = True
     var rounds = 0
@@ -653,7 +671,6 @@ def advance_correlation(mut journal: NativeJournal, plan: CorrelationInstantiati
         last_diagnostic = _wait_diagnostic(computed)
         var children = List[CorrelationChildTransition]()
         var child_plans = List[CorrelationProcessPlan]()
-        var child_cancelled = List[CorrelationBlocked]()
         for item in computed.readied:
             var row_index = _find_row(rows, item.id)
             if row_index >= 0 and rows[row_index].status == "pending":
@@ -664,39 +681,25 @@ def advance_correlation(mut journal: NativeJournal, plan: CorrelationInstantiati
                 var merged_input = _merged_input(canonical_item, plan, states)
                 children.append(CorrelationChildTransition(process_id=item.id, target_status="ready", input_json=merged_input, error_json="{}"))
                 child_plans.append(canonical_item^)
-        for blocked in computed.cancelled:
-            var row_index = _find_row(rows, blocked.process_id)
-            if row_index >= 0 and rows[row_index].status == "pending":
-                var error_json = "{\"code\":\"dead_upstream\",\"reason\":\"dead_upstream\",\"dead_upstreams\":["
-                for index in range(len(blocked.dead_upstreams)):
-                    if index > 0: error_json += ","
-                    error_json += "\"" + blocked.dead_upstreams[index] + "\""
-                error_json += "]}"
-                children.append(CorrelationChildTransition(process_id=blocked.process_id, target_status="cancelled", input_json="", error_json=error_json))
-                child_cancelled.append(blocked.copy())
         if len(children) > 0:
             _ = journal.apply_correlation_children(plan.run_id, children)
             for item in child_plans: all_promoted.append(item.copy())
-            for blocked in child_cancelled: all_cancelled.append(blocked.copy())
             changed = True
         _persist_wait_diagnostic(journal, plan, last_diagnostic)
     if changed:
         raise Error("correlation.advance.nonconvergent at /processes: fixed-point iteration exceeded process count")
     var refreshed = journal.list_processes(plan.run_id)
-    var no_op = len(all_promoted) == 0 and len(all_cancelled) == 0
-    return CorrelationAdvanceResult(rows=_ordered_rows(plan, refreshed), readied=all_promoted^, conduction=last_conduction^, blocked=last_blocked^, cancelled=all_cancelled^, readiness=_readiness(refreshed, plan), wait_diagnostic=last_diagnostic^, reaction=_reaction_marker(_reaction_requested(plan)), replayed=replayed or no_op)
+    var no_op = len(all_promoted) == 0
+    return CorrelationAdvanceResult(rows=_ordered_rows(plan, refreshed), readied=all_promoted^, conduction=last_conduction^, blocked=last_blocked^, cancelled=List[CorrelationBlocked](), readiness=_readiness(refreshed, plan), wait_diagnostic=last_diagnostic^, reaction=_reaction_marker(_reaction_requested(plan)), replayed=replayed or no_op)
 
 
 def _path_for_plan(plan: CorrelationInstantiationPlan) raises -> CorrelationPathSpec:
     var effectors = List[CorrelationEffectorSpec]()
-    var allow_feedback_cycles = False
     var accumulate_upstream_reactions = False
     for item in plan.processes:
         var metadata = Value(parse_string=item.metadata_json)
         if metadata.is_object():
-            if "allow_feedback_cycles" in metadata.object() and metadata.object()["allow_feedback_cycles"].is_bool():
-                allow_feedback_cycles = allow_feedback_cycles or metadata.object()["allow_feedback_cycles"].bool()
             if "accumulate_upstream_reactions" in metadata.object() and metadata.object()["accumulate_upstream_reactions"].is_bool():
                 accumulate_upstream_reactions = accumulate_upstream_reactions or metadata.object()["accumulate_upstream_reactions"].bool()
         effectors.append(CorrelationEffectorSpec.create(item.effector_id, "", item.conduction.copy()))
-    return CorrelationPathSpec(plan.correlation_path_id, effectors^, allow_feedback_cycles, accumulate_upstream_reactions)
+    return CorrelationPathSpec(plan.correlation_path_id, effectors^, accumulate_upstream_reactions)

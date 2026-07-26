@@ -75,7 +75,11 @@ def _path_from_json(path_val: Value) raises -> CorrelationPathSpec:
                         if c.is_string():
                             cond.append(c.string())
                 effectors.append(CorrelationEffectorSpec.create(eid, cap, cond^))
-    return CorrelationPathSpec(path_id, effectors^)
+    var acc_reactions = False
+    if path_val.is_object():
+        if "accumulate_upstream_reactions" in path_val.object() and path_val.object()["accumulate_upstream_reactions"].is_bool():
+            acc_reactions = path_val.object()["accumulate_upstream_reactions"].bool()
+    return CorrelationPathSpec(path_id, effectors^, acc_reactions)
 
 
 def host_drive_json(request: PythonObject) raises -> PythonObject:
@@ -240,7 +244,6 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     var path = CorrelationPathSpec(
         package_path_spec.id,
         effectors^,
-        package_path_spec.allow_feedback_cycles,
         package_path_spec.accumulate_upstream_reactions,
     )
 

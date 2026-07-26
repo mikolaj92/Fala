@@ -1,20 +1,18 @@
 # Fala
 
-**Version 0.6.0** — exclusive Mojo product; thin core + domain packs + POSIX host.
+**Version 0.7.13** — exclusive Mojo product; peer conduction + thin core + POSIX host.
 
-## Compose single-purpose processes
+## Observable Unix pipe for processes
 
-Fala is a **composer of single-purpose processes**, not an application server.
+Fala is a sophisticated **Unix pipe `|` operator for processes**, acting as a mediator of relations between autonomous organs. It does not run a centralized workflow engine or interpret domain payloads; rather, it conducts information impulses along defined contract pathways.
 
-1. **Write small organs** (tools) with clear I/O — preferably argv + files/JSON.
-2. **Declare a correlation path** (TOML package): which effectors run, and how
-   outputs conduct into the next step.
-3. **Drive one journal** to idle: claim → execute → complete; recover from the
-   event stream. Nested work = another process + **its own journal**.
+1. **Write small organs** (single-purpose tools) with clear I/O — preferably argv + files/JSON.
+2. **Declare contracts** (TOML package topology) defining how signals flow between autonomous processes.
+3. **Drive one journal** to idle: claim → execute → complete, and recover state from the event stream. Nested work gets its own journal.
 
 ```text
 you compose:   package → impulse → run_until_idle → journal
-Fala provides: organ loop + JournalPort + process host + adapters
+Fala mediates: contract conduction + JournalPort + process host
 organs live:   native_function | subprocess (Splot, …) | homeostat gates
 ```
 
@@ -106,12 +104,8 @@ tools/          mojo_sql_run.sh, native smokes
 
 ## Disciplines
 
-- **Cybernetic** — Impulses through `CorrelationPath`s; Associations, Reactions,
-  and Homeostats name memory, footprint, and defensive waits
-  (Mazur/Kossecki lexicon).
-- **Unix** — supervisor + **event-stream** emitter; durability is a Journal
-  port with pluggable sinks. SQLite is the **reference sink**, not product
-  identity. Nested work gets a **separate journal**, not a shared DB lock.
+- **Cybernetic** — Autonomy has reactions, contracts have relationships, and Fala has conduction. Impulses flow through topographies of named contracts. Process execution itself is a local autonomous concern; Fala mediately records and registers the memory trace (Associations, Reactions, and Homeostats) rather than orchestrating the business decision logic.
+- **Unix** — A sophisticated multi-process pipe `|` operator. Fala provides a supervisor, process host, and event-stream emitter where durability is a Journal port. SQLite is the reference sink, not product identity. Each nested or parallel system gets its own isolated journal.
 
 ## Adapters
 
@@ -170,6 +164,15 @@ scheduling and the journal.
 Fala owns journaled process state and leases; it does not isolate concurrent
 multi-run hosts for you. Parallel drivers must keep process ids / work roots
 unique. See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md).
+
+### Peer conduction (not a workflow tyrant)
+
+Fala mediates named contracts; it does not cancel dependents when an upstream
+fails. Terminal upstreams (`succeeded` / `failed` / `cancelled` / `timed_out`)
+conduct their payload into the next effector. The child organ decides what the
+failure means. One process plan per effector per run remains the durable unit
+of activation; feedback cycles wait with a typed diagnosis instead of being
+banned by a central scheduler.
 
 ## Docs
 

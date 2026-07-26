@@ -1,9 +1,6 @@
 # Conceptual Model
 
-Fala is an embedded, **event-first** runtime for observable information
-correlation paths. The product identity is not “a SQLite app”; it is an
-**autonomous correlator** that conducts Impulses through process graphs and
-emits a durable event stream through a Journal port.
+Fala is an embedded, **event-first** runtime for observable process composition, serving as a sophisticated **Unix pipe `|` operator for processes**. The product identity is not "a SQLite app"; it is a **mediator of relations** that conducts Impulses through process graphs and emits a durable event stream through a Journal port.
 
 SQLite is the bundled **reference journal sink**. Memory and JSONL sinks
 implement the same port for tests and Unix-style pipes.
@@ -22,13 +19,13 @@ Domain-agnostic records (the organ’s vocabulary):
 
 | Record | Role |
 | --- | --- |
-| **Impulse** | Typed information payload entering the system |
+| **Impulse** | Typed information payload entering the system (signals, payloads, or tokens) |
 | **ImpulseType** / **ImpulseRelation** | Type registry and lineage between impulses |
 | **Association** | Domain reading, snapshot, score, chunk, or measurement |
-| **Reaction** | Materialized output (bytes outside the journal; metadata/refs inside) |
+| **Reaction** | Materialized output (bytes outside the journal; metadata/refs inside) produced by an effector |
 | **Event** | Append-only runtime fact (ordered, command-linked) |
 | **Command** | Idempotent write intent |
-| **Process** | Schedulable unit of effector work (lease, retry, terminals) |
+| **Process** | A concrete execution or activation attempt (impulse response) of an effector |
 | **Homeostat** | Durable wait for human or external completion (defensive regulation) |
 | **Projection** | Rebuildable read model from state/events |
 | **Run** | Lifecycle boundary for a local execution |
@@ -66,3 +63,17 @@ adapter is optional and must map the current runtime contracts explicitly.
 This document does not claim that Fala implements hierarchical regulation or
 formal equivalence with any cybernetic theory — only that its lexicon and
 runtime are deliberately shaped for autonomous information correlation.
+
+## Peer conduction
+
+Conduction is a named contract, not a success-only workflow edge:
+1. **One Process per Effector (per run plan):** durable activation unit for a
+   declared node; not a claim that the organ cannot re-run via a new plan.
+2. **Terminal readiness:** a downstream process becomes `ready` when every
+   declared upstream is terminal (`succeeded`, `failed`, `cancelled`,
+   `timed_out`) — not only on all-success.
+3. **Peer conduction:** terminal payloads are conducted under `conduction`
+   (success output or failure/error object). The receiving effector owns the
+   decision.
+4. **No dead-upstream cancel:** Fala does not auto-cancel dependents when an
+   upstream fails; that would be central tyranny over child autonomy.

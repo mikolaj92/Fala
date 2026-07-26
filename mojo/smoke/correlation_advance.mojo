@@ -138,11 +138,11 @@ def main() raises:
     var failed_root = blocked_journal.claim_process("advance-fail", "advance-fail:chain:root", "smoke", "2026-01-01T00:00:01Z", "2026-01-01T00:10:00Z")
     _ = blocked_journal.fail_process(failed_root.run_id, failed_root.id, "smoke", "2026-01-01T00:00:02Z", "{\"code\":\"boom\"}")
     var dead = advance_correlation(blocked_journal, failed_plan)
-    _check(len(dead.cancelled) == 1 and dead.cancelled[0].reason == "dead_upstream", "failed upstream reports dead dependency")
-    _check(dead.rows[1].status == "cancelled", "dead upstream cancellation is durable")
-    _check(dead.reaction.code == "correlation.reaction.unavailable" and dead.reaction.replay_safe, "reaction boundary is explicit")
+    _check(len(dead.readied) == 1 and len(dead.cancelled) == 0, "failed upstream conducts to dependency")
+    _check(dead.rows[1].status == "ready", "dead upstream conducts rather than canceling")
+    _check(dead.rows[1].input_json.find("\"code\":\"boom\"") >= 0, "failed upstream error is conducted")
 
-    # A failed root cancels every downstream pending effector in one bounded fixed point.
+    # A failed root readies only the next terminal-peer layer; deeper nodes wait.
     var cascade_journal = NativeJournal(":memory:\0")
     cascade_journal.initialize()
     _ = cascade_journal.create_run("advance-cascade", "created", "{}", "2026-01-01T00:00:00Z")
@@ -155,7 +155,8 @@ def main() raises:
     var cascade_root = cascade_journal.claim_process("advance-cascade", "advance-cascade:cascade:root", "smoke", "2026-01-01T00:00:01Z", "2026-01-01T00:10:00Z")
     _ = cascade_journal.fail_process(cascade_root.run_id, cascade_root.id, "smoke", "2026-01-01T00:00:02Z", "{\"code\":\"boom\"}")
     var cascaded = advance_correlation(cascade_journal, cascade_plan)
-    _check(len(cascaded.cancelled) == 2 and cascaded.rows[1].status == "cancelled" and cascaded.rows[2].status == "cancelled", "multi-level dead upstream cancellation")
+    _check(len(cascaded.readied) == 1 and cascaded.rows[1].status == "ready" and cascaded.rows[2].status == "pending", "failed root conducts to middle, leaf stays pending")
+    _check(cascaded.rows[1].input_json.find("\"code\":\"boom\"") >= 0, "cascade middle receives failed root payload")
     var cycle_path = "/tmp/fala-native-feedback-cycle.sqlite"
     try:
         remove(cycle_path)
@@ -169,7 +170,7 @@ def main() raises:
     var cycle_b = CorrelationEffectorSpec.create("b", "cycle", _one("a"))
     cycle_effectors.append(cycle_a^)
     cycle_effectors.append(cycle_b^)
-    var cycle_plan = instantiate_correlation_path(CorrelationPathSpec("cycle", cycle_effectors^, allow_feedback_cycles=True), "advance-cycle")
+    var cycle_plan = instantiate_correlation_path(CorrelationPathSpec("cycle", cycle_effectors^), "advance-cycle")
     _ = persist_correlation_plan(cycle_journal, cycle_plan, "2026-01-01T00:00:00Z")
     var cycle = advance_correlation(cycle_journal, cycle_plan)
     _check(cycle.wait_diagnostic.deadlocked and cycle.wait_diagnostic.code == "feedback_cycle_wait", "allowed cycle terminates with typed diagnosis")
@@ -258,7 +259,7 @@ def main() raises:
     var cycle_inflight_states = List[CorrelationExecutionState]()
     cycle_inflight_states.append(CorrelationExecutionState("advance-cycle:a", "a", "running", 1, 1, "{}", "{}", "[]", _one("b")))
     cycle_inflight_states.append(CorrelationExecutionState("advance-cycle:b", "b", "pending", 0, 1, "{}", "{}", "[]", _one("a")))
-    var inflight = advance_correlation_states(CorrelationPathSpec("cycle", cycle_inflight_effectors^, allow_feedback_cycles=True), cycle_inflight_states)
+    var inflight = advance_correlation_states(CorrelationPathSpec("cycle", cycle_inflight_effectors^), cycle_inflight_states)
     _check(not inflight.wait_diagnostic.deadlocked and inflight.wait_diagnostic.code == "", "in-flight feedback dependency is not deadlocked")
     var inflight_chain_effectors = List[CorrelationEffectorSpec]()
     inflight_chain_effectors.append(CorrelationEffectorSpec.create("root", "source").copy())
@@ -278,7 +279,7 @@ def main() raises:
     var mixed_cycle_effectors = List[CorrelationEffectorSpec]()
     mixed_cycle_effectors.append(CorrelationEffectorSpec.create("a", "cycle", _one("b")).copy())
     mixed_cycle_effectors.append(CorrelationEffectorSpec.create("b", "cycle", _one("a")).copy())
-    var mixed_cycle_path = CorrelationPathSpec("mixed-cycle", mixed_cycle_effectors^, allow_feedback_cycles=True)
+    var mixed_cycle_path = CorrelationPathSpec("mixed-cycle", mixed_cycle_effectors^)
     var mixed_cycle_states = List[CorrelationExecutionState]()
     mixed_cycle_states.append(CorrelationExecutionState("mixed:a", "a", "running", 1, 1, "{}", "{}", "[]", _one("b")))
     mixed_cycle_states.append(CorrelationExecutionState("mixed:b", "b", "pending", 0, 1, "{}", "{}", "[]", _one("a")))

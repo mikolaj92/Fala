@@ -47,28 +47,24 @@ struct Readiness(Copyable, Movable):
 
 
 struct CorrelationGraph(Copyable, Movable):
-    """Validated graph and its feedback-cycle policy."""
+    """Validated graph."""
 
     var nodes: List[EffectorNode]
     var edges: List[ConductionEdge]
-    var allow_feedback_cycles: Bool
 
     def __init__(
         out self,
         nodes: List[EffectorNode],
-        allow_feedback_cycles: Bool = False,
     ) raises:
-        validate_graph(nodes, allow_feedback_cycles)
+        validate_graph(nodes)
         self.nodes = nodes.copy()
         self.edges = conduction_edges(nodes)
-        self.allow_feedback_cycles = allow_feedback_cycles
 
     def topological_order(self) raises -> List[String]:
-        return _topological_order(self.nodes, self.allow_feedback_cycles)
+        return _topological_order(self.nodes)
 
     def readiness(self, completed: List[String], failed: List[String]) raises -> Readiness:
         return readiness(self, completed, failed)
-
 
 def _contains(values: List[String], wanted: String) -> Bool:
     for value in values:
@@ -109,9 +105,8 @@ def conduction_edges(nodes: List[EffectorNode]) -> List[ConductionEdge]:
 
 def validate_graph(
     nodes: List[EffectorNode],
-    allow_feedback_cycles: Bool = False,
 ) raises:
-    """Reject duplicate ids, bad refs, self refs, duplicate refs, and cycles."""
+    """Reject duplicate ids, bad refs, self refs, and duplicate refs."""
     var ids = List[String]()
     for node in nodes:
         if node.id == "":
@@ -133,15 +128,8 @@ def validate_graph(
                 raise Error("correlation graph effector " + node.id + " has duplicate conduction reference: " + upstream)
             seen_upstreams.append(upstream)
 
-    if not allow_feedback_cycles:
-        var order = _topological_order(nodes, False)
-        if len(order) != len(ids):
-            raise Error("correlation graph contains a cycle")
-
-
 def _topological_order(
     nodes: List[EffectorNode],
-    allow_feedback_cycles: Bool,
 ) raises -> List[String]:
     var ids = effector_ids(nodes)^
     var remaining = ids^
@@ -162,8 +150,6 @@ def _topological_order(
                 selected = candidate
                 break
         if selected == "":
-            if not allow_feedback_cycles:
-                raise Error("correlation graph contains a cycle")
             for candidate in remaining:
                 order.append(candidate)
             remaining.clear()
@@ -179,7 +165,7 @@ def _topological_order(
 
 def topological_order(graph: CorrelationGraph) raises -> List[String]:
     """Return deterministic upstream-before-downstream order."""
-    return _topological_order(graph.nodes, graph.allow_feedback_cycles)
+    return _topological_order(graph.nodes)
 
 
 def readiness(
@@ -209,7 +195,7 @@ def readiness(
         var can_run = True
         if node_index < len(graph.nodes):
             for upstream in graph.nodes[node_index].conduction:
-                if not _contains(completed, upstream):
+                if not (_contains(completed, upstream) or _contains(failed, upstream)):
                     can_run = False
                     break
         if can_run:
@@ -253,21 +239,18 @@ struct CorrelationPathSpec(Copyable, Movable):
     """Typed path declaration for callers that do not depend on models.mojo."""
     var id: String
     var effectors: List[CorrelationEffectorSpec]
-    var allow_feedback_cycles: Bool
     var accumulate_upstream_reactions: Bool
 
-    def __init__(out self, id: String, var effectors: List[CorrelationEffectorSpec], allow_feedback_cycles: Bool = False, accumulate_upstream_reactions: Bool = False) raises:
+    def __init__(out self, id: String, var effectors: List[CorrelationEffectorSpec], accumulate_upstream_reactions: Bool = False) raises:
         if id == "": raise Error("correlation path id must not be empty")
         if len(effectors) == 0: raise Error("correlation path effectors must be nonempty")
         var nodes = List[EffectorNode]()
         for effector in effectors:
             nodes.append(EffectorNode(effector.id, effector.conduction.copy()))
-        validate_graph(nodes, allow_feedback_cycles)
+        validate_graph(nodes)
         self.id = id
         self.effectors = effectors.copy()
-        self.allow_feedback_cycles = allow_feedback_cycles
         self.accumulate_upstream_reactions = accumulate_upstream_reactions
-
 
 @fieldwise_init
 struct CorrelationProcessPlan(Copyable, Movable):
@@ -313,19 +296,19 @@ struct CorrelationExecutionState(Copyable, Movable):
 
 @fieldwise_init
 struct CorrelationConductionValue(Copyable, Movable):
-    """Projected domain output from one succeeded upstream effector."""
+    """Projected payload from one terminal upstream effector (success or failure)."""
     var upstream_effector_id: String
     var output_json: String
 
 
 @fieldwise_init
 struct CorrelationBlocked(Copyable, Movable):
-    """Diagnostic for an unresolved or permanently dead dependency."""
+    """Diagnostic for an unresolved dependency (still running / feedback cycle)."""
     var process_id: String
     var effector_id: String
     var unmet: List[String]
-    var dead_upstreams: List[String]
     var reason: String
+
 
 
 struct CorrelationWaitDiagnostic(Copyable, Movable):
@@ -344,13 +327,14 @@ struct CorrelationWaitDiagnostic(Copyable, Movable):
 
 @fieldwise_init
 struct CorrelationAdvancePlan(Copyable, Movable):
-    """Pure advancement result; callers persist ready/cancel transitions."""
+    """Pure advancement result; callers persist ready transitions."""
     var readied: List[CorrelationProcessPlan]
     var conduction: List[CorrelationConductionValue]
     var blocked: List[CorrelationBlocked]
     var cancelled: List[CorrelationBlocked]
     var wait_diagnostic: CorrelationWaitDiagnostic
     var replayed: Bool
+
 
 
 def _has_json_key(text: String, key: String) -> Bool:
@@ -476,7 +460,7 @@ def instantiate_correlation_path_plan(
         if effector.id in regulation_by_effector: regulation = canonical_json_text(regulation_by_effector[effector.id])
         var regulation_value = Value(parse_string=regulation)
         if not regulation_value.is_object(): raise Error("correlation regulation must be a JSON object")
-        var marker = '{"correlation_path_id":"' + path_id + '","correlation_path_spec_id":"' + path.id + '","allow_feedback_cycles":' + ("true" if path.allow_feedback_cycles else "false") + ',"effector_id":"' + effector.id + '","seq":' + String(index) + ',"accumulate_upstream_reactions":' + ("true" if path.accumulate_upstream_reactions else "false") + ',"regulation":' + regulation + ',"accepted_reaction_kinds":['
+        var marker = '{"correlation_path_id":"' + path_id + '","correlation_path_spec_id":"' + path.id + '","effector_id":"' + effector.id + '","seq":' + String(index) + ',"accumulate_upstream_reactions":' + ("true" if path.accumulate_upstream_reactions else "false") + ',"regulation":' + regulation + ',"accepted_reaction_kinds":['
         for reaction_index in range(len(effector.accepted_reaction_kinds)):
             if reaction_index > 0: marker += ','
             marker += '"' + effector.accepted_reaction_kinds[reaction_index] + '"'
@@ -521,17 +505,19 @@ def instantiate_correlation_path(
 
 
 def project_conduction(states: List[CorrelationExecutionState], downstream: CorrelationExecutionState) raises -> List[CorrelationConductionValue]:
-    """Project direct upstream outputs in declaration order, exactly once."""
+    """Project direct upstream terminal payloads in declaration order, exactly once."""
     var projected = List[CorrelationConductionValue]()
     for upstream_id in downstream.conduction:
         var found = False
         for state in states:
             if state.effector_id == upstream_id:
                 found = True
-                if state.status == "succeeded": projected.append(CorrelationConductionValue(upstream_effector_id=upstream_id, output_json=state.output_json))
+                if state.status == "succeeded" or state.status == "failed" or state.status == "cancelled" or state.status == "timed_out":
+                    projected.append(CorrelationConductionValue(upstream_effector_id=upstream_id, output_json=state.output_json))
                 break
         if not found: raise Error("unknown conduction upstream: " + upstream_id)
     return projected^
+
 
 
 def _feedback_cycle_member(states: List[CorrelationExecutionState], start: String, blocked_effectors: List[String]) -> Bool:
@@ -554,7 +540,7 @@ def _feedback_cycle_member(states: List[CorrelationExecutionState], start: Strin
 
 
 def advance_correlation_states(path: CorrelationPathSpec, states: List[CorrelationExecutionState]) raises -> CorrelationAdvancePlan:
-    """Compute root/chain/diamond readiness and dead-upstream cancellation diagnostics."""
+    """Compute root/chain/diamond readiness and diagnostics."""
     var readied = List[CorrelationProcessPlan]()
     var projected = List[CorrelationConductionValue]()
     var blocked = List[CorrelationBlocked]()
@@ -562,26 +548,27 @@ def advance_correlation_states(path: CorrelationPathSpec, states: List[Correlati
     for state in states:
         if state.status != "pending": continue
         var unmet = List[String]()
-        var dead = List[String]()
         var values = List[CorrelationConductionValue]()
         for upstream_id in state.conduction:
             var found = False
             for upstream in states:
                 if upstream.effector_id == upstream_id:
                     found = True
-                    if upstream.status == "succeeded": values.append(CorrelationConductionValue(upstream_effector_id=upstream_id, output_json=upstream.output_json))
-                    elif upstream.status == "cancelled" or upstream.status == "timed_out" or (upstream.status == "failed" and upstream.attempt >= upstream.max_attempts): dead.append(upstream_id)
-                    else: unmet.append(upstream_id)
+                    if upstream.status == "succeeded" or upstream.status == "failed" or upstream.status == "cancelled" or upstream.status == "timed_out":
+                        values.append(CorrelationConductionValue(upstream_effector_id=upstream_id, output_json=upstream.output_json))
+                    else:
+                        unmet.append(upstream_id)
                     break
-            if not found: dead.append(upstream_id)
-        if len(dead) > 0:
-            cancelled.append(CorrelationBlocked(process_id=state.process_id, effector_id=state.effector_id, unmet=unmet^, dead_upstreams=dead^, reason="dead_upstream"))
-        elif len(unmet) > 0:
-            blocked.append(CorrelationBlocked(process_id=state.process_id, effector_id=state.effector_id, unmet=unmet^, dead_upstreams=List[String](), reason="unmet_dependencies"))
+            if not found:
+                var empty_err = "{\"error\":\"upstream_not_found\",\"message\":\"upstream effector was not instantiated or is missing\"}"
+                values.append(CorrelationConductionValue(upstream_effector_id=upstream_id, output_json=empty_err))
+        if len(unmet) > 0:
+            blocked.append(CorrelationBlocked(process_id=state.process_id, effector_id=state.effector_id, unmet=unmet^, reason="unmet_dependencies"))
         else:
             for item in values: projected.append(item.copy())
             readied.append(CorrelationProcessPlan(id=state.process_id, run_id="", effector_id=state.effector_id, declaration_seq=0, status="ready", priority=0, max_attempts=state.max_attempts, timeout_seconds=0.0, input_json=state.input_json, config_json="{}", output_schema_json="{}", conduction=state.conduction.copy(), metadata_json="{}", idempotency_key="process.ready:" + state.process_id))
-    if path.allow_feedback_cycles and len(blocked) > 0:
+    
+    if len(blocked) > 0:
         # Only pending members of an actual dependency cycle are deadlocked.
         # Running/retry/waiting upstreams remain ordinary unresolved waits.
         var blocked_effectors = List[String]()
@@ -593,17 +580,17 @@ def advance_correlation_states(path: CorrelationPathSpec, states: List[Correlati
                 blocked[index] = item.copy()
     var wait_diagnostic = diagnose_correlation_wait(path, states, blocked, readied)
     return CorrelationAdvancePlan(readied=readied^, conduction=projected^, blocked=blocked^, cancelled=cancelled^, wait_diagnostic=wait_diagnostic^, replayed=False)
+
 def diagnose_correlation_wait(path: CorrelationPathSpec, states: List[CorrelationExecutionState], blocked: List[CorrelationBlocked], readied: List[CorrelationProcessPlan]) -> CorrelationWaitDiagnostic:
     """Return a stable persisted diagnosis for an actual feedback-cycle wait."""
     var ids = List[String]()
-    if path.allow_feedback_cycles and len(blocked) > 0:
+    if len(blocked) > 0:
         var blocked_effectors = List[String]()
         for item in blocked: blocked_effectors.append(item.effector_id)
         for item in blocked:
             if item.reason == "feedback_cycle_wait" and _feedback_cycle_member(states, item.effector_id, blocked_effectors):
                 ids.append(item.process_id)
     return CorrelationWaitDiagnostic(blocked_process_ids=ids^, deadlocked=len(ids) > 0, reason=("feedback_cycle_wait" if len(ids) > 0 else ""), code=("feedback_cycle_wait" if len(ids) > 0 else ""))
-
 
 
 def replay_safe_advance(previous: CorrelationAdvancePlan, current: CorrelationAdvancePlan) -> CorrelationAdvancePlan:

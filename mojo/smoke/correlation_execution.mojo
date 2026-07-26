@@ -95,12 +95,12 @@ def main() raises:
     _check(replayed.replayed and len(replayed.readied) == 0, "idempotent replay")
 
     states[2].status = "cancelled"
-    var dead = advance_correlation_states(path, states)
-    _check(len(dead.cancelled) == 1 and dead.cancelled[0].reason == "dead_upstream", "dead upstream")
+    var dead_conduction = advance_correlation_states(path, states)
+    _check(len(dead_conduction.cancelled) == 0 and len(dead_conduction.readied) == 1 and dead_conduction.readied[0].effector_id == "sink", "cancelled upstream conducts to join rather than canceling")
     var cycle_a = CorrelationEffectorSpec.create("a", "cycle", _list_one("b"))
     var cycle_b = CorrelationEffectorSpec.create("b", "cycle", _list_one("a"))
     var cycle_effectors = List[CorrelationEffectorSpec](); cycle_effectors.append(cycle_a^); cycle_effectors.append(cycle_b^)
-    var cycle_path = CorrelationPathSpec("cycle", cycle_effectors^, True)
+    var cycle_path = CorrelationPathSpec("cycle", cycle_effectors^)
     var cycle_states = List[CorrelationExecutionState](); cycle_states.append(CorrelationExecutionState("cycle:a", "a", "pending", 0, 1, "{}", "{}", "[]", _list_one("b"))); cycle_states.append(CorrelationExecutionState("cycle:b", "b", "pending", 0, 1, "{}", "{}", "[]", _list_one("a")))
     var cycle_wait = advance_correlation_states(cycle_path, cycle_states)
     _check(len(cycle_wait.blocked) == 2 and cycle_wait.blocked[0].reason == "feedback_cycle_wait", "feedback cycle diagnosis")

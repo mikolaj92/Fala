@@ -26,10 +26,10 @@ Ontology: [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md).
 ┌─────────────────────────────────────────────────────────────┐
 │  AUTONOMOUS CORRELATOR  (cybernetic organ of conduction)    │
 │                                                             │
-│  CorrelationPath ──► Effectors ──► Processes                │
-│        │ conduction              claim / lease / complete   │
-│        ▼                                                    │
-│  Associations · Reactions · Homeostats · Projections        │
+│  Contracts / Pathways ──► Effectors (Autonomous Nodes)      │
+│        │ conduction             │ activations & reactions   │
+│        ▼                        ▼                           │
+│  Mediation (Mediate relations & monitor trace of memory)    │
 │                                                             │
 │  emits: ordered RuntimeCommand + RuntimeEvent stream        │
 └────────────────────────────┬────────────────────────────────┘
@@ -56,7 +56,7 @@ Ontology: [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md).
 
 | Layer | Responsibility | Must not know |
 | --- | --- | --- |
-| **Core** | Schedule processes, wire stdin/stdout-style effector I/O, advance correlation paths, enforce transition policy | SQL schemas, file locks, Datadog, S3 |
+| **Core** | Mediate contracts, route impulses, run process host and monitor execution traces, enforce baseline transition boundaries | SQL schemas, file locks, Datadog, S3 |
 | **Journal** | Accept atomic batches, assign sequences, claim under one lock | Effector business logic |
 | **Sink** | Materialize history (maps, tables, JSONL lines) | Correlation-path topology |
 | **Ops (optional)** | Retention, reaction GC, bridge outbox/inbox, heavy projection rebuild | Required for happy-path composition |
@@ -112,17 +112,17 @@ around.
 
 | Concept | Role in the autonomous system |
 | --- | --- |
-| **Impulse** | Packet of information/energy entering the receptor |
-| **CorrelationPath** | Defined conductivity channel (topology of work) |
-| **Effector** | Operational unit that acts or reacts with the environment |
-| **conduction** | Edge that readies a dependent effector with upstream output |
-| **Process** | Schedulable attempt of an effector (lease, retry, terminal states) |
-| **Association** | Micro-registration of readings / potential shifts (memory trace) |
-| **Reaction** | Materialized footprint left by an effector |
-| **Homeostat** | Defensive wait that resists unresolved external/semantic pressure |
-| **Event / Command** | Ordered facts and idempotent write intents of the organ |
-| **Correlator** | Internal organ that registers states and associations (via Journal) |
-| **AutonomousCorrelator** | Facade of the autonomous system for embedded use |
+| **Impulse** | Packet of information/energy entering the receptor; can represent a signal, payload, or token |
+| **CorrelationPath** | Topography of named contracts defining conductivity channels between autonomous nodes |
+| **Effector** | Autonomous node/organ responsible for its own decisions, reactions, and internal regulation |
+| **conduction** | Realization of a named contract; Fala's act of transmitting an impulse from one node to another |
+| **Process** | A concrete execution or activation attempt (impulse response) of an effector on a given impulse |
+| **Association** | Micro-registration of readings / potential shifts (memory trace in the correlator) |
+| **Reaction** | Materialized, permanent footprint left by an effector's execution (not automatically conducted as an impulse) |
+| **Homeostat** | Defensive wait or checkpoint that maintains stability against external semantic noise |
+| **Event / Command** | Ordered facts and idempotent write intents registered by the correlator |
+| **Correlator** | The internal registration organ that registers states, associations, and contracts |
+| **AutonomousCorrelator** | Facade of the autonomous system acting as a mediator of relations and supervisor |
 
 Regulation hooks (e.g. `regulation` on correlation-path markers, elastic
 `max_attempts` on homeostats) are entry points for quantitative damping and
@@ -132,6 +132,17 @@ Fala does **not** claim formal equivalence with any single cybernetic theory.
 It claims a **working lexicon and runtime** that make autonomous information
 correlation paths observable and durable.
 
+### Peer conduction (healthy parent / child)
+
+Fala is a **mediator**, not a workflow tyrant:
+1. **One Process per Effector (per run plan):** durable activation unit.
+2. **Terminal readiness:** dependents ready when every declared upstream is
+   terminal — success is not privileged over failure.
+3. **Peer conduction:** terminal payloads flow under `conduction`; children
+   interpret success or error themselves.
+4. **No dead-upstream cancel:** failed parents do not silently kill children;
+   nested Falas keep separate journals and explicit handoff.
+
 ---
 
 ## How the two halves lock together
@@ -140,7 +151,7 @@ correlation paths observable and durable.
 | --- | --- |
 | Impulse accepted | `impulse.accept` command + `impulse.accepted` event in one batch |
 | Effector runs | Process claim → adapter run → complete/fail/wait |
-| Conduction advances | Pure helpers compute ready/cancel; batch may multi-unit advance |
+| Conduction advances | Mediate contract transmission; pure readiness helpers ready peers on terminal upstreams |
 | Homeostat open | Process waits; external completion closes the homeostat |
 | Memory of the run | Append-only event stream + materializations in a sink |
 | Nested autonomy | Child Fala = separate journal; bridge or stream metadata to parent |

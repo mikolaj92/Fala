@@ -384,6 +384,10 @@ struct MemoryRuntime(Movable):
         units.append(unit^)
         _ = self.journal.append_batch(JournalBatch(finished.run_id, units^))
         self.journal.seed_process(finished)
+        if process_id in self.extras:
+            var extra = self.extras[process_id].copy()
+            extra.output_json = error_json
+            self.extras[process_id] = extra^
 
     def _execution_states(self, run_id: String) raises -> List[CorrelationExecutionState]:
         var states = List[CorrelationExecutionState]()
@@ -474,7 +478,8 @@ struct MemoryRuntime(Movable):
                     for dep in extra.conduction:
                         if dep == up.effector_id:
                             is_dep = True
-                    if is_dep and self.journal.get_process(up_id).status == ProcessStatus.succeeded():
+                    var up_status = self.journal.get_process(up_id).status.copy()
+                    if is_dep and (up_status == ProcessStatus.succeeded() or up_status == ProcessStatus.failed() or up_status == ProcessStatus.cancelled() or up_status == ProcessStatus.timed_out()):
                         if not first:
                             conduction_body += ","
                         first = False
@@ -482,12 +487,6 @@ struct MemoryRuntime(Movable):
                 conduction_body += "}"
                 extra.input_json = "{\"conduction\":" + conduction_body + "}"
                 self.extras[ready.id] = extra^
-        for index in range(len(plan.cancelled)):
-            var dead = plan.cancelled[index].copy()
-            var process = self.journal.get_process(dead.process_id)
-            if process.status == ProcessStatus.pending():
-                process.status = ProcessStatus.cancelled()
-                self.journal.seed_process(process)
         return plan^
 
     def claim_next(

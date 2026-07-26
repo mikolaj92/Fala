@@ -78,19 +78,15 @@ struct PackageCorrelationPath(Copyable, Movable):
     var title: String
     var description: String
     var tags: List[String]
-    var allow_feedback_cycles: Bool
     var accumulate_upstream_reactions: Bool
 
-    def __init__(out self, id: String, effectors: List[PackageEffector], title: String = "", description: String = "", tags: List[String] = List[String](), allow_feedback_cycles: Bool = False, accumulate_upstream_reactions: Bool = False):
+    def __init__(out self, id: String, effectors: List[PackageEffector], title: String = "", description: String = "", tags: List[String] = List[String](), accumulate_upstream_reactions: Bool = False):
         self.id = id
         self.effectors = effectors.copy()
         self.title = title
         self.description = description
         self.tags = tags.copy()
-        self.allow_feedback_cycles = allow_feedback_cycles
         self.accumulate_upstream_reactions = accumulate_upstream_reactions
-
-
 struct PackageManifest(Copyable, Movable):
     """Validated strict JSON package manifest."""
     var id: String
@@ -455,21 +451,6 @@ def _validate_ontology_refs(value: Value, path: String, key: String, known: List
         i += 1
 
 
-def _validate_acyclic(effectors: List[PackageEffector], path: String) raises:
-    var visited = List[String]()
-    while len(visited) < len(effectors):
-        var progressed = False
-        for effector in effectors:
-            if _contains(visited, effector.id): continue
-            var ready = True
-            for dependency in effector.conduction:
-                if not _contains(visited, dependency): ready = False
-            if ready:
-                visited.append(effector.id.copy())
-                progressed = True
-        if not progressed:
-            _error("manifest.value", path + "/effectors", "conduction contains a cycle")
-
 def _validate_runtime(value: Value, path: String) raises:
     if value.is_null():
         return
@@ -595,7 +576,7 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_runtime_ref=adapter.runtime_ref, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, config_json=config_json, title=title, description=description, tags=tags)
 def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String]()) raises -> PackageCorrelationPath:
     if not value.is_object(): _error("manifest.type", path, "expected correlation path object")
-    _known(value, ["id", "title", "description", "tags", "effectors", "allow_feedback_cycles", "accumulate_upstream_reactions"], path)
+    _known(value, ["id", "title", "description", "tags", "effectors", "accumulate_upstream_reactions"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "correlation path id")
     var effects_value = _required_nonnull(value, "effectors", path)
     if not effects_value.is_array() or len(effects_value.array()) == 0: _error("manifest.value", path + "/effectors", "must be nonempty array")
@@ -611,22 +592,18 @@ def _path(value: Value, path: String, manifest_parent: String, capabilities: Lis
             for candidate in effectors:
                 if candidate.id == reference: found = True
             if not found: _error("manifest.dangling_reference", path + "/effectors/" + _pointer_token(effector.id) + "/conduction", "unknown effector '" + reference + "'")
-    var title = String(""); var description = String(""); var tags = List[String](); var cycles = False; var reactions = False
+    var title = String(""); var description = String(""); var tags = List[String](); var reactions = False
     var item = _optional(value, "title")
     if not item.is_null(): title = _string(item^, path + "/title")
     item = _optional(value, "description")
     if not item.is_null(): description = _string(item^, path + "/description")
     item = _optional(value, "tags")
     if not item.is_null(): tags = _strings(item^, path + "/tags")
-    item = _optional(value, "allow_feedback_cycles")
-    if not item.is_null():
-        if not item.is_bool(): _error("manifest.type", path + "/allow_feedback_cycles", "expected boolean")
-        cycles = item.bool()
     item = _optional(value, "accumulate_upstream_reactions")
     if not item.is_null():
         if not item.is_bool(): _error("manifest.type", path + "/accumulate_upstream_reactions", "expected boolean")
         reactions = item.bool()
-    return PackageCorrelationPath(id=id, effectors=effectors, title=title, description=description, tags=tags, allow_feedback_cycles=cycles, accumulate_upstream_reactions=reactions)
+    return PackageCorrelationPath(id=id, effectors=effectors, title=title, description=description, tags=tags, accumulate_upstream_reactions=reactions)
 
 
 def _json_value(text: String) raises -> Value:
@@ -712,7 +689,6 @@ def _path_json(path: PackageCorrelationPath) raises -> Value:
         effector_index += 1
     effectors_json += "]"
     result["effectors"] = _json_value(effectors_json^)
-    if path.allow_feedback_cycles: result["allow_feedback_cycles"] = Value(True)
     if path.accumulate_upstream_reactions: result["accumulate_upstream_reactions"] = Value(True)
     return Value(result^)
 
@@ -807,9 +783,6 @@ def _load_package_value(root: Value, path: String) raises -> PackageManifest:
         _validate_ontology_refs(ontology^, "/capabilities", key, reaction_ids, "reaction kind")
     _validate_ontology_refs(ontology^, "/capabilities", "emits_association_kinds", association_ids, "association kind")
     var title = String(""); var description = String(""); var tags = List[String]()
-    for path_item in paths:
-        var allow_cycles = path_item.allow_feedback_cycles
-        if not allow_cycles: _validate_acyclic(path_item.effectors, "/correlation_paths")
     var item = _optional(root, "title")
     if not item.is_null(): title = _string(item^, "/title")
     item = _optional(root, "description")

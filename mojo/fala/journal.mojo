@@ -1047,24 +1047,6 @@ struct NativeJournal(Movable):
         _ = self.transition_process_with_command(run_id, process_id, "ready", command, "{}", "{}", "", input_json)
         return self.get_process(run_id, process_id)
 
-    def cancel_correlation_dead(mut self, run_id: String, process_id: String, error_json: String = "{}") raises SQLiteError -> ProcessRow:
-        """Atomically and idempotently cancel a process with a dead upstream marker."""
-        var current = self.get_process(run_id, process_id)
-        var key = "process.cancel:" + process_id + ":dead"
-        var command = CommandRow(
-            run_id=run_id,
-            id=key,
-            command_type="process.cancel",
-            idempotency_key=key,
-            actor="correlation",
-            correlation_id="",
-            causation_id="",
-            created_at=current.created_at,
-
-            payload="{\"process_id\":" + self._json_quote(process_id) + ",\"attempt\":" + String(current.attempt) + "}",
-        )
-        _ = self.transition_process_with_command(run_id, process_id, "cancelled", command, "{}", error_json)
-        return self.get_process(run_id, process_id)
     def apply_correlation_children(
         mut self,
         run_id: String,
@@ -1074,10 +1056,11 @@ struct NativeJournal(Movable):
         correlation_id: String = "",
         causation_id: String = "",
     ) raises SQLiteError -> List[ProcessRow]:
-        """Apply deterministic ready/dead children in one transaction.
+        """Apply deterministic ready children in one transaction.
 
         The terminal source transition may already be committed by the driver;
         callers use this as an atomic, idempotent repair boundary for children.
+        Peer conduction never auto-cancels dependents.
         """
         self._require_run(run_id)
         if actor == "": raise SQLiteError(code=1, message="journal: correlation actor must not be empty")
@@ -1086,23 +1069,20 @@ struct NativeJournal(Movable):
         try:
             for child in children:
                 if child.process_id == "": raise SQLiteError(code=1, message="journal: correlation child id must not be empty")
-                if child.target_status != "ready" and child.target_status != "cancelled": raise SQLiteError(code=1, message="journal: unsupported correlation child status")
+                if child.target_status != "ready": raise SQLiteError(code=1, message="journal: unsupported correlation child status")
                 var current = self.get_process(run_id, child.process_id)
-                var key = "process.ready:" + child.process_id if child.target_status == "ready" else "process.cancel:" + child.process_id + ":dead"
-                var command_type = "process.ready" if child.target_status == "ready" else "process.cancel"
+                var key = "process.ready:" + child.process_id
+                var command_type = "process.ready"
                 var transition_at = at if at != "" else current.created_at
-                var payload = "{\"process_id\":" + self._json_quote(child.process_id)
-                var normalized_error = self._canonical_json_field(child.error_json, "correlation child error")
-                if child.target_status == "cancelled": payload += ",\"attempt\":" + String(current.attempt) + ",\"error\":" + normalized_error
-                payload += "}"
+                var payload = "{\"process_id\":" + self._json_quote(child.process_id) + "}"
                 var existing = self.db.query("SELECT command_type,actor,correlation_id,causation_id,payload,created_at FROM runtime_commands WHERE run_id=? AND idempotency_key=?")
                 existing.bind_text(1,run_id); existing.bind_text(2,key)
                 if existing.step():
                     if self._text(existing,0) != command_type or self._text(existing,1) != actor or self._text(existing,2) != correlation_id or self._text(existing,3) != causation_id or self._text(existing,4) != payload or self._text(existing,5) != transition_at: raise SQLiteError(code=1, message="journal: correlation child idempotency conflict")
                     result.append(current^); continue
                 if current.status != "pending": raise SQLiteError(code=1, message="journal: correlation child is not pending")
-                var update = self.db.query("UPDATE processes SET status=?,input_json=CASE WHEN ?='ready' AND ?<>'' THEN ? ELSE input_json END,error_json=CASE WHEN ?='cancelled' THEN ? ELSE error_json END,finished_at=CASE WHEN ?='cancelled' THEN ? ELSE finished_at END,updated_at=? WHERE run_id=? AND id=? AND status='pending'")
-                update.bind_text(1,child.target_status); update.bind_text(2,child.target_status); update.bind_text(3,child.input_json); update.bind_text(4,child.input_json); update.bind_text(5,child.target_status); update.bind_text(6,normalized_error); update.bind_text(7,child.target_status); update.bind_text(8,transition_at); update.bind_text(9,transition_at); update.bind_text(10,run_id); update.bind_text(11,child.process_id); _ = update.step()
+                var update = self.db.query("UPDATE processes SET status=?,input_json=CASE WHEN ?<>'' THEN ? ELSE input_json END,updated_at=? WHERE run_id=? AND id=? AND status='pending'")
+                update.bind_text(1,child.target_status); update.bind_text(2,child.input_json); update.bind_text(3,child.input_json); update.bind_text(4,transition_at); update.bind_text(5,run_id); update.bind_text(6,child.process_id); _ = update.step()
                 if self.db.changes() != 1: raise SQLiteError(code=1, message="journal: correlation child transition lost ownership")
                 var command = self.db.query("INSERT INTO runtime_commands (run_id,id,command_type,idempotency_key,actor,correlation_id,causation_id,payload,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
                 command.bind_text(1,run_id); command.bind_text(2,key); command.bind_text(3,command_type); command.bind_text(4,key); command.bind_text(5,actor)
@@ -1111,8 +1091,7 @@ struct NativeJournal(Movable):
                 if causation_id == "": command.bind_null(7)
                 else: command.bind_text(7,causation_id)
                 command.bind_text(8,payload); command.bind_text(9,transition_at); _ = command.step()
-                var event_type = "process.ready" if child.target_status == "ready" else "process.cancelled"
-                _ = self._append_event_in_tx(run_id,key + ":event",event_type,payload,transition_at,current.impulse_id,child.process_id,key,1,actor,correlation_id,causation_id)
+                _ = self._append_event_in_tx(run_id,key + ":event","process.ready",payload,transition_at,current.impulse_id,child.process_id,key,1,actor,correlation_id,causation_id)
                 var updated = self.get_process(run_id, child.process_id)
                 result.append(updated^)
             self.db.commit()

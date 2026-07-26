@@ -148,39 +148,6 @@ def _known(values: List[String], known: Dict[String, Bool], label: String) raise
             raise Error(label + " references unknown id '" + value + "'")
 
 
-def _validate_acyclic(ids: List[String], graph: Dict[String, List[String]]) raises:
-    # Iterative depth-first traversal avoids the old three-edge bound while
-    # keeping cycle reports deterministic (ids and dependencies are authored
-    # in stable order).  A gray node is on the active path and therefore
-    # closes a cycle; black nodes have already been completely checked.
-    var state = Dict[String, Int]()
-    for node in ids:
-        state[node] = 0
-    var stack = List[String]()
-    var offsets = List[Int]()
-    for root in ids:
-        if state[root] != 0: continue
-        stack.append(root)
-        offsets.append(0)
-        state[root] = 1
-        while len(stack) > 0:
-            var top = len(stack) - 1
-            var current = stack[top]
-            var dependencies = graph[current]
-            if offsets[top] >= len(dependencies):
-                state[current] = 2
-                _ = stack.pop()
-                _ = offsets.pop()
-                continue
-            var dependency = dependencies[offsets[top]]
-            offsets[top] += 1
-            if state[dependency] == 1:
-                raise Error("correlation path contains a conduction cycle at '" + dependency + "'")
-            if state[dependency] == 0:
-                stack.append(dependency)
-                offsets.append(0)
-                state[dependency] = 1
-
 
 struct RuntimeId(Copyable, Movable):
     var value: String
@@ -487,11 +454,10 @@ struct CorrelationPathSpec(Copyable, Movable):
     var description: String
     var tags: List[String]
     var effectors: List[EffectorSpec]
-    var allow_feedback_cycles: Bool
     var accumulate_upstream_reactions: Bool
 
     @staticmethod
-    def create(id: String, var effectors: List[EffectorSpec], title: String = "", description: String = "", var tags: List[String] = List[String](), allow_feedback_cycles: Bool = False, accumulate_upstream_reactions: Bool = False) raises -> CorrelationPathSpec:
+    def create(id: String, var effectors: List[EffectorSpec], title: String = "", description: String = "", var tags: List[String] = List[String](), accumulate_upstream_reactions: Bool = False) raises -> CorrelationPathSpec:
         _check_runtime_id(id, "correlation path id")
         if len(effectors) == 0: raise Error("correlation path effectors must be nonempty")
         var ids = List[String]()
@@ -503,8 +469,7 @@ struct CorrelationPathSpec(Copyable, Movable):
         for effector in effectors:
             for dependency in effector.conduction:
                 if dependency not in graph: raise Error("effector conduction references unknown id '" + dependency + "'")
-        if not allow_feedback_cycles: _validate_acyclic(ids, graph)
-        return CorrelationPathSpec(id=id, title=title, description=description, tags=tags^, effectors=effectors^, allow_feedback_cycles=allow_feedback_cycles, accumulate_upstream_reactions=accumulate_upstream_reactions)
+        return CorrelationPathSpec(id=id, title=title, description=description, tags=tags^, effectors=effectors^, accumulate_upstream_reactions=accumulate_upstream_reactions)
 
     def to_json(self) raises -> String:
         var effectors_json = "["
@@ -514,10 +479,8 @@ struct CorrelationPathSpec(Copyable, Movable):
             effectors_json += effector.to_json()
             first = False
         var result = "{\"id\":" + _json_quote(self.id) + ",\"title\":" + _json_optional(self.title) + ",\"description\":" + _json_optional(self.description) + ",\"tags\":" + _json_strings(self.tags) + ",\"effectors\":" + effectors_json + "]"
-        if self.allow_feedback_cycles: result += ",\"allow_feedback_cycles\":true"
         if self.accumulate_upstream_reactions: result += ",\"accumulate_upstream_reactions\":true"
         return canonical_json_text(result + "}")
-
 
 @fieldwise_init
 struct RuntimeBackendConfig(Copyable, Movable):

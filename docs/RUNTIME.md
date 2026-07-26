@@ -170,27 +170,27 @@ isolation (separate workspaces when several host threads each call
 `run_until_idle`) is a consumer concern. See
 [PROCESS_RUNTIME.md](PROCESS_RUNTIME.md#execution-model-what-fala-does-not-own).
 
-## CorrelationPath Orchestration
+## CorrelationPath conduction (peer / cybernetic)
 
-`fala.correlation_paths` executes a `CorrelationPathSpec` dependency graph over the process
-store:
+Native correlation advance mediates named contracts over the process store.
+It is **not** a central success-only workflow engine:
 
-- `instantiate_correlation_path(service, run_id=..., correlation_path=..., effector_inputs=..., ...)`
-  schedules one process per correlation_path effector. When `correlation_path_id`
-  is omitted, Fala uses `f"{run_id}:{correlation_path.id}"` so process ids
+- `instantiate_correlation_path(...)` schedules one process per correlation_path
+  effector. When `correlation_path_id` is omitted, Fala uses
+  `f"{run_id}:{correlation_path.id}"` so process ids
   (`{correlation_path_id}:{effector_id}`) stay unique per run. Passing a fixed
   id that drops `run_id` is allowed for multi-path-in-one-run layouts, but then
   the consumer must keep those ids unique themselves. Effectors with no
   `conduction` start `ready`; effectors with `conduction` start `pending`, which
   is invisible to claim.
-- After each successful effector, the driver readies dependent effectors whose conduction
-  have all succeeded, injecting each upstream effector's output into the dependent effector's
-  input under `"conduction"` (readable via `fala.sdk.conduction`). Explicit re-evaluation
-  is available through `advance_correlation_path(service, run_id=..., correlation_path_id=...)`.
-- An effector whose conduction can no longer succeed (an upstream was cancelled, timed out,
-  or failed with no attempts left) is never readied and never auto-cancelled:
-  `pending` is unclaimable, so blocked effectors fail closed by inaction and are
-  reported in `CorrelationPathAdvance.blocked`.
+- After each **terminal** effector (`succeeded`, `failed`, `cancelled`,
+  `timed_out`), the driver readies dependents whose every upstream is terminal,
+  injecting each upstream payload into the dependent input under `"conduction"`
+  (readable via `fala.sdk.conduction`). Explicit re-evaluation is available
+  through `advance_correlation_path(...)` / native `advance_correlation`.
+- Failed / cancelled / timed-out upstreams conduct their error payload. Fala
+  does **not** auto-cancel dependents with `dead_upstream`; the child organ
+  decides how to react.
 
 ```python
 from fala import instantiate_correlation_path, run_until_idle

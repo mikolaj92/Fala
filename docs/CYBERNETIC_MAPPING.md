@@ -15,7 +15,7 @@ How this lexicon meets Unix process composition and the Journal port:
 | Artifact                       | Reaction                  | Materialized, permanent footprint left by an effector |
 | Observation                    | Association               | Micro-registration of potential shifts within the memory system |
 | Gate                           | Homeostat                 | Defensive regulation checkpoint resisting external semantic noise |
-| needs (dependency edge)        | conduction                | Conductivity edge readying a dependent effector |
+| needs (dependency edge)        | conduction                | Conductivity line / named contract mediating interaction between effectors |
 | SQLiteRuntimeBackend / Storage | Correlator                | Internal organ registering states and associations (durable via Journal sinks: SQLite reference, memory, JSONL) |
 | FalaRuntime (facade)           | AutonomousCorrelator      | Execution facade of the autonomous system |
 | (implicit shared DB file)      | Journal / separate sink   | Unix durability boundary; children never share the parent journal path |

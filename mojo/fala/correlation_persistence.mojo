@@ -306,8 +306,25 @@ def _initial_input(item: CorrelationProcessPlan) raises -> String:
         if regulation.is_object() and len(regulation.object()) > 0: merged["regulation"] = regulation^
     return canonical_json_text(to_string(merged^))
 
-def _validated_upstream_output(row: ProcessRow, upstream_item: CorrelationProcessPlan, path: String) raises -> Value:
-    """Validate a succeeded durable output before it can feed conduction."""
+def _conducted_upstream_payload(row: ProcessRow, upstream_item: CorrelationProcessPlan, path: String) raises -> Value:
+    """Conduct a terminal durable upstream into a peer payload object.
+
+    Success keeps output-schema projection. Failure / cancel / timeout conduct
+    error_json as an object without success-schema validation.
+    """
+    if row.status == "failed" or row.status == "cancelled" or row.status == "timed_out":
+        var error: Value
+        try:
+            error = Value(parse_string=row.error_json)
+        except err:
+            raise Error("correlation.persistence.invalid_output at " + path + ": malformed error JSON")
+        if not error.is_object():
+            var wrapped = Object(capacity=1)
+            wrapped["error"] = error.copy()
+            return Value(wrapped^)
+        return error^
+    if row.status != "succeeded":
+        raise Error("correlation.persistence.invalid_output at " + path + ": upstream is not terminal")
     var schema_path = "/processes/" + row.id + "/output_schema_json"
     _validate_output_schema(row.output_schema_json, schema_path)
     var durable_schema = _canonical_object(row.output_schema_json, schema_path)
@@ -330,6 +347,7 @@ def _validated_upstream_output(row: ProcessRow, upstream_item: CorrelationProces
     if not projected.is_object():
         raise Error("correlation.persistence.invalid_output at " + path + ": expected JSON object")
     return projected^
+
 
 
 def _merged_input(item: CorrelationProcessPlan, plan: CorrelationInstantiationPlan, rows: List[ProcessRow]) raises -> String:
@@ -355,7 +373,7 @@ def _merged_input(item: CorrelationProcessPlan, plan: CorrelationInstantiationPl
         var upstream_index = _find_row(rows, upstream_id)
         if upstream_index < 0:
             raise Error("correlation.persistence.unknown_path at /processes/" + upstream_id + ": durable process row is missing")
-        var projected = _validated_upstream_output(rows[upstream_index], plan.processes[upstream_plan_index], "/processes/" + item.id + "/conduction/" + upstream)
+        var projected = _conducted_upstream_payload(rows[upstream_index], plan.processes[upstream_plan_index], "/processes/" + item.id + "/conduction/" + upstream)
         conduction[upstream] = projected^
         upstream_ids.append(upstream_id)
     merged["conduction"] = Value(conduction^)
@@ -464,7 +482,7 @@ def _readiness_from_rows(plan: CorrelationInstantiationPlan, rows: List[ProcessR
 
 
 def refresh_correlation_readiness(mut journal: NativeJournal, plan: CorrelationInstantiationPlan) raises -> CorrelationPersistenceResult:
-    """Promote pending dependents only after durable conduction is present."""
+    """Promote pending dependents once every declared upstream is terminal."""
     _validate_plan(plan)
     var rows = journal.list_processes(plan.run_id)
     var merged_inputs = List[String]()
@@ -475,7 +493,7 @@ def refresh_correlation_readiness(mut journal: NativeJournal, plan: CorrelationI
             raise Error("correlation.persistence.unknown_path at /processes/" + item.id + ": durable process row is missing")
         if rows[row_index].status != "pending":
             continue
-        var all_succeeded = True
+        var all_terminal = True
         for upstream in item.conduction:
             var upstream_id = ""
             for candidate in plan.processes:
@@ -487,10 +505,11 @@ def refresh_correlation_readiness(mut journal: NativeJournal, plan: CorrelationI
             var upstream_index = _find_row(rows, upstream_id)
             if upstream_index < 0:
                 raise Error("correlation.persistence.unknown_path at /processes/" + upstream_id + ": durable process row is missing")
-            if rows[upstream_index].status != "succeeded":
-                all_succeeded = False
+            var status = rows[upstream_index].status
+            if status != "succeeded" and status != "failed" and status != "cancelled" and status != "timed_out":
+                all_terminal = False
                 break
-        if all_succeeded:
+        if all_terminal:
             candidates.append(item.id)
             merged_inputs.append(_merged_input(item, plan, rows))
     journal.db.begin()

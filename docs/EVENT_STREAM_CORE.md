@@ -110,7 +110,7 @@ Today’s atomic unit is **not** always one command. Two production examples:
 **2. `transition_process` success path** (~2955–3080+), one TX:
 
 - Primary command (e.g. `process.complete`) + event + process row update  
-- If correlation-path `auto_advance`: additional `process.ready` / `process.readied` (and dead-upstream `process.cancel` / `process.cancelled`) with dependent process updates — **same commit**  
+- If correlation-path `auto_advance`: additional `process.ready` / `process.readied` for dependents whose upstreams are all terminal (success **or** failure payloads) — **same commit**  
 - Explicit later `advance` uses the same idempotency keys so it replays as no-op
 
 Any Journal design that models only `command: RuntimeCommand` (singular) **cannot wrap Correlator honestly**.
@@ -406,7 +406,7 @@ class Journal(Protocol):
 | `transition_process` complete + auto-advance | `[complete, ready₁…readyₘ, cancel₁…cancelₙ]` |
 | `enqueue_outbox_delivery` | `[enqueue unit]` |
 
-Idempotency remains **per command**. Batch replay uses the **primary (leading) service command key**; side-effect keys (`process.ready:{id}`, `process.cancel:{id}:dead`, `process.fail:{id}:{attempt}`) are deterministic so a later explicit advance is a no-op.
+Idempotency remains **per command**. Batch replay uses the **primary (leading) service command key**; side-effect keys (`process.ready:{id}`, `process.fail:{id}:{attempt}`) are deterministic so a later explicit advance is a no-op.
 
 ---
 
@@ -1057,7 +1057,7 @@ Primary pairs from `RuntimeBackendService` builders + Correlator side-effect com
 | `process.wait` | `process.waiting` | `process` | |
 | `process.retry` | `process.retry_scheduled` | `process` | |
 | `process.ready` | `process.readied` | `process` | Auto-advance side unit |
-| `process.cancel` | `process.cancelled` | `process` | Service or dead-upstream side unit |
+| `process.cancel` | `process.cancelled` | `process` | Explicit cancel (operator / service); not dead-upstream auto-kill |
 | `process.timeout` | `process.timed_out` | `process` | |
 | `homeostat.save` / `homeostat.open` | `homeostat.saved` / `homeostat.opened` | `homeostat` | |
 | `homeostat.complete` | `homeostat.completed` | `homeostat` | |

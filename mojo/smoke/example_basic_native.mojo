@@ -164,7 +164,6 @@ def main() raises:
     var path = CorrelationPathSpec(
         package_path.id,
         effectors^,
-        package_path.allow_feedback_cycles,
         package_path.accumulate_upstream_reactions,
     )
     var inputs = List[CorrelationInputField]()
