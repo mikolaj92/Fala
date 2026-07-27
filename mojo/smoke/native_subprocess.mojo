@@ -93,6 +93,25 @@ def main() raises:
         var failed = execute_subprocess(EffectorRequest("subprocess-nonzero", nonzero, "impulse", "{}", "{}", root))
         _check(not failed.success and failed.error.code == "adapter_failed" and failed.returncode == 7, "nonzero exit")
 
+        # Failed subprocess with multi-byte stderr (execute path).
+        var fail_unicode = List[String]()
+        fail_unicode.append("/bin/sh")
+        fail_unicode.append("-c")
+        fail_unicode.append(
+            "printf 'błąd krytyczny: żółć ąę\\n' >&2; exit 9"
+        )
+        var fail_adapter = AdapterSpec.subprocess(fail_unicode)
+        var fail_result = execute_subprocess(
+            EffectorRequest("subprocess-fail-unicode", fail_adapter, "impulse", "{}", "{}", root)
+        )
+        _check(
+            not fail_result.success
+                and fail_result.error.code == "adapter_failed"
+                and fail_result.returncode == 9
+                and fail_result.stderr.find("żółć") >= 0,
+            "unicode stderr failure",
+        )
+
 
         var timeout = AdapterSpec.subprocess(command)
         timeout.command[1] = "sleep"
@@ -171,7 +190,23 @@ def main() raises:
         )
         var timed = execute_subprocess(EffectorRequest("subprocess-timeout", timeout, "impulse", "{}", "{}", root))
         _check(not timed.success and timed.error.code == "adapter_timeout", "timeout")
-        print("native subprocess smoke ok: manifest result redaction stale-output nonzero timeout")
+
+        # drive_once path: multi-byte error messages must JSON-quote without abort.
+        var fail_row = durable.schedule_process(
+            "subprocess-durable", "fail-unicode", "native", "2026-01-01T00:00:10Z", "{}", "{}", "", 1, 1,
+            "2026-01-01T00:00:10Z",
+        )
+        var fail_drive = drive_once(
+            durable, fail_row, fail_adapter, "subprocess-worker",
+            "2026-01-01T00:00:11Z", "2026-01-01T00:01:00Z", NativeFunctionRegistry(),
+        )
+        var fail_done = durable.get_process("subprocess-durable", "fail-unicode")
+        _check(
+            fail_drive.failed and fail_done.status == "failed",
+            "unicode failure durable terminal",
+        )
+
+        print("native subprocess smoke ok: manifest result redaction stale-output nonzero timeout unicode")
     except err:
         if root != "": _cleanup(root)
         raise Error(String(err))
