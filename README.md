@@ -133,8 +133,15 @@ Smaller gates:
 
 ```bash
 mise exec -- pixi run core-smoke    # no SQLite
-mise exec -- pixi run host-smoke    # process host + subprocess
+mise exec -- pixi run host-smoke    # process host + subprocess + UTF-8 boundaries
 ```
+
+**When a production crash / StringSlice assert / UTF-8 host abort is found:** land the
+fix **together with** a protective regression (Mojo smoke under `mojo/smoke/` and/or
+`python/tests/`) that fails on the old code. Prefer the public host surface
+(`host_run_package` / `execute_subprocess`) plus a pure unit smoke when the bug is
+in a helper (`redact_environment`, JSON quote, …). Wire the smoke into `host-smoke`
+or `adapter-smoke` so it cannot be skipped.
 
 ## Examples
 
