@@ -53,6 +53,35 @@ def main() raises:
         _check(Path(root + "/input/manifest.json").exists(), "manifest file")
         _check(Path(root + "/output/result.json").exists(), "result file")
 
+        # Multi-byte UTF-8 on stdout/stderr must not abort the host during env
+        # redaction (StringSlice codepoint-boundary assert). #121.
+        var unicode_command = List[String]()
+        unicode_command.append("/bin/sh")
+        unicode_command.append("-c")
+        # secret + Polish text: redaction walks codepoints, not raw bytes.
+        unicode_command.append(
+            "printf 'sekret=top-secret żółć héllo 世界\\n' >&1; "
+            + "printf 'err top-secret ąę\\n' >&2; "
+            + "printf '{\"ok\":true}\\n' > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
+        )
+        var unicode_adapter = AdapterSpec.subprocess(unicode_command)
+        unicode_adapter.env["SECRET"] = "top-secret"
+        var unicode_result = execute_subprocess(
+            EffectorRequest("subprocess-unicode", unicode_adapter, "impulse", "{}", "{}", root)
+        )
+        _check(unicode_result.success and unicode_result.error.is_ok(), "unicode stream success")
+        _check(
+            unicode_result.stdout.find("<redacted>") >= 0
+                and unicode_result.stdout.find("top-secret") < 0
+                and unicode_result.stdout.find("żółć") >= 0,
+            "unicode stdout redaction",
+        )
+        _check(
+            unicode_result.stderr.find("<redacted>") >= 0
+                and unicode_result.stderr.find("top-secret") < 0,
+            "unicode stderr redaction",
+        )
+
         var no_output = AdapterSpec.subprocess(command)
         no_output.command[1] = "no-output"
         no_output.env["SECRET"] = "top-secret"
