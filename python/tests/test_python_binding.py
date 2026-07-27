@@ -248,6 +248,140 @@ root = "{rx}"
     assert "<redacted>" not in out_blob, out_blob
 
 
+def test_host_run_package_unicode_stdout_redaction(tmp_path, monkeypatch) -> None:
+    """Multi-byte stdout + env secret must not abort the host (Fala#121).
+
+    Protective regression: redact_environment used to walk UTF-8 by byte and
+    Mojo StringSlice-asserted mid-codepoint on Polish/CJK streams.
+    """
+    import sqlite3
+    import sys
+    from pathlib import Path
+
+    import fala
+
+    monkeypatch.setenv("FALA_STREAM_SECRET", "top-secret-value")
+    work = tmp_path / "unicode_ok"
+    work.mkdir()
+    rx = work / "reactions"
+    rx.mkdir()
+    db = work / "f.sqlite"
+    step = work / "step.py"
+    step.write_text(
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "out = Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'])\n"
+        "sys.stdout.write('ok top-secret-value żółć ąę 世界\\n')\n"
+        "sys.stdout.flush()\n"
+        "(out / 'result.json').write_text(json.dumps({'values': {'ok': True}}))\n",
+        encoding="utf-8",
+    )
+    pkg = work / "pkg.toml"
+    pkg.write_text(
+        f"""version = "2"
+id = "unicode_ok"
+[[capabilities]]
+id = "step"
+[[correlation_paths]]
+id = "path"
+[[correlation_paths.effectors]]
+id = "step"
+capability = "step"
+adapter = {{ kind = "subprocess", command = ["{sys.executable}", "{step}"], inherit_env = ["FALA_STREAM_SECRET"] }}
+[runtime.backend]
+kind = "sqlite"
+path = "{db}"
+[runtime.reaction_store]
+kind = "filesystem"
+root = "{rx}"
+""",
+        encoding="utf-8",
+    )
+    result = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="path",
+        run_id="unicode-ok",
+        max_ticks=8,
+    )
+    assert result.get("ok") is True, result
+    assert result.get("run_status") == "completed", result
+    row = sqlite3.connect(db).execute(
+        "select status, error_json, output_json from processes"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "succeeded", row
+    # Host must survive; secret may appear redacted in adapter telemetry only.
+    blob = (row[1] or "") + (row[2] or "")
+    assert "codepoint" not in blob.lower()
+
+
+def test_host_run_package_unicode_stderr_failure_does_not_abort(tmp_path) -> None:
+    """Failed step with multi-byte stderr must terminal-fail, not kill host (#121).
+
+    Protective regression: native_driver._json_quote used to walk error messages
+    by byte when persisting adapter_failed payloads with Polish text.
+    """
+    import sqlite3
+    import sys
+    from pathlib import Path
+
+    import fala
+
+    work = tmp_path / "unicode_fail"
+    work.mkdir()
+    rx = work / "reactions"
+    rx.mkdir()
+    db = work / "f.sqlite"
+    step = work / "step.py"
+    step.write_text(
+        "import sys\n"
+        "sys.stderr.write('błąd krytyczny: żółć ąęść\\n')\n"
+        "sys.stderr.flush()\n"
+        "raise SystemExit(9)\n",
+        encoding="utf-8",
+    )
+    pkg = work / "pkg.toml"
+    pkg.write_text(
+        f"""version = "2"
+id = "unicode_fail"
+[[capabilities]]
+id = "step"
+[[correlation_paths]]
+id = "path"
+[[correlation_paths.effectors]]
+id = "step"
+capability = "step"
+adapter = {{ kind = "subprocess", command = ["{sys.executable}", "{step}"] }}
+[runtime.backend]
+kind = "sqlite"
+path = "{db}"
+[runtime.reaction_store]
+kind = "filesystem"
+root = "{rx}"
+""",
+        encoding="utf-8",
+    )
+    result = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="path",
+        run_id="unicode-fail",
+        max_ticks=8,
+    )
+    # Process returns a structured result — host must not abort (exit 133).
+    assert result.get("ok") is True, result
+    assert result.get("run_status") == "failed", result
+    row = sqlite3.connect(db).execute(
+        "select status, error_json from processes"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "failed", row
+    err = row[1] or ""
+    assert "adapter" in err.lower() or "fail" in err.lower() or err != ""
+    assert "codepoint boundary" not in err.lower()
+
+
 def _ensure_schema(db_path) -> None:
     """Open journal probe then initialize full schema-v6 via native store."""
     import json

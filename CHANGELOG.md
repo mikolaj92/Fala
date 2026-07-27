@@ -4,6 +4,15 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## Unreleased
+
+**Protective UTF-8 regressions for adapter streams (#121).**
+
+- Mojo unit smoke `utf8-adapter-boundaries` (redact multi-byte streams, short-value policy).
+- Python `host_run_package` tests: unicode stdout + secret; unicode stderr failure
+  must terminal-fail without host abort.
+- `host-smoke` runs `utf8-adapter-boundaries`.
+
 ## 0.7.15
 
 **UTF-8-safe adapter error JSON quoting (Fala#121 follow-up).**

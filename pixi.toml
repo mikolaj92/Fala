@@ -65,7 +65,9 @@ multi-organ-example = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/multi_org
 splot-integration = "./tools/mojo_sql_run.sh mojo/smoke/splot_integration.mojo 1"
 native-process-host = "./tools/mojo_sql_run.sh mojo/smoke/native_process_host.mojo 1"
 native-subprocess = "./tools/mojo_sql_run.sh mojo/smoke/native_subprocess.mojo 1"
-host-smoke = "pixi run native-process-host && pixi run native-subprocess"
+# Pure unit regressions for UTF-8 StringSlice boundaries (Fala#121) — no process host.
+utf8-adapter-boundaries = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/utf8_adapter_boundaries.mojo"
+host-smoke = "pixi run native-process-host && pixi run native-subprocess && pixi run utf8-adapter-boundaries"
 adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke && pixi run thin-core-layers && pixi run host-smoke"
 
 # Broader historical suite (fleet/runtime-policy intentionally absent)
