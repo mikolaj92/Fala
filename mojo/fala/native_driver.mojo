@@ -311,17 +311,23 @@ def _request_input_json(input_json: String) -> String:
         return input_json
 
 def _json_quote(value: String) -> String:
+    """JSON-quote a string for adapter error payloads.
+
+    Must walk **codepoints** (not bytes). Error messages carry multi-byte UTF-8
+    (Polish legal text, paths). Byte-indexed ``value[byte=i]`` aborts Mojo when
+    ``i`` is mid-codepoint (Fala#121 follow-up on durable subprocess failures).
+    """
     var result = "\""
-    for index in range(value.byte_length()):
-        var ch = value[byte=index]
-        if ch == "\"": result += "\\\\\""
-        elif ch == "\\": result += "\\\\\\\\"
-        elif ch == "\n": result += "\\\\n"
-        elif ch == "\r": result += "\\\\r"
-        elif ch == "\t": result += "\\\\t"
+    for ch in value.codepoint_slices():
+        if ch == "\"": result += "\\\""
+        elif ch == "\\": result += "\\\\"
+        elif ch == "\n": result += "\\n"
+        elif ch == "\r": result += "\\r"
+        elif ch == "\t": result += "\\t"
         else: result += ch
     result += "\""
     return result^
+
 def _adapter_error_json(error: AdapterError) -> String:
     return "{\"code\":" + _json_quote(error.code) + ",\"message\":" + _json_quote(error.message) + "}"
 

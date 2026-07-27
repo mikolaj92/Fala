@@ -4,6 +4,14 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.15
+
+**UTF-8-safe adapter error JSON quoting (Fala#121 follow-up).**
+
+- `native_driver._json_quote` walks codepoints (used when serializing failed
+  subprocess error messages that carry multi-byte text).
+- Smoke: failing effector with Polish stderr + durable `drive_once` terminal.
+
 ## 0.7.14
 
 **UTF-8-safe env redaction on subprocess streams (#121).**
