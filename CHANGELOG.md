@@ -4,7 +4,7 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
-## Unreleased
+## 0.7.14
 
 **UTF-8-safe env redaction on subprocess streams (#121).**
 
