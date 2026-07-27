@@ -4,6 +4,16 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## Unreleased
+
+**UTF-8-safe env redaction on subprocess streams (#121).**
+
+- `redact_environment` walks UTF-8 codepoint boundaries instead of appending
+  single bytes (Mojo `StringSlice` aborts mid-codepoint).
+- Redaction secrets exclude ambient base env keys (`PATH`/`HOME`/…) and values
+  shorter than 6 bytes (timeouts/flags), so ordinary streams are not mangled.
+- Smoke: multi-byte Polish/CJK stdout+stderr with secret redaction.
+
 ## 0.7.13
 
 **Peer conduction replaces central dead-upstream tyranny.**
@@ -245,3 +255,4 @@ mise exec -- pixi run splot-integration
 
 Last line that still mixed Mojo port work with a CPython-era tree. Superseded
 for product purposes by **0.3.0 Mojo exclusive**.
+

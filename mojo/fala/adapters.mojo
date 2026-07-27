@@ -187,10 +187,26 @@ def _has_environment(inherited: Dict[String, String], key: String) -> Bool:
         if pair.key == key: return True
     return False
 
+def _is_base_environment_key(key: String) -> Bool:
+    for base in _base_environment_keys():
+        if base == key: return True
+    return False
+
 def _redaction_values(environment: Dict[String, String]) -> List[String]:
+    """Collect values worth scrubbing from operator-facing streams.
+
+    Ambient keys (PATH/HOME/TMPDIR/LANG/…) and trivially short values are not
+    secrets: substring-redacting them mangles stack traces and collides with
+    ordinary numbers (e.g. timeout ``300``). Explicit adapter secrets and long
+    inherited credentials remain.
+    """
     var secrets = List[String]()
     for pair in environment.items():
-        if pair.value != "": secrets.append(pair.value.copy())
+        if pair.value == "": continue
+        if _is_base_environment_key(pair.key): continue
+        # Short ambient values (ports, small timeouts, flags) are not credentials.
+        if pair.value.byte_length() < 6: continue
+        secrets.append(pair.value.copy())
     var i = 1
     while i < len(secrets):
         var current = secrets[i].copy()
@@ -226,19 +242,62 @@ def resolve_environment(spec: AdapterSpec, inherited: Dict[String, String] = Dic
         resolved[key] = _lookup_environment(inherited, key)
     return resolved^
 
+def _utf8_codepoint_end(value: String, start: Int) -> Int:
+    """Return the exclusive end index of the UTF-8 codepoint starting at ``start``.
+
+    ``start`` must be a codepoint boundary. Continuation bytes (10xxxxxx) extend
+    the span; the result is always a valid StringSlice end.
+    """
+    var n = value.byte_length()
+    if start >= n: return start
+    var end = start + 1
+    while end < n:
+        var b = Int(value.as_bytes()[end])
+        # UTF-8 continuation bytes have the form 10xxxxxx.
+        if (b & 0xC0) != 0x80: break
+        end += 1
+    return end
+
+def _bytes_equal_at(value: String, index: Int, secret: String) -> Bool:
+    """True when ``secret``'s UTF-8 bytes occur at ``index`` (no StringSlice).
+
+    Forming ``value[byte=index:index+len(secret)]`` is illegal in Mojo when the
+    end falls mid-codepoint of ``value``, even if the secret itself is ASCII.
+    Compare raw bytes instead.
+    """
+    var secret_len = secret.byte_length()
+    var n = value.byte_length()
+    if index < 0 or secret_len == 0 or index + secret_len > n: return False
+    var hay = value.as_bytes()
+    var needle = secret.as_bytes()
+    for offset in range(secret_len):
+        if hay[index + offset] != needle[offset]: return False
+    return True
+
 def redact_environment(value: String, environment: Dict[String, String]) -> String:
-    """Redact secrets longest-first with the reference marker."""
+    """Redact secrets longest-first with the reference marker.
+
+    Walks **UTF-8 codepoint boundaries**, never raw single bytes. Mojo ``String``
+    / ``StringSlice`` aborts when a slice ends mid-codepoint (stdlib assert at
+    ``string_slice.mojo``). Operator streams routinely contain multi-byte text
+    (e.g. Polish legal stdout/stderr); byte-wise ``replaced += text[byte=i]``
+    and fixed-width byte slices for secret matching are therefore incorrect.
+    """
     var redacted = value.copy()
     for secret in _redaction_values(environment):
+        var secret_len = secret.byte_length()
+        if secret_len == 0: continue
         var index = 0
         var replaced = String()
-        while index < redacted.byte_length():
-            if index + secret.byte_length() <= redacted.byte_length() and redacted[byte=index:index + secret.byte_length()] == secret:
+        var n = redacted.byte_length()
+        while index < n:
+            if _bytes_equal_at(redacted, index, secret):
                 replaced += "<redacted>"
-                index += secret.byte_length()
+                index += secret_len
             else:
-                replaced += redacted[byte=index]
-                index += 1
+                var next = _utf8_codepoint_end(redacted, index)
+                replaced += redacted[byte=index:next]
+                index = next
         redacted = replaced^
     return redacted
 
