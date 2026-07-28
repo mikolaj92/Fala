@@ -554,6 +554,18 @@ def _binding_metadata_state(metadata: String) -> Int:
         if metadata.find("\"__adapter_binding\"") >= 0: return -1
         return 0
 
+def _automatic_retry_allowed(metadata: String) -> Bool:
+    try:
+        var parsed = Value(parse_string=metadata)
+        if not parsed.is_object() or "regulation" not in parsed.object(): return True
+        var regulation = parsed.object()["regulation"].copy()
+        if not regulation.is_object() or "retry_policy" not in regulation.object(): return True
+        var retry_policy = regulation.object()["retry_policy"].copy()
+        return not retry_policy.is_string() or retry_policy.string() != "none"
+    except:
+        return True
+
+
 def load_adapter_bindings(mut journal: NativeJournal, run_id: String) raises SQLiteError -> List[AdapterBinding]:
     """Reload explicit mappings from process metadata without inferring adapters."""
     if run_id == "": raise SQLiteError(code=2, message="driver: run_id must not be empty")
@@ -905,6 +917,9 @@ def drive_once(
         input_json=_request_input_json(claimed.input_json),
         config_json=_effective_config_json(claimed.input_json, claimed.metadata),
         work_dir="",
+        attempt=claimed.attempt,
+        max_attempts=claimed.max_attempts,
+        run_id=claimed.run_id,
     )
     var result = _dispatch(request, registry)
     if result.waiting:
@@ -942,7 +957,8 @@ def drive_once(
     # Retry transitions are immediately claimable at the transition timestamp,
     # matching reference retry_process and bounded-drive semantics.
     var retry_due = _retry_due(claimed, now)
-    if timed_out and claimed.attempt < claimed.max_attempts:
+    var retry_allowed = _automatic_retry_allowed(claimed.metadata)
+    if timed_out and retry_allowed and claimed.attempt < claimed.max_attempts:
         stored = journal.retry_process(
             claimed.run_id, claimed.id, worker_id, now, retry_due, error_json
         )
@@ -950,7 +966,7 @@ def drive_once(
         stored = journal.timeout_process(
             claimed.run_id, claimed.id, worker_id, now, error_json
         )
-    elif claimed.attempt < claimed.max_attempts:
+    elif retry_allowed and claimed.attempt < claimed.max_attempts:
         stored = journal.retry_process(
             claimed.run_id, claimed.id, worker_id, now, retry_due, error_json
         )
