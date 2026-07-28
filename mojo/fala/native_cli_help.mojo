@@ -2,11 +2,12 @@
 
 def cli_surface_help() -> String:
     # Happy-path (Essential Fala): one journal, run lifecycle, inspect.
-    # Ops (progressive disclosure): maintain-journal, gc, projections rebuild, bridge *.
+    # Ops (progressive disclosure): maintain-journal, gc, projections rebuild, and bridge verbs.
     var text = "# core — package/run/inspect one journal\n"
-    text += "schema impulse\nschema model\nschema fala-package\n"
+    text += "schema impulse\nschema model\n"
     text += "db init\ndb migrate\ndb status\ndb schema\ndoctor\n"
     text += "create-run\n"
+    text += "impulses create\nprocesses schedule\nprocesses cancel\nprocesses timeout\nassociations append\n"
     text += "runs list\nruns inspect\nruns observe\n"
     text += "runs start\nruns wait\nruns complete\nruns fail\n"
     text += "runs request-cancel\nruns cancel\nruns timeout\n"
@@ -21,7 +22,7 @@ def cli_surface_help() -> String:
     text += "reactions list\nreactions inspect\n"
     text += "homeostats list\nhomeostats open\nhomeostats reopen\n"
     text += "homeostats complete\nhomeostats cancel\nhomeostats expire\n"
-    text += "homeostat open (alias)\nhomeostat complete (alias)\n"
+    text += "homeostat open (alias)\nhomeostat reopen (alias)\nhomeostat complete (alias)\n"
     text += "homeostat cancel (alias)\nhomeostat expire (alias)\n"
     text += "projections list\n"
     text += "trace\ndiagnose-waits\n"
@@ -29,14 +30,12 @@ def cli_surface_help() -> String:
     text += "ops maintain-journal (alias: maintain-journal)\n"
     text += "ops gc (alias: gc)\n"
     text += "ops projections rebuild (alias: projections rebuild)\n"
-    text += "ops bridge list (alias: bridge list)\n"
-    text += "ops bridge deliver (alias: bridge deliver)\n"
-    text += "ops bridge export (alias: bridge export)\n"
-    text += "ops bridge import (alias: bridge import)\n"
+    text += "bridge list\nbridges list (alias: bridge list)\nbridge deliver\nbridge export\nbridge import\n"
     text += "db vacuum\n"
-    text += "init (native boundary)\n"
+    text += "init\n"
     text += "archive-run (native boundary)\narchive-gc (native boundary)\n"
-    text += "run-until-idle (native boundary)\nreplay-execution (native boundary)\n"
+    text += "schema fala-package (native boundary)\n"
+    text += "replay-execution (native boundary)\n"
     text += "export (native boundary)"
     return text
 

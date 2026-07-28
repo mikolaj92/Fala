@@ -1,8 +1,8 @@
-"""Event-stream Journal port types (Python 0.2.2 fala.journal.types).
+"""Event-stream JournalPort records and atomic batch types.
 
-Core durability contract — no SQLite. Sinks implement append_batch / claim_next
-against these structures. See docs/EVENT_STREAM_CORE.md and
-docs/MOJO_EVENT_STREAM_MIGRATION.md.
+Core durability contract—no SQLite. Sinks implement ``append_batch`` and
+``claim_next`` against these structures. See
+``docs/JOURNALPORT_CORE_PATH.md`` and ``docs/RUNTIME_SEMANTICS.md``.
 """
 
 from std.collections import List

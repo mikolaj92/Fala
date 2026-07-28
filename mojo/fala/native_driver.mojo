@@ -555,15 +555,23 @@ def _binding_metadata_state(metadata: String) -> Int:
         return 0
 
 def _automatic_retry_allowed(metadata: String) -> Bool:
+    """Gate every automatic retry on the reserved regulation policy.
+
+    Unmarked malformed metadata is unrelated to retry policy and keeps the
+    historical automatic-retry behavior. Once the reserved marker is present,
+    malformed and unknown values fail closed.
+    """
     try:
         var parsed = Value(parse_string=metadata)
-        if not parsed.is_object() or "regulation" not in parsed.object(): return True
+        if not parsed.is_object(): return True
+        if "regulation" not in parsed.object(): return True
         var regulation = parsed.object()["regulation"].copy()
-        if not regulation.is_object() or "retry_policy" not in regulation.object(): return True
+        if not regulation.is_object(): return False
+        if "retry_policy" not in regulation.object(): return True
         var retry_policy = regulation.object()["retry_policy"].copy()
-        return not retry_policy.is_string() or retry_policy.string() != "none"
+        return retry_policy.is_string() and retry_policy.string() == "automatic"
     except:
-        return True
+        return metadata.find("\"retry_policy\"") < 0
 
 
 def load_adapter_bindings(mut journal: NativeJournal, run_id: String) raises SQLiteError -> List[AdapterBinding]:
@@ -822,8 +830,9 @@ def maintain_process(
 ) raises SQLiteError -> ProcessRow:
     """Resolve an expired lease without executing the effector.
 
-    Expired work with attempts remaining is returned to retry_wait; exhausted
-    work is terminally failed.  The lease owner is the only actor allowed to
+    Expired work with attempts remaining is returned to retry_wait unless the
+    reserved retry policy disables automatic retries; exhausted or disabled
+    work is terminally failed. The lease owner is the only actor allowed to
     perform the transition, matching the journal's ownership checks.
     """
     if worker_id == "":
@@ -833,16 +842,8 @@ def maintain_process(
         raise SQLiteError(code=1, message="driver: process lease changed concurrently")
     if current.status != "running":
         return current.copy()
-    if current.lease_owner == "":
-        raise SQLiteError(code=1, message="driver: running process has no lease owner")
-    if current.lease_owner != worker_id:
-        raise SQLiteError(code=1, message="driver: lease is held by another worker")
-    if current.lease_expires_at == "":
-        raise SQLiteError(code=1, message="driver: running process has no lease expiry")
-    if current.lease_expires_at > now:
-        return current.copy()
     var failure = error_json if error_json != "" else "{\"code\":\"lease_expired\",\"message\":\"process lease expired\"}"
-    if current.attempt >= current.max_attempts:
+    if current.attempt >= current.max_attempts or not _automatic_retry_allowed(current.metadata):
         return journal.fail_process(current.run_id, current.id, worker_id, now, failure)
     var due = retry_available_at if retry_available_at != "" else now
     if due < now:

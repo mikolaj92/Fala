@@ -17,7 +17,7 @@ EffectorHandler = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 def load_manifest(env: Mapping[str, str] | None = None) -> dict[str, Any]:
-    source_env = env or os.environ
+    source_env = os.environ if env is None else env
     manifest_path = source_env.get("FALA_EFFECTOR_MANIFEST")
     if not manifest_path:
         raise RuntimeError("FALA_EFFECTOR_MANIFEST is required")
@@ -31,12 +31,14 @@ def input_values(manifest: Mapping[str, Any]) -> dict[str, Any]:
     return _dict(manifest.get("input"))
 
 
-INJECTED_INPUT_KEYS: frozenset[str] = frozenset({"conduction", "upstream_reactions"})
+INJECTED_INPUT_KEYS: frozenset[str] = frozenset(
+    {"conduction", "upstream_reactions", "regulation"}
+)
 """The ``input`` keys Fala injects when readying a correlation_path effector.
 
-``conduction`` carries the direct upstream outputs; ``upstream_reactions`` carries the
-transitive-ancestor reactions when the correlation_path opts in via
-``accumulate_upstream_reactions``. Everything else in ``input`` is authored.
+``conduction`` carries direct upstream outputs; ``upstream_reactions`` carries
+transitive-ancestor reactions when opted in; and ``regulation`` carries the
+runtime regulation envelope. Everything else in ``input`` is authored.
 """
 
 
@@ -132,7 +134,7 @@ def write_result(
     *,
     env: Mapping[str, str] | None = None,
 ) -> Path:
-    source_env = env or os.environ
+    source_env = os.environ if env is None else env
     output_dir = source_env.get("FALA_EFFECTOR_OUTPUT_DIR")
     if not output_dir:
         raise RuntimeError("FALA_EFFECTOR_OUTPUT_DIR is required")

@@ -318,6 +318,20 @@ def main() raises:
         id="reaction-keep", run_id="run-keep", kind="text", uri=referenced_blob.uri,
         size_bytes=referenced_blob.size_bytes, content_hash="sha256:" + referenced_blob.digest,
     ))
+    var inconsistent_reaction_rejected = False
+    try:
+        store.put_reaction(Reaction(
+            id="reaction-inconsistent", run_id="run-keep", kind="text", uri=referenced_blob.uri,
+            size_bytes=referenced_blob.size_bytes, content_hash="sha256:" + orphan_blob.digest,
+        ))
+    except err:
+        inconsistent_reaction_rejected = True
+    _check(inconsistent_reaction_rejected, "inconsistent reaction CAS identity rejected")
+    var inconsistent_rows = store.list_reaction_records("run-keep", "", "text", -1)
+    var inconsistent_found = False
+    for item in inconsistent_rows:
+        if item.id == "reaction-inconsistent": inconsistent_found = True
+    _check(not inconsistent_found, "inconsistent reaction not persisted")
     var persisted_reactions = store.list_reaction_records("run-keep", "", "text", -1)
     _check(len(persisted_reactions) >= 1, "reaction persistence rows available")
     var gc_dry = maintain_journal(store, 

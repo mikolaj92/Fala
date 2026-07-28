@@ -57,6 +57,42 @@ def main() raises:
         var environment = List[String]()
         environment.append("PATH=/usr/bin:/bin")
         environment.append("FALA_SMOKE=ok")
+        var malformed = False
+        try:
+            var bad = start_native_process(_argv(""), environment)
+            bad.destroy()
+        except:
+            malformed = True
+        _check(malformed, "empty argv0 rejected before launch")
+        malformed = False
+        try:
+            var bad = start_native_process(_argv("/usr/bin/true", "bad\narg"), environment)
+            bad.destroy()
+        except:
+            malformed = True
+        _check(malformed, "newline argv rejected before launch")
+        malformed = False
+        try:
+            var bad = start_native_process(_argv("/usr/bin/true"), ["BAD-NAME=value"])
+            bad.destroy()
+        except:
+            malformed = True
+        _check(malformed, "invalid environment name rejected before launch")
+        malformed = False
+        try:
+            var bad = start_native_process(_argv("/usr/bin/true"), ["BAD=value\n"])
+            bad.destroy()
+        except:
+            malformed = True
+        _check(malformed, "newline environment value rejected before launch")
+        malformed = False
+        try:
+            var bad = start_native_process(_argv("/usr/bin/true"), environment, "bad\0cwd")
+            bad.destroy()
+        except:
+            malformed = True
+        _check(malformed, "NUL cwd rejected before launch")
+
 
         _implicit_raii(environment)
         var after_raii = start_native_process(_argv("/usr/bin/true"), environment)

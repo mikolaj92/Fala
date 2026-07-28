@@ -1,6 +1,6 @@
 [workspace]
 name = "fala"
-version = "0.4.0"
+version = "0.7.15"
 channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
 platforms = ["osx-arm64"]
 

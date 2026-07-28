@@ -1,54 +1,39 @@
 # Unix Streams and Cybernetic Conduction
 
-Fala sits at the intersection of two disciplined traditions:
+Fala is a local autonomous **Correlator** and cybernetic mediator implemented
+with Unix-shaped process composition. Cybernetics supplies the identity and
+vocabulary—Impulses, conduction, Effectors, Associations, Reactions, and
+Homeostats. Unix supplies the transport and durability boundary—argv children,
+streams, separate journals, and interchangeable sinks.
 
-1. **Unix process composition** — small tools, clear streams, optional sinks.
-2. **Autonomous-system cybernetics** (Mazur / Kossecki lexicon) — impulses,
-   conduction, effectors, homeostats, and durable associations.
-
-Neither is decorative. The Unix half keeps the engine light and recursive.
-The cybernetic half names what moves through that engine and why the run
-settles, waits, or defends.
-
-Authoritative term mapping: [`CYBERNETIC_MAPPING.md`](CYBERNETIC_MAPPING.md).  
-Event-stream architecture: [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md).  
-Ontology: [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md).
+The canonical ontology and conduction invariants live in
+[`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md). Historical terminology and its
+current Mojo/TOML/JSON mapping live in
+[`CYBERNETIC_MAPPING.md`](CYBERNETIC_MAPPING.md).
 
 ---
 
 ## One picture
 
 ```text
-  environment / operator / parent Fala
+ environment / operator / parent Fala
               │
-              │  Impulses (typed packets of information)
+              │ typed Impulse
               ▼
-┌─────────────────────────────────────────────────────────────┐
-│  AUTONOMOUS CORRELATOR  (cybernetic organ of conduction)    │
-│                                                             │
-│  Contracts / Pathways ──► Effectors (Autonomous Nodes)      │
-│        │ conduction             │ activations & reactions   │
-│        ▼                        ▼                           │
-│  Mediation (Mediate relations & monitor trace of memory)    │
-│                                                             │
-│  emits: ordered RuntimeCommand + RuntimeEvent stream        │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-                             │  Journal port (Unix durability boundary)
-                             ▼
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-           Memory         SQLite          JSONL
-           (tests)     (reference)      (pipe/file)
-              │              │              │
-              └──────────────┴──────────────┘
-                     optional TeeJournal
+┌──────────────────────────────────────────────────────────┐
+│ AUTONOMOUS CORRELATOR                                    │
+│ named contracts → Effectors → activations and reactions  │
+│ conducts relations; records ordered commands and events  │
+└──────────────────────────┬───────────────────────────────┘
+                           │ JournalPort
+                           ▼
+                  Memory · SQLite · JSONL
+                           │
+                       optional Tee
 ```
 
-**Cybernetics decides what is true about the world of the run.**  
-**Unix decides how those truths are carried, nested, and stored.**
-
----
+Cybernetics decides what is true about the autonomous run. Unix decides how
+those truths are carried, nested, and stored.
 
 ## The Unix half
 
@@ -56,165 +41,101 @@ Ontology: [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md).
 
 | Layer | Responsibility | Must not know |
 | --- | --- | --- |
-| **Core** | Mediate contracts, route impulses, run process host and monitor execution traces, enforce baseline transition boundaries | SQL schemas, file locks, Datadog, S3 |
-| **Journal** | Accept atomic batches, assign sequences, claim under one lock | Effector business logic |
-| **Sink** | Materialize history (maps, tables, JSONL lines) | Correlation-path topology |
-| **Ops (optional)** | Retention, reaction GC, bridge outbox/inbox, heavy projection rebuild | Required for happy-path composition |
+| **Correlator** | Mediate contracts, route impulses, host local processes, and monitor execution traces | Sink-specific schemas and remote infrastructure |
+| **JournalPort** | Accept ordered command/event decision units and expose work claims | Effector business logic; sink-independent atomicity claims |
+| **Sink** | Materialize history as memory rows, SQLite tables, or JSONL lines | Correlation-path topology |
+| **Optional ops** | Retention, bridge delivery, reaction GC, and projection rebuild | Required happy-path composition |
 
-Hard-wiring SQLite into the core coupled *supervision* with *storage*. That
-broke recursion (parent and child fighting one `.db`) and forced every
-deployment into one składowanie model. The Journal Protocol is the Unix
-fix: the engine emits facts; a sink listens.
-
-**Essential Fala** is organ + JournalPort + driver/host + local adapters +
-minimal run-to-idle/inspect CLI. Retention, maintain, reaction GC, bridge, and
-projection rebuild live in `ops_*` modules — see
-[`FALA_ARCHITECTURE_STATUS.md`](FALA_ARCHITECTURE_STATUS.md) and
-[`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md).
+The JournalPort keeps supervision independent from storage. SQLite is the
+reference sink, not product identity; memory and JSONL implement the same port
+for tests and Unix pipes but do not inherit SQLite's transaction guarantees.
 
 ### Streams, not shared mutable files
 
-Default multi-Fala composition uses **separate journals** (or separate
-SQLite files behind `SqliteJournal`) plus bridge delivery. Child never
-shares the parent’s journal path. Parent can:
+Composition uses separate journals (or separate SQLite files) plus explicit
+bridge delivery. A child never shares its parent's journal path. A parent may
+import bridge envelopes or attach export/debug metadata; semantic merging is
+an explicit boundary rather than a shared database.
 
-- import bridge envelopes (semantic merge, v1), or
-- attach composition metadata with `stream.merged` helpers for export/debug.
-
-Pipes and files stay valid sinks: `JsonlJournal` appends one line per
-accepted batch with fsync-before-index barriers; `TeeJournal` fans out to
-several sinks (e.g. SQLite + JSONL).
+`JsonlJournal` appends accepted batches as JSONL with a write barrier;
+`TeeJournal` fans out to several sinks. Reaction bytes live in a reaction store;
+the journal carries metadata and references.
 
 ### Small tools, sharp edges
 
-- CLI is the primary operator interface (`--journal`, `--db` alias).
-- Effectors are adapters: `subprocess`, `native_function`, `manual_homeostat`.
-  Subprocesses get manifests, not open DB handles. Nested Fala = another
-  process + separate journal, not a peer mesh (`FALA_HOST_AND_COMPOSITION.md`).
-- Reaction **bytes** live in a reaction store (filesystem by default);
-  the journal holds metadata and refs only.
-- Tests prefer `InMemoryJournal`; production defaults to SQLite reference sink.
+- The native Mojo CLI is the operator interface.
+- Effectors are `subprocess`, `native_function`, or `manual_homeostat`.
+- Subprocesses receive manifests and return JSON result manifests, never open
+  database handles.
+- Nested Fala is another process with another journal, not a peer mesh.
 
-### What Unix does *not* abandon
-
-Fala is not “log to stderr and hope.” Crash recovery, idempotent commands,
-atomic multi-command batches (claim reaps + auto-ready), and rebuildable
-projections stay first-class — implemented **at the Journal/sink boundary**,
-not by stuffing SQL into the supervisor.
-
----
+Crash recovery, idempotent commands, durable claims, and rebuildable
+projections are first-class SQLite/runtime concerns. Weaker sinks document
+their own persistence and atomicity limits rather than claiming parity.
 
 ## The cybernetic half
 
-Fala’s public vocabulary is Impulse-first and domain-agnostic. Domain packs
-(Splot, Signals, …) map special language onto this organ, not the other way
-around.
+Fala's public vocabulary is Impulse-first and domain-agnostic. Domain packs
+(Splot, Signals, Takt, and others) map special language onto this organ; they
+do not redefine its ontology. See [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md)
+for definitions and readiness rules.
 
-| Concept | Role in the autonomous system |
-| --- | --- |
-| **Impulse** | Packet of information/energy entering the receptor; can represent a signal, payload, or token |
-| **CorrelationPath** | Topography of named contracts defining conductivity channels between autonomous nodes |
-| **Effector** | Autonomous node/organ responsible for its own decisions, reactions, and internal regulation |
-| **conduction** | Realization of a named contract; Fala's act of transmitting an impulse from one node to another |
-| **Process** | A concrete execution or activation attempt (impulse response) of an effector on a given impulse |
-| **Association** | Micro-registration of readings / potential shifts (memory trace in the correlator) |
-| **Reaction** | Materialized, permanent footprint left by an effector's execution (not automatically conducted as an impulse) |
-| **Homeostat** | Defensive wait or checkpoint that maintains stability against external semantic noise |
-| **Event / Command** | Ordered facts and idempotent write intents registered by the correlator |
-| **Correlator** | The internal registration organ that registers states, associations, and contracts |
-| **AutonomousCorrelator** | Facade of the autonomous system acting as a mediator of relations and supervisor |
+The Correlator mediates named contracts rather than imposing a success-only
+workflow:
 
-Regulation hooks (e.g. `regulation` on correlation-path markers, elastic
-`max_attempts` on homeostats) are entry points for quantitative damping and
-variety measurements without rewriting conduction topology.
+1. One durable Process represents each Effector activation in a run plan.
+2. Dependents become ready when every declared upstream is terminal.
+3. Terminal payloads—success or error—are conducted to the receiving Effector.
+4. A failed parent does not silently cancel a child; the child decides what the
+   error means.
 
-Fala does **not** claim formal equivalence with any single cybernetic theory.
-It claims a **working lexicon and runtime** that make autonomous information
-correlation paths observable and durable.
+Fala claims a working lexicon and observable runtime, not formal equivalence
+with any single cybernetic theory.
 
-### Peer conduction (healthy parent / child)
-
-Fala is a **mediator**, not a workflow tyrant:
-1. **One Process per Effector (per run plan):** durable activation unit.
-2. **Terminal readiness:** dependents ready when every declared upstream is
-   terminal — success is not privileged over failure.
-3. **Peer conduction:** terminal payloads flow under `conduction`; children
-   interpret success or error themselves.
-4. **No dead-upstream cancel:** failed parents do not silently kill children;
-   nested Falas keep separate journals and explicit handoff.
-
----
-
-## How the two halves lock together
+## How the halves lock together
 
 | Cybernetic concern | Unix mechanism |
 | --- | --- |
-| Impulse accepted | `impulse.accept` command + `impulse.accepted` event in one batch |
-| Effector runs | Process claim → adapter run → complete/fail/wait |
-| Conduction advances | Mediate contract transmission; pure readiness helpers ready peers on terminal upstreams |
-| Homeostat open | Process waits; external completion closes the homeostat |
-| Memory of the run | Append-only event stream + materializations in a sink |
-| Nested autonomy | Child Fala = separate journal; bridge or stream metadata to parent |
-| Operator observation | CLI trace/events, projections, archives — sinks, not core |
+| Impulse accepted | `impulse.accept` command and `impulse.accepted` event in one batch |
+| Effector runs | Process claim → adapter run → complete, fail, or wait |
+| Conduction advances | Correlator readiness and named contract transmission |
+| Homeostat opens | Process waits; explicit external completion closes it |
+| Memory of the run | Ordered command/event stream materialized by a sink |
+| Nested autonomy | Child Fala has a separate journal; bridge is explicit |
+| Operator observation | Native CLI traces, events, and projections |
 
-The Correlator is no longer “the SQLite file.” It is the **registration organ**
-whose durability is provided by a Journal sink (SQLite reference, memory,
-JSONL, or tee).
-
----
+The Correlator is therefore not a SQLite file. It is the registration organ;
+durability is supplied by a JournalPort sink.
 
 ## Recursion without shared-state traps
 
 ```text
-Parent Fala  (journal J_p)
+Parent Fala (journal J_p)
   │
-  ├─ own Impulses / Processes / Events ──► J_p
-  │
-  └─ subprocess effector  (process host — core Fala)
-        command points at child Fala CLI or any effector binary
-        │
-        ▼
-     Child Fala  (journal J_c, J_c ≠ J_p)   # separate being
-        │
-        └─ events on J_c
-              │
-              ▼
-         result.json / optional bridge file export
-              │
-              ▼
-         Parent completes process / optional inbox import on J_p
+  └─ subprocess effector → Child Fala (journal J_c, J_c ≠ J_p)
+                              │
+                              └─ result.json / explicit bridge envelope
 ```
 
-Zero shared SQLite lock between parent and child. Zero peer registry.
-Composition stays Unix-shaped; autonomy stays cybernetic (each correlator is
-its own organ with its own memory). Multi-runtime pools are optional ops
-machinery, not this picture.
+Each correlator keeps its own memory and process ownership. Composition remains
+Unix-shaped; autonomy remains cybernetic.
 
----
+## Design rules
 
-## Design rules of thumb
-
-1. **Name cybernetically, store Unix-style.** Impulses and homeostats in the
-   API; streams and sinks on disk.
-2. **Core never imports a sink driver as identity.** Prefer Journal Protocol;
-   SQLite is default *implementation*, not product definition.
-3. **One atomic batch = one durable decision.** Including multi-command claim
-   and correlation auto-advance.
-4. **Children get their own journal.** Always.
-5. **Domain packs map in; core does not map out.** Splot/Signals stay outside
-   the Impulse ontology.
-
----
+1. Name cybernetically; store Unix-style.
+2. Keep sinks behind JournalPort; SQLite is an implementation.
+3. Treat each sink-accepted decision unit as one ordered record; require atomic
+   command/event/state transitions only from a sink that explicitly provides them.
+4. Give every child its own journal.
+5. Map domain packs into the core; do not map the core out into domain jargon.
 
 ## Related docs
 
 | Doc | Focus |
 | --- | --- |
-| [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md) | Core records and Takt boundary |
-| [`CYBERNETIC_MAPPING.md`](CYBERNETIC_MAPPING.md) | Old → Mazur/FALA term matrix |
-| [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md) | Journal architecture and PR history |
-| [`RUNTIME.md`](RUNTIME.md) | Runtime surfaces and concepts |
-| [`MULTI_FALA_COMPOSITION.md`](MULTI_FALA_COMPOSITION.md) | Bridge, pools, delegation |
-| [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) | Sequential driver, isolation boundary |
-| [`SQLITE_BACKEND.md`](SQLITE_BACKEND.md) | Reference sink details |
-| [`MOJO_EVENT_STREAM_MIGRATION.md`](MOJO_EVENT_STREAM_MIGRATION.md) | Mojo port order: **core first**, SQLite adapter second, other sinks later |
+| [`CONCEPTUAL_MODEL.md`](CONCEPTUAL_MODEL.md) | canonical ontology and conduction |
+| [`CYBERNETIC_MAPPING.md`](CYBERNETIC_MAPPING.md) | historical → current lexicon |
+| [`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md) | transaction and state invariants |
+| [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) | claims, leases, and execution |
+| [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md) | subprocess wire boundary |
+| [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md) | host composition |

@@ -3,7 +3,8 @@
 **Status:** product decision (2026-07).
 
 **Single engine: Mojo.** There is no dual-runtime product and no CPython
-engine tree. Process host, journal, driver, CLI: **Mojo only**.
+engine tree. The optional `python/fala` package is a thin JSON host binding to
+the Mojo engine, not another journal, driver, or runtime implementation.
 
 This document also separates **what every Fala is** from **removed** fleet
 machinery that historically lived under the name `fala_runtime`.
@@ -39,7 +40,12 @@ These are merge-gate for any native land that claims “Fala works.”
 | **Host** | spawn and supervise **local** effectors: argv, cwd, env, timeout, stdin/out files |
 | **Adapter kinds (local)** | `native_function`, `subprocess`, `manual_homeostat` |
 | **Reaction store** | bytes outside the journal; metadata/refs inside |
-| **CLI (core)** | run/inspect one journal (`--journal` / `--db`) — not retention/bridge/rebuild |
+| **CLI (core)** | implemented `init`, run create/lifecycle/list/inspect/observe, and event/domain inspection on one journal (`--db`); ops retention/bridge/rebuild remain separate |
+
+The native CLI's `run_until_idle` name is reserved for the embedded/library API;
+it is not a standalone command. CLI mutations use explicit `--db`, `--run-id`,
+and `--now` flags where required. The `schema fala-package` name is reserved
+for the native boundary; its schema encoder is not implemented here.
 
 **Not** Essential Fala (optional ops): journal retention / maintain, reaction GC,
 bridge outbox/inbox, heavy projection rebuild (`ops_maintenance`, `ops_bridge`,
@@ -70,13 +76,13 @@ boundaries (manifests, redaction, no open parent DB handles).
 
 ### Child Fala without multi-runtime
 
-A nested correlator is still **one Fala process** with **its own journal**:
+A nested correlator is a **separate Fala process** with its **own journal**:
 
 ```text
 Parent Fala  (journal J_p)
   │
   └─ subprocess effector
-        command: ["fala", "run", "--db", "child.sqlite", …]
+        command: ["<child-program>", "--db", "child.sqlite", …]
               │
               ▼
         Child Fala  (journal J_c, J_c ≠ J_p)
@@ -88,8 +94,45 @@ Parent Fala  (journal J_p)
 No `RuntimePool`. No mutual registry. Address of the child is the **command
 line and paths the parent chose**, not a fleet membership card.
 
-Optional later: parent imports a **bridge envelope file** the child exported.
-That is operator/parent orchestration, not “Falas discover each other.”
+Parent/child composition uses separate journals and an explicit handoff:
+
+1. Parent runs a subprocess effector whose declared child program owns its
+   own database path. The reserved native `run-until-idle` boundary is not a
+   currently executable standalone CLI command.
+2. Child never shares the parent journal path.
+3. Results return through the subprocess contract (`result.json`) and/or the bridge commands below:
+```text
+fala bridge list --db JOURNAL.sqlite --run-id RUN_ID
+fala bridge deliver --db SOURCE.sqlite --run-id RUN_ID --delivery-id DELIVERY_ID --target-db TARGET.sqlite --now RFC3339
+fala bridge export --db JOURNAL.sqlite --run-id RUN_ID --delivery-id DELIVERY_ID --out delivery.json
+fala bridge import --db JOURNAL.sqlite --file delivery.json
+```
+
+Optional bridge import is operator/parent orchestration, not “Falas discover
+each other.”
+
+---
+
+## Optional Python host binding
+
+The wheel ships `python/fala` as a convenience boundary over the authoritative
+Mojo engine. `host_drive` / `host_drive_json` and `open_memory` drive the memory
+path; `open_sqlite`, `host_run_package`, and `delete_terminal_run` cross a JSON
+boundary into the native Mojo extension for durable hosting. `MemoryHost` is a
+small builder around the memory path. None of these APIs creates a CPython
+engine or restores the removed `python_function` adapter.
+
+The `host_run_package` binding uses an empty native-function registry; a package
+whose selected path requires `native_function` therefore cannot execute through
+this thin host unless a registered registry is supplied by another native
+boundary. The binding does not expose manifest adapter metadata through
+`fala.sdk` helpers.
+
+`fala.sdk` is different: it helps a Python **subprocess effector** read
+`FALA_EFFECTOR_MANIFEST`, inspect declared input/conduction/config and runtime
+injections, and write `FALA_EFFECTOR_OUTPUT_DIR/result.json`. It conforms to the
+same language-neutral wire contract as any other child process; its helpers do
+not expose manifest adapter metadata.
 
 ---
 
@@ -152,6 +195,30 @@ StateFact injection** from child into parent privileged tables.
 
 ---
 
+## Optional Nostr transport
+
+Nostr and Fala overlap mechanically at the envelope boundary: both preserve
+typed messages, identifiers, causal references, signatures/provenance, and
+fan-out to independently acting receivers. Their cybernetic roles differ.
+Nostr answers who published a statement and how relays distribute it; Fala
+decides what an accepted impulse means inside one local conduction topology,
+which capability may react, how that reaction is materialized, and how the
+correlator's journal continues.
+
+A Nostr integration is therefore an optional signed transport for bridge
+envelopes, not Fala's identity, journal, claim/lease protocol, scheduler, or
+delivery guarantee. Relay acceptance does not mean execution, and duplicate or
+out-of-order delivery must cross the same validated, idempotent bridge boundary
+as file import. Public envelopes select declared capabilities; they do not carry
+arbitrary `argv`, `cwd`, environment values, or secrets. Large reactions remain
+out of band and travel as canonical references, digests, and metadata.
+
+This boundary keeps each Fala complete and locally ordered. It does not add a
+required peer mesh, relay discovery, global journal, marketplace, payment
+layer, or exactly-once claim.
+
+---
+
 ## Mojo land checklist (revised)
 
 | Gate | Item |
@@ -172,7 +239,6 @@ StateFact injection** from child into parent privileged tables.
 | `python_function` | **removed** |
 | `fala_runtime` | **removed** |
 
-See also [`MOJO_EVENT_STREAM_MIGRATION.md`](MOJO_EVENT_STREAM_MIGRATION.md).
 
 ---
 
@@ -181,5 +247,5 @@ See also [`MOJO_EVENT_STREAM_MIGRATION.md`](MOJO_EVENT_STREAM_MIGRATION.md).
 - [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md) — recursion without shared DB
 - [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) — process/host boundary
 - [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md) — effector I/O contract
-- [`MULTI_FALA_COMPOSITION.md`](MULTI_FALA_COMPOSITION.md) — composition without peer mesh
-- [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md) — journal + child journal rules
+- [`EVENTS_AND_REPLAY.md`](EVENTS_AND_REPLAY.md) — implemented event inspection and projection replay
+- [`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md) — JournalPort durability boundary

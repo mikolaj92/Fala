@@ -22,7 +22,7 @@ title = "Signal reading reaction"
 media_types = ["application/json"]
 
 [[reaction_kinds]]
-id = "splot.arbitration_result"
+id = "splot.decision_report"
 title = "Arbitration result"
 media_types = ["application/json"]
 
@@ -43,7 +43,7 @@ emits_association_kinds = ["signals.channel"]
 id = "arbitrate"
 title = "External arbitration organ"
 accepts_reaction_kinds = ["signals.reading"]
-emits_reaction_kinds = ["splot.arbitration_result"]
+emits_reaction_kinds = ["splot.decision_report"]
 
 [[correlation_paths]]
 id = "signal_then_arbitrate"

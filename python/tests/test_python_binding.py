@@ -88,6 +88,38 @@ def test_sdk_run_manifest_effector(tmp_path, monkeypatch) -> None:
     assert result["values"]["echo"]["x"] == 1
 
 
+def test_sdk_declared_inputs_excludes_runtime_injected_keys() -> None:
+    from fala import sdk
+
+    manifest = {
+        "input": {
+            "authored": 1,
+            "conduction": {"source": "value"},
+            "upstream_reactions": [{"kind": "source"}],
+            "regulation": {"retry_policy": "none"},
+        }
+    }
+    assert sdk.declared_inputs(manifest) == {"authored": 1}
+    assert sdk.INJECTED_INPUT_KEYS == {
+        "conduction",
+        "upstream_reactions",
+        "regulation",
+    }
+
+
+def test_sdk_explicit_empty_env_does_not_fall_back_to_process_env(
+    tmp_path, monkeypatch
+) -> None:
+    from fala import sdk
+
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"input": {}}', encoding="utf-8")
+    monkeypatch.setenv("FALA_EFFECTOR_MANIFEST", str(manifest))
+    with pytest.raises(RuntimeError, match="FALA_EFFECTOR_MANIFEST"):
+        sdk.load_manifest(env={})
+    with pytest.raises(RuntimeError, match="FALA_EFFECTOR_OUTPUT_DIR"):
+        sdk.write_result({}, env={})
+
 def test_host_run_package_subprocess(tmp_path) -> None:
     import fala
     from pathlib import Path
@@ -108,6 +140,49 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert result.get("run_status") == "completed"
     assert int(result.get("ticks") or 0) >= 1
 
+def test_host_run_package_strict_json_package_uses_json_loader(tmp_path) -> None:
+    """A canonical JSON package must not be sent through the TOML parser."""
+    import json
+    import sys
+
+    import fala
+
+    step = tmp_path / "step.py"
+    step.write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
+        "json.dumps({'values': {'ok': True}}))\n",
+        encoding="utf-8",
+    )
+    package = {
+        "version": "2",
+        "id": "json_smoke",
+        "capabilities": [{"id": "step"}],
+        "correlation_paths": [{
+            "id": "one_step",
+            "effectors": [{
+                "id": "step",
+                "capability": "step",
+                "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
+            }],
+        }],
+        "runtime": {
+            "backend": {"kind": "sqlite", "path": str(tmp_path / "json.sqlite")},
+            "reaction_store": {"kind": "filesystem", "root": str(tmp_path / "reactions")},
+        },
+    }
+    json_package = tmp_path / "subprocess.fala-package.json"
+    json_package.write_text(json.dumps(package), encoding="utf-8")
+    result = fala.host_run_package(
+        db_path=tmp_path / "json.sqlite",
+        package_path=json_package,
+        path_id="one_step",
+        run_id="json_smoke",
+        max_ticks=8,
+    )
+    assert result["ok"] is True
+    assert result["run_status"] == "completed"
 
 def test_host_run_package_inherit_env_from_host_process(tmp_path, monkeypatch) -> None:
     """inherit_env must pull ambient host env (regression: empty inherited map)."""

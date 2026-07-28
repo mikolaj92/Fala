@@ -1,86 +1,84 @@
 # Fala Process Runtime
 
-Fala processes are schedulable execution units attached to a run and optionally
-to an impulse. They are part of the embedded Impulse runtime and persist in the
-SQLite backend.
+Processes are schedulable execution units attached to a run and optionally to
+an Impulse. Their persistence boundary depends on the configured sink. In the
+current SQLite core, `NativeJournal` and `NativeDomainStore` own direct
+transactional helpers; SQLite is the reference sink, not the process identity.
 
-## Runtime Boundary
+## Runtime boundary
 
 Fala owns:
 
-- run state
-- impulse state
-- process scheduling
-- claim and lease state
-- retry and timeout state
-- command idempotency
-- event append
-- association append
-- reaction metadata
-- homeostat state
-- projection rebuilds
-- bridge outbox/inbox records
+- run and impulse state;
+- process scheduling, claims, and worker leases;
+- retry and timeout state;
+- command idempotency and event append;
+- association and reaction metadata;
+- homeostat state and projection rebuilds;
+- bridge outbox/inbox records.
 
-Adapters own execution only. They receive validated input from the runtime and
-return validated output for the runtime to commit.
+Adapters own execution only. They receive validated JSON input at the adapter
+boundary and return validated output for the Correlator to commit.
 
 ## Execution model
 
-Default: `run_until_idle` is a **claim → execute → complete** loop under one
-worker lease. By default it claims **one** ready process per outer step
-(`claims_per_round=1`).
+Default `run_until_idle` is a **claim → execute → complete** loop under one
+worker lease. Its default driver is deliberately sequential: one process per
+tick (`claims_per_round=1`). Logical independence in a correlation graph does
+not itself promise simultaneous execution.
 
-### Multi-claim (same journal)
+### Serial multi-claim loop (same journal)
+Pass `claims_per_round > 1` to `drive_until_idle`, or call
+`drive_ready_batch` with `max_claims`, to permit several claim/execute/complete
+ticks in one driver round. The current driver still executes them sequentially
+under one lease owner; this is neither an atomic claim batch nor concurrent
+execution, and exact persistence behavior depends on the selected sink.
 
-Pass `claims_per_round > 1` to `drive_until_idle`, or call `drive_ready_batch`
-with `max_claims`, to claim and drive several ready processes in one batch on
-the **same** journal. This is still one Fala / one lease owner — not a fleet —
-but it is first-class multi-claim composition for independent ready work.
+This remains one Fala, not a fleet.
+
+Durable cancellation requests and terminal transitions do not interrupt an
+already-blocked adapter call. The process host enforces its own timeout and has
+a cancellation ABI, but the current driver has no live child-handle polling
+path that connects a later journal cancellation request to that ABI.
+
+Low-level journal/process retry primitives are policy-neutral. The native
+driver enforces `retry_policy` for adapter failure, timeout, and expired-lease
+maintenance; callers invoking low-level retry APIs directly own that policy.
 
 ### Multi-workspace (separate journals)
 
-Unix-style parallel composition uses **multiple Fala instances**, each with
-its **own journal path** (or `MemoryDriver` with a distinct `stream_id`). Nested
-organs use subprocess + separate child journal (`FALA_HOST_AND_COMPOSITION.md`).
-Fala is not a multi-job cluster scheduler; it is a composable organ + journal.
+Unix-style parallel composition uses multiple Fala instances, each with its own
+journal path (or a memory driver with a distinct `stream_id`). Nested organs
+use a subprocess and a separate child journal; see
+[`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
-Implications for embedded consumers:
+Fala is not a cluster scheduler. Process identity is scoped by run: the journal
+key is `(run_id, process_id)`, and default correlation-path ids are
+`{run_id}:{path_spec_id}:{effector_id}` when `correlation_path_id` is omitted.
+The native driver leaves `EffectorRequest.work_dir` empty. A direct adapter
+caller may provide it explicitly; otherwise the subprocess adapter chooses
+`FALA_EFFECTOR_ROOT` or the host current directory and creates a hashed,
+per-attempt `.fala-effector-*` directory from run, process, impulse, and attempt.
+Consumers remain responsible for distinct journal and reaction-store paths.
 
-- **Process identity is scoped by run.** The journal primary key is
-  `(run_id, process_id)`. Default correlation-path process ids are
-  `{run_id}:{path_spec_id}:{effector_id}` when `correlation_path_id` is omitted.
-- **Work directories follow `process.id`.** When a consumer passes
-  `work_dir` into `run_until_idle`, each subprocess effector gets
-  `work_dir / process.id`. That is scratch for one process, not a
-  cross-run concurrent workspace manager.
-- **Parallel workspaces are first-class composition.** Prefer separate journals
-  (or multi-claim batches) rather than fighting one shared DB. If the host
-  still starts several loops against a shared work root, isolation remains the
-  consumer's responsibility for process ids and reaction store paths.
-- **Leases are ownership and crash recovery**, not "orchestrate five document
-  jobs in parallel for me."
+Leases provide ownership and crash recovery; they do not orchestrate arbitrary
+parallel document jobs.
 
-## Process State
+## Process state
 
-Current Impulse process statuses are:
+Current process statuses are:
 
-- `pending`
-- `ready`
-- `running`
-- `waiting`
-- `retry_wait`
-- `succeeded`
-- `failed`
-- `cancel_requested`
-- `cancelled`
-- `timed_out`
+`pending`, `ready`, `running`, `waiting`, `retry_wait`, `succeeded`, `failed`,
+`cancel_requested`, `cancelled`, and `timed_out`.
 
-Runtime code must prevent arbitrary status mutation by adapters. State changes
-go through backend/service operations and append runtime events.
+Adapters cannot mutate these statuses directly. State changes go through
+Correlator operations and append runtime events. See
+[`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md) for transaction and transition
+invariants.
 
-## Adapter Kinds
+## Adapter kinds
 
-Fala package effectors declare adapters (TOML):
+Fala package effectors declare adapters in TOML (canonical JSON is equivalent):
 
 ```toml
 [[correlation_paths]]
@@ -94,53 +92,36 @@ adapter = { kind = "native_function", ref = "example.normalize" }
 
 Supported adapter kinds:
 
-- `native_function`: registered in-process callable (Mojo registry).
-- `subprocess`: local command as an argument list — **how Fala runs children**.
+- `native_function`: registered in-process Mojo callable.
+- `subprocess`: local command as an argument list—the process-host boundary.
 - `manual_homeostat`: explicit operator homeostat.
 
-**Removed:** `python_function` (CPython), `fala_runtime` (fleet). Nest another
-Fala with `subprocess` and a **separate journal**
-(see [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md)).
+Subprocess commands are argument lists, not shell strings. The host prepares
+JSON input manifests, captures stdout/stderr, validates result manifests, and
+commits resulting events, reactions, and associations through the applicable
+native SQLite transaction helpers when using the SQLite core.
 
-Subprocess commands are lists, not shell strings. The runtime prepares input
-manifests, captures stdout/stderr, validates output manifests, and commits
-resulting events/reactions/associations transactionally. The process host is
-part of Fala product core.
+Current package schema version 2 declares the durable runtime boundary
+explicitly:
 
-## Local Inspection
+```toml
+[runtime.backend]
+kind = "sqlite"
+path = ".fala/state.sqlite"
 
-Processes are inspectable through the CLI:
-
-```bash
-uv run fala processes list \
-  --db .fala/state.sqlite \
-  --run-id run_local
-
-uv run fala processes inspect \
-  --db .fala/state.sqlite \
-  --run-id run_local \
-  --process-id process_123
+[runtime.reaction_store]
+kind = "filesystem"
+root = ".fala/reactions"
 ```
 
-Waits and deadlocks are diagnosed from persisted process/homeostat state:
+This configuration selects implementations; neither SQLite nor the filesystem
+reaction store defines Fala's ontology.
 
-```bash
-uv run fala diagnose-waits \
-  --db .fala/state.sqlite \
-  --run-id run_local
-```
+## Local inspection
 
-## SQLite Requirements
-
-The SQLite backend is the reference backend for process state. It must support:
-
-- atomic claim/lease
-- retry scheduling
-- completion and failure commits
-- homeostat waits
-- projection rebuilds
-- restart recovery
-- command deduplication
-- positive lease durations and run-until-idle tick limits
+Use the native Mojo CLI to inspect persisted processes and waits. Commands emit
+JSON and accept the Journal/sink path explicitly; see the CLI help for the
+current command names and options. The durable records include process state,
+homeostat state, lease ownership, and wait diagnostics.
 
 External queues and web servers are not required for local execution.

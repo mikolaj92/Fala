@@ -3,7 +3,7 @@ from std.collections import List
 from fala.adapters import AdapterSpec, NativeFunctionRegistry
 from fala.journal import NativeJournal, ProcessRow
 from fala.status import ProcessStatus
-from fala.native_driver import AdapterBinding, drive_once, maintain_process, run_until_idle, finalize_run, drive_bound_queue, persist_adapter_binding
+from fala.native_driver import AdapterBinding, _automatic_retry_allowed, drive_once, maintain_process, run_until_idle, finalize_run, drive_bound_queue, persist_adapter_binding
 from fala.processes import ProcessRecord, retry_backoff_seconds
 
 
@@ -117,6 +117,13 @@ def main() raises:
     var no_retry = drive_once(journal, journal.get_process("driver-no-retry", "unsafe"), missing, "driver-worker", "2026-01-01T00:04:01Z", "2026-01-01T00:05:00Z", registry)
     var no_retry_failed = journal.get_process("driver-no-retry", "unsafe")
     _check(no_retry.failed and no_retry_failed.status == "failed" and no_retry_failed.attempt == 1 and len(journal.list_commands("driver-no-retry", "process.retry")) == 0, "retry_policy none prevents automatic retry")
+    _check(not _automatic_retry_allowed("{\"regulation\":{\"retry_policy\":\"none\"}" ), "malformed retry policy marker fails closed")
+    _check(_automatic_retry_allowed("{\"unrelated\":"), "unmarked malformed metadata preserves automatic retry")
+    _ = journal.create_run("driver-invalid-retry", "active", "{}", "2026-01-01T00:04:32Z")
+    _ = journal.schedule_process("driver-invalid-retry", "marked", "native", "2026-01-01T00:04:32Z", "{}", "{\"regulation\":{\"retry_policy\":\"invalid\"}}", "", 1, 3, "2026-01-01T00:04:32Z")
+    var invalid_retry = drive_once(journal, journal.get_process("driver-invalid-retry", "marked"), missing, "driver-worker", "2026-01-01T00:04:33Z", "2026-01-01T00:05:00Z", registry)
+    var invalid_retry_row = journal.get_process("driver-invalid-retry", "marked")
+    _check(invalid_retry.failed and invalid_retry_row.status == "failed" and invalid_retry_row.attempt == 1 and len(journal.list_commands("driver-invalid-retry", "process.retry")) == 0, "unknown retry policy fails closed")
 
     # Empty caller bindings reload the explicit durable mapping and dispatch
     # through the typed native registry without inferring an adapter.
@@ -272,12 +279,18 @@ def main() raises:
         "2026-01-01T00:10:03Z",
     )
     _check(
+
         lease_retry.status == "retry_wait"
             and lease_retry.attempt == 1
             and lease_retry.available_at == "2026-01-01T00:10:03Z"
             and lease_retry.error_json.find("lease_expired") >= 0,
         "expired lease retries at transition time",
     )
+    _ = journal.create_run("driver-lease-no-retry", "active", "{}", "2026-01-01T00:11:00Z")
+    _ = journal.schedule_process("driver-lease-no-retry", "lease-none", "native", "2026-01-01T00:11:00Z", "{}", "{\"regulation\":{\"retry_policy\":\"none\"}}", "", 1, 3, "2026-01-01T00:11:00Z")
+    var lease_none_claim = journal.claim_process("driver-lease-no-retry", "lease-none", "old-worker", "2026-01-01T00:11:01Z", "2026-01-01T00:11:02Z")
+    var lease_none_failed = maintain_process(journal, lease_none_claim, "old-worker", "2026-01-01T00:11:03Z", "2026-01-01T00:11:03Z")
+    _check(lease_none_failed.status == "failed" and lease_none_failed.attempt == 1 and len(journal.list_commands("driver-lease-no-retry", "process.retry")) == 0, "retry_policy none prevents expired-lease retry")
     var lease_claim_two = journal.claim_process(
         "driver-lease",
         "lease",

@@ -1,15 +1,15 @@
 # Splot Arbitration Domain Pack (Mojo)
 
-`fala.domain_packs.splot` keeps arbitration **vocabulary** outside Fala core.
-Core provides impulses, commands, events, associations, homeostats, projections,
-and journal sinks. This pack maps Splot-oriented names onto those records — pure
-builders only; no scheduler logic and no arbitration engine.
+`fala.domain_packs.splot` is a vocabulary pack, not the Splot arbitration
+engine. It maps Splot concepts onto Fala's domain-agnostic records using pure
+builders; scheduling, scoring, and arbitration remain in the separate Splot
+0.3+ Mojo product hosted through a subprocess.
 
-The **engine** (many signals → one decision) lives in the separate **Splot**
-product (v0.3+, exclusive Mojo). Fala hosts it as a subprocess effector; see
-[`examples/splot-integration/`](../examples/splot-integration/).
+See the shared rules in [`DOMAIN_PACKS.md`](DOMAIN_PACKS.md), the subprocess
+wire contract in [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md), and the host
+boundary in [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
-## Concepts (domain pack)
+## Concepts and mappings
 
 | Domain | Core mapping |
 | --- | --- |
@@ -19,57 +19,33 @@ product (v0.3+, exclusive Mojo). Fala hosts it as a subprocess effector; see
 | Case summary | Projection name `splot.case:{claim_id}` |
 | Decision report | Reaction kind `splot.decision_report` (package) |
 
-## Process semantics (pack vocabulary)
+Pack process vocabulary:
 
-- `intake` — accept arbitration case impulse
-- `jurisdiction` — record admissibility associations
-- `triage` — open/complete review homeostats
-- `award_projection` — case summary projection
+- `intake` — accept an arbitration case impulse;
+- `jurisdiction` — record admissibility associations;
+- `triage` — open/complete review homeostats;
+- `award_projection` — maintain the case summary projection.
 
-## Mojo module
+## Module and package
 
-- `mojo/fala/domain_packs/splot.mojo`
-- Helpers: `impulse_from_case`, `case_from_impulse`, `jurisdiction_association`,
-  `review_homeostat`, `case_projection`
+- Mojo module: `mojo/fala/domain_packs/splot.mojo`;
+- helpers: `impulse_from_case`, `case_from_impulse`,
+  `jurisdiction_association`, `review_homeostat`, `case_projection`;
+- TOML package example:
+  `examples/domain-packs/splot/fala-package.toml`.
 
-## Package example (vocabulary)
+## Optional Splot host
 
-```bash
-# Manifest (native TOML)
-examples/domain-packs/splot/fala-package.toml
-```
-
-## Hosting the Splot engine (subprocess)
-
-Sibling checkout (default):
-
-```text
-~/Developer/OSS/Fala
-~/Developer/OSS/Splot   # v0.3.0+
-```
+The integration example is [`../examples/splot-integration/`](../examples/splot-integration/).
+It runs `Splot/tools/splot_step.sh` through `FALA_EFFECTOR_*`; the child writes
+`output/result.json` with a decision envelope (`status`,
+`selected_candidate_id`, and related fields). The child owns its own journal;
+there is no Python Splot path or shared SQLite state.
 
 ```bash
-# Override if needed:
-# SPLOT_ROOT=/path/to/Splot
-
+mise exec -- pixi run splot-domain
 mise exec -- pixi run splot-integration
 ```
 
-Fala’s process host runs `Splot/tools/splot_step.sh` with the effector boundary
-(`FALA_EFFECTOR_*`). Splot writes `output/result.json` with a decision envelope
-(`status`, `selected_candidate_id`, …). There is no Python Splot path.
-
-## Proof
-
-```bash
-mise exec -- pixi run splot-domain        # vocabulary pack
-mise exec -- pixi run splot-integration   # Fala host → Splot Mojo step
-# splot-domain is also in extended-smoke
-```
-
-## Boundary
-
-- Core must not import Splot **product** types; only optional pack consumers use
-  `fala.domain_packs.splot`.
-- Domain packs may depend on `fala.domain` records only.
-- Arbitration scoring/policy lives in Splot, not in Fala core or this pack.
+Core must not import Splot product types. Domain packs depend only on
+`fala.domain` records; arbitration policy remains in Splot.

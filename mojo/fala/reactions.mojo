@@ -201,13 +201,13 @@ def reaction_uri_from_digest(digest: String) raises -> String:
 
 
 def _digest_from_uri(uri: String) raises -> String:
+    """Parse only canonical lowercase Fala SHA-256 reaction URIs."""
     if not uri.startswith(_URI_PREFIX) or uri.byte_length() != _URI_PREFIX.byte_length() + 64:
         raise Error("Invalid Fala reaction URI")
     var digest = String(uri[byte=_URI_PREFIX.byte_length():])
-    if not _digest_valid(digest):
+    if not _digest_valid(digest) or digest != _lower_hex(digest):
         raise Error("Invalid Fala reaction digest")
-    return _lower_hex(digest)
-
+    return digest
 
 def _verify_blob_digest(target: Path, digest: String) raises:
     try:

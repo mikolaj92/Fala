@@ -21,6 +21,13 @@ def main() raises:
     print(kept.digest)
     print(resolve_uri(root, kept.uri))
     _check(is_fala_reaction_uri(kept.uri), "strict URI accepted")
+    _check(not is_fala_reaction_uri("fala-reaction://sha256/" + kept.digest.upper()), "uppercase digest URI rejected")
+    var uppercase_digest_rejected = False
+    try:
+        _ = digest_from_fala_reaction_uri("fala-reaction://sha256/" + kept.digest.upper())
+    except:
+        uppercase_digest_rejected = True
+    _check(uppercase_digest_rejected, "uppercase digest extraction rejected")
     _check(not is_fala_reaction_uri("fala-reaction://sha256/not-a-digest"), "malformed URI rejected")
     _check(not is_fala_reaction_uri("fala-reaction://sha256/" + kept.digest + "?extra=1"), "URI query rejected")
     _check(digest_from_fala_reaction_uri(kept.uri) == kept.digest, "digest extraction")

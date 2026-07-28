@@ -1,50 +1,59 @@
 # Adapter Contracts
 
-Supported effector adapters (exclusive Mojo product):
+Fala's default effector boundary is a local subprocess. All adapters execute
+one claimed process; the runtime owns process state, events, reactions metadata,
+and journal writes.
 
-- `subprocess`: local command as an argument list — **primary child boundary**.
-- `native_function`: in-process registered callable (tests / embedded).
-- `manual_homeostat`: opens a durable manual homeostat and waits.
+## Adapter kinds
 
-**Removed:**
+- `subprocess`: local command as an argument list; the primary child boundary.
+- `native_function`: registered in-process Mojo callable (embedded/tests).
+- `manual_homeostat`: durable operator wait.
 
-- `python_function` — CPython importable callables (not part of the product).
-- `fala_runtime` (fleet/pool enqueue) — use `subprocess` + separate journal.
-  See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
+`python_function` and `fala_runtime` are removed product kinds. A nested Fala
+uses `subprocess` and a separate journal; pool/fleet selection is not an
+adapter. See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
-Subprocess effectors receive:
+## Subprocess wire boundary
+
+Each attempt receives:
 
 ```text
-input/
-  manifest.json
-output/
-  result.json
+input/manifest.json
+output/result.json
 ```
 
-`input/manifest.json` protocol version 1 contains:
+Manifest protocol version 1 contains:
 
-- `execution_id`: stable logical identity scoped as `<run_id>:<process_id>`;
-- `process_id`: process identity within the run;
-- `attempt` and `max_attempts`: the current physical try and its durable limit;
+- `execution_id`: stable identity `<run_id>:<process_id>`;
+- `process_id`, `attempt`, and `max_attempts`;
 - `impulse_id`, `input`, `config`, and adapter metadata.
 
-Retries keep `execution_id` stable and increment `attempt`. Effectors that perform
-external side effects should deduplicate durable results by `execution_id` and use
-it as an idempotency key where the external system supports one.
+Retries preserve `execution_id` and increment `attempt`. Effectors with
+external side effects should use `execution_id` as their idempotency key and
+deduplicate durable results. The default `retry_policy` is `automatic`;
+`none` disables automatic retry for effects that cannot be made idempotent.
 
-Package effectors may set `retry_policy` to `automatic` (the compatibility
-default) or `none`. `none` prevents Fala from automatically retrying adapter
-failures and timeouts even if the process has attempts remaining. Use it for an
-effect that cannot be made idempotent or durably deduplicated.
+The runtime gives every attempt an isolated work directory scoped by run,
+process, impulse, and attempt. It writes the manifest, captures stdout/stderr,
+validates `output/result.json` as a JSON object, and structurally canonicalizes
+that object before committing the runtime result; the submitted JSON bytes are
+not byte-preserved. Resolved secrets are redacted only from the
+operator-facing stdout/stderr streams. Adapters never mutate a JournalPort,
+NativeJournal, SQLite database, or other Fala journal directly.
 
-The default subprocess work directory is scoped by run, process, impulse, and
-attempt. Attempts therefore cannot overwrite each other's manifest or result;
-cross-attempt deduplication belongs to the effector and uses `execution_id`.
+The native `doctor --package` / `--output` filesystem checks are currently a
+reserved native boundary, not an executable package-conformance command.
+Package loading itself validates known adapter kinds, subprocess command shape,
+and the environment boundary.
 
-The runtime writes the input manifest, captures stdout/stderr, redacts configured
-secret values from those operator-facing streams, validates that
-`output/result.json` is a JSON object without mutating its structured content, and
-commits runtime state itself. Effectors must not mutate SQLite directly.
+Python subprocesses may use `fala.sdk` to read
+`FALA_EFFECTOR_MANIFEST`, inspect declared inputs, conduction, upstream/output
+reactions, regulation, and config, then write
+`FALA_EFFECTOR_OUTPUT_DIR/result.json`. These helpers do not expose manifest
+adapter metadata. This is a helper for the wire contract, not a `python_function`
+adapter or a CPython engine.
 
-`fala doctor --package` validates package adapter references where the runtime
-can check them locally (known kinds, subprocess command shape, env boundary).
+See [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) for claims and leases,
+[`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md) for transaction invariants, and
+[`SECURITY.md`](SECURITY.md) for the trust boundary.

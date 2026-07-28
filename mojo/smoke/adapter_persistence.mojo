@@ -104,6 +104,19 @@ def main() raises:
     _check(not AdapterSpec(AdapterKind("unknown")).validate().is_ok(), "unknown adapter kind rejected")
     var empty_command = List[String]()
     _check(not AdapterSpec.subprocess(empty_command).validate().is_ok(), "empty subprocess command rejected")
+    var bad_argv0 = AdapterSpec.subprocess([""])
+    _check(not bad_argv0.validate().is_ok(), "empty argv0 rejected")
+    var bad_argv_control = AdapterSpec.subprocess(["/bin/true", "bad\narg"])
+    _check(not bad_argv_control.validate().is_ok(), "newline argv rejected")
+    var bad_cwd = AdapterSpec.subprocess(["/bin/true"])
+    bad_cwd.cwd = "bad\0cwd"
+    _check(not bad_cwd.validate().is_ok(), "NUL cwd rejected")
+    var bad_env_name = AdapterSpec.subprocess(["/bin/true"])
+    bad_env_name.env["BAD-NAME"] = "value"
+    _check(not bad_env_name.validate().is_ok(), "invalid env name rejected")
+    var bad_env_value = AdapterSpec.subprocess(["/bin/true"])
+    bad_env_value.env["VALID_NAME"] = "value\n"
+    _check(not bad_env_value.validate().is_ok(), "newline env value rejected")
     var invalid_manual = AdapterSpec.manual_homeostat()
     invalid_manual.timeout_seconds = 1.0
     _check(not invalid_manual.validate().is_ok(), "manual homeostat timeout rejected")

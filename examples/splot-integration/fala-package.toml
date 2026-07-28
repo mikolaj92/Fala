@@ -1,6 +1,6 @@
 # Fala package: run Splot 0.3+ Mojo as a subprocess effector.
 # Requires sibling checkout: ../Splot (or SPLOT_ROOT).
-version = "1"
+version = "2"
 id = "fala_splot_integration"
 title = "Fala hosts Splot arbitration (Mojo)"
 

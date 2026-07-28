@@ -57,6 +57,39 @@ def _blob(values: List[String], label: String) raises -> String:
             raise Error(label + " entries must not contain NUL")
         result += value + "\0"
     return result
+def _is_environment_name(value: String) -> Bool:
+    var n = value.byte_length()
+    if n == 0: return False
+    var first = value[byte=0]
+    if not ((first >= "A" and first <= "Z") or (first >= "a" and first <= "z") or first == "_"):
+        return False
+    for index in range(1, n):
+        var character = value[byte=index]
+        if ((character >= "A" and character <= "Z") or (character >= "a" and character <= "z")
+                or (character >= "0" and character <= "9") or character == "_"):
+            continue
+        return False
+    return True
+
+
+def _validate_start_inputs(argv: List[String], env: List[String], cwd_path: String) raises:
+    if len(argv) == 0: raise Error("native process argv must not be empty")
+    if argv[0] == "": raise Error("native process argv[0] must not be empty")
+    for value in argv:
+        if value.find("\0") >= 0 or value.find("\n") >= 0 or value.find("\r") >= 0:
+            raise Error("native process argv entries must not contain NUL or newline")
+    if cwd_path.find("\0") >= 0 or cwd_path.find("\n") >= 0 or cwd_path.find("\r") >= 0:
+        raise Error("native process cwd must not contain NUL or newline")
+    for entry in env:
+        var separator = entry.find("=")
+        if separator <= 0:
+            raise Error("native process environment entries must be NAME=value")
+        var name = String(entry[byte=0:separator])
+        if not _is_environment_name(name):
+            raise Error("native process environment name is invalid: " + name)
+        if entry.find("\0") >= 0 or entry.find("\n") >= 0 or entry.find("\r") >= 0:
+            raise Error("native process environment entries must not contain NUL or newline")
+
 
 
 def _host_library_name() -> String:
@@ -219,6 +252,7 @@ struct ProcessHost(Movable):
     var _process: Int
 
     def __init__(out self, argv: List[String], env: List[String], cwd_path: String, stdin_path: String, stdout_path: String, stderr_path: String, timeout_ms: Int, terminate_grace_ms: Int) raises:
+        _validate_start_inputs(argv, env, cwd_path)
         self._process = 0
         var library_path = _library_path()
         self._library = OwnedDLHandle(library_path)

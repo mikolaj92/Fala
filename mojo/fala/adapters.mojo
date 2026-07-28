@@ -171,6 +171,24 @@ def _validate_json_text(value: String, field: String) -> AdapterError:
         return AdapterError.invalid(field + " must contain valid JSON")
     return AdapterError.none()
 
+def _has_process_boundary_controls(value: String) -> Bool:
+    return value.find("\0") >= 0 or value.find("\n") >= 0 or value.find("\r") >= 0
+
+
+def _is_environment_name(value: String) -> Bool:
+    var n = value.byte_length()
+    if n == 0: return False
+    var first = value[byte=0]
+    if not ((first >= "A" and first <= "Z") or (first >= "a" and first <= "z") or first == "_"):
+        return False
+    for index in range(1, n):
+        var character = value[byte=index]
+        if ((character >= "A" and character <= "Z") or (character >= "a" and character <= "z")
+                or (character >= "0" and character <= "9") or character == "_"):
+            continue
+        return False
+    return True
+
 def _base_environment_keys() -> List[String]:
     var keys = List[String]()
     keys.append("PATH"); keys.append("HOME"); keys.append("TMPDIR")
@@ -193,19 +211,16 @@ def _is_base_environment_key(key: String) -> Bool:
     return False
 
 def _redaction_values(environment: Dict[String, String]) -> List[String]:
-    """Collect values worth scrubbing from operator-facing streams.
+    """Collect nonempty, non-ambient values for operator stream scrubbing.
 
-    Ambient keys (PATH/HOME/TMPDIR/LANG/…) and trivially short values are not
-    secrets: substring-redacting them mangles stack traces and collides with
-    ordinary numbers (e.g. timeout ``300``). Explicit adapter secrets and long
-    inherited credentials remain.
+    Ambient keys (PATH/HOME/TMPDIR/LANG/…) are not secrets: substring-redacting
+    them mangles stack traces and collides with ordinary values. Explicit adapter
+    secrets and inherited credentials are scrubbed regardless of length.
     """
     var secrets = List[String]()
     for pair in environment.items():
         if pair.value == "": continue
         if _is_base_environment_key(pair.key): continue
-        # Short ambient values (ports, small timeouts, flags) are not credentials.
-        if pair.value.byte_length() < 6: continue
         secrets.append(pair.value.copy())
     var i = 1
     while i < len(secrets):
@@ -347,6 +362,15 @@ struct AdapterSpec(Copyable, Movable):
         if self.kind == AdapterKind.subprocess():
             if len(self.command) == 0: return AdapterError.invalid("subprocess requires non-empty argv command")
             if self.`ref` != "" or self.runtime_ref != "": return AdapterError.invalid("subprocess cannot define ref or runtime_ref")
+            if self.command[0] == "": return AdapterError.invalid("subprocess argv[0] must not be empty")
+            for value in self.command:
+                if _has_process_boundary_controls(value): return AdapterError.invalid("subprocess argv entries must not contain NUL or newline")
+            if _has_process_boundary_controls(self.cwd): return AdapterError.invalid("subprocess cwd must not contain NUL or newline")
+            for pair in self.env.items():
+                if not _is_environment_name(pair.key): return AdapterError.invalid("subprocess environment name is invalid: " + pair.key)
+                if _has_process_boundary_controls(pair.value): return AdapterError.invalid("subprocess environment values must not contain NUL or newline")
+            for key in self.inherit_env:
+                if not _is_environment_name(key): return AdapterError.invalid("subprocess inherit_env name is invalid: " + key)
             return AdapterError.none()
         if self.kind == AdapterKind.manual_homeostat():
             if len(self.command) != 0 or self.`ref` != "" or self.runtime_ref != "": return AdapterError.invalid("manual_homeostat does not accept command, ref, or runtime_ref")

@@ -59,6 +59,26 @@ def _canonical_reaction_metadata(value: String) raises SQLiteError -> String:
         return canonical_json_text(to_string(parsed))
     except err:
         raise SQLiteError(code=1, message="domain store: reaction metadata must be a JSON object")
+def _validate_reaction_cas_identity(row: Reaction) raises SQLiteError:
+    """Reject malformed or conflicting canonical CAS identity fields."""
+    var uri_digest = ""
+    if row.uri.startswith("fala-reaction://sha256/"):
+        uri_digest = reaction_digest_or_empty(row.uri)
+        if uri_digest == "":
+            raise SQLiteError(code=1, message="domain store: invalid reaction digest URI")
+    var hash_digest = ""
+    if row.content_hash.startswith("sha256:"):
+        if row.content_hash.byte_length() != 71:
+            raise SQLiteError(code=1, message="domain store: invalid reaction content hash")
+        var hash_uri = "fala-reaction://sha256/"
+        for index in range(7, row.content_hash.byte_length()):
+            hash_uri += String(row.content_hash[byte=index])
+        hash_digest = reaction_digest_or_empty(hash_uri)
+        if hash_digest == "":
+            raise SQLiteError(code=1, message="domain store: invalid reaction content hash")
+    if uri_digest != "" and hash_digest != "" and uri_digest != hash_digest:
+        raise SQLiteError(code=1, message="domain store: reaction URI/content hash mismatch")
+
 def _reaction_journal_payload(row: Reaction) -> String:
     var content_hash = "null"
     if row.content_hash != "": content_hash = _quote(row.content_hash)
@@ -403,6 +423,7 @@ struct NativeDomainStore(Movable):
     ) raises SQLiteError -> CommandSubmission:
         if command_type != "reaction.record": raise SQLiteError(code=1, message="record_reaction requires command_type 'reaction.record'")
         if not row.is_valid(): raise SQLiteError(code=1, message="domain store: invalid reaction")
+        _validate_reaction_cas_identity(row)
         var normalized = row.copy()
         normalized.metadata = _canonical_reaction_metadata(row.metadata)
         var normalized_events = List[EventInput]()
@@ -571,6 +592,7 @@ struct NativeDomainStore(Movable):
     def put_reaction(mut self, row: Reaction) raises SQLiteError:
         if not row.is_valid():
             raise SQLiteError(code=1, message="domain store: invalid reaction")
+        _validate_reaction_cas_identity(row)
         self._require_run(row.run_id)
         var normalized = row.copy()
         normalized.metadata = _canonical_reaction_metadata(row.metadata)
@@ -843,32 +865,27 @@ struct NativeDomainStore(Movable):
         stmt.close()
         return result^
     def referenced_reaction_digests(mut self) raises SQLiteError -> List[String]:
-        """Return normalized valid CAS digests from content hashes and URIs."""
+        """Return every normalized valid CAS digest referenced by reaction rows."""
         var result = List[String]()
         var stmt = self.db.query("SELECT content_hash,uri FROM reactions ORDER BY id ASC")
         while stmt.step():
-            var digest = ""
+            var candidates = List[String]()
             if not stmt.column_null(0):
                 var candidate = self._text(stmt, 0)
                 if candidate.startswith("sha256:") and candidate.byte_length() == 71:
-                    try:
-                        var suffix = ""
-                        for index in range(7, candidate.byte_length()): suffix += String(candidate[byte=index])
-                        digest = reaction_digest_or_empty("fala-reaction://sha256/" + suffix)
-                    except:
-                        digest = ""
-            if digest == "":
-                try:
-                    digest = reaction_digest_or_empty(self._text(stmt, 1))
-                except:
-                    digest = ""
-            if digest == "": continue
-            var duplicate = False
-            for prior in result:
-                if prior == digest:
-                    duplicate = True
-                    break
-            if not duplicate: result.append(digest)
+                    var hash_uri = "fala-reaction://sha256/"
+                    for index in range(7, candidate.byte_length()): hash_uri += String(candidate[byte=index])
+                    var hash_digest = reaction_digest_or_empty(hash_uri)
+                    if hash_digest != "": candidates.append(hash_digest)
+            var uri_digest = reaction_digest_or_empty(self._text(stmt, 1))
+            if uri_digest != "": candidates.append(uri_digest)
+            for digest in candidates:
+                var duplicate = False
+                for prior in result:
+                    if prior == digest:
+                        duplicate = True
+                        break
+                if not duplicate: result.append(digest)
         stmt.close()
         return result^
 

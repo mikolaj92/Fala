@@ -2,27 +2,56 @@
 
 Parent track: thin core (#94, #99).
 
+## Why this boundary exists
+
+The earlier SQLite-first runtime had two competing write paths: facade methods
+mutated durable tables while event/command records described some of the same
+transitions. Fala moved toward an event-first core so supervision is auditable,
+replayable, and independent of a particular sink. That generic JournalPort
+surface is not, however, a uniform transaction guarantee across sinks.
+
+The current SQLite authority is the direct transactional helper set on
+`NativeJournal` and `NativeDomainStore`. `NativeDomainStore` is not a
+`JournalPort` implementation. `SqliteJournalPort.append_batch` dispatches only
+the leading unit to `NativeJournal`; non-leading units are ignored as write
+inputs, so it does not provide atomic multi-unit batch replay. Memory, JSONL,
+and Tee have weaker persistence/atomicity properties: JSONL claim transitions
+are not persisted to the file, and Tee mirrors appends after its primary
+accepts them rather than providing a cross-sink transaction.
+
+JournalPort has one generic authority per sink: an in-memory map, SQLite
+adapter, or JSONL file/index materializes accepted records according to that
+sink's implementation. Replaying the same idempotency keys is a no-op where
+that sink implements the replay contract; this document does not claim uniform
+multi-unit atomicity across all sinks.
+
 ## Hard rule
 
-On the **core path** (accept impulse → claim process → complete / fail / wait /
-homeostat terminal), durable **run and process truth** is written through
-**JournalPort** batch and claim APIs (`append_batch`, `claim_next` / journal
-claim helpers). Sinks materialize history; they must not invent a second
-supervisor write path for process leases.
+The core path uses the configured sink's supported APIs. In the current SQLite
+core, `NativeJournal` and `NativeDomainStore` direct helpers own atomic
+transactions for command/event/state operations. The driver uses journal claim
+helpers for SQLite process leases, but this must not be generalized into a
+claim or transaction guarantee for every JournalPort sink.
 
 ## Core-path write map
 
 | Flow | Primary API | Durability boundary |
 | --- | --- | --- |
-| Accept impulse | `NativeDomainStore.accept_impulse` | Records command + events in the reference SQLite journal tables via `_domain_command_start` / `_append_domain_event_in_tx` (idempotent command keys). Memory path uses `InMemoryJournal.append_batch` via driver/runtime. |
-| Claim / complete / fail / retry / wait | `native_driver` + `NativeJournal` / `JournalPort` | `claim_process` / process transitions go through journal claim and command batches — not ad-hoc process UPDATEs outside the journal helpers. |
-| Homeostat open / terminal | `save_homeostat`, `transition_homeostat` (+ driver helpers) | Domain command + event rows with idempotency; status transitions are command-gated. |
-| Association / reaction / relation record | `record_*` / `put_*` | Domain tables + optional journaled wrappers; reaction **bytes** live in the reaction store (refs in journal). |
+| Accept impulse | `NativeDomainStore.accept_impulse` | Records impulse, command, and event in one reference-SQLite transaction with idempotent keys. Memory runtime uses `InMemoryJournal.append_batch`; other sinks follow their own adapter behavior. |
+| Claim / complete / fail / retry / wait | `NativeJournal` helpers in SQLite; JournalPort claim/batch APIs for generic sinks | SQLite claim uses `NativeJournal.claim_next_ready` atomically and returns a `ClaimResult` representation from `SqliteJournalPort`; JSONL claim transitions remain in its in-memory index and are not persisted. |
+| Homeostat open / terminal | `save_homeostat`, `transition_homeostat` (+ driver helpers) | SQLite domain command + event + state rows commit together with idempotency; this is not a uniform guarantee of every sink. |
+| Association / reaction / relation record | `record_*` / `put_*` | NativeDomainStore direct domain transactions; reaction **bytes** live in the reaction store (refs in journal). |
+
+Low-level `put_*` methods are direct SQLite writes and are test/admin or
+explicit record APIs where documented; they do not establish that every
+mutation routes through JournalPort. Production host paths use the applicable
+native command/event helpers, while generic sinks retain their weaker
+semantics.
 
 ## Ops / sink-only (non-core)
 
 These may touch SQLite (or filesystem CAS) without being part of Essential Fala.
-They are **not** required for `package → impulse → run_until_idle → journal`.
+They are **not** required for `package → impulse → run_until_idle → configured persistence`.
 
 | API area | Module | Notes |
 | --- | --- | --- |
@@ -49,6 +78,7 @@ sink, not shared mutable state.
 
 ## Related docs
 
-- [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md) — command/event stream model  
-- [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md) — core vs journal vs sink  
-- [`FALA_ARCHITECTURE_STATUS.md`](FALA_ARCHITECTURE_STATUS.md) — Essential vs ops inventory  
+- [`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md) — transaction and state invariants
+- [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md) — separate-journal child composition
+- [`EVENTS_AND_REPLAY.md`](EVENTS_AND_REPLAY.md) — event ordering and projection replay
+- [`FALA_ARCHITECTURE_STATUS.md`](FALA_ARCHITECTURE_STATUS.md) — Essential vs ops inventory

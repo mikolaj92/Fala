@@ -53,6 +53,31 @@ def main() raises:
         _check(result.output_json.find("\"ok\":true") >= 0, "result JSON")
         _check(result.stdout.find("<redacted>") >= 0 and result.stdout.find("top-secret") < 0, "stdout redaction")
         _check(result.stderr.find("<redacted>") >= 0 and result.stderr.find("top-secret") < 0, "stderr redaction")
+
+        # Nonempty short secrets are still fully redacted from operator streams.
+        var short_command = List[String]()
+        short_command.append("/bin/sh")
+        short_command.append("-c")
+        short_command.append(
+            "printf \"short=$SHORT_SECRET\\n\" >&1; printf \"short=$SHORT_SECRET\\n\" >&2; "
+            + "printf '{\"ok\":true}\\n' > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
+        )
+        var short_adapter = AdapterSpec.subprocess(short_command)
+        short_adapter.env["SHORT_SECRET"] = "shrt"
+        var short_result = execute_subprocess(
+            EffectorRequest("subprocess-short-secret", short_adapter, "impulse", "{}", "{}")
+        )
+        _check(
+            short_result.success
+                and short_result.stdout.find("shrt") < 0
+                and short_result.stdout.find("<redacted>") >= 0,
+            "short stdout redaction",
+        )
+        _check(
+            short_result.stderr.find("shrt") < 0
+                and short_result.stderr.find("<redacted>") >= 0,
+            "short stderr redaction",
+        )
         _check(Path(root + "/input/manifest.json").exists(), "manifest file")
         var manifest = Path(root + "/input/manifest.json").read_text()
         _check(manifest.find("\"protocol_version\":1") >= 0, "manifest protocol version")

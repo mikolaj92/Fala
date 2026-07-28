@@ -1,191 +1,170 @@
 # Fala
 
-**Version 0.7.13** — exclusive Mojo product; peer conduction + thin core + POSIX host.
+**Version 0.7.15** — Mojo-native engine with an optional thin Python host
+binding; local autonomous Correlator, cybernetic mediation, event-first memory,
+and a POSIX process host.
 
-## Observable Unix pipe for processes
+## Local autonomous Correlator
 
-Fala is a sophisticated **Unix pipe `|` operator for processes**, acting as a mediator of relations between autonomous organs. It does not run a centralized workflow engine or interpret domain payloads; rather, it conducts information impulses along defined contract pathways.
+Fala is a cybernetic mediator for autonomous organs. It accepts typed
+**Impulses**, conducts them through named contracts between **Effectors**, and
+records associations and reactions as an observable memory trace. The runtime
+is event-first: JournalPort batches carry commands and events, while sinks
+provide durable storage.
 
-1. **Write small organs** (single-purpose tools) with clear I/O — preferably argv + files/JSON.
-2. **Declare contracts** (TOML package topology) defining how signals flow between autonomous processes.
-3. **Drive one journal** to idle: claim → execute → complete, and recover state from the event stream. Nested work gets its own journal.
-
-```text
-you compose:   package → impulse → run_until_idle → journal
-Fala mediates: contract conduction + JournalPort + process host
-organs live:   native_function | subprocess (Splot, …) | homeostat gates
-```
-
-**Fala is a fully Mojo runtime.**
-
-## Thin Python host binding (optional, memory path)
-
-```python
-import fala
-result = fala.host_drive(
-    run_id="run1",
-    impulse={"id": "imp1", "type": "case", "payload": {"n": 1}},
-    path={"id": "chain", "effectors": [
-        {"id": "root", "capability": "source"},
-        {"id": "leaf", "capability": "sink", "conduction": ["root"]},
-    ]},
-    outputs={"root": {"value": 42}, "leaf": {"done": True}},
-)
-```
-
-Requires Mojo toolchain. Also: `fala.sdk` (pure-Python effector helpers),
-`fala.open_sqlite(path)` / `fala.host_run_package(...)` durable journal path
-(optional SQLite sink via sqlite.fire; first-use auto-clones the Git repository and
-runs `make -C vendor/sqlite.fire/native` when missing — needs a C compiler + libsqlite3;
-set `FALA_SKIP_NATIVE_BUILD=1` to skip). Python native builds dynamically resolve
-both `EmberJson` and `sqlite.fire` sources (gitignored in `vendor/`).
-No CPython RuntimeBackendService. Full multi-organ CLI remains primary for complex ops.
-
- There is no CPython engine, no YAML packages,
-and no multi-runtime fleet.
-
-It is an embedded, **event-first** correlator: impulses move through
-correlation paths of effectors; a journal records durable process state; a
-**process host** runs OS children (Darwin and Linux). One engine — organ +
-journal + host.
+Unix process composition is the implementation boundary, not the product
+identity. Fala hosts local children, keeps each organ's journal separate, and
+drives one run to idle through its embedded/library API; `run_until_idle` is
+not a standalone CLI command.
 
 ```text
-Impulse / package (TOML)
+you compose:   TOML/JSON package → Impulse → embedded run_until_idle → JournalPort
+Fala mediates: cybernetic contracts + conduction + process host
+organs live:   native_function | subprocess | manual_homeostat
+```
+
+## Core picture
+
+```text
+Impulse / package (TOML or JSON)
         │
         ▼
-  CorrelationPath (effectors)
+  CorrelationPath (named contracts)
         │
         ├── native_function   (in-process Mojo registry)
-        ├── subprocess        (OS child + FALA_EFFECTOR_*)
-        └── manual_homeostat  (wait for operator; rearm + EV regulation available)
+        ├── subprocess        (OS child + JSON manifest boundary)
+        └── manual_homeostat  (operator wait and regulation)
         │
         ▼
-  JournalPort  →  InMemory | SQLite | JSONL | Tee
+  JournalPort → InMemory | SQLite | JSONL | Tee
         │
         ▼
   events · associations · reactions · processes · projections
 ```
+
+SQLite is the bundled reference sink; memory, JSONL, and tee sinks implement
+the same JournalPort. Reaction bytes live in the local reaction store, while
+the journal records metadata and references.
 
 ## What it is for
 
 | Use | Example |
 | --- | --- |
 | Local correlation paths | ingest → enrich → export as durable processes |
-| Host other Mojo tools | run Splot (or any argv child) as a subprocess effector |
-| Multi-organ composition | Signals vocabulary + Splot subprocess (`examples/multi-organ/`) |
-| Observable runs | journaled leases, retries, homeostats, projections |
-| Embedded / CLI | drive one run to idle without a web stack |
+| Host Mojo tools | run Splot or any argv child as a subprocess effector |
+| Domain packs | Signals, Splot, and Takt vocabulary on Fala records |
+| Observable runs | journaled leases, retries, homeostats, and projections |
+| Embedded / CLI | embedded code drives a run to idle; CLI creates/lists/inspects one local run |
 
 ## What it is not
 
-- Not a Python package or CPython host  
-- Not YAML-based packaging (TOML / JSON only)  
-- Not a fleet / multi-runtime peer mesh (`fala_runtime` removed)  
-- Not Redis/Postgres/Kafka — local journal + filesystem reactions by default  
+- Not a fleet or multi-runtime peer mesh
+- Not Redis/Postgres/Kafka; local journals and filesystem reactions are the
+  default
 
-## Fully Mojo
+## Mojo-native engine
 
-| | |
+| Surface | Current contract |
 | --- | --- |
-| Language | **Mojo only** (`mojo/fala/`) |
-| Packages | **TOML** (or canonical JSON) |
-| Adapters | `subprocess` · `native_function` · `manual_homeostat` |
-| Proof | Mojo smokes (`mojo/smoke/` + `pixi.toml`) |
-| Python / YAML | **none** in the product tree |
+| Engine | Mojo only (`mojo/fala/`) |
+| Host binding | Optional thin Python package (`python/fala/`), a JSON bridge to Mojo—not a second engine |
+| Packages | TOML or canonical JSON |
+| Adapters | `subprocess`, `native_function`, `manual_homeostat` |
+| Journal | `JournalPort`, memory/SQLite/JSONL/tee sinks |
+| Proof | Mojo smokes under `mojo/smoke/` and `pixi.toml` |
 
 ```text
-mojo/fala/      engine (organ, journal, driver, host, packages, CLI)
-mojo/smoke/     gates
-examples/       TOML packages (basic, splot vocabulary, splot-integration)
-docs/           architecture & contracts
-vendor/         EmberJson, sqlite.fire (gitignored dynamically-cloned dependencies)
-tools/          mojo_sql_run.sh, native smokes
+mojo/fala/      Mojo Correlator, JournalPort, driver, host, packages, CLI
+python/fala/    optional host binding and subprocess-effector SDK
+mojo/smoke/     executable gates
+examples/       TOML packages and domain vocabulary
+docs/           architecture and contracts
+vendor/         dynamically managed EmberJson and sqlite.fire dependencies
+tools/          native smoke helpers
 ```
 
-## Disciplines
-
-- **Cybernetic** — Autonomy has reactions, contracts have relationships, and Fala has conduction. Impulses flow through topographies of named contracts. Process execution itself is a local autonomous concern; Fala mediately records and registers the memory trace (Associations, Reactions, and Homeostats) rather than orchestrating the business decision logic.
-- **Unix** — A sophisticated multi-process pipe `|` operator. Fala provides a supervisor, process host, and event-stream emitter where durability is a Journal port. SQLite is the reference sink, not product identity. Each nested or parallel system gets its own isolated journal.
-
-## Adapters
+## Adapters and process execution
 
 | Kind | Role |
 | --- | --- |
-| `subprocess` | argv child; work dir with `input/` + `output/result.json` |
-| `native_function` | in-process Mojo callable via registry |
-| `manual_homeostat` | open a durable wait for operator input |
+| `subprocess` | argv child; manifest in `input/`, result in `output/result.json` |
+| `native_function` | in-process Mojo callable from the native registry |
+| `manual_homeostat` | durable operator wait and explicit completion |
 
-Removed: `python_function`, `fala_runtime`.
+`run_until_idle` is the embedded/library API that drives processes sequentially
+(claim → execute → complete), not a standalone CLI command. Each process has a
+run-scoped identity, lease, and isolated work directory. The native CLI exposes
+the durable create/lifecycle/list/inspect operations separately and requires
+`--db`, `--run-id`, and `--now` where those commands need them. Independent work
+can use multi-claim batches or separate Fala instances with separate journals.
+See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md).
 
-Details: [`docs/ADAPTER_CONTRACTS.md`](docs/ADAPTER_CONTRACTS.md).
+Fala is a mediator, not a workflow tyrant: terminal upstreams conduct success
+or error payloads to dependents, and the receiving effector decides what the
+payload means. A failed upstream does not silently cancel its dependents.
 
 ## Quick proof
 
 Requires Pixi/Mojo (see `pixi.toml`):
 
 ```bash
-# vendor dependencies (EmberJson, sqlite.fire) are managed dynamically by Pixi/scripts;
-# to clone and run the smoke gateway:
 mise exec -- pixi run full-smoke
-```
-
-Smaller gates:
-
-```bash
 mise exec -- pixi run core-smoke    # no SQLite
-mise exec -- pixi run host-smoke    # process host + subprocess + UTF-8 boundaries
+mise exec -- pixi run host-smoke    # process host and subprocess boundary
 ```
-
-**When a production crash / StringSlice assert / UTF-8 host abort is found:** land the
-fix **together with** a protective regression (Mojo smoke under `mojo/smoke/` and/or
-`python/tests/`) that fails on the old code. Prefer the public host surface
-(`host_run_package` / `execute_subprocess`) plus a pure unit smoke when the bug is
-in a helper (`redact_environment`, JSON quote, …). Wire the smoke into `host-smoke`
-or `adapter-smoke` so it cannot be skipped.
 
 ## Examples
 
 | Path | What |
 | --- | --- |
-| `examples/correlation-paths/basic/` | TOML package, `native_function` effectors |
-| `examples/domain-packs/splot/` | Splot **vocabulary** on Fala records |
-| `examples/splot-integration/` | Host sibling **Splot 0.3.1+** as subprocess |
+| `examples/correlation-paths/basic/` | TOML package with native effectors |
+| `examples/domain-packs/splot/` | Splot vocabulary on Fala records |
+| `examples/splot-integration/` | Splot 0.3.1+ hosted as a subprocess |
 
 ```bash
 mise exec -- pixi run example-basic-native
 mise exec -- pixi run splot-domain
-# sibling checkout ~/…/Splot (or SPLOT_ROOT):
 mise exec -- pixi run splot-integration
 ```
 
-Fala does **not** import Splot. Splot is an optional child product; Fala owns
-scheduling and the journal.
-
-## Execution model
-
-`run_until_idle` drives processes **sequentially** (claim → execute → complete).
-Fala owns journaled process state and leases; it does not isolate concurrent
-multi-run hosts for you. Parallel drivers must keep process ids / work roots
-unique. See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md).
-
-### Peer conduction (not a workflow tyrant)
-
-Fala mediates named contracts; it does not cancel dependents when an upstream
-fails. Terminal upstreams (`succeeded` / `failed` / `cancelled` / `timed_out`)
-conduct their payload into the next effector. The child organ decides what the
-failure means. One process plan per effector per run remains the durable unit
-of activation; feedback cycles wait with a typed diagnosis instead of being
-banned by a central scheduler.
+Fala does not import Splot. Splot is an optional child product; Fala owns
+conduction, process hosting, and the journal.
 
 ## Docs
 
-| Doc | Topic |
+### Identity and philosophy
+
+| Doc | Focus |
 | --- | --- |
-| [`docs/FALA_ARCHITECTURE_STATUS.md`](docs/FALA_ARCHITECTURE_STATUS.md) | product status |
-| [`docs/UNIX_AND_CYBERNETICS.md`](docs/UNIX_AND_CYBERNETICS.md) | philosophy |
-| [`docs/ADAPTER_CONTRACTS.md`](docs/ADAPTER_CONTRACTS.md) | effector I/O |
-| [`docs/SPLOT_DOMAIN_PACK.md`](docs/SPLOT_DOMAIN_PACK.md) | Splot vocabulary + host |
-| [`CHANGELOG.md`](CHANGELOG.md) | releases |
+| [`CONCEPTUAL_MODEL.md`](docs/CONCEPTUAL_MODEL.md) | canonical ontology and conduction rules |
+| [`CYBERNETIC_MAPPING.md`](docs/CYBERNETIC_MAPPING.md) | historical → current lexicon and Mojo surfaces |
+| [`UNIX_AND_CYBERNETICS.md`](docs/UNIX_AND_CYBERNETICS.md) | Unix composition and cybernetic synthesis |
+| [`DOMAIN_PACKS.md`](docs/DOMAIN_PACKS.md) | domain vocabulary boundaries |
+| [`TAKT_DOMAIN_PACK.md`](docs/TAKT_DOMAIN_PACK.md) | Takt domain adapter |
+
+### Runtime and boundaries
+
+| Doc | Focus |
+| --- | --- |
+| [`RUNTIME_SEMANTICS.md`](docs/RUNTIME_SEMANTICS.md) | transaction and state invariants |
+| [`PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md) | claims, leases, retries, and execution |
+| [`ADAPTER_CONTRACTS.md`](docs/ADAPTER_CONTRACTS.md) | subprocess and effector wire boundary |
+| [`FALA_HOST_AND_COMPOSITION.md`](docs/FALA_HOST_AND_COMPOSITION.md) | process-host composition |
+| [`JOURNALPORT_CORE_PATH.md`](docs/JOURNALPORT_CORE_PATH.md) | JournalPort core path |
+| [`SQLITE_BACKEND.md`](docs/SQLITE_BACKEND.md) | reference sink details |
+| [`REACTIONS_AND_REFERENCES.md`](docs/REACTIONS_AND_REFERENCES.md) | reaction bytes and references |
+
+### Operations and assurance
+
+| Doc | Focus |
+| --- | --- |
+| [`EVENTS_AND_REPLAY.md`](docs/EVENTS_AND_REPLAY.md) | event ordering and replay |
+| [`MIGRATIONS.md`](docs/MIGRATIONS.md) | schema and package migration |
+| [`SECURITY.md`](docs/SECURITY.md) | trust boundary and subprocess safety |
+| [`FALA_ARCHITECTURE_STATUS.md`](docs/FALA_ARCHITECTURE_STATUS.md) | current architecture status |
+| [`SPLOT_DOMAIN_PACK.md`](docs/SPLOT_DOMAIN_PACK.md) | Splot vocabulary and host integration |
+
+[`CHANGELOG.md`](CHANGELOG.md) contains release history.
 
 ## License
 

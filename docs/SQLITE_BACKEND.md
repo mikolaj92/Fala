@@ -1,40 +1,39 @@
 # SQLite Backend
 
-SQLite is the bundled **reference journal sink** for Fala's event-first core
-(see [`EVENT_STREAM_CORE.md`](EVENT_STREAM_CORE.md)). The `Correlator` /
-`SqliteJournal` path stores:
+SQLite is Fala's bundled **reference journal sink** for the event-first core.
+The public sink is `SqliteJournalPort`; its native engine is `NativeJournal`.
+The port implements JournalPort while the engine provides the SQLite-backed
+domain operations. See [`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md)
+and [`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md).
 
-- runs, impulses, impulse types, and impulse relations
-- associations, reaction metadata, processes, homeostats, and projections
-- append-only runtime commands and runtime events
-- bridge inbox/outbox deliveries
-- runtime pools and delegation policies
-- schema migration state
+The backend stores:
 
-The backend initializes SQLite with WAL journal mode, foreign keys, and a busy
-timeout. Reaction bytes are not stored in SQLite by default; SQLite stores refs
-and metadata.
+- runs, impulses, impulse types, and impulse relations;
+- associations, reaction metadata, processes, homeostats, and projections;
+- append-only runtime commands and runtime events;
+- optional bridge inbox/outbox deliveries;
+- schema migration state.
 
-Run creation stores the run row, `run.create` command, and `run.created` event in
-one SQLite transaction.
-Run status changes store the `run.status.set` or `run.cancel` command, event,
-and run status update in one SQLite transaction.
-Impulse acceptance stores the impulse row, `impulse.accept` command, and
-`impulse.accepted` event in one SQLite transaction.
-Impulse type registration, impulse relation recording, association recording,
-reaction recording, process scheduling, and process status transitions also
-commit their runtime command, event, and state change together.
-Homeostat creation and terminal transitions are committed the same way.
-Projection save and rebuild commands commit their projection writes in the same
-transaction.
-Bridge outbox enqueue/deliver and inbox import commands commit their local
-delivery rows with the command and event in one transaction.
+Reaction bytes are not stored in SQLite by default: the journal stores refs and
+metadata while `FileReactionStore` stores content-addressed bytes.
 
-Runtime commands and events are guarded by SQLite triggers that reject direct
-updates and deletes. New runtime facts must be appended through command
-submission.
+Core JournalPort operations commit command/event/state changes atomically. Run
+creation, status changes, impulse acceptance, process scheduling and
+transitions, homeostat transitions, and projection saves use these transaction
+boundaries. Runtime commands and events are protected against direct updates
+and deletes; core facts are appended through JournalPort/backend command paths.
 
-Run-scoped writes reject unknown run ids before storing runtime state.
+Historical `runtime_pools` and `delegation_policies` tables may remain in the
+schema for compatibility with older databases. They are not Fala identity or
+active fleet APIs and must not be re-exposed as core features.
 
-The backend is local-first and requires no Redis, Postgres, queue broker, web
-server, Docker, or external service.
+Bridge inbox/outbox operations are optional local envelope handoff helpers, not
+shared mutable state or a global transaction. Retention, maintenance, reaction
+GC, and projection rebuilds are optional ops layers. Maintenance transactions
+cover SQLite row changes only; reaction GC scans SQLite references and then
+deletes filesystem CAS blobs as a separate operation, not as one cross-store
+transaction. Maintenance is not a normal runtime mutation path.
+
+SQLite initializes with WAL mode, foreign keys, and a busy timeout. The sink is
+local-first and requires no Redis, Postgres, queue broker, web server, Docker,
+or external service.
