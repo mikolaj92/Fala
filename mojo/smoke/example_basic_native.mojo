@@ -157,7 +157,7 @@ def main() raises:
             item.timeout_seconds,
             item.config_json,
             "{}",
-            "{}",
+            "{\"retry_policy\":\"" + item.retry_policy + "\"}",
             List[String](),
         )
         effectors.append(spec^)

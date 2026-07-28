@@ -237,7 +237,7 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
             item.timeout_seconds,
             item.config_json,
             "{}",
-            "{}",
+            "{\"retry_policy\":\"" + item.retry_policy + "\"}",
             List[String](),
         )
         effectors.append(spec^)

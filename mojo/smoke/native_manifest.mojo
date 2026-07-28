@@ -52,6 +52,11 @@ def main() raises:
     _check(configured.correlation_paths[0].effectors[0].config_json == "{\"limit\":2}", "config object retention")
     _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"config\":[],\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
     _expect_error(valid, "manifest.type at /correlation_paths/0/effectors/0/config: expected object")
+    _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"retry_policy\":\"none\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    var no_retry = load_package_json(valid)
+    _check(no_retry.correlation_paths[0].effectors[0].retry_policy == "none" and serialize_package_json(no_retry).find("\"retry_policy\":\"none\"") >= 0, "retry policy round trip")
+    _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"retry_policy\":\"sometimes\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    _expect_error(valid, "expected automatic or none")
 
     # Root, path, effector, adapter, and array fields are strict.
     _write(valid, "[]")

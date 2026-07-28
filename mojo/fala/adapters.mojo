@@ -363,19 +363,25 @@ struct AdapterSpec(Copyable, Movable):
 
 struct EffectorRequest(Copyable, Movable):
     var process_id: String
+    var run_id: String
     var adapter: AdapterSpec
     var impulse_id: String
     var input_json: String
     var config_json: String
     var work_dir: String
+    var attempt: Int
+    var max_attempts: Int
 
-    def __init__(out self, process_id: String, adapter: AdapterSpec, impulse_id: String = "", input_json: String = "{}", config_json: String = "{}", work_dir: String = ""):
+    def __init__(out self, process_id: String, adapter: AdapterSpec, impulse_id: String = "", input_json: String = "{}", config_json: String = "{}", work_dir: String = "", attempt: Int = 1, max_attempts: Int = 1, run_id: String = ""):
         self.process_id = process_id
+        self.run_id = run_id
         self.adapter = adapter.copy()
         self.impulse_id = impulse_id
         self.input_json = input_json
         self.config_json = config_json
         self.work_dir = work_dir
+        self.attempt = attempt
+        self.max_attempts = max_attempts
 
 @fieldwise_init
 struct EffectorResult(Copyable, Movable):
@@ -520,7 +526,11 @@ def adapter_manifest_json(request: EffectorRequest) raises -> String:
     if not input_error.is_ok(): raise Error(input_error.message)
     var config_error = _validate_json_text(request.config_json, "request.config_json")
     if not config_error.is_ok(): raise Error(config_error.message)
-    return "{\"process_id\":" + _json_quoted(request.process_id) + ",\"impulse_id\":" + _json_quoted(request.impulse_id) + ",\"input\":" + request.input_json + ",\"config\":" + request.config_json + ",\"adapter\":" + _adapter_metadata_json(request.adapter) + "}"
+    if request.process_id == "": raise Error("request.process_id must not be empty")
+    if request.attempt < 1: raise Error("request.attempt must be at least one")
+    if request.max_attempts < request.attempt: raise Error("request.max_attempts must be at least attempt")
+    var execution_id = request.process_id if request.run_id == "" else request.run_id + ":" + request.process_id
+    return "{\"protocol_version\":1,\"execution_id\":" + _json_quoted(execution_id) + ",\"process_id\":" + _json_quoted(request.process_id) + ",\"attempt\":" + String(request.attempt) + ",\"max_attempts\":" + String(request.max_attempts) + ",\"impulse_id\":" + _json_quoted(request.impulse_id) + ",\"input\":" + request.input_json + ",\"config\":" + request.config_json + ",\"adapter\":" + _adapter_metadata_json(request.adapter) + "}"
 def adapter_result_json(result: EffectorResult) raises -> String:
     var output_error = _validate_json_text(result.output_json, "result.output_json")
     if not output_error.is_ok(): raise Error(output_error.message)
@@ -598,7 +608,7 @@ def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, Str
         try:
             var effector_root = getenv("FALA_EFFECTOR_ROOT")
             var base = Path(effector_root) if effector_root != "" else cwd()
-            root = (base / Path(".fala-effector-" + sha256_bytes(request.process_id + ":" + request.impulse_id))).__fspath__()
+            root = (base / Path(".fala-effector-" + sha256_bytes(request.run_id + ":" + request.process_id + ":" + request.impulse_id + ":" + String(request.attempt)))).__fspath__()
         except err:
             return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
     var boundary = SubprocessBoundary(request.adapter.command, root)

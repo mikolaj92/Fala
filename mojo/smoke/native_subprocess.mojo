@@ -2,8 +2,9 @@ from std.collections import List
 from std.ffi import CStringSlice, c_int, external_call
 from std.memory import UnsafePointer
 from std.os import remove
-from std.pathlib import Path
+from std.pathlib import Path, cwd
 from fala import AdapterSpec, EffectorRequest, NativeFunctionRegistry, execute_subprocess
+from fala.reactions import sha256_bytes
 from fala.journal import NativeJournal
 from fala.native_driver import drive_once
 
@@ -37,6 +38,8 @@ def _cleanup(path: String) raises:
 
 def main() raises:
     var root = ""
+    var attempt_one_root = ""
+    var attempt_two_root = ""
     try:
         root = _fresh_root()
         var command = List[String]()
@@ -44,14 +47,62 @@ def main() raises:
         command.append("success")
         var adapter = AdapterSpec.subprocess(command)
         adapter.env["SECRET"] = "top-secret"
-        var request = EffectorRequest("subprocess-smoke", adapter, "impulse", "{\"value\":1}", "{}", root)
+        var request = EffectorRequest("subprocess-smoke", adapter, "impulse", "{\"value\":1}", "{}", root, run_id="run-smoke")
         var result = execute_subprocess(request)
         _check(result.success and result.error.is_ok(), "successful result")
         _check(result.output_json.find("\"ok\":true") >= 0, "result JSON")
         _check(result.stdout.find("<redacted>") >= 0 and result.stdout.find("top-secret") < 0, "stdout redaction")
         _check(result.stderr.find("<redacted>") >= 0 and result.stderr.find("top-secret") < 0, "stderr redaction")
         _check(Path(root + "/input/manifest.json").exists(), "manifest file")
+        var manifest = Path(root + "/input/manifest.json").read_text()
+        _check(manifest.find("\"protocol_version\":1") >= 0, "manifest protocol version")
+        _check(manifest.find("\"execution_id\":\"run-smoke:subprocess-smoke\"") >= 0, "manifest execution id")
+        _check(manifest.find("\"attempt\":1") >= 0 and manifest.find("\"max_attempts\":1") >= 0, "manifest attempt context")
         _check(Path(root + "/output/result.json").exists(), "result file")
+
+        # Retries preserve logical identity but never share physical files.
+        attempt_one_root = (
+            cwd()
+            / Path(
+                ".fala-effector-"
+                + sha256_bytes("run-smoke:subprocess-boundary:impulse:1")
+            )
+        ).__fspath__()
+        attempt_two_root = (
+            cwd()
+            / Path(
+                ".fala-effector-"
+                + sha256_bytes("run-smoke:subprocess-boundary:impulse:2")
+            )
+        ).__fspath__()
+        _cleanup(attempt_one_root)
+        _cleanup(attempt_two_root)
+        var attempt_one = execute_subprocess(
+            EffectorRequest(
+                "subprocess-boundary", adapter, "impulse", "{}", "{}",
+                attempt=1, max_attempts=2, run_id="run-smoke",
+            )
+        )
+        var attempt_two = execute_subprocess(
+            EffectorRequest(
+                "subprocess-boundary", adapter, "impulse", "{}", "{}",
+                attempt=2, max_attempts=2, run_id="run-smoke",
+            )
+        )
+        _check(attempt_one.success and attempt_two.success, "attempt boundary execution")
+        _check(attempt_one_root != attempt_two_root, "distinct attempt roots")
+        var attempt_one_manifest = Path(attempt_one_root + "/input/manifest.json").read_text()
+        var attempt_two_manifest = Path(attempt_two_root + "/input/manifest.json").read_text()
+        _check(
+            attempt_one_manifest.find("\"execution_id\":\"run-smoke:subprocess-boundary\"") >= 0
+                and attempt_two_manifest.find("\"execution_id\":\"run-smoke:subprocess-boundary\"") >= 0,
+            "stable execution identity across attempt roots",
+        )
+        _check(
+            attempt_one_manifest.find("\"attempt\":1") >= 0
+                and attempt_two_manifest.find("\"attempt\":2") >= 0,
+            "physical attempt manifests",
+        )
 
         # Multi-byte UTF-8 on stdout/stderr must not abort the host during env
         # redaction (StringSlice codepoint-boundary assert). #121.
@@ -209,5 +260,9 @@ def main() raises:
         print("native subprocess smoke ok: manifest result redaction stale-output nonzero timeout unicode")
     except err:
         if root != "": _cleanup(root)
+        if attempt_one_root != "": _cleanup(attempt_one_root)
+        if attempt_two_root != "": _cleanup(attempt_two_root)
         raise Error(String(err))
     if root != "": _cleanup(root)
+    if attempt_one_root != "": _cleanup(attempt_one_root)
+    if attempt_two_root != "": _cleanup(attempt_two_root)

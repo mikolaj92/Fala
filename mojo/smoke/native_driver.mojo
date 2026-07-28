@@ -112,6 +112,11 @@ def main() raises:
             and len(failed_events) == 1,
         "terminal failure and durable retry history",
     )
+    _ = journal.create_run("driver-no-retry", "active", "{}", "2026-01-01T00:04:00Z")
+    _ = journal.schedule_process("driver-no-retry", "unsafe", "native", "2026-01-01T00:04:00Z", "{}", "{\"regulation\":{\"retry_policy\":\"none\"}}", "", 1, 3, "2026-01-01T00:04:00Z")
+    var no_retry = drive_once(journal, journal.get_process("driver-no-retry", "unsafe"), missing, "driver-worker", "2026-01-01T00:04:01Z", "2026-01-01T00:05:00Z", registry)
+    var no_retry_failed = journal.get_process("driver-no-retry", "unsafe")
+    _check(no_retry.failed and no_retry_failed.status == "failed" and no_retry_failed.attempt == 1 and len(journal.list_commands("driver-no-retry", "process.retry")) == 0, "retry_policy none prevents automatic retry")
 
     # Empty caller bindings reload the explicit durable mapping and dispatch
     # through the typed native registry without inferring an adapter.
