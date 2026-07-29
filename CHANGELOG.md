@@ -4,7 +4,25 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
-## Unreleased
+## 0.7.16
+
+**Current contract hardening.**
+
+- Native process-host discovery uses explicit `FALA_PROCESS_HOST_LIBRARY` or the
+  packaged library relative to the executable; cwd and source-tree fallbacks are
+  not supported.
+- Automatic retries provide at-least-once external-effect delivery. `execution_id`
+  is the stable idempotency key; `attempt` identifies only a physical try. Effectors
+  must durably deduplicate before performing an external effect, and use
+  `retry_policy = "none"` when they cannot guarantee that.
+- The 0.7.14 short-secret exclusion is superseded: configured secret values are
+  redacted from captured streams regardless of length (ambient base environment
+  values remain outside the configured-secret set).
+- Fleet ontology removal is complete: active adapter fields, `RuntimePool` /
+  `DelegationPolicy` types, fresh-schema `runtime_pools` /
+  `delegation_policies` DDL and index, and generic CLI inspection for those
+  tables are gone. Existing databases may retain ignored historical tables;
+  explicit `fala_runtime` rejection and migration key mapping remain.
 
 **Protective UTF-8 regressions for adapter streams (#121).**
 

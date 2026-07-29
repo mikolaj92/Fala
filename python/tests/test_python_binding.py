@@ -140,6 +140,35 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert result.get("run_status") == "completed"
     assert int(result.get("ticks") or 0) >= 1
 
+def test_host_run_package_honors_explicit_process_host_library(
+    tmp_path, monkeypatch
+) -> None:
+    import fala
+    import fala.host as host
+    from fala._build import ensure_process_host_library
+    from pathlib import Path
+
+    library = ensure_process_host_library()
+    pkg = Path(__file__).resolve().parent / "fixtures" / "subprocess_one.fala-package.toml"
+    monkeypatch.setenv("FALA_PROCESS_HOST_LIBRARY", str(library))
+
+    def unexpected_packaged_build():
+        raise AssertionError("explicit process-host library must bypass packaged build")
+
+    monkeypatch.setattr(host, "ensure_process_host_library", unexpected_packaged_build)
+    result = fala.host_run_package(
+        db_path=tmp_path / "explicit-library.sqlite",
+        package_path=pkg,
+        path_id="one_step",
+        run_id="explicit_library",
+        max_ticks=8,
+    )
+
+    assert result["ok"] is True
+    assert result["run_status"] == "completed"
+    assert __import__("os").environ["FALA_PROCESS_HOST_LIBRARY"] == str(library)
+
+
 def test_host_run_package_strict_json_package_uses_json_loader(tmp_path) -> None:
     """A canonical JSON package must not be sent through the TOML parser."""
     import json

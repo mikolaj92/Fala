@@ -14,7 +14,6 @@ from fala.json import canonical_json_text
 struct _AdapterData(Copyable, Movable):
     var kind: String
     var reference: String
-    var runtime_ref: String
     var command: List[String]
     var cwd: String
     var env: Dict[String, String]
@@ -43,7 +42,6 @@ struct PackageEffector(Copyable, Movable):
     var capability: String
     var adapter_kind: String
     var adapter_ref: String
-    var adapter_runtime_ref: String
     var adapter_command: List[String]
     var adapter_cwd: String
     var adapter_env: Dict[String, String]
@@ -55,13 +53,12 @@ struct PackageEffector(Copyable, Movable):
     var description: String
     var tags: List[String]
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_runtime_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic"):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic"):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
         self.adapter_kind = adapter_kind
         self.adapter_ref = adapter_ref
-        self.adapter_runtime_ref = adapter_runtime_ref
         self.adapter_command = adapter_command.copy()
         self.adapter_cwd = adapter_cwd
         self.adapter_env = adapter_env.copy()
@@ -480,14 +477,13 @@ def _validate_runtime(value: Value, path: String) raises:
 def _adapter(value: Value, path: String, manifest_parent: String) raises -> _AdapterData:
     if not value.is_object():
         _error("manifest.type", path, "expected adapter object")
-    _known(value, ["kind", "ref", "runtime_ref", "command", "cwd", "env", "inherit_env", "timeout_seconds"], path)
+    _known(value, ["kind", "ref", "command", "cwd", "env", "inherit_env", "timeout_seconds"], path)
     var kind = _nonempty(_required(value, "kind", path), path + "/kind")
     if kind == "fala_runtime":
         _error("manifest.unsupported", path + "/kind", "fala_runtime is not part of Fala; use subprocess with a separate journal")
     if kind != "subprocess" and kind != "native_function" and kind != "manual_homeostat":
         _error("manifest.unsupported", path + "/kind", "unsupported adapter kind")
     var reference = String("")
-    var runtime_ref = String("")
     var command = List[String]()
     var cwd = String("")
     var env = Dict[String, String]()
@@ -496,8 +492,6 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
     var timeout_present = False
     var item = _optional(value, "ref")
     if not item.is_null(): reference = _nonempty(item^, path + "/ref")
-    item = _optional(value, "runtime_ref")
-    if not item.is_null(): runtime_ref = _nonempty(item^, path + "/runtime_ref")
     item = _optional(value, "command")
     if not item.is_null(): command = _strings(item^, path + "/command")
     item = _optional(value, "cwd")
@@ -530,12 +524,12 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
     if timeout_present and timeout == 0.0: _error("manifest.value", path + "/timeout_seconds", "must be greater than 0 when provided")
     if timeout < 0.0: _error("manifest.value", path + "/timeout_seconds", "must not be negative")
     if kind == "subprocess" and len(command) == 0: _error("manifest.value", path + "/command", "subprocess requires command")
-    if kind == "subprocess" and (reference != "" or runtime_ref != ""): _error("manifest.boundary", path, "subprocess adapter cannot define ref or runtime_ref")
+    if kind == "subprocess" and reference != "": _error("manifest.boundary", path, "subprocess adapter cannot define ref")
     if kind == "native_function" and reference == "": _error("manifest.missing", path + "/ref", "native_function requires ref")
-    if kind == "native_function" and (len(command) != 0 or runtime_ref != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0): _error("manifest.boundary", path, "native_function adapter has invalid boundary fields")
-    if kind == "manual_homeostat" and (reference != "" or runtime_ref != "" or len(command) != 0 or cwd != "" or len(env) != 0 or len(inherit_env) != 0 or timeout != 0.0): _error("manifest.boundary", path, "manual_homeostat adapter has invalid boundary fields")
+    if kind == "native_function" and (len(command) != 0 or cwd != "" or len(env) != 0 or len(inherit_env) != 0): _error("manifest.boundary", path, "native_function adapter has invalid boundary fields")
+    if kind == "manual_homeostat" and (reference != "" or len(command) != 0 or cwd != "" or len(env) != 0 or len(inherit_env) != 0 or timeout != 0.0): _error("manifest.boundary", path, "manual_homeostat adapter has invalid boundary fields")
     if kind != "subprocess" and len(inherit_env) != 0: _error("manifest.boundary", path + "/inherit_env", "only subprocess adapters may inherit environment")
-    return _AdapterData(kind=kind, reference=reference, runtime_ref=runtime_ref, command=command^, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=timeout)
+    return _AdapterData(kind=kind, reference=reference, command=command^, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=timeout)
 
 
 def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String]()) raises -> PackageEffector:
@@ -580,7 +574,7 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_runtime_ref=adapter.runtime_ref, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy)
 def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String]()) raises -> PackageCorrelationPath:
     if not value.is_object(): _error("manifest.type", path, "expected correlation path object")
     _known(value, ["id", "title", "description", "tags", "effectors", "accumulate_upstream_reactions"], path)

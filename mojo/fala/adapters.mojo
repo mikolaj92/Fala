@@ -324,7 +324,6 @@ struct AdapterSpec(Copyable, Movable):
     var kind: AdapterKind
     var command: List[String]
     var `ref`: String
-    var runtime_ref: String
     var cwd: String
     var env: Dict[String, String]
     var inherit_env: List[String]
@@ -333,7 +332,6 @@ struct AdapterSpec(Copyable, Movable):
         self.kind = kind.copy()
         self.command = List[String]()
         self.`ref` = ""
-        self.runtime_ref = ""
         self.cwd = ""
         self.env = Dict[String, String]()
         self.inherit_env = List[String]()
@@ -361,7 +359,7 @@ struct AdapterSpec(Copyable, Movable):
         if not isfinite(self.timeout_seconds): return AdapterError.invalid("timeout_seconds must be finite")
         if self.kind == AdapterKind.subprocess():
             if len(self.command) == 0: return AdapterError.invalid("subprocess requires non-empty argv command")
-            if self.`ref` != "" or self.runtime_ref != "": return AdapterError.invalid("subprocess cannot define ref or runtime_ref")
+            if self.`ref` != "": return AdapterError.invalid("subprocess cannot define ref")
             if self.command[0] == "": return AdapterError.invalid("subprocess argv[0] must not be empty")
             for value in self.command:
                 if _has_process_boundary_controls(value): return AdapterError.invalid("subprocess argv entries must not contain NUL or newline")
@@ -373,13 +371,13 @@ struct AdapterSpec(Copyable, Movable):
                 if not _is_environment_name(key): return AdapterError.invalid("subprocess inherit_env name is invalid: " + key)
             return AdapterError.none()
         if self.kind == AdapterKind.manual_homeostat():
-            if len(self.command) != 0 or self.`ref` != "" or self.runtime_ref != "": return AdapterError.invalid("manual_homeostat does not accept command, ref, or runtime_ref")
+            if len(self.command) != 0 or self.`ref` != "": return AdapterError.invalid("manual_homeostat does not accept command or ref")
             if self.cwd != "" or len(self.env) != 0 or len(self.inherit_env) != 0: return AdapterError.invalid("manual_homeostat does not accept cwd or environment")
             if self.timeout_seconds != 0.0: return AdapterError.invalid("manual_homeostat cannot define timeout_seconds")
             return AdapterError.none()
         if self.kind == AdapterKind.native_function():
             if self.`ref` == "": return AdapterError.invalid("function adapter requires ref")
-            if len(self.command) != 0 or self.runtime_ref != "": return AdapterError.invalid("function adapter cannot define command or runtime_ref")
+            if len(self.command) != 0: return AdapterError.invalid("function adapter cannot define command")
             if self.cwd != "" or len(self.env) != 0 or len(self.inherit_env) != 0: return AdapterError.invalid("function adapter does not accept cwd or environment")
             return AdapterError.none()
         return AdapterError.invalid("unknown adapter kind")
@@ -478,7 +476,6 @@ def _json_string_map(values: Dict[String, String]) -> String:
 def _adapter_metadata_json(adapter: AdapterSpec) -> String:
     var result = "{\"kind\":" + _json_quoted(adapter.kind.value)
     if adapter.`ref` != "": result += ",\"ref\":" + _json_quoted(adapter.`ref`)
-    if adapter.runtime_ref != "": result += ",\"runtime_ref\":" + _json_quoted(adapter.runtime_ref)
     if len(adapter.command) != 0: result += ",\"command\":" + _json_string_list(adapter.command)
     if adapter.cwd != "": result += ",\"cwd\":" + _json_quoted(adapter.cwd)
     if len(adapter.env) != 0:
@@ -503,7 +500,7 @@ def adapter_spec_from_json(text: String) raises -> AdapterSpec:
     if not parsed.is_object(): raise Error("adapter binding must be a JSON object")
     var root = parsed.object().copy()
     for pair in root.items():
-        if pair.key != "kind" and pair.key != "ref" and pair.key != "runtime_ref" and pair.key != "cwd" and pair.key != "timeout_seconds" and pair.key != "command" and pair.key != "inherit_env" and pair.key != "env":
+        if pair.key != "kind" and pair.key != "ref" and pair.key != "cwd" and pair.key != "timeout_seconds" and pair.key != "command" and pair.key != "inherit_env" and pair.key != "env":
             raise Error("adapter binding contains unknown key: " + pair.key)
     if "kind" not in root or not root["kind"].is_string():
         raise Error("adapter binding requires string kind")
@@ -511,9 +508,6 @@ def adapter_spec_from_json(text: String) raises -> AdapterSpec:
     if "ref" in root:
         if not root["ref"].is_string(): raise Error("adapter binding ref must be a string")
         adapter.`ref` = root["ref"].string()
-    if "runtime_ref" in root:
-        if not root["runtime_ref"].is_string(): raise Error("adapter binding runtime_ref must be a string")
-        adapter.runtime_ref = root["runtime_ref"].string()
     if "cwd" in root:
         if not root["cwd"].is_string(): raise Error("adapter binding cwd must be a string")
         adapter.cwd = root["cwd"].string()

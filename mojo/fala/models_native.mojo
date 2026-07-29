@@ -478,31 +478,3 @@ struct RuntimeBudget(Copyable, Movable):
     @staticmethod
     def unlimited() -> RuntimeBudget:
         return RuntimeBudget(-1, -1, -1, -1.0, -1, -1)
-
-
-struct RuntimePool(Copyable, Movable):
-    var id: String
-    var runtimes: List[RuntimeRef]
-    var impulse_types: List[String]
-    var metadata: String
-
-    def __init__(out self, id: String, var runtimes: List[RuntimeRef], var impulse_types: List[String], metadata: String):
-        self.id = id
-        self.runtimes = runtimes^
-        self.impulse_types = impulse_types^
-        self.metadata = metadata
-
-
-struct DelegationPolicy(Copyable, Movable):
-    var id: String
-    var pool_id: String
-    var impulse_types: List[String]
-    var budget: RuntimeBudget
-    var metadata: String
-
-    def __init__(out self, id: String, pool_id: String, var impulse_types: List[String], var budget: RuntimeBudget, metadata: String):
-        self.id = id
-        self.pool_id = pool_id
-        self.impulse_types = impulse_types^
-        self.budget = budget^
-        self.metadata = metadata

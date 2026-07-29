@@ -117,6 +117,23 @@ Renamed surfaces:
   `input_digest`, `output_digest`/`error_digest`; `reaction.recorded` carries
   `content_hash`.
 
+## Pre-release fleet ontology removal
+
+The pre-release cleanup removed the fleet ontology from active code rather
+than preserving it as compatibility surface. Current contracts are:
+
+- active adapter kinds are `subprocess`, `native_function`, and
+  `manual_homeostat`; `runtime_ref` is not an adapter field, and a
+  `runtime_ref` key in a manifest or adapter JSON is an unknown field;
+- `RuntimePool` and `DelegationPolicy` types are gone;
+- fresh SQLite schema initialization does not create or require
+  `runtime_pools`, `delegation_policies`, or `idx_delegation_policies_pool`;
+- existing databases may physically retain those historical tables; they are
+  ignored and are not dropped by schema bootstrap;
+- generic CLI row inspection cannot inspect `runtime_pools`;
+- the explicit `fala_runtime` rejection and the migration key mapping remain
+  as fail-closed migration history, not as active product surface.
+
 ## Retired design documents
 
 The documentation consolidation removed five overlapping records only after
@@ -128,8 +145,8 @@ assigning their live contracts and rationale to canonical documents:
 | `MOJO_EVENT_STREAM_MIGRATION.md` | `FALA_ARCHITECTURE_STATUS.md`, `JOURNALPORT_CORE_PATH.md`, and release history in `CHANGELOG.md` | Completed branch/work-order checklist and obsolete Python-to-Mojo port sequencing. The resulting Mojo-native event-first engine and sink contracts remain documented. |
 | `MIGRATION_FROM_FALA_1.md` | This document, “Fala 1 → current cybernetic model” | Duplicate standalone checklist. Its vocabulary mapping, rationale, and five-step migration order remain above. |
 | `MULTI_FALA_COMPOSITION.md` | `FALA_HOST_AND_COMPOSITION.md` | Duplicate composition guide. Separate journals, subprocess handoff, bridge envelopes, and the rejection of pools/discovery remain canonical there. |
-| `RUNTIME.md` | `CONCEPTUAL_MODEL.md`, `RUNTIME_SEMANTICS.md`, `PROCESS_RUNTIME.md`, `ADAPTER_CONTRACTS.md` | Removed CPython runtime/service APIs, RuntimePool/fleet claims, `uv` examples, and unsupported replay/export/archive commands (not 0.7.15 products). Its command/event ontology, sequential driver, package runtime configuration, conduction, conformance, and inspection guidance remain in the living runtime docs. |
+| `RUNTIME.md` | `CONCEPTUAL_MODEL.md`, `RUNTIME_SEMANTICS.md`, `PROCESS_RUNTIME.md`, `ADAPTER_CONTRACTS.md` | Removed CPython runtime/service APIs, RuntimePool/fleet claims, `uv` examples, and unsupported replay/export/archive commands (not 0.7.16 products). Its command/event ontology, sequential driver, package runtime configuration, conduction, conformance, and inspection guidance remain in the living runtime docs. |
 
 “Superseded” here means the old implementation plan or unsupported surface is
-not part of 0.7.15. Git history is not being used as a substitute for the
+not part of 0.7.16. Git history is not being used as a substitute for the
 motivation and current contract retained above.

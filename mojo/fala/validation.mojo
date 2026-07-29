@@ -105,7 +105,6 @@ def validate_adapter_boundary(
     kind: String,
     command: String,
     adapter_ref: String,
-    runtime_ref: String,
     cwd: String,
     env_count: Int,
     inherit_env_count: Int,
@@ -124,8 +123,6 @@ def validate_adapter_boundary(
             return _fail("adapter_boundary", "adapter.command", "subprocess adapter requires non-empty command")
         if adapter_ref != "":
             return _fail("adapter_boundary", "adapter.ref", "subprocess adapter cannot define ref")
-        if runtime_ref != "":
-            return _fail("adapter_boundary", "adapter.runtime_ref", "subprocess adapter cannot define runtime_ref")
         return _ok()
     if inherit_env_count > 0:
         return _fail("adapter_boundary", "adapter.inherit_env", kind + " adapter cannot define inherit_env")
@@ -133,14 +130,12 @@ def validate_adapter_boundary(
         if adapter_ref == "":
             return _fail("adapter_boundary", "adapter.ref", "native_function adapter requires ref")
         if command != "": return _fail("adapter_boundary", "adapter.command", "native_function adapter cannot define command")
-        if runtime_ref != "": return _fail("adapter_boundary", "adapter.runtime_ref", "native_function adapter cannot define runtime_ref")
         if cwd != "": return _fail("adapter_boundary", "adapter.cwd", "native_function adapter cannot define cwd")
         if env_count > 0: return _fail("adapter_boundary", "adapter.env", "native_function adapter cannot define env")
         return _ok()
     if kind == "manual_homeostat":
         if command != "": return _fail("adapter_boundary", "adapter.command", "manual_homeostat adapter cannot define command")
         if adapter_ref != "": return _fail("adapter_boundary", "adapter.ref", "manual_homeostat adapter cannot define ref")
-        if runtime_ref != "": return _fail("adapter_boundary", "adapter.runtime_ref", "manual_homeostat adapter cannot define runtime_ref")
         if cwd != "": return _fail("adapter_boundary", "adapter.cwd", "manual_homeostat adapter cannot define cwd")
         if env_count > 0: return _fail("adapter_boundary", "adapter.env", "manual_homeostat adapter cannot define env")
         if timeout_seconds >= 0.0: return _fail("adapter_boundary", "adapter.timeout_seconds", "manual_homeostat adapter cannot define timeout_seconds")

@@ -1,4 +1,4 @@
-# Fala host vs multi-runtime — product boundary
+# Fala host and composition — product boundary
 
 **Status:** product decision (2026-07).
 
@@ -6,8 +6,8 @@
 engine tree. The optional `python/fala` package is a thin JSON host binding to
 the Mojo engine, not another journal, driver, or runtime implementation.
 
-This document also separates **what every Fala is** from **removed** fleet
-machinery that historically lived under the name `fala_runtime`.
+This document separates **what every Fala is** from the historical fleet
+machinery once associated with `fala_runtime`.
 
 ---
 
@@ -18,9 +18,9 @@ machinery that historically lived under the name `fala_runtime`.
 2. **Fala must be able to run children.** Without a local process host
    (subprocess / equivalent), the product is only an in-process callback
    engine — incomplete as a Unix-shaped correlator.
-3. **`fala_runtime` mixed two different jobs.** We unbundle them:
-   - **into Fala:** local host + effector execution boundary
-   - **out of Fala identity:** multi-runtime pools / fleet selection
+3. **Historical `fala_runtime` combined two different jobs.** The current
+   product keeps local hosting and effector execution, while multi-runtime
+   pools and fleet selection are removed from Fala identity.
 
 Nested autonomy does **not** require that parent and child “know” each other
 as peers in a pool. It requires **separate journals** and an **explicit
@@ -30,7 +30,8 @@ handoff** (process boundary + optional envelope import), same as Unix pipes.
 
 ## Essential Fala (one being)
 
-These are merge-gate for any native land that claims “Fala works.”
+Core Fala consists of the following pieces; a composition is complete when it
+can use these local boundaries.
 
 | Piece | Role |
 | --- | --- |
@@ -91,8 +92,8 @@ Parent Fala  (journal J_p)
                     (parent never writes J_c)
 ```
 
-No `RuntimePool`. No mutual registry. Address of the child is the **command
-line and paths the parent chose**, not a fleet membership card.
+No `RuntimePool` or mutual registry exists. The address of the child is the
+**command line and paths the parent chose**, not a fleet membership card.
 
 Parent/child composition uses separate journals and an explicit handoff:
 
@@ -143,15 +144,15 @@ not expose manifest adapter metadata.
 | Driver must not hard-require Correlator/`sqlite://` | **Fala** (host/driver hygiene) |
 | Enqueue “work elsewhere” as a process that waits | **Re-express as local patterns** first: subprocess to another `fala` CLI, or `waiting` + external complete |
 | Bridge outbox/inbox rows on **this** journal | **Optional local surface** (export/import envelopes for one run) — not peer mesh |
-| `RuntimeRef` / `RunRef` as typed ids in envelopes | Keep as **envelope fields** when importing foreign ids; not a live directory of peers |
-| `RuntimePool`, fleet policies, `fala_runtime` adapter | **Removed** from product surface |
+| Foreign runtime/run identifiers in imported envelopes | Keep as opaque envelope data; not a live directory of peers |
+| `RuntimePool`, fleet policies, `fala_runtime` adapter | **Removed** from the product surface |
 | Network peer mesh | **Out of Fala** |
 
 | Old name | Status |
 | --- | --- |
 | adapter `fala_runtime` | **removed** — use `subprocess` + separate journal |
 | RuntimePool / create-pool CLI | **removed** |
-| process host | **merge-gate** for Mojo land |
+| process host | **core local boundary** |
 
 ---
 
@@ -164,9 +165,10 @@ not expose manifest adapter metadata.
 - pool policies (`least_busy`, `round_robin`, …)
 - `enqueue_fala_runtime_process` / fleet selection
 
-Historical storage rows/tables may still exist in SQLite schema for
-compatibility; they are **not** part of Fala identity and must not be
-re-exposed as core features.
+Existing databases may physically retain historical `runtime_pools` and
+`delegation_policies` tables. Current code ignores those tables; fresh schemas
+do not create them, and neither the tables nor their index are exposed by the
+CLI. They are not Fala identity or an active fleet surface.
 
 Nested composition is only:
 
@@ -186,9 +188,7 @@ operator (or parent process) already chose:
 
 | Mode | Core? | Role |
 | --- | --- | --- |
-| Local file export/import | optional helper | Unix-friendly merge without shared DB |
-| Local two-path deliver (same machine) | optional helper | convenience for tests/ops |
-| Network multi-hop / pools | optional multi-runtime | not default |
+| Network multi-hop / pools | out of Fala |
 
 v1 semantic merge remains: validate envelope, budgets if present, **no raw
 StateFact injection** from child into parent privileged tables.
@@ -219,15 +219,14 @@ layer, or exactly-once claim.
 
 ---
 
-## Mojo land checklist (revised)
+## Current implementation status
 
-| Gate | Item |
+| Surface | Current status |
 | --- | --- |
-| **Must** | Event-stream core + Journal sinks (memory/sqlite/jsonl/tee) |
-| **Must** | Driver + `native_function` path |
-| **Must** | **Process host + `subprocess` path green** (children of Fala) |
-| **Removed** | RuntimePool / `fala_runtime` / fleet — do not port |
-| **Nice** | Bridge file export/import for nested CLI children |
+| Event stream and Journal sinks | Implemented: InMemory and reference SQLite; Jsonl/Tee are available sinks |
+| Driver and `native_function` | Implemented |
+| Separate-journal child composition | Supported through subprocess handoff and explicit bridge envelopes |
+| RuntimePool / `fala_runtime` / fleet selection | Removed from the product surface |
 
 ## Adapter kinds (product)
 
@@ -238,6 +237,10 @@ layer, or exactly-once claim.
 | `manual_homeostat` | **core** |
 | `python_function` | **removed** |
 | `fala_runtime` | **removed** |
+
+`runtime_ref` is not an adapter field. A `runtime_ref` key in a manifest or
+adapter JSON is an unknown field; the migration layer retains the explicit
+historical `fala_runtime` rejection instead of reviving that surface.
 
 
 ---

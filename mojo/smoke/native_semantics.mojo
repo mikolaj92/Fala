@@ -874,7 +874,6 @@ def main() raises:
         "worker-subprocess", "2026-01-01T00:00:28Z", "2026-01-01T00:01:00Z", registry
     )
     var fala_runtime_spec = AdapterSpec(AdapterKind("fala_runtime"))
-    fala_runtime_spec.runtime_ref = "runtime.native"
     var fala_runtime_result = drive_once(
         journal, fala_runtime_row, fala_runtime_spec,
         "worker-fala-runtime", "2026-01-01T00:00:29Z", "2026-01-01T00:01:00Z", registry

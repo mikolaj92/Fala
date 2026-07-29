@@ -1055,13 +1055,12 @@ def _rows(path: String, resource: String, table: String, command: String) raises
     elif table == "homeostats": sql = "SELECT run_id,id,kind,impulse_id,status,values_json,metadata,attempt,max_attempts,created_at,updated_at FROM homeostats"
     elif table == "projections": sql = "SELECT p.id,p.run_id,p.name,p.version,p.data,p.source_event_sequence,p.updated_at,CASE WHEN EXISTS (SELECT 1 FROM runtime_events e WHERE e.run_id=p.run_id AND e.sequence>p.source_event_sequence) THEN 1 ELSE 0 END FROM projections p"
     elif table == "bridge_outbox" or table == "bridge_inbox": sql = "SELECT run_id,id,idempotency_key,status,attempts,source_ref,target_ref,impulse_json,event_ref,pool_id,budget,metadata,created_at,updated_at FROM " + table
-    elif table == "runtime_pools": sql = "SELECT id,runtimes_json,impulse_types,metadata FROM runtime_pools"
     elif table == "runtime_commands": sql = "SELECT run_id,id,command_type,idempotency_key,actor,correlation_id,causation_id,payload,created_at FROM runtime_commands"
     elif table == "runtime_events": sql = "SELECT run_id,sequence,id,event_type,schema_version,impulse_id,process_id,command_id,actor,correlation_id,causation_id,payload,created_at FROM runtime_events"
     elif table == "processes": sql = "SELECT run_id,id,process_type,impulse_id,status,priority,attempt,max_attempts,available_at,lease_owner,lease_expires_at,input_json,output_json,error_json,metadata,created_at,updated_at,started_at,finished_at,output_schema_json FROM processes"
     else: raise SQLiteError(code=2, message="argument_error: unsupported row table")
     var where = False
-    if run_id != "" and table != "runtime_pools": sql += " WHERE run_id=?"; where = True
+    if run_id != "": sql += " WHERE run_id=?"; where = True
     if impulse_id != "":
         if table == "impulse_relations":
             if where: sql += " AND (source_impulse_id=? OR target_impulse_id=?)"
@@ -1100,7 +1099,6 @@ def _rows(path: String, resource: String, table: String, command: String) raises
         if where: sql += " AND kind=?"
         else: sql += " WHERE kind=?"; where = True
     if table == "runtime_events": sql += " ORDER BY sequence ASC"
-    elif table == "runtime_pools": sql += " ORDER BY id ASC"
     elif table == "impulse_types": sql += " ORDER BY id ASC"
     elif table == "projections": sql += " ORDER BY name ASC"
     elif table == "processes": sql += " ORDER BY priority DESC,available_at ASC,created_at ASC,id ASC"
@@ -1142,7 +1140,6 @@ def _rows(path: String, resource: String, table: String, command: String) raises
         elif table == "runtime_events": row_json = "{\"run_id\":" + _quote(_text(stmt,0)) + ",\"sequence\":" + String(stmt.column_int(1)) + ",\"id\":" + _quote(_text(stmt,2)) + ",\"event_type\":" + _quote(_text(stmt,3)) + ",\"schema_version\":" + String(stmt.column_int(4)) + ",\"impulse_id\":" + _nullable_text_json(stmt,5) + ",\"process_id\":" + _nullable_text_json(stmt,6) + ",\"command_id\":" + _nullable_text_json(stmt,7) + ",\"actor\":" + _nullable_text_json(stmt,8) + ",\"correlation_id\":" + _nullable_text_json(stmt,9) + ",\"causation_id\":" + _nullable_text_json(stmt,10) + ",\"payload\":" + _text(stmt,11) + ",\"created_at\":" + _quote(_text(stmt,12)) + "}"
         elif table == "processes": row_json = "{\"run_id\":" + _quote(_text(stmt,0)) + ",\"id\":" + _quote(_text(stmt,1)) + ",\"process_type\":" + _quote(_text(stmt,2)) + ",\"impulse_id\":" + _nullable_text_json(stmt,3) + ",\"status\":" + _quote(_text(stmt,4)) + ",\"priority\":" + String(stmt.column_int(5)) + ",\"attempt\":" + String(stmt.column_int(6)) + ",\"max_attempts\":" + String(stmt.column_int(7)) + ",\"available_at\":" + _quote(_text(stmt,8)) + ",\"lease_owner\":" + _nullable_text_json(stmt,9) + ",\"lease_expires_at\":" + _nullable_text_json(stmt,10) + ",\"input\":" + _text(stmt,11) + ",\"output\":" + _text(stmt,12) + ",\"error\":" + _text(stmt,13) + ",\"metadata\":" + _text(stmt,14) + ",\"created_at\":" + _quote(_text(stmt,15)) + ",\"updated_at\":" + _quote(_text(stmt,16)) + ",\"started_at\":" + _nullable_text_json(stmt,17) + ",\"finished_at\":" + _nullable_text_json(stmt,18) + ",\"output_schema\":" + _text(stmt,19) + "}"
         elif table == "bridge_outbox" or table == "bridge_inbox": row_json = "{\"run_id\":" + _quote(_text(stmt,0)) + ",\"id\":" + _quote(_text(stmt,1)) + ",\"idempotency_key\":" + _quote(_text(stmt,2)) + ",\"status\":" + _quote(_text(stmt,3)) + ",\"attempts\":" + String(stmt.column_int(4)) + ",\"source_ref\":" + _quote(_text(stmt,5)) + ",\"target_ref\":" + _quote(_text(stmt,6)) + ",\"impulse\":" + _text(stmt,7) + ",\"event_ref\":" + _nullable_text_json(stmt,8) + ",\"pool_id\":" + _nullable_text_json(stmt,9) + ",\"budget\":" + _text(stmt,10) + ",\"metadata\":" + _text(stmt,11) + ",\"created_at\":" + _quote(_text(stmt,12)) + ",\"updated_at\":" + _quote(_text(stmt,13)) + "}"
-        elif table == "runtime_pools": row_json = "{\"id\":" + _quote(_text(stmt,0)) + ",\"runtimes\":" + _text(stmt,1) + ",\"impulse_types\":" + _text(stmt,2) + ",\"metadata\":" + _text(stmt,3) + "}"
         if not first: items += ","
         first = False
         items += row_json

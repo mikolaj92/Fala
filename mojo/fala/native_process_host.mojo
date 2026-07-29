@@ -7,7 +7,8 @@ library for at least as long as each process handle and never invokes a shell.
 from std.collections import List
 from std.ffi import CStringSlice, OwnedDLHandle, c_int, c_long_long, external_call
 from std.memory import MutUnsafePointer, UnsafePointer, alloc
-from std.pathlib import Path, cwd
+from std.pathlib import Path
+from std.os import getenv
 from std.sys import CompilationTarget
 from std.sys import argv
 
@@ -163,25 +164,23 @@ def _executable_path() raises -> String:
 
 
 def _library_path() raises -> String:
-    """Find the packaged host beside the executable, then the source build tree.
-
-    Supported: Darwin (dylib) and Linux (so). Windows is out of scope.
-    """
+    """Resolve only an explicit or executable-relative process-host library."""
     if not CompilationTarget.is_macos() and not CompilationTarget.is_linux():
         raise Error("fala native process host requires Darwin or Linux")
-    var lib_name = _host_library_name()
+    var configured = getenv("FALA_PROCESS_HOST_LIBRARY")
+    if configured != "":
+        if not configured.startswith("/"):
+            raise Error("FALA_PROCESS_HOST_LIBRARY must be an absolute path")
+        if not Path(configured).is_file():
+            raise Error("FALA_PROCESS_HOST_LIBRARY must name an existing regular file")
+        return configured
     var executable = _executable_path()
-    var directory = _directory_of(executable)
-    var packaged = directory + "/../native/" + lib_name
-    if Path(packaged).exists():
-        return packaged
-    var source = (cwd() / Path("../../mojo/fala/native/" + lib_name)).__fspath__()
-    if Path(source).exists():
-        return source
-    # Prefer in-tree build next to sources when running from a worktree.
-    var tree = (cwd() / Path("mojo/fala/native/" + lib_name)).__fspath__()
-    if Path(tree).exists():
-        return tree
+    var packaged = _directory_of(executable) + "/../native/" + _host_library_name()
+    if not Path(packaged).is_file():
+        raise Error(
+            "fala process host library is missing beside the executable; "
+            "set FALA_PROCESS_HOST_LIBRARY to an absolute packaged library path"
+        )
     return packaged
 def native_process_host_available() -> Bool:
     """Return whether the host loads and exposes the complete ABI."""

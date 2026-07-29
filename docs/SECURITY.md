@@ -16,6 +16,12 @@ Rules:
 - web/API infrastructure is not part of core;
 - runtime mutations go through JournalPort/backend command APIs.
 
+External effects under automatic retry are at-least-once: a timeout or crash
+may leave an effect completed before its runtime result is committed. Effectors
+must durably deduplicate by stable `execution_id` before performing the effect;
+`attempt` identifies only a physical try and is not an idempotency key. Use
+`retry_policy = "none"` when durable deduplication cannot be guaranteed.
+
 Do not put secrets in event payloads, reaction metadata, exported traces, or
 HTML reports. See [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md) for the wire
 boundary and [`REACTIONS_AND_REFERENCES.md`](REACTIONS_AND_REFERENCES.md) for

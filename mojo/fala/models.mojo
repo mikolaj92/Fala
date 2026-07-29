@@ -289,14 +289,13 @@ struct EffectorAdapterSpec(Copyable, Movable):
     var kind: String
     var command: List[String]
     var `ref`: String
-    var runtime_ref: String
     var cwd: String
     var env: Dict[String, String]
     var inherit_env: List[String]
     var timeout_seconds: Float64
 
     @staticmethod
-    def create(kind: String, var command: List[String] = List[String](), `ref`: String = "", runtime_ref: String = "", cwd: String = "", var env: Dict[String, String] = Dict[String, String](), var inherit_env: List[String] = List[String](), timeout_seconds: Float64 = -1.0) raises -> EffectorAdapterSpec:
+    def create(kind: String, var command: List[String] = List[String](), `ref`: String = "", cwd: String = "", var env: Dict[String, String] = Dict[String, String](), var inherit_env: List[String] = List[String](), timeout_seconds: Float64 = -1.0) raises -> EffectorAdapterSpec:
         if kind == "fala_runtime":
             raise Error("fala_runtime is not part of Fala; use subprocess with a separate journal")
         if kind != "subprocess" and kind != "native_function" and kind != "manual_homeostat":
@@ -306,20 +305,19 @@ struct EffectorAdapterSpec(Copyable, Movable):
         var normalized_timeout = timeout_seconds if timeout_seconds > 0.0 else 0.0
         if kind == "subprocess":
             if len(command) == 0: raise Error("subprocess adapter requires non-empty command")
-            if `ref` != "" or runtime_ref != "": raise Error("subprocess adapter cannot define ref/runtime_ref")
+            if `ref` != "": raise Error("subprocess adapter cannot define ref")
         elif kind == "native_function":
             _check_nonempty(`ref`, kind + " adapter ref")
-            if len(command) != 0 or runtime_ref != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0: raise Error(kind + " adapter has invalid boundary fields")
+            if len(command) != 0 or cwd != "" or len(env) != 0 or len(inherit_env) != 0: raise Error(kind + " adapter has invalid boundary fields")
         elif kind == "manual_homeostat":
-            if len(command) != 0 or `ref` != "" or runtime_ref != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0 or normalized_timeout != 0.0: raise Error("manual_homeostat adapter has invalid boundary fields")
+            if len(command) != 0 or `ref` != "" or cwd != "" or len(env) != 0 or len(inherit_env) != 0 or normalized_timeout != 0.0: raise Error("manual_homeostat adapter has invalid boundary fields")
         if kind != "subprocess" and len(inherit_env) != 0: raise Error("only subprocess adapters may inherit environment")
-        return EffectorAdapterSpec(kind=kind, command=command^, `ref`=`ref`, runtime_ref=runtime_ref, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=normalized_timeout)
+        return EffectorAdapterSpec(kind=kind, command=command^, `ref`=`ref`, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=normalized_timeout)
 
     def to_json(self) raises -> String:
         var result = "{\"kind\":" + _json_quote(self.kind)
         if len(self.command) != 0: result += ",\"command\":" + _json_strings(self.command)
         if self.`ref` != "": result += ",\"ref\":" + _json_quote(self.`ref`)
-        if self.runtime_ref != "": result += ",\"runtime_ref\":" + _json_quote(self.runtime_ref)
         if self.cwd != "": result += ",\"cwd\":" + _json_quote(self.cwd)
         if len(self.env) != 0: result += ",\"env\":" + _json_map(self.env)
         if len(self.inherit_env) != 0: result += ",\"inherit_env\":" + _json_strings(self.inherit_env)

@@ -50,6 +50,12 @@ def main() raises:
     persist_adapter_binding(journal, binding, "2026-01-01T00:00:01Z")
     var encoded = adapter_spec_json(adapter)
     _check(adapter_spec_json(adapter_spec_from_json(encoded)) == encoded, "codec round trip")
+    var unknown_field_rejected = False
+    try:
+        _ = adapter_spec_from_json("{\"kind\":\"native_function\",\"ref\":\"echo\",\"runtime_ref\":\"runtime.main\"}")
+    except err:
+        unknown_field_rejected = String(err).find("unknown key: runtime_ref") >= 0
+    _check(unknown_field_rejected, "runtime_ref is rejected as unknown adapter binding key")
     var loaded = load_adapter_bindings(journal, "run-persist")
     _check(len(loaded) == 1 and loaded[0].process_id == "p-native" and loaded[0].adapter.`ref` == "echo", "load before reopen")
     journal.close()

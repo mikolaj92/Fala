@@ -33,4 +33,4 @@ __all__ = [
     "sdk",
     "__version__",
 ]
-__version__ = "0.7.15"
+__version__ = "0.7.16"

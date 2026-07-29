@@ -1,6 +1,6 @@
 # Fala Architecture Status
 
-**Product: 0.7.15** · Mojo-native engine + optional thin Python host binding.
+**Product: 0.7.16** · Mojo-native engine + optional thin Python host binding.
 
 Fala is a local autonomous Correlator: a cybernetic organ that conducts
 Impulses between Effectors and records their Associations and Reactions. Its
@@ -12,7 +12,7 @@ Philosophy: [`UNIX_AND_CYBERNETICS.md`](UNIX_AND_CYBERNETICS.md) · Host boundar
 lexicon: [`CYBERNETIC_MAPPING.md`](CYBERNETIC_MAPPING.md) · JournalPort audit:
 [`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md).
 
-## Essential Fala (merge-gate)
+## Essential Fala
 
 Happy path: **package → impulse → run_until_idle → configured persistence**.
 The generic `JournalPort` types describe batch/claim/load operations, but they
@@ -33,7 +33,7 @@ The native CLI includes implemented `init`. `schema fala-package` is listed
 only as a reserved native-boundary schema encoder, not an implemented command.
 `run_until_idle` is an embedded/library API, not a standalone CLI command.
 
-## Optional / ops layers (not merge-gate)
+## Optional / ops layers
 
 Composable operators may import these; composing a small flow does **not** require them.
 
@@ -115,8 +115,8 @@ Process, Run, Homeostat, Projection, JournalPort, Effector adapters
 | **support** | `json`, `toml`, `sqlite`, `migration`, `validation`, `errors` |
 | **domain pack** | `domain_packs/splot` (vocabulary; logic lives in external organs like Splot) |
 
-Forbidden for Essential Fala checklist: requiring `ops_maintenance`, `ops_bridge`,
-or `ops_projections` to accept an impulse or drive a claim loop.
+Essential Fala must not require `ops_maintenance`, `ops_bridge`, or
+`ops_projections` to accept an impulse or drive a claim loop.
 
 ## Status
 

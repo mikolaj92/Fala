@@ -41,6 +41,7 @@ if [[ "$need_host" == "1" ]]; then
         "$host_src"
     fi
   fi
+  export FALA_PROCESS_HOST_LIBRARY="$host_lib"
   # Effector fixture binary used by native_subprocess smoke (argv child).
   fixture="/tmp/fala-native-subprocess-fixture"
   if [[ ! -x "$fixture" ]]; then

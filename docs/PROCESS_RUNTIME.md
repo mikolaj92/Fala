@@ -45,6 +45,18 @@ Low-level journal/process retry primitives are policy-neutral. The native
 driver enforces `retry_policy` for adapter failure, timeout, and expired-lease
 maintenance; callers invoking low-level retry APIs directly own that policy.
 
+External effects under automatic retry are delivered at least once: a timeout
+or crash can leave an external effect completed before the runtime result is
+committed, and a later attempt may run again. `execution_id` is the stable
+idempotency key across attempts; `attempt` identifies only the physical try and
+must not be used as that key. Effectors must durably deduplicate before
+performing an external effect. Set `retry_policy = "none"` when that guarantee
+cannot be made.
+
+Native process-host library discovery is explicit: use the absolute path in
+`FALA_PROCESS_HOST_LIBRARY` when set; otherwise use only the packaged library
+relative to the executable. There is no cwd or source-tree fallback.
+
 ### Multi-workspace (separate journals)
 
 Unix-style parallel composition uses multiple Fala instances, each with its own

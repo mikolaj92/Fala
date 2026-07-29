@@ -29,10 +29,13 @@ Manifest protocol version 1 contains:
 - `process_id`, `attempt`, and `max_attempts`;
 - `impulse_id`, `input`, `config`, and adapter metadata.
 
-Retries preserve `execution_id` and increment `attempt`. Effectors with
-external side effects should use `execution_id` as their idempotency key and
-deduplicate durable results. The default `retry_policy` is `automatic`;
-`none` disables automatic retry for effects that cannot be made idempotent.
+Retries preserve `execution_id` and increment `attempt`. Automatic retry is
+at-least-once delivery for external effects: a timeout or crash may leave an
+external effect completed even when the runtime result is not committed, and a
+later attempt may execute again. `attempt` identifies only the physical try; it
+is not an idempotency key. Effectors must durably deduplicate by stable
+`execution_id` before performing the external effect. If that guarantee cannot
+be made, set `retry_policy = "none"`.
 
 The runtime gives every attempt an isolated work directory scoped by run,
 process, impulse, and attempt. It writes the manifest, captures stdout/stderr,

@@ -143,7 +143,7 @@ class MemoryHost:
         )
 
 
-def _with_sqlite_cwd(fn):  # type: ignore[no-untyped-def]
+def _with_sqlite_cwd(fn, process_host_library: Path | None = None):  # type: ignore[no-untyped-def]
     """Run *fn* with cwd at vendor/sqlite.fire (dylib load path).
 
     Subprocess effectors without an explicit ``FALA_EFFECTOR_ROOT`` create
@@ -151,12 +151,15 @@ def _with_sqlite_cwd(fn):  # type: ignore[no-untyped-def]
     package vendor tree for dylib discovery, so when the env root is unset we
     install a process-local temporary root for the duration of *fn* and clean
     it up afterward (#119). An already-configured root is preserved as-is.
+    When supplied, ``process_host_library`` is passed through the hardened
+    native loader without overriding an explicit caller setting.
     """
     from fala._build import repo_root
 
     sqlite_cwd = repo_root() / "vendor" / "sqlite.fire"
     prev = os.getcwd()
     previous_effector_root = os.environ.get("FALA_EFFECTOR_ROOT")
+    previous_process_host_library = os.environ.get("FALA_PROCESS_HOST_LIBRARY")
     owned_root: tempfile.TemporaryDirectory[str] | None = None
     try:
         if sqlite_cwd.is_dir():
@@ -164,8 +167,14 @@ def _with_sqlite_cwd(fn):  # type: ignore[no-untyped-def]
         if previous_effector_root is None or not previous_effector_root.strip():
             owned_root = tempfile.TemporaryDirectory(prefix="fala-effectors-")
             os.environ["FALA_EFFECTOR_ROOT"] = owned_root.name
+        if (previous_process_host_library is None or not previous_process_host_library.strip()) and process_host_library is not None:
+            os.environ["FALA_PROCESS_HOST_LIBRARY"] = str(process_host_library.resolve())
         return fn()
     finally:
+        if previous_process_host_library is None:
+            os.environ.pop("FALA_PROCESS_HOST_LIBRARY", None)
+        else:
+            os.environ["FALA_PROCESS_HOST_LIBRARY"] = previous_process_host_library
         if previous_effector_root is None:
             os.environ.pop("FALA_EFFECTOR_ROOT", None)
         else:
@@ -257,7 +266,17 @@ def host_run_package(
     if command_overrides:
         request["command_overrides"] = {k: list(v) for k, v in command_overrides.items()}
 
-    ensure_process_host_library()
+    configured_process_host = os.environ.get("FALA_PROCESS_HOST_LIBRARY", "")
+    if configured_process_host.strip():
+        process_host_library = Path(configured_process_host)
+        if not process_host_library.is_absolute():
+            raise ValueError("FALA_PROCESS_HOST_LIBRARY must be an absolute path")
+        if not process_host_library.is_file():
+            raise ValueError(
+                "FALA_PROCESS_HOST_LIBRARY must name an existing regular file"
+            )
+    else:
+        process_host_library = ensure_process_host_library()
     ensure_sqlite_fire_library()
     native = ensure_native()
 
@@ -270,7 +289,7 @@ def host_run_package(
             raise RuntimeError(f"fala.host_run_package failed: {raw!r}")
         return out
 
-    return _with_sqlite_cwd(_call)
+    return _with_sqlite_cwd(_call, process_host_library)
 
 
 def delete_terminal_run(db_path: str | Path, run_id: str) -> dict[str, Any]:

@@ -424,55 +424,6 @@ struct RuntimeBudget(Copyable, Movable):
         return "{\"runtime_hops\":" + (String(self.runtime_hops) if self.runtime_hops_limited else "null") + ",\"spawned_runs\":" + (String(self.spawned_runs) if self.spawned_runs_limited else "null") + ",\"impulse_count\":" + (String(self.impulse_count) if self.impulse_count_limited else "null") + ",\"wall_time_seconds\":" + (String(self.wall_time_seconds) if self.wall_time_seconds_limited else "null") + ",\"attempts\":" + (String(self.attempts) if self.attempts_limited else "null") + ",\"reaction_bytes\":" + (String(self.reaction_bytes) if self.reaction_bytes_limited else "null") + "}"
 
 
-struct RuntimePool(Copyable, Movable):
-    var id: String
-    var runtimes: String
-    var impulse_types: String
-    var metadata: String
-
-    def __init__(out self, id: String, runtimes: String = "[]",
-                 impulse_types: String = "[]", metadata: String = "{}"):
-        self.id = id
-        self.runtimes = runtimes
-        self.impulse_types = impulse_types
-        self.metadata = metadata
-
-    def is_valid(self) -> Bool:
-        return _nonempty(self.id)
-
-    def validate(self) -> Bool:
-        return self.is_valid()
-
-    def to_json(self) -> String:
-        return "{\"id\":" + _quote(self.id) + ",\"runtimes\":" + self.runtimes + ",\"impulse_types\":" + self.impulse_types + ",\"metadata\":" + self.metadata + "}"
-
-
-struct DelegationPolicy(Copyable, Movable):
-    var id: String
-    var pool_id: String
-    var impulse_types: String
-    var budget: RuntimeBudget
-    var metadata: String
-
-    def __init__(out self, id: String, pool_id: String,
-                 impulse_types: String = "[]", var budget: RuntimeBudget = RuntimeBudget(),
-                 metadata: String = "{}"):
-        self.id = id
-        self.pool_id = pool_id
-        self.impulse_types = impulse_types
-        self.budget = budget^
-        self.metadata = metadata
-
-    def is_valid(self) -> Bool:
-        return _nonempty(self.id) and _nonempty(self.pool_id) and self.budget.is_valid()
-
-    def validate(self) -> Bool:
-        return self.is_valid()
-
-    def to_json(self) -> String:
-        return "{\"id\":" + _quote(self.id) + ",\"pool_id\":" + _quote(self.pool_id) + ",\"impulse_types\":" + self.impulse_types + ",\"budget\":" + self.budget.to_json() + ",\"metadata\":" + self.metadata + "}"
-
-
 struct BridgeDelivery(Copyable, Movable):
     var id: String
     var run_id: String

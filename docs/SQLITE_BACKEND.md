@@ -23,9 +23,11 @@ transitions, homeostat transitions, and projection saves use these transaction
 boundaries. Runtime commands and events are protected against direct updates
 and deletes; core facts are appended through JournalPort/backend command paths.
 
-Historical `runtime_pools` and `delegation_policies` tables may remain in the
-schema for compatibility with older databases. They are not Fala identity or
-active fleet APIs and must not be re-exposed as core features.
+Existing databases may physically retain historical `runtime_pools` and
+`delegation_policies` tables. Fresh schema initialization does not create or
+require those tables or `idx_delegation_policies_pool`; active code ignores
+such physical remnants, and generic CLI inspection does not expose them. They
+are migration history, not Fala identity or an active fleet API.
 
 Bridge inbox/outbox operations are optional local envelope handoff helpers, not
 shared mutable state or a global transaction. Retention, maintenance, reaction

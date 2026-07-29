@@ -12,7 +12,7 @@ from std.collections import List
 # Keep this in lock-step with src/fala/runtime_backend.py.
 comptime SCHEMA_VERSION: Int = 6
 
-# The Python backend currently creates sixteen named tables.  The migration
+# The backend currently creates fourteen named tables.  The migration
 # table is included in this list (and in the script) so callers can inspect the
 # complete schema rather than only runtime domain tables.
 comptime _TABLE_NAMES: List[String] = [
@@ -30,8 +30,6 @@ comptime _TABLE_NAMES: List[String] = [
     "projections",
     "bridge_outbox",
     "bridge_inbox",
-    "runtime_pools",
-    "delegation_policies",
 ]
 
 comptime SCHEMA_SQL: String = """
@@ -255,22 +253,6 @@ CREATE TABLE IF NOT EXISTS bridge_inbox (
     UNIQUE (run_id, idempotency_key)
 );
 
-CREATE TABLE IF NOT EXISTS runtime_pools (
-    id TEXT PRIMARY KEY,
-    runtimes_json TEXT NOT NULL,
-    impulse_types TEXT NOT NULL,
-    metadata TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS delegation_policies (
-    id TEXT PRIMARY KEY,
-    pool_id TEXT NOT NULL,
-    impulse_types TEXT NOT NULL,
-    budget TEXT NOT NULL,
-    metadata TEXT NOT NULL,
-    FOREIGN KEY (pool_id)
-        REFERENCES runtime_pools (id)
-);
 
 CREATE INDEX IF NOT EXISTS idx_runtime_events_impulse
     ON runtime_events (run_id, impulse_id, sequence);
@@ -278,8 +260,6 @@ CREATE INDEX IF NOT EXISTS idx_runtime_events_process
     ON runtime_events (run_id, process_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_runs_status
     ON runs (status, updated_at);
-CREATE INDEX IF NOT EXISTS idx_delegation_policies_pool
-    ON delegation_policies (pool_id, id);
 CREATE INDEX IF NOT EXISTS idx_impulse_relations_source
     ON impulse_relations (run_id, source_impulse_id, relation_type);
 CREATE INDEX IF NOT EXISTS idx_impulse_relations_target
@@ -350,8 +330,6 @@ def table_names() -> List[String]:
         "projections",
         "bridge_outbox",
         "bridge_inbox",
-        "runtime_pools",
-        "delegation_policies",
     ]
 
 # Minimal adapter contract used by initialize_schema. Native SQLite wrappers
@@ -368,7 +346,7 @@ def initialize_schema[T: SQLConnection](mut connection: T) raises:
 def _index_names() -> List[String]:
     return [
         "idx_runtime_events_impulse", "idx_runtime_events_process", "idx_runs_status",
-        "idx_delegation_policies_pool", "idx_impulse_relations_source", "idx_impulse_relations_target",
+        "idx_impulse_relations_source", "idx_impulse_relations_target",
         "idx_associations_impulse", "idx_reactions_impulse", "idx_processes_ready",
     ]
 
@@ -527,13 +505,10 @@ def schema_status(mut connection: Connection) raises SQLiteError -> SchemaStatus
     if not _table_exists(connection, "projections"): missing.append("projections")
     if not _table_exists(connection, "bridge_outbox"): missing.append("bridge_outbox")
     if not _table_exists(connection, "bridge_inbox"): missing.append("bridge_inbox")
-    if not _table_exists(connection, "runtime_pools"): missing.append("runtime_pools")
-    if not _table_exists(connection, "delegation_policies"): missing.append("delegation_policies")
     var missing_indices = List[String]()
     if not _object_exists(connection, "index", "idx_runtime_events_impulse"): missing_indices.append("idx_runtime_events_impulse")
     if not _object_exists(connection, "index", "idx_runtime_events_process"): missing_indices.append("idx_runtime_events_process")
     if not _object_exists(connection, "index", "idx_runs_status"): missing_indices.append("idx_runs_status")
-    if not _object_exists(connection, "index", "idx_delegation_policies_pool"): missing_indices.append("idx_delegation_policies_pool")
     if not _object_exists(connection, "index", "idx_impulse_relations_source"): missing_indices.append("idx_impulse_relations_source")
     if not _object_exists(connection, "index", "idx_impulse_relations_target"): missing_indices.append("idx_impulse_relations_target")
     if not _object_exists(connection, "index", "idx_associations_impulse"): missing_indices.append("idx_associations_impulse")
