@@ -86,7 +86,85 @@ def test_ensure_sqlite_fire_missing_sources_fails_closed(
     (tmp_path / "vendor" / "EmberJson").mkdir(parents=True)
     with pytest.raises(RuntimeError) as excinfo:
         ensure_sqlite_fire_library(tmp_path)
-    assert "sources missing" in str(excinfo.value)
+    assert "source dependency" in str(excinfo.value)
+
+
+def test_source_dependencies_checkout_pinned_revisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fala import _build
+
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> None:
+        calls.append(command)
+        if command[1] == "clone":
+            Path(command[-1]).mkdir(parents=True)
+
+    monkeypatch.setattr(_build.shutil, "which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(_build.subprocess, "run", fake_run)
+
+    _build._ensure_ember_json_sources(tmp_path)
+    _build._ensure_sqlite_fire_sources(tmp_path)
+
+    assert [call[-1] for call in calls if "checkout" in call] == [
+        _build._EMBER_JSON_REV,
+        _build._SQLITE_FIRE_REV,
+    ]
+
+
+def test_incomplete_source_dependency_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fala import _build
+
+    incomplete = tmp_path / "vendor" / "sqlite.fire"
+    incomplete.mkdir(parents=True)
+    (incomplete / "stale").write_text("floating checkout", encoding="utf-8")
+
+    def fake_clone(*, url: str, revision: str, destination: Path) -> None:
+        assert url == "https://github.com/mikolaj92/sqlite.fire.git"
+        assert revision == _build._SQLITE_FIRE_REV
+        assert not (destination / "stale").exists()
+
+    monkeypatch.setattr(_build, "_clone_pinned_source", fake_clone)
+
+    _build._ensure_sqlite_fire_sources(tmp_path)
+
+
+def test_complete_wrong_source_revision_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fala import _build
+
+    source = tmp_path / "vendor" / "sqlite.fire"
+    (source / ".git").mkdir(parents=True)
+    expected = source / "src" / "sqlite_fire" / "sqlite.mojo"
+    expected.parent.mkdir(parents=True)
+    expected.write_text("complete but stale", encoding="utf-8")
+    cloned: list[tuple[str, str, Path]] = []
+
+    monkeypatch.setattr(
+        _build.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _build.subprocess.CompletedProcess([], 0, "wrong-revision\n", ""),
+    )
+    monkeypatch.setattr(
+        _build,
+        "_clone_pinned_source",
+        lambda *, url, revision, destination: cloned.append((url, revision, destination)),
+    )
+
+    _build._ensure_sqlite_fire_sources(tmp_path)
+
+    assert cloned == [
+        (
+            "https://github.com/mikolaj92/sqlite.fire.git",
+            _build._SQLITE_FIRE_REV,
+            source,
+        )
+    ]
+    assert not expected.exists()
 
 
 def test_memory_path_does_not_require_sqlite_fire_env(

@@ -28,6 +28,8 @@ _NATIVE_MOJO = _PACKAGE_DIR / "_native.mojo"
 _CACHE_DIR_NAME = "__mojocache__"
 _SKIP_NATIVE_BUILD_ENV = "FALA_SKIP_NATIVE_BUILD"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+_EMBER_JSON_REV = "91e35260578dcf6a3f96f36a0e166e1bca15ccd6"
+_SQLITE_FIRE_REV = "3d482362c863e769d018443045b27ca5db645b3c"
 _NATIVE_BUILD_LOCK = threading.Lock()
 
 
@@ -259,49 +261,64 @@ def _cross_process_lock(lock_path: Path) -> Iterator[None]:
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
+def _clone_pinned_source(*, url: str, revision: str, destination: Path) -> None:
+    git = shutil.which("git")
+    if git is None:
+        raise RuntimeError(
+            f"Fala source dependency {url}@{revision} is missing and `git` is not on PATH"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [git, "clone", "--filter=blob:none", "--no-checkout", url, str(destination)],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [git, "-C", str(destination), "checkout", "--detach", revision],
+            check=True,
+            capture_output=True,
+        )
+    except Exception as exc:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise RuntimeError(
+            f"Failed to fetch Fala source dependency {url}@{revision}: {exc}"
+        ) from exc
+
+
+def _source_is_pinned(source_dir: Path, revision: str) -> bool:
+    git = shutil.which("git")
+    if git is None or not (source_dir / ".git").exists():
+        return False
+    result = subprocess.run(
+        [git, "-C", str(source_dir), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == revision
+
+
 def _ensure_ember_json_sources(root: Path) -> None:
     source_dir = root / "vendor" / "EmberJson"
-    if not source_dir.is_dir():
-        git = shutil.which("git")
-        if git is not None:
-            try:
-                subprocess.run(
-                    [git, "clone", "--depth", "1", "https://github.com/bgreni/EmberJson.git", str(source_dir)],
-                    check=True,
-                    capture_output=True,
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"EmberJson directory missing at {source_dir} and auto-clone failed: {e}. "
-                    "Please checkout https://github.com/bgreni/EmberJson.git manually."
-                ) from e
-        else:
-            raise RuntimeError(
-                f"EmberJson sources missing at {source_dir} and `git` not found on PATH. "
-                "Fala extension build requires EmberJson."
-            )
+    if not _source_is_pinned(source_dir, _EMBER_JSON_REV):
+        shutil.rmtree(source_dir, ignore_errors=True)
+        _clone_pinned_source(
+            url="https://github.com/bgreni/EmberJson.git",
+            revision=_EMBER_JSON_REV,
+            destination=source_dir,
+        )
+
 
 def _ensure_sqlite_fire_sources(root: Path) -> None:
     source_dir = root / "vendor" / "sqlite.fire"
-    if not source_dir.is_dir():
-        git = shutil.which("git")
-        if git is not None:
-            try:
-                subprocess.run(
-                    [git, "clone", "--depth", "1", "https://github.com/mikolaj92/sqlite.fire.git", str(source_dir)],
-                    check=True,
-                    capture_output=True,
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"sqlite.fire directory missing at {source_dir} and auto-clone failed: {e}. "
-                    "Please checkout https://github.com/mikolaj92/sqlite.fire.git manually."
-                ) from e
-        else:
-            raise RuntimeError(
-                f"sqlite.fire native sources missing at {source_dir} and `git` not found on PATH. "
-                "Fala extension build requires sqlite.fire."
-            )
+    if not _source_is_pinned(source_dir, _SQLITE_FIRE_REV):
+        shutil.rmtree(source_dir, ignore_errors=True)
+        _clone_pinned_source(
+            url="https://github.com/mikolaj92/sqlite.fire.git",
+            revision=_SQLITE_FIRE_REV,
+            destination=source_dir,
+        )
 def _build_native_extension(root: Path, so_path: Path) -> None:
     """Build the Mojo extension to a unique temp path and publish atomically."""
     env = _mojo_env(root)

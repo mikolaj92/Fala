@@ -49,6 +49,8 @@ def _worker_build_once(payload: dict[str, Any]) -> dict[str, Any]:
     build._build_native_extension = fake_build  # type: ignore[method-assign]
     build._source_hash = lambda _root: "deadbeefcafebabe"  # type: ignore[method-assign]
     build.repo_root = lambda: root  # type: ignore[method-assign]
+    build._ensure_ember_json_sources = lambda _root: None  # type: ignore[method-assign]
+    build._ensure_sqlite_fire_sources = lambda _root: None  # type: ignore[method-assign]
 
     path = build._ensure_native_artifact(root)
     return {
@@ -75,6 +77,8 @@ def _worker_failed_build_preserves(payload: dict[str, Any]) -> dict[str, Any]:
     build._build_native_extension = boom  # type: ignore[method-assign]
     build._source_hash = lambda _root: "newdigest0000000"  # type: ignore[method-assign]
     build.repo_root = lambda: root  # type: ignore[method-assign]
+    build._ensure_ember_json_sources = lambda _root: None  # type: ignore[method-assign]
+    build._ensure_sqlite_fire_sources = lambda _root: None  # type: ignore[method-assign]
 
     try:
         build._ensure_native_artifact(root)
@@ -100,7 +104,11 @@ def isolated_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "root"
     (root / "mojo" / "fala").mkdir(parents=True)
     (root / "vendor" / "EmberJson").mkdir(parents=True)
+    (root / "vendor" / "EmberJson" / "emberjson").mkdir()
+    (root / "vendor" / "EmberJson" / "emberjson" / "__init__.mojo").write_text("")
     (root / "vendor" / "sqlite.fire" / "src").mkdir(parents=True)
+    (root / "vendor" / "sqlite.fire" / "src" / "sqlite_fire").mkdir()
+    (root / "vendor" / "sqlite.fire" / "src" / "sqlite_fire" / "sqlite.mojo").write_text("")
     monkeypatch.setenv("FALA_HOME", str(root))
     return package
 
