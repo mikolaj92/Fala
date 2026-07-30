@@ -1,6 +1,6 @@
 # Native Fala core (Mojo)
 
-**Product version: 0.7.16** — Mojo-native engine.
+**Product version: 0.7.17** — Mojo-native engine.
 
 **Journal is core:** `JournalPort` types + `InMemoryJournal` ship with the
 engine. File/SQL/JSONL sinks implement the same port (SQLite is the reference
