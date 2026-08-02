@@ -4,6 +4,18 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.18
+
+**Thread-safe durable host cwd (#128).**
+
+- Serialize the entire `_with_sqlite_cwd` critical section (chdir, env install/restore,
+  and the wrapped native call) with a module-level `threading.RLock`.
+- Concurrent `host_run_package` / `open_sqlite` callers in one process no longer race
+  process-global cwd restore against relative `native/libsqlite_fire.dylib` `dlopen`.
+- Python regressions: concurrent `_with_sqlite_cwd` probe + concurrent
+  `host_run_package` smoke.
+
+
 ## 0.7.16
 
 **Current contract hardening.**

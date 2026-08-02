@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -21,6 +22,11 @@ from fala._build import (
     ensure_process_host_library,
     ensure_sqlite_fire_library,
 )
+
+# Process-global cwd/env mutations in ``_with_sqlite_cwd`` are not thread-safe
+# without serialization: concurrent durable host entrypoints race chdir restore
+# against relative dylib ``dlopen`` (#128).
+_SQLITE_CWD_LOCK = threading.RLock()
 
 
 def host_drive(
@@ -153,35 +159,46 @@ def _with_sqlite_cwd(fn, process_host_library: Path | None = None):  # type: ign
     it up afterward (#119). An already-configured root is preserved as-is.
     When supplied, ``process_host_library`` is passed through the hardened
     native loader without overriding an explicit caller setting.
+
+    The whole critical section (chdir, env install/restore, *fn*) is serialized
+    with a module-level ``RLock`` so concurrent ``host_run_package`` /
+    ``open_sqlite`` callers cannot restore another thread's previous cwd before
+    relative dylib ``dlopen`` completes (#128).
     """
     from fala._build import repo_root
 
-    sqlite_cwd = repo_root() / "vendor" / "sqlite.fire"
-    prev = os.getcwd()
-    previous_effector_root = os.environ.get("FALA_EFFECTOR_ROOT")
-    previous_process_host_library = os.environ.get("FALA_PROCESS_HOST_LIBRARY")
-    owned_root: tempfile.TemporaryDirectory[str] | None = None
-    try:
-        if sqlite_cwd.is_dir():
-            os.chdir(sqlite_cwd)
-        if previous_effector_root is None or not previous_effector_root.strip():
-            owned_root = tempfile.TemporaryDirectory(prefix="fala-effectors-")
-            os.environ["FALA_EFFECTOR_ROOT"] = owned_root.name
-        if (previous_process_host_library is None or not previous_process_host_library.strip()) and process_host_library is not None:
-            os.environ["FALA_PROCESS_HOST_LIBRARY"] = str(process_host_library.resolve())
-        return fn()
-    finally:
-        if previous_process_host_library is None:
-            os.environ.pop("FALA_PROCESS_HOST_LIBRARY", None)
-        else:
-            os.environ["FALA_PROCESS_HOST_LIBRARY"] = previous_process_host_library
-        if previous_effector_root is None:
-            os.environ.pop("FALA_EFFECTOR_ROOT", None)
-        else:
-            os.environ["FALA_EFFECTOR_ROOT"] = previous_effector_root
-        if owned_root is not None:
-            owned_root.cleanup()
-        os.chdir(prev)
+    with _SQLITE_CWD_LOCK:
+        sqlite_cwd = repo_root() / "vendor" / "sqlite.fire"
+        prev = os.getcwd()
+        previous_effector_root = os.environ.get("FALA_EFFECTOR_ROOT")
+        previous_process_host_library = os.environ.get("FALA_PROCESS_HOST_LIBRARY")
+        owned_root: tempfile.TemporaryDirectory[str] | None = None
+        try:
+            if sqlite_cwd.is_dir():
+                os.chdir(sqlite_cwd)
+            if previous_effector_root is None or not previous_effector_root.strip():
+                owned_root = tempfile.TemporaryDirectory(prefix="fala-effectors-")
+                os.environ["FALA_EFFECTOR_ROOT"] = owned_root.name
+            if (
+                previous_process_host_library is None
+                or not previous_process_host_library.strip()
+            ) and process_host_library is not None:
+                os.environ["FALA_PROCESS_HOST_LIBRARY"] = str(
+                    process_host_library.resolve()
+                )
+            return fn()
+        finally:
+            if previous_process_host_library is None:
+                os.environ.pop("FALA_PROCESS_HOST_LIBRARY", None)
+            else:
+                os.environ["FALA_PROCESS_HOST_LIBRARY"] = previous_process_host_library
+            if previous_effector_root is None:
+                os.environ.pop("FALA_EFFECTOR_ROOT", None)
+            else:
+                os.environ["FALA_EFFECTOR_ROOT"] = previous_effector_root
+            if owned_root is not None:
+                owned_root.cleanup()
+            os.chdir(prev)
 
 
 def open_sqlite(path: str | Path) -> dict[str, Any]:
