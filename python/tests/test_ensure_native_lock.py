@@ -311,3 +311,46 @@ def test_with_sqlite_cwd_preserves_configured_effector_root(
     assert host._with_sqlite_cwd(probe) == "ok"
     assert os.environ["FALA_EFFECTOR_ROOT"] == str(configured)
     assert configured.is_dir()
+
+
+def test_with_sqlite_cwd_serializes_concurrent_callers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent ``_with_sqlite_cwd`` callers must not race chdir restore (#128)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from fala import host
+
+    root = tmp_path / "root"
+    sqlite = root / "vendor" / "sqlite.fire"
+    sqlite.mkdir(parents=True)
+    (root / "mojo" / "fala").mkdir(parents=True)
+    (root / "vendor" / "EmberJson").mkdir(parents=True)
+    monkeypatch.setenv("FALA_HOME", str(root))
+    monkeypatch.delenv("FALA_EFFECTOR_ROOT", raising=False)
+
+    baseline = os.getcwd()
+    seen: list[str] = []
+    errors: list[str] = []
+
+    def probe(worker: int) -> str:
+        def body() -> str:
+            cwd = os.getcwd()
+            if Path(cwd).resolve() != sqlite.resolve():
+                errors.append(f"worker {worker}: cwd={cwd!r}")
+            time.sleep(0.05)
+            if os.getcwd() != cwd:
+                errors.append(f"worker {worker}: cwd changed under lock")
+            seen.append(cwd)
+            return "ok"
+
+        return host._with_sqlite_cwd(body)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(probe, i) for i in range(8)]
+        results = [future.result(timeout=30) for future in as_completed(futures)]
+
+    assert results == ["ok"] * 8
+    assert errors == []
+    assert len(seen) == 8
+    assert all(Path(cwd).resolve() == sqlite.resolve() for cwd in seen)
+    assert os.getcwd() == baseline

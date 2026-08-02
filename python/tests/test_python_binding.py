@@ -140,6 +140,40 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert result.get("run_status") == "completed"
     assert int(result.get("ticks") or 0) >= 1
 
+
+def test_concurrent_host_run_package_serializes_sqlite_cwd(tmp_path) -> None:
+    """Concurrent durable hosts must not race process-global chdir (#128).
+
+    ``_with_sqlite_cwd`` mutates cwd for relative dylib discovery. Without a
+    host-side lock, one thread can restore another thread's previous cwd before
+    ``dlopen(native/libsqlite_fire.dylib)`` completes.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from pathlib import Path
+
+    import fala
+
+    pkg = Path(__file__).resolve().parent / "fixtures" / "subprocess_one.fala-package.toml"
+    assert pkg.is_file()
+    workers = 4
+
+    def _run(worker: int) -> dict:
+        return fala.host_run_package(
+            db_path=tmp_path / f"concurrent-{worker}.sqlite",
+            package_path=pkg,
+            path_id="one_step",
+            run_id=f"concurrent_{worker}",
+            max_ticks=8,
+        )
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_run, i) for i in range(workers)]
+        results = [future.result(timeout=60) for future in as_completed(futures)]
+
+    assert len(results) == workers
+    assert all(result.get("ok") is True for result in results)
+    assert all(result.get("run_status") == "completed" for result in results)
+
 def test_host_run_package_honors_explicit_process_host_library(
     tmp_path, monkeypatch
 ) -> None:
