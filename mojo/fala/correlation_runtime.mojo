@@ -15,7 +15,7 @@ from fala.correlation_persistence import (
     validate_correlation_persistence_plan,
     persist_correlation_plan,
 )
-from fala.journal import NativeJournal, ProcessRow
+from fala.journal import NativeJournal, ProcessRow, RunRecord
 from fala.native_driver import (
     RunFinalizationResult,
     RunUntilIdleResult,
@@ -82,6 +82,95 @@ def _validate_bindings(plan: CorrelationInstantiationPlan, bindings: List[Adapte
             raise SQLiteError(code=2, message="correlation runtime: duplicate adapter binding for process " + item.id)
 
 
+def _identity_fields_present(
+    package_id: String,
+    package_version: String,
+    package_digest: String,
+    correlation_path_id: String,
+    correlation_path_digest: String,
+    runtime_version: String,
+    backend_version: String,
+) -> Bool:
+    return (
+        package_id != ""
+        and package_version != ""
+        and package_digest != ""
+        and correlation_path_id != ""
+        and correlation_path_digest != ""
+        and runtime_version != ""
+        and backend_version != ""
+    )
+
+
+def _identity_matches_record(
+    record: RunRecord,
+    package_id: String,
+    package_version: String,
+    package_digest: String,
+    correlation_path_id: String,
+    correlation_path_digest: String,
+    runtime_version: String,
+    backend_version: String,
+) -> Bool:
+    return (
+        record.id != ""
+        and record.package_id == package_id
+        and record.package_version == package_version
+        and record.package_digest == package_digest
+        and record.correlation_path_id == correlation_path_id
+        and record.correlation_path_digest == correlation_path_digest
+        and record.runtime_version == runtime_version
+        and record.backend_version == backend_version
+    )
+
+
+def _require_run_identity(
+    record: RunRecord,
+    run_id: String,
+    package_id: String,
+    package_version: String,
+    package_digest: String,
+    correlation_path_id: String,
+    correlation_path_digest: String,
+    runtime_version: String,
+    backend_version: String,
+) raises:
+    """Fail closed before drive/finalize when durable identity is missing or mismatched."""
+    if record.id != run_id:
+        raise SQLiteError(code=2, message="correlation runtime: durable run id mismatch")
+    if not _identity_fields_present(
+        package_id,
+        package_version,
+        package_digest,
+        correlation_path_id,
+        correlation_path_digest,
+        runtime_version,
+        backend_version,
+    ):
+        raise SQLiteError(code=2, message="correlation runtime: requested run identity is incomplete")
+    if not _identity_fields_present(
+        record.package_id,
+        record.package_version,
+        record.package_digest,
+        record.correlation_path_id,
+        record.correlation_path_digest,
+        record.runtime_version,
+        record.backend_version,
+    ):
+        raise SQLiteError(code=2, message="correlation runtime: durable run identity is incomplete")
+    if not _identity_matches_record(
+        record,
+        package_id,
+        package_version,
+        package_digest,
+        correlation_path_id,
+        correlation_path_digest,
+        runtime_version,
+        backend_version,
+    ):
+        raise SQLiteError(code=2, message="correlation runtime: durable run identity mismatch")
+
+
 def _terminal_result(mut journal: NativeJournal, run_id: String, status: String) raises -> CorrelationRuntimeResult:
     """Construct a copy-safe terminal replay without mutating durable state."""
     var rows = journal.list_processes(run_id)
@@ -127,6 +216,8 @@ def _terminal_result(mut journal: NativeJournal, run_id: String, status: String)
     )
 
 
+
+
 def run_correlation_path(
     mut journal: NativeJournal,
     run_id: String,
@@ -139,11 +230,20 @@ def run_correlation_path(
     lease_expires_at: String,
     max_ticks: Int,
     metadata: String = "{}",
+    package_id: String = "",
+    package_version: String = "",
+    package_digest: String = "",
+    correlation_path_id: String = "",
+    correlation_path_digest: String = "",
+    runtime_version: String = "",
+    backend_version: String = "",
 ) raises -> CorrelationRuntimeResult:
     """Create/replay, persist, drive, and finalize one native correlation path.
 
     The journal operations are deliberately sequential and independently
     durable; this wrapper does not claim atomic cross-database behavior.
+    Durable package/path/runtime identity is compared on every create and
+    replay before scheduling, driving, or finalizing.
     """
     if run_id == "":
         raise SQLiteError(code=2, message="correlation runtime: run_id must not be empty")
@@ -156,20 +256,58 @@ def run_correlation_path(
     if max_ticks < 1:
         raise SQLiteError(code=2, message="correlation runtime: max_ticks must be greater than zero")
 
+    var requested_path_id = correlation_path_id if correlation_path_id != "" else plan.correlation_path_id
+    if requested_path_id == "" or plan.correlation_path_id == "":
+        raise SQLiteError(code=2, message="correlation runtime: correlation_path_id must not be empty")
+    if requested_path_id != plan.correlation_path_id:
+        raise SQLiteError(code=2, message="correlation runtime: plan correlation_path_id differs from requested identity")
+
     # get_run_record reports a missing row through this one narrow diagnostic;
     # every other SQLite failure is rethrown unchanged.
     var existing = RunStatus.created()
     var has_existing = False
     var existing_status = ""
+    var existing_record = RunRecord(
+        id="",
+        status="",
+        title="",
+        package_id="",
+        package_version="",
+        package_digest="",
+        correlation_path_id="",
+        correlation_path_digest="",
+        runtime_version="",
+        backend_version="",
+        schema_version=0,
+        metadata="",
+        created_at="",
+        updated_at="",
+        started_at="",
+        finished_at="",
+    )
     try:
-        var record = journal.get_run_record(run_id)
+        existing_record = journal.get_run_record(run_id)
         has_existing = True
-        existing_status = record.status
-        existing = RunStatus(record.status)
+        existing_status = existing_record.status
+        existing = RunStatus(existing_record.status)
     except err:
         var detail = String(err)
         if detail.find("journal: run row not found") < 0:
             raise err^
+    if has_existing:
+        # Terminal, non-terminal, and idempotent reuses all compare durable
+        # identity before any further create/persist/drive/finalize work.
+        _require_run_identity(
+            existing_record,
+            run_id,
+            package_id,
+            package_version,
+            package_digest,
+            requested_path_id,
+            correlation_path_digest,
+            runtime_version,
+            backend_version,
+        )
     if has_existing and existing.is_terminal():
         # Terminal replay intentionally stops before any create/persist/drive
         # operation, but inputs are still validated at this API boundary.
@@ -188,7 +326,41 @@ def run_correlation_path(
     # non-terminal runs resume their durable plan without a conflicting
     # run.create payload.
     if not has_existing:
-        _ = journal.create_run(run_id, "created", metadata, created_at)
+        if not _identity_fields_present(
+            package_id,
+            package_version,
+            package_digest,
+            requested_path_id,
+            correlation_path_digest,
+            runtime_version,
+            backend_version,
+        ):
+            raise SQLiteError(code=2, message="correlation runtime: requested run identity is incomplete")
+        _ = journal.create_run(
+            run_id,
+            "created",
+            metadata,
+            created_at,
+            package_id=package_id,
+            package_version=package_version,
+            package_digest=package_digest,
+            correlation_path_id=requested_path_id,
+            correlation_path_digest=correlation_path_digest,
+            runtime_version=runtime_version,
+            backend_version=backend_version,
+        )
+        var created_record = journal.get_run_record(run_id)
+        _require_run_identity(
+            created_record,
+            run_id,
+            package_id,
+            package_version,
+            package_digest,
+            requested_path_id,
+            correlation_path_digest,
+            runtime_version,
+            backend_version,
+        )
     _ = persist_correlation_plan(journal, plan, created_at)
     var processes = List[ProcessRow]()
     var adapters = List[AdapterSpec]()

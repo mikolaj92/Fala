@@ -261,6 +261,39 @@ struct NativeJournal(Movable):
             elif ch == '\t': result += "\\t"
             else: result += ch
         return result + "\""
+    def _bind_nullable(mut self, mut stmt: Statement, index: Int, value: String) raises SQLiteError:
+        if value == "":
+            stmt.bind_null(index)
+        else:
+            stmt.bind_text(index, value)
+
+    def _identity_mismatch(
+        self,
+        package_id: String,
+        package_version: String,
+        package_digest: String,
+        correlation_path_id: String,
+        correlation_path_digest: String,
+        runtime_version: String,
+        backend_version: String,
+        stored_package_id: String,
+        stored_package_version: String,
+        stored_package_digest: String,
+        stored_correlation_path_id: String,
+        stored_correlation_path_digest: String,
+        stored_runtime_version: String,
+        stored_backend_version: String,
+    ) -> Bool:
+        return (
+            package_id != stored_package_id
+            or package_version != stored_package_version
+            or package_digest != stored_package_digest
+            or correlation_path_id != stored_correlation_path_id
+            or correlation_path_digest != stored_correlation_path_digest
+            or runtime_version != stored_runtime_version
+            or backend_version != stored_backend_version
+        )
+
     def _require_run(mut self, run_id: String) raises SQLiteError:
         if run_id == "":
             raise SQLiteError(code=1, message="journal: run_id must not be empty")
@@ -485,6 +518,13 @@ struct NativeJournal(Movable):
         title: String = "",
         updated_at: String = "",
         idempotency_key: String = "",
+        package_id: String = "",
+        package_version: String = "",
+        package_digest: String = "",
+        correlation_path_id: String = "",
+        correlation_path_digest: String = "",
+        runtime_version: String = "",
+        backend_version: String = "",
     ) raises SQLiteError -> RunRow:
         if run_id == "" or status == "":
             raise SQLiteError(code=1, message="journal: run id and status must not be empty")
@@ -496,10 +536,10 @@ struct NativeJournal(Movable):
         var payload = "{\"metadata\":" + self._json_quote(metadata) + ",\"status\":" + self._json_quote(status) + ",\"title\":" + self._json_quote(title) + "}"
         self.db.begin_immediate()
         try:
-            var existing = self.db.query("SELECT status,title,metadata,created_at,updated_at FROM runs WHERE id=?")
+            var existing = self.db.query("SELECT status,title,package_id,package_version,package_digest,correlation_path_id,correlation_path_digest,runtime_version,backend_version,metadata,created_at,updated_at FROM runs WHERE id=?")
             existing.bind_text(1, run_id)
             if existing.step():
-                if self._text(existing,0) != status or self._text(existing,1) != title or self._text(existing,2) != metadata or self._text(existing,3) != created_at or self._text(existing,4) != update:
+                if self._text(existing,0) != status or self._text(existing,1) != title or self._identity_mismatch(package_id, package_version, package_digest, correlation_path_id, correlation_path_digest, runtime_version, backend_version, self._text(existing,2), self._text(existing,3), self._text(existing,4), self._text(existing,5), self._text(existing,6), self._text(existing,7), self._text(existing,8)) or self._text(existing,9) != metadata or self._text(existing,10) != created_at or self._text(existing,11) != update:
                     raise SQLiteError(code=1, message="journal: run already exists with different contents")
                 var prior = self.db.query("SELECT id,command_type,idempotency_key,payload,created_at FROM runtime_commands WHERE run_id=? AND idempotency_key=?")
                 prior.bind_text(1,run_id); prior.bind_text(2,key)
@@ -511,8 +551,17 @@ struct NativeJournal(Movable):
                     raise SQLiteError(code=1, message="journal: run creation event replay conflict")
                 self.db.commit()
             else:
-                var insert = self.db.query("INSERT INTO runs (id,status,title,metadata,created_at,updated_at,schema_version) VALUES (?,?,?,?,?,?,6)")
-                insert.bind_text(1,run_id); insert.bind_text(2,status); insert.bind_text(3,title); insert.bind_text(4,metadata); insert.bind_text(5,created_at); insert.bind_text(6,update); _ = insert.step()
+                var insert = self.db.query("INSERT INTO runs (id,status,title,package_id,package_version,package_digest,correlation_path_id,correlation_path_digest,runtime_version,backend_version,metadata,created_at,updated_at,schema_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,6)")
+                insert.bind_text(1,run_id); insert.bind_text(2,status)
+                self._bind_nullable(insert, 3, title)
+                self._bind_nullable(insert, 4, package_id)
+                self._bind_nullable(insert, 5, package_version)
+                self._bind_nullable(insert, 6, package_digest)
+                self._bind_nullable(insert, 7, correlation_path_id)
+                self._bind_nullable(insert, 8, correlation_path_digest)
+                self._bind_nullable(insert, 9, runtime_version)
+                self._bind_nullable(insert, 10, backend_version)
+                insert.bind_text(11,metadata); insert.bind_text(12,created_at); insert.bind_text(13,update); _ = insert.step()
                 var command = self.db.query("INSERT INTO runtime_commands (run_id,id,command_type,idempotency_key,actor,payload,created_at) VALUES (?,?,? ,?,NULL,?,?)")
                 command.bind_text(1,run_id); command.bind_text(2,command_id); command.bind_text(3,"run.create"); command.bind_text(4,key); command.bind_text(5,payload); command.bind_text(6,created_at); _ = command.step()
                 var event = self.db.query("INSERT INTO runtime_events (run_id,sequence,id,event_type,schema_version,command_id,payload,created_at) VALUES (?,1,?,'run.created',1,?,?,?)")
