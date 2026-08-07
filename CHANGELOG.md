@@ -4,6 +4,17 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.19
+
+**Durable run identity on create/replay (#130).**
+
+- `host_run_package` derives package/path digests and persists package_id, package_version,
+  package_digest, correlation_path_id, correlation_path_digest, runtime_version, backend_version
+  on every new durable run.
+- `run_correlation_path` fail-closes when requested or durable identity is incomplete or mismatched
+  before create, drive, or finalize.
+- Unblocks consumers that pin Fala with `FALA_HOME` native builds after the identity contract landed.
+
 ## 0.7.18
 
 **Thread-safe durable host cwd (#128).**
