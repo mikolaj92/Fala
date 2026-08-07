@@ -4,6 +4,15 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.20
+
+**host_run_package path identity alignment.**
+
+- Pass package `path_id` into `instantiate_correlation_path` as `correlation_path_id` so the
+  durable run identity matches the plan (no more `plan correlation_path_id differs from
+  requested identity` when path_id is set and instantiate previously defaulted to `run_id:path`).
+- Required for Temida/Dike `dike analyze` after 0.7.19 identity persistence.
+
 ## 0.7.19
 
 **Durable run identity on create/replay (#130).**

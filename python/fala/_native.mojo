@@ -296,6 +296,7 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     var plan = instantiate_correlation_path(
         path,
         run_id,
+        correlation_path_id=path_id,
         input_fields=inputs^,
         per_effector_inputs=per_inputs^,
         per_effector_configs=per_configs^,
