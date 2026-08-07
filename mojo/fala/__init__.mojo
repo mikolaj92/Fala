@@ -19,7 +19,7 @@ from .adapters import (
 )
 from .native_package import (
     PackageManifestError, PackageEffector, PackageCorrelationPath,
-    PackageManifest, load_package_json, serialize_package_json,
+    PackageManifest, load_package_json, serialize_package_json, serialize_correlation_path_json,
     validate_package_json_text,
 )
 from .toml import parse_toml_value, parse_toml_json

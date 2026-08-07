@@ -202,6 +202,13 @@ def main() raises:
         "2026-01-01T00:00:01Z",
         "2026-01-01T00:01:00Z",
         8,
+        package_id=manifest.id,
+        package_version=manifest.version,
+        package_digest="basic-package-digest",
+        correlation_path_id=package_path.id,
+        correlation_path_digest="basic-path-digest",
+        runtime_version="0.7.15",
+        backend_version="native-sqlite",
     )
     _check(not first.replayed and first.run_status == "completed", "initial package run completed")
     _check(first.drive_result.ticks == 3, "three native effectors executed")
@@ -230,6 +237,13 @@ def main() raises:
         "2026-01-01T00:00:01Z",
         "2026-01-01T00:01:00Z",
         8,
+        package_id=manifest.id,
+        package_version=manifest.version,
+        package_digest="basic-package-digest",
+        correlation_path_id=package_path.id,
+        correlation_path_digest="basic-path-digest",
+        runtime_version="0.7.15",
+        backend_version="native-sqlite",
     )
     _check(replay.replayed and replay.run_status == "completed", "terminal package replay")
     _check(replay.drive_result.ticks == 0 and len(reopened.list_processes(run_id)) == 3, "replay is idempotent")

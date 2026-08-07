@@ -149,6 +149,27 @@ struct RunLifecycle(Movable):
         return "{\"reason\":" + encoded_reason + ",\"target\":" + self._json_quote(target) + "}"
     def _create_payload(mut self, run_id: String, status: String) -> String:
         return "{\"run_id\":" + self._json_quote(run_id) + ",\"status\":" + self._json_quote(status) + "}"
+    def _identity_mismatch(
+        self,
+        package_id: String,
+        package_version: String,
+        package_digest: String,
+        correlation_path_id: String,
+        correlation_path_digest: String,
+        runtime_version: String,
+        backend_version: String,
+        stored: RunLifecycleRecord,
+    ) -> Bool:
+        return (
+            package_id != stored.package_id
+            or package_version != stored.package_version
+            or package_digest != stored.package_digest
+            or correlation_path_id != stored.correlation_path_id
+            or correlation_path_digest != stored.correlation_path_digest
+            or runtime_version != stored.runtime_version
+            or backend_version != stored.backend_version
+        )
+
 
     def _transition(
         mut self,
@@ -306,6 +327,8 @@ struct RunLifecycle(Movable):
             self.journal.db.rollback()
             raise SQLiteError(code=1, message="run creation failed")
         var stored = self.get_record(run_id)
+        if self._identity_mismatch(package_id, package_version, package_digest, correlation_path_id, correlation_path_digest, runtime_version, backend_version, stored):
+            raise SQLiteError(code=1, message="run lifecycle identity mismatch")
         var command = self.journal.get_command_by_idempotency(run_id, idempotency_key)
         return RunCreateResult(run=stored^, command=command^, replayed=replayed)
 

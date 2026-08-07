@@ -9,6 +9,7 @@ Heavy multi-organ CLI / bridge / projections stay on the Mojo CLI surface.
 
 from std.collections import Dict, List
 from std.os import abort
+from std.pathlib import Path
 from std.python import PythonObject
 from std.python.bindings import PythonModuleBuilder
 
@@ -33,6 +34,13 @@ from fala.package import PackageManifest, load_package_json, load_package_toml
 from fala.domain_store import NativeDomainStore
 from fala.ops_maintenance import RunDeleteCounts, delete_terminal_run
 from fala.native_driver import AdapterBinding
+from fala.native_package import serialize_correlation_path_json
+from fala.reactions import content_address_json, sha256_raw_bytes
+
+# Durable host identity constants for package-driven runs.
+# Keep aligned with published package version (pyproject / releases).
+comptime FALA_RUNTIME_VERSION: String = "0.7.18"
+comptime FALA_BACKEND_VERSION: String = "native-sqlite"
 
 
 
@@ -219,7 +227,13 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     var now = _obj_string(root, "now", "2026-01-01T00:00:01Z")
     var lease = _obj_string(root, "lease_expires_at", "2026-01-01T01:00:00Z")
 
+    var package_bytes = Path(package_path).read_bytes()
+    var package_digest = sha256_raw_bytes(package_bytes)
     var manifest = _load_package(package_path)
+    var package_id = manifest.id
+    var package_version = manifest.version
+    if package_id == "" or package_version == "":
+        raise Error("fala.host_run_package_json: package id/version required")
     var package_path_spec = manifest.correlation_paths[0].copy()
     var found = False
     for pth in manifest.correlation_paths:
@@ -229,7 +243,9 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
             break
     if not found:
         raise Error("fala.host_run_package_json: path_id not in package: " + path_id)
-
+    var correlation_path_digest = content_address_json(
+        serialize_correlation_path_json(package_path_spec)
+    )
     var effectors = List[CorrelationEffectorSpec]()
     for item in package_path_spec.effectors:
         var spec = CorrelationEffectorSpec.create(
@@ -357,6 +373,13 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         now,
         lease,
         max_ticks,
+        package_id=package_id,
+        package_version=package_version,
+        package_digest=package_digest,
+        correlation_path_id=path_id,
+        correlation_path_digest=correlation_path_digest,
+        runtime_version=FALA_RUNTIME_VERSION,
+        backend_version=FALA_BACKEND_VERSION,
     )
 
     var statuses = String("[")
@@ -385,6 +408,20 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         + ("true" if result.replayed else "false")
         + ",\"ticks\":"
         + String(result.drive_result.ticks)
+        + ",\"package_id\":"
+        + _quote_json(package_id)
+        + ",\"package_version\":"
+        + _quote_json(package_version)
+        + ",\"package_digest\":"
+        + _quote_json(package_digest)
+        + ",\"correlation_path_id\":"
+        + _quote_json(path_id)
+        + ",\"correlation_path_digest\":"
+        + _quote_json(correlation_path_digest)
+        + ",\"runtime_version\":"
+        + _quote_json(FALA_RUNTIME_VERSION)
+        + ",\"backend_version\":"
+        + _quote_json(FALA_BACKEND_VERSION)
         + ",\"processes\":"
         + statuses
         + "}"
