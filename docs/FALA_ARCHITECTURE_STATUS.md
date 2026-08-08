@@ -98,6 +98,12 @@ release chronology remains in [`CHANGELOG.md`](../CHANGELOG.md).
 The distribution ships an **optional thin Python host binding**. There is no
 CPython engine/product runtime and no Python engine demo tree.
 
+Fala has no web application or frontend asset surface. Authentication, session,
+account, admin, and platform chrome are outside this product boundary; the
+platform COMPAT UI contract therefore does not apply to the Mojo engine or its
+thin Python JSON host binding. See [Fala host and composition](FALA_HOST_AND_COMPOSITION.md#web-and-platform-ui-boundary).
+
+
 ## Core ontology
 
 Impulse, ImpulseType, ImpulseRelation, Association, Reaction, Event, Command,
