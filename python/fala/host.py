@@ -1,5 +1,8 @@
 """Thin in-process Fala host API.
 
+This host is the local process/JSON boundary, not an HTTP application or web
+app factory. It provides:
+
 - **Memory path:** ``host_drive`` / ``open_memory`` (Mojo native extension auto-builds on first use, which dynamically pulls sqlite.fire sources).
 - **Durable path:** ``open_sqlite`` / ``host_run_package`` / ``delete_terminal_run``
   (optional SQLite journal sink via sqlite.fire; auto-builds the native library

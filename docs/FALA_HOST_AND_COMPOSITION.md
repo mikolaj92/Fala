@@ -30,17 +30,19 @@ handoff** (process boundary + optional envelope import), same as Unix pipes.
 
 ## Web and platform UI boundary
 
-Fala is a headless Mojo correlator and local process host. It does not expose
-an HTTP application, authentication/session/account/admin pages, templates, or
-static frontend assets. The optional `python/fala` package is a JSON host
-binding, not a web app factory.
+Fala is a headless Mojo correlator and local process host. In this repository,
+“host” means starting and supervising local effectors, not serving an HTTP
+application. Fala does not expose authentication/session/account/admin pages,
+templates, or static frontend assets. The optional `python/fala` package is a
+JSON host binding, not a web app factory.
 
 Fala is therefore not a platform COMPAT web host: `product_shell`, Basecoat,
 HTMX, Alpine, `/static/platform/` assets, and platform auth/user-management
-pins have no attachment point in this repository. Adding a frontend stack
-would create a second product surface rather than align an existing one. Any
-future web host should adopt the platform shell and assets at that host's
-boundary instead of adding chrome to Fala.
+pins have no attachment point in this repository. There is intentionally no
+Fala base layout that can extend `product_shell`, no Fala account surface that
+can own logout, and no Fala theme/locale surface to wire to platform partials.
+Any future HTTP host embedding Fala must adopt the platform shell and assets at
+that host’s boundary instead of adding chrome to Fala.
 
 ---
 
