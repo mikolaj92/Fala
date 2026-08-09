@@ -1,7 +1,7 @@
 """Thin in-process Fala host API.
 
 - **Memory path:** ``host_drive`` / ``open_memory`` (Mojo native extension auto-builds on first use, which dynamically pulls sqlite.fire sources).
-- **Durable path:** ``open_sqlite`` / ``host_run_package`` / ``delete_terminal_run``
+- **Durable path:** ``open_sqlite`` / ``host_run_package`` / ``record_in_process`` / ``delete_terminal_run``
   (optional SQLite journal sink via sqlite.fire; auto-builds the native library
   on first use — #106 / #108).
 
@@ -15,7 +15,7 @@ import os
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, TypeVar
 
 from fala._build import (
     ensure_native,
@@ -27,6 +27,9 @@ from fala._build import (
 # without serialization: concurrent durable host entrypoints race chdir restore
 # against relative dylib ``dlopen`` (#128).
 _SQLITE_CWD_LOCK = threading.RLock()
+_IN_PROCESS_LOCKS_GUARD = threading.Lock()
+_IN_PROCESS_LOCKS: dict[Path, threading.Lock] = {}
+_T = TypeVar("_T")
 
 
 def host_drive(
@@ -130,7 +133,9 @@ class MemoryHost:
         self._path = {"id": path_id, "effectors": [dict(e) for e in effectors]}
         return self
 
-    def register_output(self, effector_id: str, output: Mapping[str, Any] | str) -> "MemoryHost":
+    def register_output(
+        self, effector_id: str, output: Mapping[str, Any] | str
+    ) -> "MemoryHost":
         self._outputs[effector_id] = output if isinstance(output, str) else dict(output)
         return self
 
@@ -224,6 +229,174 @@ def open_sqlite(path: str | Path) -> dict[str, Any]:
     return _with_sqlite_cwd(_call)
 
 
+def record_in_process(
+    *,
+    db_path: str | Path,
+    run_id: str,
+    process_id: str,
+    operation: Callable[[], _T],
+    inputs: Mapping[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    process_type: str = "in_process",
+) -> _T:
+    """Run one Python callback and durably record its terminal process row.
+
+    The callback runs in the calling process and is invoked exactly once.  Its
+    JSON-recordable return value is stored as ``output_json`` and returned
+    unchanged.  If it raises, a failed row containing the exception type and
+    message is committed and the original exception is re-raised.
+
+    Recording is fail-closed: inputs and metadata are validated before the
+    callback, and a non-JSON-recordable return value turns the row into a
+    failure.  Calls for the same database are single-flight and reject rather
+    than wait when another callback is active.  The referenced run must already
+    exist.
+    """
+    import sqlite3
+    from datetime import datetime, timezone
+
+    db = Path(db_path).expanduser().resolve()
+    rid = str(run_id).strip()
+    pid = str(process_id).strip()
+    ptype = str(process_type).strip()
+    if not rid or not pid or not ptype:
+        raise ValueError(
+            "fala.record_in_process: run_id, process_id, and process_type must not be blank"
+        )
+    if not callable(operation):
+        raise TypeError("fala.record_in_process: operation must be callable")
+
+    # Validate diagnostics before doing durable work or invoking user code.
+    input_json = _record_json(dict(inputs or {}), "inputs")
+    metadata_json = _record_json(dict(metadata or {}), "metadata")
+    db.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_durable_schema(db)
+
+    with _IN_PROCESS_LOCKS_GUARD:
+        flight = _IN_PROCESS_LOCKS.setdefault(db, threading.Lock())
+    if not flight.acquire(blocking=False):
+        raise RuntimeError(f"fala.record_in_process: execution already active for {db}")
+
+    def now() -> str:
+        return (
+            datetime.now(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z")
+        )
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(db, timeout=30.0)
+        conn.execute("PRAGMA foreign_keys = ON")
+        started = now()
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM runs WHERE id=?", (rid,)).fetchone() is None:
+            raise ValueError(f"fala.record_in_process: unknown run: {rid}")
+        conn.execute(
+            "INSERT INTO processes "
+            "(run_id,id,process_type,status,priority,attempt,max_attempts,available_at,"
+            "input_json,output_json,error_json,metadata,created_at,updated_at,started_at,output_schema_json) "
+            "VALUES (?,?,?,'running',0,1,1,?,?,'{}','{}',?,?,?,?, '{}')",
+            (
+                rid,
+                pid,
+                ptype,
+                started,
+                input_json,
+                metadata_json,
+                started,
+                started,
+                started,
+            ),
+        )
+        conn.commit()
+
+        try:
+            result = operation()
+        except BaseException as exc:
+            error_json = _record_json(
+                {"message": str(exc), "type": type(exc).__name__}, "exception"
+            )
+            try:
+                _finish_in_process(conn, rid, pid, "failed", "{}", error_json, now())
+            except Exception as recording_error:
+                exc.add_note(
+                    f"Fala could not record process failure: {recording_error}"
+                )
+            raise
+
+        try:
+            output_json = _record_json(result, "operation result")
+        except (TypeError, ValueError) as exc:
+            error_json = _record_json(
+                {"message": str(exc), "type": type(exc).__name__}, "exception"
+            )
+            _finish_in_process(conn, rid, pid, "failed", "{}", error_json, now())
+            raise
+        _finish_in_process(conn, rid, pid, "succeeded", output_json, "{}", now())
+        return result
+    finally:
+        if conn is not None:
+            conn.close()
+        flight.release()
+
+
+def _ensure_durable_schema(db: Path) -> None:
+    """Initialize the native schema through a harmless unknown-run transaction."""
+    open_sqlite(db)
+    ensure_sqlite_fire_library()
+    native = ensure_native()
+
+    def _call() -> None:
+        try:
+            native.delete_terminal_run_json(
+                json.dumps({"db_path": str(db), "run_id": "__fala_schema_probe__"})
+            )
+        except Exception as exc:
+            if "unknown run" not in str(exc):
+                raise RuntimeError(
+                    f"fala.record_in_process: schema initialization failed: {exc}"
+                ) from exc
+
+    _with_sqlite_cwd(_call)
+
+
+def _record_json(value: Any, label: str) -> str:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            f"fala.record_in_process: {label} is not JSON-recordable"
+        ) from exc
+
+
+def _finish_in_process(
+    conn: Any,
+    run_id: str,
+    process_id: str,
+    status: str,
+    output_json: str,
+    error_json: str,
+    finished_at: str,
+) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    cursor = conn.execute(
+        "UPDATE processes SET status=?,output_json=?,error_json=?,updated_at=?,finished_at=? "
+        "WHERE run_id=? AND id=? AND status='running'",
+        (status, output_json, error_json, finished_at, finished_at, run_id, process_id),
+    )
+    if cursor.rowcount != 1:
+        conn.rollback()
+        raise RuntimeError("fala.record_in_process: active process row disappeared")
+    conn.commit()
+
+
 def host_run_package(
     *,
     db_path: str | Path,
@@ -281,7 +454,9 @@ def host_run_package(
             for step, cfg in effector_configs.items()
         }
     if command_overrides:
-        request["command_overrides"] = {k: list(v) for k, v in command_overrides.items()}
+        request["command_overrides"] = {
+            k: list(v) for k, v in command_overrides.items()
+        }
 
     configured_process_host = os.environ.get("FALA_PROCESS_HOST_LIBRARY", "")
     if configured_process_host.strip():
@@ -336,9 +511,13 @@ def delete_terminal_run(db_path: str | Path, run_id: str) -> dict[str, Any]:
         except Exception as exc:  # Mojo raises Error → Python exception
             message = str(exc)
             if "run_id must not be empty" in message:
-                raise ValueError("fala.delete_terminal_run: run_id must not be blank") from exc
+                raise ValueError(
+                    "fala.delete_terminal_run: run_id must not be blank"
+                ) from exc
             if "unknown run" in message:
-                raise ValueError(f"fala.delete_terminal_run: unknown run: {rid}") from exc
+                raise ValueError(
+                    f"fala.delete_terminal_run: unknown run: {rid}"
+                ) from exc
             if "not terminal" in message:
                 raise ValueError(
                     f"fala.delete_terminal_run: run is not terminal: {rid}"
@@ -352,4 +531,3 @@ def delete_terminal_run(db_path: str | Path, run_id: str) -> dict[str, Any]:
         return out
 
     return _with_sqlite_cwd(_call)
-
