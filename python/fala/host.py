@@ -1,7 +1,8 @@
 """Thin in-process Fala host API.
 
 - **Memory path:** ``host_drive`` / ``open_memory`` (Mojo native extension auto-builds on first use, which dynamically pulls sqlite.fire sources).
-- **Durable path:** ``open_sqlite`` / ``host_run_package`` / ``record_in_process`` / ``delete_terminal_run``
+- **Durable path:** ``open_sqlite`` / ``host_run_package`` / ``record_in_process`` / ``delete_terminal_run`` /
+  ``maintain_journal`` / ``recover_incomplete``
   (optional SQLite journal sink via sqlite.fire; auto-builds the native library
   on first use — #106 / #108).
 
@@ -15,7 +16,7 @@ import os
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TypeVar
+from typing import Any, Callable, Mapping, Sequence, TypeVar, TypedDict
 
 from fala._build import (
     ensure_native,
@@ -482,6 +483,159 @@ def host_run_package(
         return out
 
     return _with_sqlite_cwd(_call, process_host_library)
+
+
+class MaintenanceRun(TypedDict):
+    run_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    finished_at: str
+    deleted: bool
+    row_counts: dict[str, int]
+
+
+class JournalMaintenanceResult(TypedDict):
+    ok: bool
+    dry_run: bool
+    older_than_days: float
+    keep_last: int
+    vacuum: bool
+    before: str
+    candidate_count: int
+    deleted_run_count: int
+    row_counts: dict[str, int]
+    runs: list[MaintenanceRun]
+    reaction_gc: dict[str, int]
+    vacuumed: bool
+
+
+class RecoveryItem(TypedDict):
+    run_id: str
+    process_id: str
+    previous_status: str
+    status: str
+    attempt: int
+    max_attempts: int
+
+
+class IncompleteRecoveryResult(TypedDict):
+    ok: bool
+    worker_id: str
+    now: str
+    recovered_count: int
+    requeued_count: int
+    unrecoverable_count: int
+    items: list[RecoveryItem]
+
+
+def _durable_database(db_path: str | Path, operation: str) -> Path:
+    db = Path(db_path).expanduser().resolve()
+    if not db.is_file():
+        raise FileNotFoundError(f"fala.{operation}: database not found: {db}")
+    return db
+
+
+def maintain_journal(
+    db_path: str | Path,
+    *,
+    older_than_days: float,
+    keep_last: int = -1,
+    vacuum: bool = False,
+    dry_run: bool = True,
+    reaction_root: str | Path | None = None,
+) -> JournalMaintenanceResult:
+    """Plan or apply native terminal-run retention and optional maintenance.
+
+    ``dry_run=True`` is the safe default. ``keep_last`` preserves the newest N
+    terminal runs; nonterminal runs are never candidates. The consumer never
+    receives a SQL escape hatch: selection, deletion, trigger restoration,
+    reaction GC, and VACUUM remain native store operations.
+    """
+    if isinstance(older_than_days, bool) or not isinstance(older_than_days, (int, float)):
+        raise TypeError("fala.maintain_journal: older_than_days must be numeric")
+    age = float(older_than_days)
+    if not __import__("math").isfinite(age) or age < 0:
+        raise ValueError("fala.maintain_journal: older_than_days must be finite and non-negative")
+    if isinstance(keep_last, bool) or not isinstance(keep_last, int) or keep_last < -1:
+        raise ValueError("fala.maintain_journal: keep_last must be -1 or non-negative")
+    if not isinstance(vacuum, bool) or not isinstance(dry_run, bool):
+        raise TypeError("fala.maintain_journal: vacuum and dry_run must be bool")
+    db = _durable_database(db_path, "maintain_journal")
+    root = ""
+    if reaction_root is not None:
+        reaction_path = Path(reaction_root).expanduser().resolve()
+        if not reaction_path.is_dir():
+            raise FileNotFoundError(f"fala.maintain_journal: reaction root not found: {reaction_path}")
+        root = str(reaction_path)
+    ensure_sqlite_fire_library()
+    native = ensure_native()
+    request = {"db_path": str(db), "older_than_days": age, "keep_last": keep_last,
+               "vacuum": vacuum, "dry_run": dry_run, "reaction_root": root}
+
+    def _call() -> JournalMaintenanceResult:
+        try:
+            raw = native.maintain_journal_json(json.dumps(request, sort_keys=True))
+        except Exception as exc:
+            raise RuntimeError(f"fala.maintain_journal failed: {exc}") from exc
+        out = json.loads(str(raw))
+        if not isinstance(out, dict) or out.get("ok") is not True:
+            raise RuntimeError(f"fala.maintain_journal failed: {raw!r}")
+        return out  # type: ignore[return-value]
+
+    return _with_sqlite_cwd(_call)
+
+
+def recover_incomplete(
+    db_path: str | Path,
+    *,
+    worker_id: str,
+    now: str,
+    retry_available_at: str | None = None,
+) -> IncompleteRecoveryResult:
+    """Resolve this worker's expired running claims through native journal APIs.
+
+    Live leases and other workers' leases remain untouched. Expired claims are
+    requeued when their persisted retry policy/attempt budget permits, otherwise
+    they become terminally failed. A repeated call is an idempotent no-op.
+    Timestamps must be timezone-qualified ISO-8601 strings; lexical ordering is
+    intentionally restricted to normalized UTC (``Z``) values.
+    """
+    worker = str(worker_id or "").strip()
+    if not worker:
+        raise ValueError("fala.recover_incomplete: worker_id must not be blank")
+    from datetime import datetime
+
+    def timestamp(value: str, label: str) -> str:
+        if not isinstance(value, str) or not value.endswith("Z"):
+            raise ValueError(f"fala.recover_incomplete: {label} must be an ISO-8601 UTC timestamp ending in Z")
+        try:
+            datetime.fromisoformat(value[:-1] + "+00:00")
+        except ValueError as exc:
+            raise ValueError(f"fala.recover_incomplete: invalid {label}") from exc
+        return value
+
+    at = timestamp(now, "now")
+    due = timestamp(retry_available_at or at, "retry_available_at")
+    if due < at:
+        raise ValueError("fala.recover_incomplete: retry_available_at must not precede now")
+    db = _durable_database(db_path, "recover_incomplete")
+    ensure_sqlite_fire_library()
+    native = ensure_native()
+    request = {"db_path": str(db), "worker_id": worker, "now": at, "retry_available_at": due}
+
+    def _call() -> IncompleteRecoveryResult:
+        try:
+            raw = native.recover_incomplete_json(json.dumps(request, sort_keys=True))
+        except Exception as exc:
+            raise RuntimeError(f"fala.recover_incomplete failed: {exc}") from exc
+        out = json.loads(str(raw))
+        if not isinstance(out, dict) or out.get("ok") is not True:
+            raise RuntimeError(f"fala.recover_incomplete failed: {raw!r}")
+        return out  # type: ignore[return-value]
+
+    return _with_sqlite_cwd(_call)
+
 
 
 def delete_terminal_run(db_path: str | Path, run_id: str) -> dict[str, Any]:
