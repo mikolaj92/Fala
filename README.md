@@ -1,6 +1,6 @@
 # Fala
 
-**Version 0.7.18** — Mojo-native engine with an optional thin Python host
+**Version 0.7.21** — Mojo-native engine with an optional thin Python host
 binding; local autonomous Correlator, cybernetic mediation, event-first memory,
 and a POSIX process host.
 
@@ -129,6 +129,28 @@ mise exec -- pixi run splot-integration
 
 Fala does not import Splot. Splot is an optional child product; Fala owns
 conduction, process hosting, and the journal.
+
+### Durable in-process callbacks (Python)
+
+For a resident Python component that must record one attempt without a subprocess,
+create the run through the normal durable lifecycle and call `record_in_process`:
+
+```python
+result = fala.record_in_process(
+    db_path="journal.sqlite",
+    run_id="existing-run",
+    process_id="attempt-42",
+    inputs={"checkpoint": 41},
+    metadata={"component": "importer"},
+    operation=lambda: import_one_batch(),
+)
+```
+
+The callback is invoked once. Its JSON-recordable result is stored in one succeeded
+process row and returned unchanged; exceptions produce a failed row and are re-raised.
+Invalid JSON diagnostics/results fail closed. Executions sharing a journal are
+non-blocking single-flight. This primitive records only the callback attempt: callers
+continue to own run creation and finalization policy.
 
 ## Docs
 

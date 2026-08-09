@@ -20,17 +20,19 @@ from fala.host import (
     host_run_package,
     open_memory,
     open_sqlite,
+    record_in_process,
 )
 
 __all__ = [
     "MemoryHost",
+    "__version__",
     "delete_terminal_run",
     "host_drive",
     "host_drive_json",
     "host_run_package",
     "open_memory",
     "open_sqlite",
+    "record_in_process",
     "sdk",
-    "__version__",
 ]
-__version__ = "0.7.18"
+__version__ = "0.7.21"

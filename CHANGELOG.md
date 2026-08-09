@@ -4,6 +4,17 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.21
+
+**Durable in-process callback recording.**
+
+- Add public `record_in_process`, which invokes one Python callback exactly once and
+  records one terminal `processes` row in an existing durable run.
+- Success returns the original value; callback failures are recorded with exception
+  type/message and re-raised unchanged.
+- JSON diagnostics and results fail closed, and callbacks targeting the same journal
+  are single-flight.
+
 ## 0.7.20
 
 **host_run_package path identity alignment.**
