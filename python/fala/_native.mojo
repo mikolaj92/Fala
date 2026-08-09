@@ -384,20 +384,52 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     )
 
     var statuses = String("[")
+    var effector_results = String("{")
     var procs = journal.list_processes(run_id)
     var i = 0
     while i < len(procs):
         if i > 0:
             statuses += ","
         statuses += (
-            "{\"id\":\""
-            + procs[i].id
-            + "\",\"status\":\""
-            + procs[i].status
-            + "\"}"
+            "{\"id\":"
+            + _quote_json(procs[i].id)
+            + ",\"status\":"
+            + _quote_json(procs[i].status)
+            + "}"
+        )
+
+        # The process id is deterministic for an instantiated path, so recover
+        # the package effector id without exposing journal metadata as API.
+        var effector_id = String("")
+        for planned in plan.processes:
+            if planned.id == procs[i].id:
+                effector_id = planned.effector_id
+                break
+        if effector_id == "":
+            journal.close()
+            raise Error("fala.host_run_package_json: process is not in correlation plan: " + procs[i].id)
+
+        # Validate before embedding the stored JSON.  Invalid journal data must
+        # fail closed instead of becoming a quoted or partially decoded value.
+        _ = Value(parse_string=procs[i].output_json)
+        _ = Value(parse_string=procs[i].error_json)
+        if effector_results != "{":
+            effector_results += ","
+        effector_results += (
+            _quote_json(effector_id)
+            + ":{\"id\":"
+            + _quote_json(procs[i].id)
+            + ",\"status\":"
+            + _quote_json(procs[i].status)
+            + ",\"output\":"
+            + procs[i].output_json
+            + ",\"error\":"
+            + procs[i].error_json
+            + "}"
         )
         i += 1
     statuses += "]"
+    effector_results += "}"
     journal.close()
 
     var out = (
@@ -425,6 +457,8 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         + _quote_json(FALA_BACKEND_VERSION)
         + ",\"processes\":"
         + statuses
+        + ",\"effector_results\":"
+        + effector_results
         + "}"
     )
     return PythonObject(out)

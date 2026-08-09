@@ -6,6 +6,12 @@ CLI, journal/driver contracts).
 
 ## 0.7.21
 
+**Terminal effector results.**
+
+- `host_run_package` now returns an `effector_results` object keyed by package
+  effector id with process `id`, `status`, and decoded `output` / `error` values.
+- Malformed stored result JSON fails closed at the native binding boundary.
+
 **Durable in-process callback recording.**
 
 - Add public `record_in_process`, which invokes one Python callback exactly once and

@@ -139,6 +139,38 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     # subprocess fixture success → completed
     assert result.get("run_status") == "completed"
     assert int(result.get("ticks") or 0) >= 1
+    assert result["processes"] == [
+        {"id": "one_step:ping", "status": "succeeded"}
+    ]
+    terminal = result["effector_results"]
+    assert list(terminal) == ["ping"]
+    assert terminal["ping"]["id"] == "one_step:ping"
+    assert terminal["ping"]["status"] == "succeeded"
+    assert terminal["ping"]["output"]["ok"] is True
+    assert terminal["ping"]["error"] == {}
+
+
+def test_host_run_package_exposes_decoded_failed_effector_result(tmp_path) -> None:
+    import fala
+    from pathlib import Path
+
+    pkg = Path(__file__).resolve().parent / "fixtures" / "subprocess_one.fala-package.toml"
+    result = fala.host_run_package(
+        db_path=tmp_path / "failed.sqlite",
+        package_path=pkg,
+        path_id="one_step",
+        run_id="failed_result",
+        command_overrides={"ping": ["/tmp/fala-native-subprocess-fixture", "fail"]},
+        max_ticks=8,
+    )
+
+    assert result["run_status"] == "failed"
+    terminal = result["effector_results"]["ping"]
+    assert terminal["id"] == "one_step:ping"
+    assert terminal["status"] == "failed"
+    assert isinstance(terminal["output"], dict)
+    assert isinstance(terminal["error"], dict)
+    assert terminal["error"]
 
 
 def test_concurrent_host_run_package_serializes_sqlite_cwd(tmp_path) -> None:
@@ -246,6 +278,70 @@ def test_host_run_package_strict_json_package_uses_json_loader(tmp_path) -> None
     )
     assert result["ok"] is True
     assert result["run_status"] == "completed"
+    step_result = result["effector_results"]["step"]
+    assert step_result["status"] == "succeeded"
+    assert step_result["output"]["values"] == {"ok": True}
+    assert step_result["error"] == {}
+
+
+def test_host_run_package_fails_closed_on_malformed_stored_result(tmp_path) -> None:
+    """Replayed terminal results must never leak malformed journal JSON."""
+    import json
+    import sqlite3
+    import sys
+
+    import fala
+
+    step = tmp_path / "step.py"
+    step.write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
+        "json.dumps({'values': {'ok': True}}))\n",
+        encoding="utf-8",
+    )
+    package = {
+        "version": "2",
+        "id": "malformed_result",
+        "capabilities": [{"id": "step"}],
+        "correlation_paths": [{
+            "id": "one_step",
+            "effectors": [{
+                "id": "step",
+                "capability": "step",
+                "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
+            }],
+        }],
+        "runtime": {
+            "backend": {"kind": "sqlite", "path": str(tmp_path / "malformed.sqlite")},
+            "reaction_store": {"kind": "filesystem", "root": str(tmp_path / "reactions")},
+        },
+    }
+    package_path = tmp_path / "malformed.fala-package.json"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+    db = tmp_path / "malformed.sqlite"
+    first = fala.host_run_package(
+        db_path=db,
+        package_path=package_path,
+        path_id="one_step",
+        run_id="malformed",
+        max_ticks=8,
+    )
+    assert first["run_status"] == "completed"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "update processes set output_json=? where run_id=? and id=?",
+            ("not-json", "malformed", "one_step:step"),
+        )
+
+    with pytest.raises(Exception, match="Expected|parse|JSON|json"):
+        fala.host_run_package(
+            db_path=db,
+            package_path=package_path,
+            path_id="one_step",
+            run_id="malformed",
+            max_ticks=8,
+        )
 
 def test_host_run_package_inherit_env_from_host_process(tmp_path, monkeypatch) -> None:
     """inherit_env must pull ambient host env (regression: empty inherited map)."""

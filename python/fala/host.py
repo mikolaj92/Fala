@@ -413,7 +413,9 @@ def host_run_package(
     """Drive one correlation path from a TOML package on a SQLite journal (Mojo).
 
     Ensures both native libraries required by the durable subprocess path before
-    loading the Mojo host.
+    loading the Mojo host.  The returned ``effector_results`` mapping is keyed by
+    package effector id; each value contains process ``id`` and ``status`` plus
+    decoded ``output`` and ``error`` JSON values for the stored process.
     """
     from datetime import datetime, timezone
 
