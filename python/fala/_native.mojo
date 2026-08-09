@@ -32,14 +32,18 @@ from fala.json import parse_json
 from fala.memory_driver import MemoryDriver
 from fala.package import PackageManifest, load_package_json, load_package_toml
 from fala.domain_store import NativeDomainStore
-from fala.ops_maintenance import RunDeleteCounts, delete_terminal_run
-from fala.native_driver import AdapterBinding
+from fala.ops_maintenance import (
+    JournalMaintenancePlan, RunDeleteCounts, delete_terminal_run, maintain_journal,
+)
+from fala.native_driver import (
+    AdapterBinding, IncompleteRecoveryResult, recover_incomplete_processes,
+)
 from fala.native_package import serialize_correlation_path_json
 from fala.reactions import content_address_json, sha256_raw_bytes
 
 # Durable host identity constants for package-driven runs.
 # Keep aligned with published package version (pyproject / releases).
-comptime FALA_RUNTIME_VERSION: String = "0.7.18"
+comptime FALA_RUNTIME_VERSION: String = "0.7.22"
 comptime FALA_BACKEND_VERSION: String = "native-sqlite"
 
 
@@ -521,6 +525,140 @@ def _delete_counts_json(run_id: String, counts: RunDeleteCounts) -> String:
     )
 
 
+def _counts_json(counts: RunDeleteCounts) -> String:
+    return (
+        "{\"bridge_inbox\":" + String(counts.bridge_inbox)
+        + ",\"bridge_outbox\":" + String(counts.bridge_outbox)
+        + ",\"projections\":" + String(counts.projections)
+        + ",\"homeostats\":" + String(counts.homeostats)
+        + ",\"processes\":" + String(counts.processes)
+        + ",\"reactions\":" + String(counts.reactions)
+        + ",\"associations\":" + String(counts.associations)
+        + ",\"impulse_relations\":" + String(counts.impulse_relations)
+        + ",\"impulse_types\":" + String(counts.impulse_types)
+        + ",\"impulses\":" + String(counts.impulses)
+        + ",\"runtime_events\":" + String(counts.runtime_events)
+        + ",\"runtime_commands\":" + String(counts.runtime_commands)
+        + ",\"runs\":" + String(counts.runs)
+        + ",\"total\":" + String(counts.total()) + "}"
+    )
+
+
+def _maintenance_plan_json(plan: JournalMaintenancePlan) -> String:
+    var runs = "["
+    var first = True
+    for item in plan.retention.runs:
+        if not first: runs += ","
+        first = False
+        runs += (
+            "{\"run_id\":" + _quote_json(item.run_id)
+            + ",\"status\":" + _quote_json(item.status)
+            + ",\"created_at\":" + _quote_json(item.created_at)
+            + ",\"updated_at\":" + _quote_json(item.updated_at)
+            + ",\"finished_at\":" + _quote_json(item.finished_at)
+            + ",\"deleted\":" + ("true" if item.deleted else "false")
+            + ",\"row_counts\":" + _counts_json(item.row_counts) + "}"
+        )
+    runs += "]"
+    return (
+        "{\"ok\":true,\"dry_run\":" + ("true" if plan.dry_run else "false")
+        + ",\"older_than_days\":" + String(plan.older_than_days)
+        + ",\"keep_last\":" + String(plan.keep_last)
+        + ",\"vacuum\":" + ("true" if plan.vacuum else "false")
+        + ",\"before\":" + _quote_json(plan.before)
+        + ",\"candidate_count\":" + String(plan.retention.candidate_count)
+        + ",\"deleted_run_count\":" + String(plan.retention.deleted_run_count)
+        + ",\"row_counts\":" + _counts_json(plan.retention.row_counts)
+        + ",\"runs\":" + runs
+        + ",\"reaction_gc\":{\"candidate_count\":" + String(plan.reaction_gc.candidate_count)
+        + ",\"deleted_count\":" + String(plan.reaction_gc.deleted_count) + "}"
+        + ",\"vacuumed\":" + ("true" if plan.vacuumed else "false") + "}"
+    )
+
+
+def maintain_journal_json(request: PythonObject) raises -> PythonObject:
+    """Run native terminal-only journal retention/GC/VACUUM policy."""
+    var root = parse_json(String(py=request)).value.copy()
+    if not root.is_object(): raise Error("fala.maintain_journal_json: root must be object")
+    var db_path = _obj_string(root, "db_path")
+    if db_path == "": raise Error("fala.maintain_journal_json: db_path required")
+    var older_than_days = 0.0
+    if "older_than_days" in root.object():
+        var value = root.object()["older_than_days"].copy()
+        if value.is_float(): older_than_days = value.float()
+        elif value.is_int(): older_than_days = Float64(value.int())
+        elif value.is_uint(): older_than_days = Float64(value.uint())
+        else: raise Error("fala.maintain_journal_json: older_than_days must be numeric")
+    var keep_last = _obj_int(root, "keep_last", -1)
+    var vacuum = False
+    if "vacuum" in root.object() and root.object()["vacuum"].is_bool(): vacuum = root.object()["vacuum"].bool()
+    var dry_run = True
+    if "dry_run" in root.object() and root.object()["dry_run"].is_bool(): dry_run = root.object()["dry_run"].bool()
+    var reaction_root = _obj_string(root, "reaction_root")
+    var store = NativeDomainStore.open(db_path)
+    var out = String("")
+    try:
+        store.initialize()
+        var plan = maintain_journal(store, older_than_days, keep_last, vacuum, dry_run, reaction_root)
+        out = _maintenance_plan_json(plan)
+        store.close()
+    except err:
+        try: store.close()
+        except close_err: pass
+        raise Error(String(err))
+    return PythonObject(out)
+
+
+def _recovery_json(result: IncompleteRecoveryResult) -> String:
+    var items = "["
+    var first = True
+    for item in result.items:
+        if not first: items += ","
+        first = False
+        items += (
+            "{\"run_id\":" + _quote_json(item.run_id)
+            + ",\"process_id\":" + _quote_json(item.process_id)
+            + ",\"previous_status\":" + _quote_json(item.previous_status)
+            + ",\"status\":" + _quote_json(item.status)
+            + ",\"attempt\":" + String(item.attempt)
+            + ",\"max_attempts\":" + String(item.max_attempts) + "}"
+        )
+    items += "]"
+    return (
+        "{\"ok\":true,\"worker_id\":" + _quote_json(result.worker_id)
+        + ",\"now\":" + _quote_json(result.now)
+        + ",\"recovered_count\":" + String(result.recovered_count)
+        + ",\"requeued_count\":" + String(result.requeued_count)
+        + ",\"unrecoverable_count\":" + String(result.unrecoverable_count)
+        + ",\"items\":" + items + "}"
+    )
+
+
+def recover_incomplete_json(request: PythonObject) raises -> PythonObject:
+    """Resolve expired claims through native lease/process transitions."""
+    var root = parse_json(String(py=request)).value.copy()
+    if not root.is_object(): raise Error("fala.recover_incomplete_json: root must be object")
+    var db_path = _obj_string(root, "db_path")
+    var worker_id = _obj_string(root, "worker_id")
+    var now = _obj_string(root, "now")
+    var retry_available_at = _obj_string(root, "retry_available_at", now)
+    if db_path == "" or worker_id == "" or now == "":
+        raise Error("fala.recover_incomplete_json: db_path, worker_id, now required")
+    var journal = NativeJournal.open(db_path)
+    var out = String("")
+    try:
+        journal.initialize()
+        var result = recover_incomplete_processes(journal, worker_id, now, retry_available_at)
+        out = _recovery_json(result)
+        journal.close()
+    except err:
+        try: journal.close()
+        except close_err: pass
+        raise Error(String(err))
+    return PythonObject(out)
+
+
+
 def delete_terminal_run_json(request: PythonObject) raises -> PythonObject:
     """Delete one terminal durable run via NativeDomainStore transaction.
 
@@ -568,6 +706,8 @@ def PyInit__native() abi("C") -> PythonObject:
         m.def_function[open_sqlite_journal]("open_sqlite_journal")
         m.def_function[host_run_package_json]("host_run_package_json")
         m.def_function[delete_terminal_run_json]("delete_terminal_run_json")
+        m.def_function[maintain_journal_json]("maintain_journal_json")
+        m.def_function[recover_incomplete_json]("recover_incomplete_json")
         return m.finalize()
     except e:
         abort(String("fala._native init failed: ", e))

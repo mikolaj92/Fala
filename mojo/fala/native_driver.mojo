@@ -820,6 +820,84 @@ def diagnose_waits(mut journal: NativeJournal, run_id: String, impulse_id: Strin
     return CorrelationWaitDiagnostic(graph.blocked_process_ids^, graph.deadlocked, graph.reason, graph.code)
 
 
+@fieldwise_init
+struct IncompleteRecoveryItem(Copyable, Movable):
+    """One expired owned claim resolved by journal transition APIs."""
+    var run_id: String
+    var process_id: String
+    var previous_status: String
+    var status: String
+    var attempt: Int
+    var max_attempts: Int
+
+
+@fieldwise_init
+struct IncompleteRecoveryResult(Copyable, Movable):
+    """Deterministically ordered recovery result for one worker lease scope."""
+    var worker_id: String
+    var now: String
+    var recovered_count: Int
+    var requeued_count: Int
+    var unrecoverable_count: Int
+    var items: List[IncompleteRecoveryItem]
+
+
+def recover_incomplete_processes(
+    mut journal: NativeJournal,
+    worker_id: String,
+    now: String,
+    retry_available_at: String = "",
+) raises SQLiteError -> IncompleteRecoveryResult:
+    """Resolve only expired running claims owned by ``worker_id``.
+
+    Live claims and claims owned by another worker are not selected. Every
+    selected row is transitioned through ``maintain_process`` so ownership,
+    attempt policy, command/event recording, and concurrent lease checks remain
+    inside the native journal transaction boundary. Repeating at the same
+    timestamp is a no-op because resolved rows are no longer running.
+    """
+    if worker_id == "" or now == "":
+        raise SQLiteError(code=1, message="driver: recovery requires worker_id and now")
+    var due = retry_available_at if retry_available_at != "" else now
+    if due < now:
+        raise SQLiteError(code=1, message="driver: retry availability must not precede recovery timestamp")
+    var selected = List[ProcessRow]()
+    var stmt = journal.db.query("SELECT run_id,id,process_type,impulse_id,status,priority,attempt,max_attempts,available_at,lease_owner,lease_expires_at,input_json,output_json,error_json,metadata,created_at,updated_at,started_at,finished_at,output_schema_json FROM processes WHERE status='running' AND lease_owner=? AND lease_expires_at IS NOT NULL AND lease_expires_at<=? ORDER BY run_id ASC,id ASC")
+    stmt.bind_text(1, worker_id)
+    stmt.bind_text(2, now)
+    while stmt.step():
+        selected.append(ProcessRow(
+            run_id=journal._text(stmt,0), id=journal._text(stmt,1), process_type=journal._text(stmt,2),
+            impulse_id=journal._text(stmt,3), status=journal._text(stmt,4), priority=stmt.column_int(5),
+            attempt=stmt.column_int(6), max_attempts=stmt.column_int(7), available_at=journal._text(stmt,8),
+            lease_owner=journal._text(stmt,9), lease_expires_at=journal._text(stmt,10),
+            input_json=journal._text(stmt,11), output_json=journal._text(stmt,12), error_json=journal._text(stmt,13),
+            metadata=journal._text(stmt,14), created_at=journal._text(stmt,15), updated_at=journal._text(stmt,16),
+            started_at=journal._text(stmt,17), finished_at=journal._text(stmt,18), output_schema_json=journal._text(stmt,19),
+        )^)
+    stmt.close()
+    var items = List[IncompleteRecoveryItem]()
+    var requeued = 0
+    var unrecoverable = 0
+    for candidate in selected:
+        var resolved = maintain_process(
+            journal, candidate, candidate.lease_owner, now, due,
+            "{\"code\":\"lease_expired\",\"message\":\"process lease expired during recovery\"}",
+        )
+        if resolved.status == "retry_wait": requeued += 1
+        elif resolved.status == "failed": unrecoverable += 1
+        else:
+            raise SQLiteError(code=1, message="driver: recovery produced unsupported process status")
+        items.append(IncompleteRecoveryItem(
+            run_id=resolved.run_id, process_id=resolved.id, previous_status="running",
+            status=resolved.status, attempt=resolved.attempt, max_attempts=resolved.max_attempts,
+        )^)
+    return IncompleteRecoveryResult(
+        worker_id=worker_id, now=now, recovered_count=len(items),
+        requeued_count=requeued, unrecoverable_count=unrecoverable, items=items^,
+    )
+
+
 def maintain_process(
     mut journal: NativeJournal,
     process: ProcessRow,
