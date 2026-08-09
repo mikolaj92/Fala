@@ -694,6 +694,10 @@ def _path_json(path: PackageCorrelationPath) raises -> Value:
     if path.accumulate_upstream_reactions: result["accumulate_upstream_reactions"] = Value(True)
     return Value(result^)
 
+def serialize_correlation_path_json(path: PackageCorrelationPath) raises -> String:
+    """Canonical JSON projection for one selected correlation path."""
+    return canonical_json_text(to_string(_path_json(path)))
+
 
 def serialize_package_json(manifest: PackageManifest) raises -> String:
     """Serialize a validated manifest with deterministic EmberJson ordering."""

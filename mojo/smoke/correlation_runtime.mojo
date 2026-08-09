@@ -5,7 +5,9 @@ from fala import (
     AdapterBinding,
     AdapterSpec,
     CorrelationEffectorSpec,
+    CorrelationInstantiationPlan,
     CorrelationPathSpec,
+    CorrelationRuntimeResult,
     NativeFunctionRegistry,
     NativeJournal,
     instantiate_correlation_path,
@@ -42,6 +44,69 @@ def _bindings(run_id: String, path_id: String) -> List[AdapterBinding]:
     bindings.append(AdapterBinding(path_id + ":root", AdapterSpec.native_function("native.correlation"), run_id))
     bindings.append(AdapterBinding(path_id + ":leaf", AdapterSpec.native_function("native.correlation"), run_id))
     return bindings^
+
+
+# Deterministic durable identity used by this smoke. Digests are fixed strings
+# (not content digests) so the test remains hermetic without package files.
+comptime SMOKE_PACKAGE_ID: String = "smoke.correlation"
+comptime SMOKE_PACKAGE_VERSION: String = "1"
+comptime SMOKE_PACKAGE_DIGEST: String = "pkg-digest-smoke"
+comptime SMOKE_PATH_DIGEST: String = "path-digest-smoke"
+comptime SMOKE_RUNTIME_VERSION: String = "0.7.15"
+comptime SMOKE_BACKEND_VERSION: String = "native-sqlite"
+
+
+def _create_identified_run(mut journal: NativeJournal, run_id: String, path_id: String, metadata: String = "{}", created_at: String = "2026-01-01T00:00:00Z") raises:
+    _ = journal.create_run(
+        run_id,
+        "created",
+        metadata,
+        created_at,
+        package_id=SMOKE_PACKAGE_ID,
+        package_version=SMOKE_PACKAGE_VERSION,
+        package_digest=SMOKE_PACKAGE_DIGEST,
+        correlation_path_id=path_id,
+        correlation_path_digest=SMOKE_PATH_DIGEST,
+        runtime_version=SMOKE_RUNTIME_VERSION,
+        backend_version=SMOKE_BACKEND_VERSION,
+    )
+
+
+def _run_identified(
+    mut journal: NativeJournal,
+    run_id: String,
+    plan: CorrelationInstantiationPlan,
+    bindings: List[AdapterBinding],
+    registry: NativeFunctionRegistry,
+    created_at: String,
+    worker_id: String,
+    now: String,
+    lease_expires_at: String,
+    max_ticks: Int,
+    metadata: String = "{}",
+) raises -> CorrelationRuntimeResult:
+    return run_correlation_path(
+        journal,
+        run_id,
+        plan,
+        bindings,
+        registry,
+        created_at,
+        worker_id,
+        now,
+        lease_expires_at,
+        max_ticks,
+        metadata,
+        package_id=SMOKE_PACKAGE_ID,
+        package_version=SMOKE_PACKAGE_VERSION,
+        package_digest=SMOKE_PACKAGE_DIGEST,
+        correlation_path_id=plan.correlation_path_id,
+        correlation_path_digest=SMOKE_PATH_DIGEST,
+        runtime_version=SMOKE_RUNTIME_VERSION,
+        backend_version=SMOKE_BACKEND_VERSION,
+    )
+
+
 def _native_correlation(input_json: String, config_json: String) raises -> String:
     return "{\"value\":1}"
 
@@ -70,7 +135,7 @@ def main() raises:
     var rejected_equal_lease = False
     var equal_lease_diagnostic = ""
     try:
-        var invalid_lease = run_correlation_path(
+        var invalid_lease = _run_identified(
             journal,
             "equal-lease-run",
             instantiate_correlation_path(correlation_path, "equal-lease-run"),
@@ -104,7 +169,7 @@ def main() raises:
     equal_binding_rows.bind_text(1, "equal-lease-run")
     _check(equal_binding_rows.step() and equal_binding_rows.column_int(0) == 0, "equal lease does not persist adapter binding rows")
     equal_binding_rows.close()
-    var first = run_correlation_path(
+    var first = _run_identified(
         journal,
         "runtime-run",
         plan,
@@ -125,9 +190,9 @@ def main() raises:
     # first drive. Zero bindings means the host has not bound the plan yet.
     var first_host_plan = instantiate_correlation_path(correlation_path, "first-host-run")
     var first_host_bindings = _bindings("first-host-run", first_host_plan.correlation_path_id)
-    _ = journal.create_run("first-host-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _create_identified_run(journal, "first-host-run", first_host_plan.correlation_path_id)
     _ = persist_correlation_plan(journal, first_host_plan, "2026-01-01T00:00:00Z")
-    var first_host_drive = run_correlation_path(
+    var first_host_drive = _run_identified(
         journal,
         "first-host-run",
         first_host_plan,
@@ -143,7 +208,7 @@ def main() raises:
     # A mid-batch lookup failure must roll back earlier binding writes.
     var rollback_plan = instantiate_correlation_path(correlation_path, "rollback-run")
     var rollback_bindings = _bindings("rollback-run", rollback_plan.correlation_path_id)
-    _ = journal.create_run("rollback-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _create_identified_run(journal, "rollback-run", rollback_plan.correlation_path_id)
     _ = persist_correlation_plan(journal, rollback_plan, "2026-01-01T00:00:00Z")
     rollback_bindings[1].process_id = "missing-process"
     var rollback_rejected = False
@@ -158,13 +223,13 @@ def main() raises:
     # must remain fail-closed rather than mixing old and current bindings.
     var partial_plan = instantiate_correlation_path(correlation_path, "partial-binding-run")
     var partial_bindings = _bindings("partial-binding-run", partial_plan.correlation_path_id)
-    _ = journal.create_run("partial-binding-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _create_identified_run(journal, "partial-binding-run", partial_plan.correlation_path_id)
     _ = persist_correlation_plan(journal, partial_plan, "2026-01-01T00:00:00Z")
     persist_adapter_binding(journal, partial_bindings[0], "2026-01-01T00:00:00Z")
     var partial_rejected = False
     var partial_diagnostic = ""
     try:
-        var partial_drive = run_correlation_path(
+        var partial_drive = _run_identified(
             journal,
             "partial-binding-run",
             partial_plan,
@@ -184,7 +249,7 @@ def main() raises:
     # Zero bindings after any execution evidence is corruption, not first drive.
     var missing_after_start_plan = instantiate_correlation_path(correlation_path, "missing-after-start-run")
     var missing_after_start_bindings = _bindings("missing-after-start-run", missing_after_start_plan.correlation_path_id)
-    _ = journal.create_run("missing-after-start-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _create_identified_run(journal, "missing-after-start-run", missing_after_start_plan.correlation_path_id)
     _ = persist_correlation_plan(journal, missing_after_start_plan, "2026-01-01T00:00:00Z")
     var touched = journal.db.query("UPDATE processes SET attempt=1,started_at=?,updated_at=? WHERE run_id=? AND id=?")
     touched.bind_text(1, "2026-01-01T00:00:01Z")
@@ -196,7 +261,7 @@ def main() raises:
     var missing_after_start_rejected = False
     var missing_after_start_diagnostic = ""
     try:
-        var missing_after_start_drive = run_correlation_path(
+        var missing_after_start_drive = _run_identified(
             journal,
             "missing-after-start-run",
             missing_after_start_plan,
@@ -216,7 +281,7 @@ def main() raises:
     # Persist a non-terminal run before simulating a host restart.
     var resume_plan = instantiate_correlation_path(correlation_path, "resume-run")
     var persisted_resume_bindings = _bindings("resume-run", resume_plan.correlation_path_id)
-    _ = journal.create_run("resume-run", "created", "{}", "2026-01-01T00:00:00Z")
+    _create_identified_run(journal, "resume-run", resume_plan.correlation_path_id)
     _ = persist_correlation_plan(journal, resume_plan, "2026-01-01T00:00:00Z")
     for binding in persisted_resume_bindings:
         persist_adapter_binding(journal, binding, "2026-01-01T00:00:00Z")
@@ -229,7 +294,7 @@ def main() raises:
     var changed_resume_bindings = List[AdapterBinding]()
     changed_resume_bindings.append(AdapterBinding(resume_plan.correlation_path_id + ":root", AdapterSpec.native_function("native.changed"), "resume-run"))
     changed_resume_bindings.append(AdapterBinding(resume_plan.correlation_path_id + ":leaf", AdapterSpec.native_function("native.changed"), "resume-run"))
-    var resumed = run_correlation_path(
+    var resumed = _run_identified(
         reopened,
         "resume-run",
         resume_plan,
@@ -242,7 +307,7 @@ def main() raises:
         4,
     )
     _check(resumed.run_status == "completed" and resumed.drive_result.ticks == 2, "non-terminal replay drives persisted bindings")
-    var replay = run_correlation_path(
+    var replay = _run_identified(
         reopened,
         "runtime-run",
         plan,
