@@ -202,3 +202,92 @@ def test_replaced_database_is_reensured_and_malformed_v6_refused(tmp_path) -> No
     with sqlite3.connect(bad) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
         assert conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == [("runs",)]
+
+
+def test_full_schema_contract_rejects_noncore_shape_before_mutation(tmp_path) -> None:
+    import fala
+    db = tmp_path / "malformed.sqlite"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE impulses (id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO impulses VALUES ('sentinel')")
+    with pytest.raises(RuntimeError, match="incompatible impulses"):
+        fala.ensure_journal(db)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert conn.execute("SELECT * FROM impulses").fetchall() == [("sentinel",)]
+        assert conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == [("impulses",)]
+
+
+def test_full_schema_contract_validates_owned_indexes_triggers_and_foreign_keys(tmp_path) -> None:
+    import fala
+    db = tmp_path / "journal.sqlite"
+    fala.ensure_journal(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DROP INDEX idx_runs_status")
+        conn.execute("CREATE INDEX idx_runs_status ON runs(status)")
+    with pytest.raises(RuntimeError, match="incompatible index idx_runs_status"):
+        fala.ensure_journal(db)
+
+    db2 = tmp_path / "trigger.sqlite"
+    fala.ensure_journal(db2)
+    with sqlite3.connect(db2) as conn:
+        conn.execute("DROP TRIGGER runtime_events_no_delete")
+        conn.execute("CREATE TRIGGER runtime_events_no_delete BEFORE DELETE ON runtime_events BEGIN SELECT 1; END")
+    with pytest.raises(RuntimeError, match="incompatible trigger runtime_events_no_delete"):
+        fala.ensure_journal(db2)
+
+    # Recreate a schema-owned FK table without its declared relationship.
+    db3 = tmp_path / "fk.sqlite"
+    fala.ensure_journal(db3)
+    with sqlite3.connect(db3) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("ALTER TABLE reactions RENAME TO reactions_old")
+        conn.execute("CREATE TABLE reactions (run_id TEXT NOT NULL,id TEXT NOT NULL,kind TEXT NOT NULL,uri TEXT NOT NULL,impulse_id TEXT,media_type TEXT,size_bytes INTEGER,content_hash TEXT,metadata TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(run_id,id))")
+        conn.execute("DROP TABLE reactions_old")
+    with pytest.raises(RuntimeError, match="foreign keys"):
+        fala.ensure_journal(db3)
+
+
+@pytest.mark.parametrize(
+    ("blocker_status", "process_status", "run_status"),
+    [("completed", "succeeded", "completed"), ("cancelled", "cancelled", "cancelled"), ("expired", "timed_out", "timed_out")],
+)
+def test_native_terminal_pairings_are_exact(tmp_path, blocker_status, process_status, run_status) -> None:
+    import fala
+    db = tmp_path / f"{blocker_status}.sqlite"
+    fala.upsert_run_metadata(db, run_id="run", status="waiting", metadata={})
+    fala.park_process(db, run_id="run", process_id="process")
+    result = fala.complete_waiting_process(db, run_id="run", process_id="process", blocker_status=blocker_status, process_status=process_status, run_status=run_status)
+    assert (result["process_status"], result["run_status"]) == (process_status, run_status)
+
+
+def test_invalid_terminal_pairings_and_any_partial_lease_fail_closed(tmp_path) -> None:
+    import fala
+    db = tmp_path / "journal.sqlite"
+    fala.upsert_run_metadata(db, run_id="run", status="waiting", metadata={})
+    fala.park_process(db, run_id="run", process_id="process")
+    for kwargs in (
+        {"blocker_status": "completed", "process_status": "failed", "run_status": "failed"},
+        {"blocker_status": "completed", "process_status": "succeeded", "run_status": "failed"},
+    ):
+        with pytest.raises(ValueError, match="terminal pairing"):
+            fala.complete_waiting_process(db, run_id="run", process_id="process", **kwargs)
+    for owner, expiry in (("worker", None), (None, "2099"), ("worker", "2099")):
+        with sqlite3.connect(db) as conn:
+            conn.execute("UPDATE processes SET lease_owner=?,lease_expires_at=? WHERE run_id='run' AND id='process'", (owner, expiry))
+        with pytest.raises(ValueError, match="wholly unleased"):
+            fala.complete_waiting_process(db, run_id="run", process_id="process")
+
+
+def test_waiting_upsert_rejects_existing_lease_and_terminal_update_clears_it(tmp_path) -> None:
+    import fala
+    db = tmp_path / "journal.sqlite"
+    fala.upsert_run_metadata(db, run_id="run", status="active", metadata={})
+    fala.upsert_process(db, run_id="run", process_id="process", status="running")
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE processes SET lease_owner='worker',lease_expires_at='2099' WHERE run_id='run' AND id='process'")
+    with pytest.raises(ValueError, match="leased process"):
+        fala.park_process(db, run_id="run", process_id="process")
+    fala.upsert_process(db, run_id="run", process_id="process", status="succeeded")
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT lease_owner,lease_expires_at FROM processes WHERE run_id='run' AND id='process'").fetchone() == (None, None)

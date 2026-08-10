@@ -18,6 +18,8 @@ BLOCKER_STATUSES = frozenset({"open", "completed", "cancelled", "expired"})
 TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled", "timed_out"})
 TERMINAL_PROCESS_STATUSES = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 TERMINAL_BLOCKER_STATUSES = frozenset({"completed", "cancelled", "expired"})
+_BLOCKER_PROCESS_TERMINALS = {"completed": "succeeded", "cancelled": "cancelled", "expired": "timed_out"}
+_PROCESS_RUN_TERMINALS = {"succeeded": "completed", "cancelled": "cancelled", "timed_out": "timed_out"}
 _ENSURE_LOCK = threading.Lock()
 
 _RUN_TRANSITIONS = {
@@ -78,12 +80,192 @@ def _connect(db: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
-# Columns used by this public API.  Exact nullability, defaults and primary keys
-# matter: CREATE TABLE IF NOT EXISTS cannot repair a look-alike Hermes table.
-_CORE_SHAPES = {
-    "runs": [("id", "TEXT", 0, None, 1), ("status", "TEXT", 1, None, 0), ("title", "TEXT", 0, None, 0), ("package_id", "TEXT", 0, None, 0), ("package_version", "TEXT", 0, None, 0), ("package_digest", "TEXT", 0, None, 0), ("correlation_path_id", "TEXT", 0, None, 0), ("correlation_path_digest", "TEXT", 0, None, 0), ("runtime_version", "TEXT", 0, None, 0), ("backend_version", "TEXT", 0, None, 0), ("schema_version", "INTEGER", 1, None, 0), ("metadata", "TEXT", 1, None, 0), ("created_at", "TEXT", 1, None, 0), ("updated_at", "TEXT", 1, None, 0), ("started_at", "TEXT", 0, None, 0), ("finished_at", "TEXT", 0, None, 0)],
-    "processes": [("run_id", "TEXT", 1, None, 1), ("id", "TEXT", 1, None, 2), ("process_type", "TEXT", 1, None, 0), ("impulse_id", "TEXT", 0, None, 0), ("status", "TEXT", 1, None, 0), ("priority", "INTEGER", 1, None, 0), ("attempt", "INTEGER", 1, None, 0), ("max_attempts", "INTEGER", 1, None, 0), ("available_at", "TEXT", 1, None, 0), ("lease_owner", "TEXT", 0, None, 0), ("lease_expires_at", "TEXT", 0, None, 0), ("input_json", "TEXT", 1, None, 0), ("output_json", "TEXT", 1, None, 0), ("error_json", "TEXT", 1, None, 0), ("metadata", "TEXT", 1, None, 0), ("created_at", "TEXT", 1, None, 0), ("updated_at", "TEXT", 1, None, 0), ("started_at", "TEXT", 0, None, 0), ("finished_at", "TEXT", 0, None, 0), ("output_schema_json", "TEXT", 1, "'{}'", 0)],
-    "homeostats": [("run_id", "TEXT", 1, None, 1), ("id", "TEXT", 1, None, 2), ("kind", "TEXT", 1, None, 0), ("impulse_id", "TEXT", 0, None, 0), ("status", "TEXT", 1, None, 0), ("values_json", "TEXT", 1, None, 0), ("metadata", "TEXT", 1, None, 0), ("attempt", "INTEGER", 1, "0", 0), ("max_attempts", "INTEGER", 1, "1", 0), ("created_at", "TEXT", 1, None, 0), ("updated_at", "TEXT", 1, None, 0)],
+# Canonical schema-v6 structural contract, mirrored from mojo/fala/schema.mojo.
+_SCHEMA_SHAPES = {'runs': [('id', 'TEXT', 0, None, 1),
+          ('status', 'TEXT', 1, None, 0),
+          ('title', 'TEXT', 0, None, 0),
+          ('package_id', 'TEXT', 0, None, 0),
+          ('package_version', 'TEXT', 0, None, 0),
+          ('package_digest', 'TEXT', 0, None, 0),
+          ('correlation_path_id', 'TEXT', 0, None, 0),
+          ('correlation_path_digest', 'TEXT', 0, None, 0),
+          ('runtime_version', 'TEXT', 0, None, 0),
+          ('backend_version', 'TEXT', 0, None, 0),
+          ('schema_version', 'INTEGER', 1, None, 0),
+          ('metadata', 'TEXT', 1, None, 0),
+          ('created_at', 'TEXT', 1, None, 0),
+          ('updated_at', 'TEXT', 1, None, 0),
+          ('started_at', 'TEXT', 0, None, 0),
+          ('finished_at', 'TEXT', 0, None, 0)],
+ 'schema_migrations': [('id', 'TEXT', 0, None, 1),
+                       ('version', 'INTEGER', 1, None, 0),
+                       ('name', 'TEXT', 1, None, 0),
+                       ('applied_at', 'TEXT', 1, None, 0)],
+ 'impulses': [('run_id', 'TEXT', 1, None, 1),
+              ('id', 'TEXT', 1, None, 2),
+              ('impulse_type', 'TEXT', 1, None, 0),
+              ('payload', 'TEXT', 1, None, 0),
+              ('metadata', 'TEXT', 1, None, 0),
+              ('created_at', 'TEXT', 1, None, 0),
+              ('updated_at', 'TEXT', 1, None, 0)],
+ 'impulse_types': [('run_id', 'TEXT', 1, None, 1),
+                   ('id', 'TEXT', 1, None, 2),
+                   ('title', 'TEXT', 0, None, 0),
+                   ('description', 'TEXT', 0, None, 0),
+                   ('media_types', 'TEXT', 1, None, 0),
+                   ('value_schema_json', 'TEXT', 1, None, 0),
+                   ('metadata', 'TEXT', 1, None, 0),
+                   ('created_at', 'TEXT', 1, None, 0),
+                   ('updated_at', 'TEXT', 1, None, 0)],
+ 'impulse_relations': [('run_id', 'TEXT', 1, None, 1),
+                       ('id', 'TEXT', 1, None, 2),
+                       ('relation_type', 'TEXT', 1, None, 0),
+                       ('source_impulse_id', 'TEXT', 1, None, 0),
+                       ('target_impulse_id', 'TEXT', 1, None, 0),
+                       ('metadata', 'TEXT', 1, None, 0),
+                       ('created_at', 'TEXT', 1, None, 0)],
+ 'runtime_commands': [('run_id', 'TEXT', 1, None, 1),
+                      ('id', 'TEXT', 1, None, 2),
+                      ('command_type', 'TEXT', 1, None, 0),
+                      ('idempotency_key', 'TEXT', 1, None, 0),
+                      ('actor', 'TEXT', 0, None, 0),
+                      ('correlation_id', 'TEXT', 0, None, 0),
+                      ('causation_id', 'TEXT', 0, None, 0),
+                      ('payload', 'TEXT', 1, None, 0),
+                      ('created_at', 'TEXT', 1, None, 0)],
+ 'runtime_events': [('run_id', 'TEXT', 1, None, 1),
+                    ('sequence', 'INTEGER', 1, None, 2),
+                    ('id', 'TEXT', 1, None, 0),
+                    ('event_type', 'TEXT', 1, None, 0),
+                    ('schema_version', 'INTEGER', 1, '1', 0),
+                    ('impulse_id', 'TEXT', 0, None, 0),
+                    ('process_id', 'TEXT', 0, None, 0),
+                    ('command_id', 'TEXT', 0, None, 0),
+                    ('actor', 'TEXT', 0, None, 0),
+                    ('correlation_id', 'TEXT', 0, None, 0),
+                    ('causation_id', 'TEXT', 0, None, 0),
+                    ('payload', 'TEXT', 1, None, 0),
+                    ('created_at', 'TEXT', 1, None, 0)],
+ 'associations': [('run_id', 'TEXT', 1, None, 1),
+                  ('id', 'TEXT', 1, None, 2),
+                  ('kind', 'TEXT', 1, None, 0),
+                  ('impulse_id', 'TEXT', 0, None, 0),
+                  ('values_json', 'TEXT', 1, None, 0),
+                  ('metadata', 'TEXT', 1, None, 0),
+                  ('created_at', 'TEXT', 1, None, 0)],
+ 'reactions': [('run_id', 'TEXT', 1, None, 1),
+               ('id', 'TEXT', 1, None, 2),
+               ('kind', 'TEXT', 1, None, 0),
+               ('uri', 'TEXT', 1, None, 0),
+               ('impulse_id', 'TEXT', 0, None, 0),
+               ('media_type', 'TEXT', 0, None, 0),
+               ('size_bytes', 'INTEGER', 0, None, 0),
+               ('content_hash', 'TEXT', 0, None, 0),
+               ('metadata', 'TEXT', 1, None, 0),
+               ('created_at', 'TEXT', 1, None, 0)],
+ 'processes': [('run_id', 'TEXT', 1, None, 1),
+               ('id', 'TEXT', 1, None, 2),
+               ('process_type', 'TEXT', 1, None, 0),
+               ('impulse_id', 'TEXT', 0, None, 0),
+               ('status', 'TEXT', 1, None, 0),
+               ('priority', 'INTEGER', 1, None, 0),
+               ('attempt', 'INTEGER', 1, None, 0),
+               ('max_attempts', 'INTEGER', 1, None, 0),
+               ('available_at', 'TEXT', 1, None, 0),
+               ('lease_owner', 'TEXT', 0, None, 0),
+               ('lease_expires_at', 'TEXT', 0, None, 0),
+               ('input_json', 'TEXT', 1, None, 0),
+               ('output_json', 'TEXT', 1, None, 0),
+               ('error_json', 'TEXT', 1, None, 0),
+               ('metadata', 'TEXT', 1, None, 0),
+               ('created_at', 'TEXT', 1, None, 0),
+               ('updated_at', 'TEXT', 1, None, 0),
+               ('started_at', 'TEXT', 0, None, 0),
+               ('finished_at', 'TEXT', 0, None, 0),
+               ('output_schema_json', 'TEXT', 1, "'{}'", 0)],
+ 'homeostats': [('run_id', 'TEXT', 1, None, 1),
+                ('id', 'TEXT', 1, None, 2),
+                ('kind', 'TEXT', 1, None, 0),
+                ('impulse_id', 'TEXT', 0, None, 0),
+                ('status', 'TEXT', 1, None, 0),
+                ('values_json', 'TEXT', 1, None, 0),
+                ('metadata', 'TEXT', 1, None, 0),
+                ('attempt', 'INTEGER', 1, '0', 0),
+                ('max_attempts', 'INTEGER', 1, '1', 0),
+                ('created_at', 'TEXT', 1, None, 0),
+                ('updated_at', 'TEXT', 1, None, 0)],
+ 'projections': [('run_id', 'TEXT', 1, None, 1),
+                 ('name', 'TEXT', 1, None, 2),
+                 ('id', 'TEXT', 1, None, 0),
+                 ('version', 'INTEGER', 1, None, 0),
+                 ('data', 'TEXT', 1, None, 0),
+                 ('source_event_sequence', 'INTEGER', 1, None, 0),
+                 ('updated_at', 'TEXT', 1, None, 0)],
+ 'bridge_outbox': [('run_id', 'TEXT', 1, None, 1),
+                   ('id', 'TEXT', 1, None, 2),
+                   ('idempotency_key', 'TEXT', 1, None, 0),
+                   ('source_ref', 'TEXT', 1, None, 0),
+                   ('target_ref', 'TEXT', 1, None, 0),
+                   ('impulse_json', 'TEXT', 1, None, 0),
+                   ('event_ref', 'TEXT', 0, None, 0),
+                   ('pool_id', 'TEXT', 0, None, 0),
+                   ('budget', 'TEXT', 1, None, 0),
+                   ('status', 'TEXT', 1, None, 0),
+                   ('attempts', 'INTEGER', 1, None, 0),
+                   ('metadata', 'TEXT', 1, None, 0),
+                   ('created_at', 'TEXT', 1, None, 0),
+                   ('updated_at', 'TEXT', 1, None, 0)],
+ 'bridge_inbox': [('run_id', 'TEXT', 1, None, 1),
+                  ('id', 'TEXT', 1, None, 2),
+                  ('idempotency_key', 'TEXT', 1, None, 0),
+                  ('source_ref', 'TEXT', 1, None, 0),
+                  ('target_ref', 'TEXT', 1, None, 0),
+                  ('impulse_json', 'TEXT', 1, None, 0),
+                  ('event_ref', 'TEXT', 0, None, 0),
+                  ('pool_id', 'TEXT', 0, None, 0),
+                  ('budget', 'TEXT', 1, None, 0),
+                  ('status', 'TEXT', 1, None, 0),
+                  ('attempts', 'INTEGER', 1, None, 0),
+                  ('metadata', 'TEXT', 1, None, 0),
+                  ('created_at', 'TEXT', 1, None, 0),
+                  ('updated_at', 'TEXT', 1, None, 0)]}
+_SCHEMA_INDEXES = {'idx_associations_impulse': ('run_id', 'impulse_id', 'created_at'),
+ 'idx_bridge_inbox_status': ('run_id', 'status', 'updated_at'),
+ 'idx_bridge_outbox_status': ('run_id', 'status', 'updated_at'),
+ 'idx_homeostats_status': ('run_id', 'status', 'updated_at'),
+ 'idx_impulse_relations_source': ('run_id', 'source_impulse_id', 'relation_type'),
+ 'idx_impulse_relations_target': ('run_id', 'target_impulse_id', 'relation_type'),
+ 'idx_processes_impulse': ('run_id', 'impulse_id', 'status'),
+ 'idx_processes_ready': ('status', 'available_at', 'priority', 'created_at'),
+ 'idx_processes_run_status': ('run_id', 'status', 'updated_at'),
+ 'idx_reactions_impulse': ('run_id', 'impulse_id', 'kind', 'created_at'),
+ 'idx_runs_status': ('status', 'updated_at'),
+ 'idx_runtime_events_impulse': ('run_id', 'impulse_id', 'sequence'),
+ 'idx_runtime_events_process': ('run_id', 'process_id', 'sequence')}
+_SCHEMA_FOREIGN_KEYS = {'impulse_relations': [('impulses', 'run_id', 'run_id', 'NO ACTION', 'NO ACTION', 'NONE'),
+                       ('impulses', 'target_impulse_id', 'id', 'NO ACTION', 'NO ACTION', 'NONE'),
+                       ('impulses', 'run_id', 'run_id', 'NO ACTION', 'NO ACTION', 'NONE'),
+                       ('impulses', 'source_impulse_id', 'id', 'NO ACTION', 'NO ACTION', 'NONE')],
+ 'processes': [('impulses', 'run_id', 'run_id', 'NO ACTION', 'NO ACTION', 'NONE'),
+               ('impulses', 'impulse_id', 'id', 'NO ACTION', 'NO ACTION', 'NONE')],
+ 'reactions': [('impulses', 'run_id', 'run_id', 'NO ACTION', 'NO ACTION', 'NONE'),
+               ('impulses', 'impulse_id', 'id', 'NO ACTION', 'NO ACTION', 'NONE')],
+ 'runtime_events': [('runtime_commands', 'run_id', 'run_id', 'NO ACTION', 'NO ACTION', 'NONE'),
+                    ('runtime_commands', 'command_id', 'id', 'NO ACTION', 'NO ACTION', 'NONE')]}
+_SCHEMA_TRIGGERS = {'runtime_commands_no_delete': 'create trigger runtime_commands_no_delete before delete on runtime_commands begin select raise(abort, '
+                               "'runtime_commands is append-only'); end",
+ 'runtime_commands_no_update': 'create trigger runtime_commands_no_update before update on runtime_commands begin select raise(abort, '
+                               "'runtime_commands is append-only'); end",
+ 'runtime_events_no_delete': 'create trigger runtime_events_no_delete before delete on runtime_events begin select raise(abort, '
+                             "'runtime_events is append-only'); end",
+ 'runtime_events_no_update': 'create trigger runtime_events_no_update before update on runtime_events begin select raise(abort, '
+                             "'runtime_events is append-only'); end"}
+
+_SCHEMA_UNIQUES = {
+    "runtime_commands": {("run_id", "idempotency_key")},
+    "runtime_events": {("run_id", "id")},
+    "bridge_outbox": {("run_id", "idempotency_key")},
+    "bridge_inbox": {("run_id", "idempotency_key")},
 }
 
 
@@ -91,29 +273,74 @@ def _shape(conn: sqlite3.Connection, table: str) -> list[tuple[Any, ...]]:
     return [(r[1], str(r[2]).upper(), r[3], r[4], r[5]) for r in conn.execute(f"PRAGMA table_info({table})")]
 
 
-def _validate_core(conn: sqlite3.Connection, *, before_migration: bool = False) -> None:
-    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    for table, expected in _CORE_SHAPES.items():
-        if table not in names:
-            continue
+def _foreign_keys(conn: sqlite3.Connection, table: str) -> list[tuple[Any, ...]]:
+    return [tuple(r[2:8]) for r in conn.execute(f"PRAGMA foreign_key_list({table})")]
+
+
+def _index_columns(conn: sqlite3.Connection, name: str) -> tuple[str, ...]:
+    return tuple(r[2] for r in conn.execute(f"PRAGMA index_info({name})"))
+
+
+def _validate_schema(conn: sqlite3.Connection, *, before_migration: bool) -> None:
+    objects = {(r[0], r[1]): r[2] for r in conn.execute(
+        "SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index','trigger')"
+    )}
+    for table, expected in _SCHEMA_SHAPES.items():
+        if ("table", table) not in objects:
+            if before_migration:
+                continue
+            raise RuntimeError(f"fala journal: schema-v6 table {table!r} is missing")
         actual = _shape(conn, table)
         allowed = [expected]
-        if before_migration and table == "processes": allowed.append(expected[:-1])
-        if before_migration and table == "homeostats": allowed.extend([expected[:7] + expected[9:], expected[:8] + expected[9:]])
-        if actual not in allowed:
+        # These are the only legacy shapes the native v6 migration repairs.
+        if before_migration and table == "processes":
+            allowed.append(expected[:-1])
+        if before_migration and table == "homeostats":
+            allowed.extend([expected[:7] + expected[9:], expected[:8] + expected[9:]])
+        if before_migration and table == "runtime_events":
+            required = {"run_id", "sequence", "id", "event_type", "payload", "created_at"}
+            expected_by_name = {column[0]: column for column in expected}
+            actual_names = {column[0] for column in actual}
+            legacy_ok = required <= actual_names <= set(expected_by_name) and all(
+                column == expected_by_name[column[0]] for column in actual
+            )
+            if legacy_ok:
+                allowed.append(actual)
+        if not any(sorted(actual) == sorted(candidate) for candidate in allowed):
             raise RuntimeError(f"fala journal: incompatible {table} table; refusing schema-v6 write")
+        expected_fks = _SCHEMA_FOREIGN_KEYS.get(table, [])
+        if _foreign_keys(conn, table) != expected_fks:
+            raise RuntimeError(f"fala journal: incompatible {table} foreign keys; refusing schema-v6 write")
+        uniques = {
+            _index_columns(conn, row[1])
+            for row in conn.execute(f"PRAGMA index_list({table})")
+            if row[3] == "u"
+        }
+        if uniques != _SCHEMA_UNIQUES.get(table, set()):
+            raise RuntimeError(f"fala journal: incompatible {table} unique constraints; refusing schema-v6 write")
+    for name, columns in _SCHEMA_INDEXES.items():
+        if ("index", name) not in objects:
+            if before_migration:
+                continue
+            raise RuntimeError(f"fala journal: schema-v6 index {name!r} is missing")
+        if _index_columns(conn, name) != columns:
+            raise RuntimeError(f"fala journal: incompatible index {name}; refusing schema-v6 write")
+    for name, expected_sql in _SCHEMA_TRIGGERS.items():
+        if ("trigger", name) not in objects:
+            if before_migration:
+                continue
+            raise RuntimeError(f"fala journal: schema-v6 trigger {name!r} is missing")
+        actual_sql = " ".join((objects[("trigger", name)] or "").lower().split())
+        if actual_sql != expected_sql:
+            raise RuntimeError(f"fala journal: incompatible trigger {name}; refusing schema-v6 write")
 
 
 def _validate_v6(conn: sqlite3.Connection) -> None:
-    _validate_core(conn)
+    _validate_schema(conn, before_migration=False)
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     row = conn.execute("SELECT version FROM schema_migrations WHERE id='runtime_backend'").fetchone()
     if version != 6 or row is None or row[0] != 6:
         raise RuntimeError("fala journal: schema-v6 initialization incomplete")
-    required = {"runs", "schema_migrations", "impulses", "impulse_types", "impulse_relations", "runtime_commands", "runtime_events", "associations", "reactions", "processes", "homeostats", "projections", "bridge_outbox", "bridge_inbox"}
-    present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    if not required <= present:
-        raise RuntimeError("fala journal: schema-v6 tables are incomplete")
 
 
 def ensure_journal(db_path: str | Path) -> None:
@@ -123,7 +350,7 @@ def ensure_journal(db_path: str | Path) -> None:
     with _ENSURE_LOCK:
         if db.exists():
             with _connect(db) as conn:
-                _validate_core(conn, before_migration=True)
+                _validate_schema(conn, before_migration=True)
         _ensure_durable_schema(db)
         with _connect(db) as conn:
             _validate_v6(conn)
@@ -190,10 +417,15 @@ def upsert_process(db_path: str | Path, *, run_id: str, process_id: str, status:
         if row is not None:
             supplied=(state,ptype,attempt,*values); durable=(row["status"],row["process_type"],row["attempt"],row["input_json"],row["output_json"],row["error_json"],row["metadata"])
             if row["status"] in TERMINAL_PROCESS_STATUSES:
-                if supplied==durable: return
+                if supplied == durable:
+                    if row["lease_owner"] is not None or row["lease_expires_at"] is not None:
+                        conn.execute("UPDATE processes SET lease_owner=NULL,lease_expires_at=NULL WHERE run_id=? AND id=?", (rid, pid))
+                    return
                 raise ValueError(f"fala journal: terminal process {pid!r} cannot be overwritten or reopened")
             _require_transition(row["status"],state,_PROCESS_TRANSITIONS,"process")
-            conn.execute("UPDATE processes SET process_type=?,status=?,attempt=?,input_json=?,output_json=?,error_json=?,metadata=?,updated_at=?,finished_at=? WHERE run_id=? AND id=?",(ptype,state,attempt,*values,now,finished,rid,pid)); return
+            if state == "waiting" and (row["lease_owner"] is not None or row["lease_expires_at"] is not None):
+                raise ValueError(f"fala journal: leased process {pid!r} cannot be upserted as waiting")
+            conn.execute("UPDATE processes SET process_type=?,status=?,attempt=?,input_json=?,output_json=?,error_json=?,metadata=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=?,finished_at=? WHERE run_id=? AND id=?",(ptype,state,attempt,*values,now,finished,rid,pid)); return
         conn.execute("INSERT INTO processes (run_id,id,process_type,status,priority,attempt,max_attempts,available_at,input_json,output_json,error_json,metadata,created_at,updated_at,started_at,finished_at,output_schema_json) VALUES (?,?,?,?,0,?,1,?,?,?,?,?,?,?,?,?,'{}')",(rid,pid,ptype,state,attempt,now,*values,now,now,now,finished))
 
 
@@ -204,11 +436,15 @@ def park_process(db_path: str | Path, **kwargs: Any) -> None:
 def complete_waiting_process(db_path: str | Path, *, run_id: str, process_id: str, blocker_id: str | None=None, output: Mapping[str, Any] | None=None, process_status: str="succeeded", blocker_status: str="completed", run_status: str="completed") -> LifecycleResult:
     db,rid,pid=_db(db_path),_required(run_id,"run_id"),_required(process_id,"process_id")
     pstate=_status(process_status,"process_status",TERMINAL_PROCESS_STATUSES); rstate=_status(run_status,"run_status",TERMINAL_RUN_STATUSES); bstate=_status(blocker_status,"blocker_status",TERMINAL_BLOCKER_STATUSES)
+    if _BLOCKER_PROCESS_TERMINALS[bstate] != pstate:
+        raise ValueError(f"fala journal: blocker/process terminal pairing {bstate!r}/{pstate!r} is invalid")
+    if _PROCESS_RUN_TERMINALS[pstate] != rstate:
+        raise ValueError(f"fala journal: process/run terminal pairing {pstate!r}/{rstate!r} is invalid")
     bid=_required(blocker_id,"blocker_id") if blocker_id is not None else None; encoded=_json({"completed": True} if output is None else output,"output")
     ensure_journal(db); now=_now()
     with _connect(db) as conn:
         conn.row_factory=sqlite3.Row; conn.execute("BEGIN IMMEDIATE")
-        process=conn.execute("SELECT status,output_json FROM processes WHERE run_id=? AND id=?",(rid,pid)).fetchone()
+        process=conn.execute("SELECT status,output_json,lease_owner,lease_expires_at FROM processes WHERE run_id=? AND id=?",(rid,pid)).fetchone()
         if process is None: raise ValueError(f"fala journal: process {pid!r} not found")
         run=conn.execute("SELECT status FROM runs WHERE id=?",(rid,)).fetchone()
         if run is None: raise ValueError(f"fala journal: run {rid!r} not found")
@@ -216,11 +452,17 @@ def complete_waiting_process(db_path: str | Path, *, run_id: str, process_id: st
         if bid and blocker is None: raise ValueError(f"fala journal: blocker {bid!r} not found")
         exact=(process["status"]==pstate and process["output_json"]==encoded and run["status"]==rstate and (not bid or (blocker["status"]==bstate and blocker["values_json"]==encoded)))
         if process["status"] != "waiting":
-            if exact: return {"run_id":rid,"process_id":pid,"changed":False,"process_status":pstate,"run_status":rstate}
+            if exact:
+                changed = process["lease_owner"] is not None or process["lease_expires_at"] is not None
+                if changed:
+                    conn.execute("UPDATE processes SET lease_owner=NULL,lease_expires_at=NULL WHERE run_id=? AND id=?", (rid, pid))
+                return {"run_id":rid,"process_id":pid,"changed":changed,"process_status":pstate,"run_status":rstate}
             raise ValueError("fala journal: completion conflicts with durable lifecycle state")
+        if process["lease_owner"] is not None or process["lease_expires_at"] is not None:
+            raise ValueError("fala journal: waiting process must be wholly unleased before completion")
         if run["status"] in TERMINAL_RUN_STATUSES and run["status"] != rstate: raise ValueError("fala journal: completion conflicts with terminal run")
         if bid and blocker["status"] != "open" and not (blocker["status"]==bstate and blocker["values_json"]==encoded): raise ValueError("fala journal: completion conflicts with terminal blocker")
-        cur=conn.execute("UPDATE processes SET status=?,output_json=?,updated_at=?,finished_at=? WHERE run_id=? AND id=? AND status='waiting'",(pstate,encoded,now,now,rid,pid))
+        cur=conn.execute("UPDATE processes SET status=?,output_json=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=?,finished_at=? WHERE run_id=? AND id=? AND status='waiting' AND lease_owner IS NULL AND lease_expires_at IS NULL",(pstate,encoded,now,now,rid,pid))
         if cur.rowcount != 1: raise ValueError("fala journal: process completion lost compare-and-set")
         if bid and blocker["status"] == "open":
             cur=conn.execute("UPDATE homeostats SET status=?,values_json=?,updated_at=? WHERE run_id=? AND id=? AND status='open'",(bstate,encoded,now,rid,bid))
