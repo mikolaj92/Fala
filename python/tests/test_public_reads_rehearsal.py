@@ -92,3 +92,31 @@ def test_rehearsal_detects_source_path_swap(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match='identity changed'):
         fala.rehearse_journal_retention(db,tmp_path/'swapped',{'older_than_days':1,'safety_margin_bytes':0})
     assert (tmp_path/'swapped'/'.incomplete').exists()
+
+
+def test_rehearsal_rejects_committed_wal_mutation_of_snapshot(tmp_path, monkeypatch):
+    import fala
+    db = tmp_path / "j.sqlite"
+    _journal(db)
+
+    def mutate(snapshot, **kwargs):
+        # A separate connection switches the snapshot back to WAL and commits a
+        # durable mutation which can leave the main database bytes unchanged.
+        writer = sqlite3.connect(snapshot)
+        try:
+            assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+            writer.execute("UPDATE runs SET title='EVIL' WHERE id='z'")
+            writer.commit()
+        finally:
+            writer.close()
+        return {"dry_run": True}
+
+    monkeypatch.setattr(fala.rehearsal, "maintain_journal", mutate)
+    output = tmp_path / "mutated"
+    with pytest.raises(RuntimeError, match="dry-run mutated"):
+        fala.rehearse_journal_retention(
+            db, output,
+            {"older_than_days": 1, "keep_last": 1, "safety_margin_bytes": 0},
+        )
+    assert (output / ".incomplete").exists()
+    assert not (output / "retention-plan.json").exists()

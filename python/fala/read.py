@@ -52,16 +52,19 @@ def _safe(value: Any, field: str) -> Any:
 def _open(path: Path) -> sqlite3.Connection:
     uri = f"file:{quote(str(path), safe='/')}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON")
-    conn.execute("BEGIN")
-    conn.execute("PRAGMA schema_version").fetchone()  # materialize the snapshot
-    version = conn.execute("PRAGMA user_version").fetchone()
-    migration = conn.execute("SELECT version FROM schema_migrations WHERE id='runtime_backend'").fetchone()
-    if version is None or version[0] != _SCHEMA_VERSION or migration is None or migration[0] != _SCHEMA_VERSION:
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        conn.execute("PRAGMA schema_version").fetchone()  # materialize the snapshot
+        version = conn.execute("PRAGMA user_version").fetchone()
+        migration = conn.execute("SELECT version FROM schema_migrations WHERE id='runtime_backend'").fetchone()
+        if version is None or version[0] != _SCHEMA_VERSION or migration is None or migration[0] != _SCHEMA_VERSION:
+            raise RuntimeError("fala read: schema v6 is required")
+        return conn
+    except BaseException:
         conn.close()
-        raise RuntimeError("fala read: schema v6 is required")
-    return conn
+        raise
 
 
 def _row(row: sqlite3.Row, columns: tuple[str, ...]) -> dict[str, Any]:

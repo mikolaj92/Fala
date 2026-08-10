@@ -41,14 +41,61 @@ def _identity(path: Path) -> dict[str, Any]:
         os.close(fd)
 
 
-def _source_set(source: Path) -> dict[str, dict[str, Any]]:
-    result = {name: _identity(path) for name, path in (
-        ("main", source), ("wal", Path(str(source) + "-wal")), ("shm", Path(str(source) + "-shm")))}
-    # SQLite readers legitimately maintain transient lock bytes and mtime in SHM;
-    # its durable identity contract is presence/device/inode, not content.
+def _database_identity(path: Path) -> dict[str, Any]:
+    """Hash database content while excluding SQLite's change counters.
+
+    Opening a database in WAL mode and checkpointing it can update header bytes
+    24..27 and 92..95 without changing any logical database content.
+    """
+    identity = _identity(path)
+    if not identity.get("present"):
+        return identity
+    data = bytearray(path.read_bytes())
+    if len(data) >= 100 and data[:16] == b"SQLite format 3\x00":
+        data[24:28] = b"\x00" * 4
+        data[92:96] = b"\x00" * 4
+    identity["sha256"] = hashlib.sha256(data).hexdigest()
+    identity.pop("mtime_ns", None)
+    return identity
+
+
+def _sqlite_set(path: Path) -> dict[str, dict[str, Any]]:
+    """Measure all files capable of holding durable SQLite state."""
+    return {name: _identity(candidate) for name, candidate in (
+        ("main", path), ("wal", Path(str(path) + "-wal")),
+        ("shm", Path(str(path) + "-shm")),
+    )}
+
+
+def _stable_sqlite_set(path: Path) -> dict[str, dict[str, Any]]:
+    result = _sqlite_set(path)
+    # SQLite lock activity changes timestamps and SHM bytes without changing
+    # database contents. Main/WAL content and identity are the durable evidence;
+    # SHM is checked for presence and pathname identity.
+    for name in ("main", "wal"):
+        if result[name].get("present"):
+            result[name].pop("mtime_ns", None)
     if result["shm"].get("present"):
         result["shm"] = {key: result["shm"][key] for key in ("present", "device", "inode")}
     return result
+
+
+def _source_set(source: Path) -> dict[str, dict[str, Any]]:
+    return _stable_sqlite_set(source)
+
+
+def _normalize_snapshot(snapshot: Path) -> None:
+    """Checkpoint all committed state into main and leave DELETE/no sidecars."""
+    with sqlite3.connect(snapshot) as connection:
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if checkpoint is not None and checkpoint[0] != 0:
+            raise RuntimeError(f"fala rehearsal: snapshot checkpoint failed: {checkpoint!r}")
+        journal_mode = connection.execute("PRAGMA journal_mode=DELETE").fetchone()
+        if journal_mode is None or str(journal_mode[0]).lower() != "delete":
+            raise RuntimeError(f"fala rehearsal: could not normalize snapshot journal mode: {journal_mode!r}")
+    state = _sqlite_set(snapshot)
+    if state["wal"].get("present") or state["shm"].get("present"):
+        raise RuntimeError("fala rehearsal: normalized snapshot has SQLite sidecars")
 
 
 def _write_exclusive(path: Path, data: bytes, mode: int = 0o600) -> None:
@@ -127,6 +174,10 @@ def rehearse_journal_retention(source: str | Path, destination: str | Path, poli
         if before["main"].get("device") == current_snap.st_dev and before["main"].get("inode") == current_snap.st_ino:
             raise RuntimeError("fala rehearsal: snapshot aliases source")
         os.chmod(snapshot, 0o600)
+        # The backup may retain WAL as its persistent journal mode. Normalize the
+        # private, offline copy before measuring it so a committed dry-run write
+        # cannot hide exclusively in a newly-created WAL sidecar.
+        _normalize_snapshot(snapshot)
         with sqlite3.connect(f"file:{quote(str(snapshot), safe='/')}?mode=ro", uri=True) as check:
             integrity = [row[0] for row in check.execute("PRAGMA integrity_check")]
             foreign_keys = [list(row) for row in check.execute("PRAGMA foreign_key_check")]
@@ -135,17 +186,20 @@ def rehearse_journal_retention(source: str | Path, destination: str | Path, poli
         free_post = shutil.disk_usage(output).free
         if free_post < margin:
             raise RuntimeError(f"fala rehearsal: insufficient post-backup space ({free_post} < {margin})")
-        # Exactly one policy evaluation, always against the snapshot.
-        snapshot_before = _identity(snapshot)
+        # Measure the normalized main file, call maintenance exactly once, then
+        # checkpoint and normalize again. Thus even a committed WAL-only write is
+        # folded into main before comparison and cannot escape detection.
+        snapshot_before = _database_identity(snapshot)
         dry_plan = maintain_journal(snapshot, older_than_days=age, keep_last=keep, vacuum=False, dry_run=True)
-        snapshot_after = _identity(snapshot)
+        _normalize_snapshot(snapshot)
+        snapshot_after = _database_identity(snapshot)
+        if snapshot_before != snapshot_after:
+            raise RuntimeError("fala rehearsal: dry-run mutated the rehearsal snapshot")
         with sqlite3.connect(f"file:{quote(str(snapshot), safe='/')}?mode=ro", uri=True) as check:
             post_integrity = [row[0] for row in check.execute("PRAGMA integrity_check")]
             post_foreign_keys = [list(row) for row in check.execute("PRAGMA foreign_key_check")]
         if post_integrity != ["ok"] or post_foreign_keys:
             raise RuntimeError("fala rehearsal: post-plan snapshot validation failed")
-        if snapshot_before != snapshot_after:
-            raise RuntimeError("fala rehearsal: dry-run mutated the rehearsal snapshot")
         after = _source_set(source_path)
         if before != after: raise RuntimeError("fala rehearsal: source main/WAL/SHM identity changed")
         result = {"schema_version": 1, "created_at": datetime.now(UTC).isoformat(),
