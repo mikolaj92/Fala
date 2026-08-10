@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import math
 import sqlite3
-import shutil
-import tempfile
 from datetime import datetime, timezone
 from os import fspath
 from pathlib import Path
@@ -13,13 +13,20 @@ from urllib.parse import quote
 
 _ENVELOPE_VERSION = 1
 _SCHEMA_VERSION = 6
-# Fala-owned schema-v6 query. Consumers never need to know the durable schema.
+_PROCESS_STATUSES = frozenset({
+    "pending", "ready", "running", "waiting", "retry_wait", "succeeded",
+    "failed", "cancel_requested", "cancelled", "timed_out",
+})
+_RUN_STATUSES = frozenset({
+    "created", "active", "waiting", "completed", "failed",
+    "cancel_requested", "cancelled", "timed_out",
+})
+# Every process row is evidence: filtering here could hide corrupt status values.
 _LEASE_QUERY = """
 SELECT p.run_id, p.id, p.status, p.lease_owner, p.lease_expires_at,
        p.attempt, p.max_attempts, r.status
 FROM processes AS p
 LEFT JOIN runs AS r ON r.id = p.run_id
-WHERE p.lease_owner IS NOT NULL OR p.lease_expires_at IS NOT NULL
 ORDER BY p.run_id ASC, p.id ASC
 """
 _SCHEMA_QUERY = """
@@ -61,30 +68,55 @@ def _envelope(now: datetime | None = None) -> dict[str, Any]:
             "process": "claimed_while_status_running_with_owner_and_expiry",
             "reaction": "durable_artifact_not_leased",
         },
-        "current": [],
-        "expired": [],
-        "uncertainty": [],
-        "errors": [],
+        "current": [], "expired": [], "uncertainty": [], "errors": [],
         "complete": False,
     }
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert even corrupt SQLite/exception context to JSON-safe values."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else str(value)
+    if isinstance(value, bytes):
+        return {"storage_class": "blob", "hex": value.hex()}
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
 def _issue(code: str, message: str, **context: Any) -> dict[str, Any]:
     result: dict[str, Any] = {"code": code, "message": message}
-    result.update(context)
+    result.update({key: _json_safe(value) for key, value in context.items()})
     return result
 
 
-def inspect_leases(
-    db_path: str | bytes | Path, now: datetime | str | None = None
-) -> dict[str, Any]:
-    """Inspect current Fala leases without creating or changing the database.
+def _finish(result: dict[str, Any]) -> dict[str, Any]:
+    safe = _json_safe(result)
+    json.dumps(safe, allow_nan=False)
+    return safe
 
-    The JSON-safe result fails closed: database/schema failures are reported in
-    ``errors`` and ``complete`` remains false. Only schema-v6 ``running``
-    processes with both lease fields are classified current or expired. A
-    read-only connection includes committed WAL records; immutable mode is used
-    only when no WAL sidecar exists because immutable SQLite cannot follow WAL.
+
+def _pin_read_snapshot(connection: sqlite3.Connection) -> None:
+    """Start and materialize a SQLite read transaction."""
+    connection.execute("BEGIN")
+    connection.execute("PRAGMA schema_version").fetchone()
+
+
+def inspect_leases(
+    db_path: str | bytes | Path,
+    now: datetime | str | None = None,
+    *,
+    max_rows: int = 100_000,
+) -> dict[str, Any]:
+    """Inspect current Fala leases through one pinned read-only transaction.
+
+    All process rows up to ``max_rows`` are validated before known rows without
+    lease state are omitted. The JSON-safe API-v1 result fails closed on any
+    malformed evidence.
     """
     result = _envelope()
     try:
@@ -92,7 +124,11 @@ def inspect_leases(
         result["observed_at"] = _stamp(observed)
     except (TypeError, ValueError, OverflowError) as exc:
         result["errors"].append(_issue("invalid_now", str(exc)))
-        return result
+        return _finish(result)
+
+    if isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows < 1:
+        result["errors"].append(_issue("invalid_limit", "max_rows must be a positive integer"))
+        return _finish(result)
 
     try:
         path = Path(fspath(db_path)).expanduser().resolve(strict=True)
@@ -100,59 +136,79 @@ def inspect_leases(
             raise FileNotFoundError(f"not a regular file: {path}")
     except (TypeError, ValueError, OSError) as exc:
         result["errors"].append(_issue("database_unavailable", str(exc)))
-        return result
+        return _finish(result)
 
-    # mode=ro is mandatory. Avoid immutable when a WAL exists: SQLite's
-    # immutable contract assumes sidecars do not change and may omit WAL data.
-    wal_present = Path(str(path) + "-wal").exists()
+    rows: list[tuple[Any, ...]] = []
+    uri = f"file:{quote(str(path), safe='/')}?mode=ro"
     try:
-        with tempfile.TemporaryDirectory(prefix="fala-inspect-") as temporary:
-            opened_path = path
-            if wal_present:
-                # Read the WAL through a private copy. Even a mode=ro SQLite
-                # connection writes lock bytes in the original -shm file.
-                # Copying all existing members keeps the source byte-for-byte
-                # untouched while retaining committed WAL frames.
-                opened_path = Path(temporary) / path.name
-                for suffix in ("", "-wal", "-shm"):
-                    source = Path(str(path) + suffix)
-                    if source.exists():
-                        shutil.copy2(source, Path(str(opened_path) + suffix))
-                # A writer may commit while sidecars are copied. Validate that
-                # the copied WAL is readable; SQLite failure is fail-closed.
-            uri = f"file:{quote(str(opened_path), safe='/')}?mode=ro"
-            if not wal_present:
-                uri += "&immutable=1"
-            connection = sqlite3.connect(uri, uri=True, timeout=0)
-            try:
-                row = connection.execute(_SCHEMA_QUERY).fetchone()
-                user_version = connection.execute("PRAGMA user_version").fetchone()
-                if (
-                    row is None
-                    or row[0] != _SCHEMA_VERSION
-                    or user_version is None
-                    or user_version[0] != _SCHEMA_VERSION
-                ):
-                    result["errors"].append(
-                        _issue("unsupported_schema", "Fala schema v6 is required")
-                    )
-                    return result
-                rows = connection.execute(_LEASE_QUERY).fetchall()
-            finally:
-                connection.close()
-    except (sqlite3.Error, OSError) as exc:
-        result["errors"].append(_issue("database_error", str(exc)))
-        return result
+        connection = sqlite3.connect(uri, uri=True, timeout=0)
+        try:
+            _pin_read_snapshot(connection)
+            row = connection.execute(_SCHEMA_QUERY).fetchone()
+            user_version = connection.execute("PRAGMA user_version").fetchone()
+            if (row is None or row[0] != _SCHEMA_VERSION or user_version is None
+                    or user_version[0] != _SCHEMA_VERSION):
+                result["errors"].append(_issue("unsupported_schema", "Fala schema v6 is required"))
+                return _finish(result)
 
-    for (
-        run_id, process_id, status, owner, expires, attempt, max_attempts, run_status
-    ) in rows:
+            for row_number, process_row in enumerate(connection.execute(_LEASE_QUERY), start=1):
+                if row_number > max_rows:
+                    result["errors"].append(_issue(
+                        "row_limit_exceeded", "lease inspection row limit exceeded",
+                        max_rows=max_rows,
+                    ))
+                    break
+                rows.append(process_row)
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        result["errors"].append(_issue("database_error", str(exc)))
+        return _finish(result)
+
+    for run_id, process_id, status, owner, expires, attempt, max_attempts, run_status in rows:
         context = {"run_id": run_id, "process_id": process_id}
-        if status != "running":
+        malformed: list[str] = []
+        if not isinstance(run_id, str) or not run_id:
+            malformed.append("run_id must be non-empty TEXT")
+        if not isinstance(process_id, str) or not process_id:
+            malformed.append("process_id must be non-empty TEXT")
+        if not isinstance(status, str) or status not in _PROCESS_STATUSES:
+            malformed.append("process status must be an allowed TEXT value")
+        if not isinstance(run_status, str) or run_status not in _RUN_STATUSES:
+            malformed.append("run status must be an allowed TEXT value")
+        if owner is not None and (not isinstance(owner, str) or not owner):
+            malformed.append("lease owner must be NULL or non-empty TEXT")
+        if expires is not None and (not isinstance(expires, str) or not expires):
+            malformed.append("lease expiry must be NULL or non-empty TEXT")
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 0:
+            malformed.append("attempt must be a non-negative INTEGER")
+        if (isinstance(max_attempts, bool) or not isinstance(max_attempts, int)
+                or max_attempts < 1):
+            malformed.append("max_attempts must be a positive INTEGER")
+        if (isinstance(attempt, int) and not isinstance(attempt, bool)
+                and isinstance(max_attempts, int) and not isinstance(max_attempts, bool)
+                and max_attempts >= 1 and attempt > max_attempts):
+            malformed.append("attempt must not exceed max_attempts")
+        if malformed:
             result["uncertainty"].append(_issue(
-                "lease_on_non_running_process",
-                "lease fields exist on a process that is not running",
-                status=status, **context,
+                "malformed_process_row", "; ".join(malformed), status=status,
+                run_status=run_status, attempt=attempt, max_attempts=max_attempts,
+                lease_owner=owner, lease_expires_at=expires, **context,
+            ))
+            continue
+
+        if status != "running":
+            if owner is not None or expires is not None:
+                result["uncertainty"].append(_issue(
+                    "lease_on_non_running_process",
+                    "lease fields exist on a process that is not running",
+                    status=status, **context,
+                ))
+            continue
+        if owner is None or expires is None:
+            result["uncertainty"].append(_issue(
+                "incomplete_process_lease",
+                "running process lease requires owner and expiry", **context,
             ))
             continue
         if run_status != "active":
@@ -162,42 +218,23 @@ def inspect_leases(
                 run_status=run_status, **context,
             ))
             continue
-        if not isinstance(owner, str) or not owner:
-            result["uncertainty"].append(_issue(
-                "incomplete_process_lease",
-                "running process lease has no owner",
-                **context,
-            ))
-            continue
-        if not isinstance(expires, str) or not expires:
-            result["uncertainty"].append(_issue(
-                "incomplete_process_lease",
-                "running process lease has no expiry",
-                **context,
-            ))
-            continue
         try:
             expiry = _utc(expires)
         except (TypeError, ValueError, OverflowError) as exc:
             result["uncertainty"].append(_issue(
-                "invalid_lease_expiry", str(exc), lease_expires_at=expires, **context
+                "invalid_lease_expiry", str(exc), lease_expires_at=expires, **context,
             ))
             continue
         lease = {
-            "kind": "process",
-            "run_id": run_id,
-            "process_id": process_id,
-            "owner": owner,
-            "lease_expires_at": _stamp(expiry),
-            "attempt": attempt,
-            "max_attempts": max_attempts,
-            "process_status": status,
-            "run_status": run_status,
+            "kind": "process", "run_id": run_id, "process_id": process_id,
+            "owner": owner, "lease_expires_at": _stamp(expiry),
+            "attempt": attempt, "max_attempts": max_attempts,
+            "process_status": status, "run_status": run_status,
         }
         (result["expired"] if expiry <= observed else result["current"]).append(lease)
 
     result["complete"] = not result["errors"] and not result["uncertainty"]
-    return result
+    return _finish(result)
 
 
 __all__ = ["inspect_leases"]

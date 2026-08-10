@@ -4,6 +4,22 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.24
+
+**Transactionally safe lease inspection.**
+
+- Inspect live journals with a normal SQLite `mode=ro` connection and one read
+  transaction pinned before all schema and lease reads; remove torn sidecar
+  copying and unsafe immutable live-path reads.
+- Query every running process plus all lease residue, so incomplete running
+  claims fail closed.
+- Stream lease rows with a configurable conservative `max_rows` budget
+  (default 100,000); exhaustion returns `complete=false` and a typed error.
+  Database/WAL size is deliberately uncapped, including valid 14 GB journals.
+- Preserve application row content. SQLite lock and SHM metadata may change
+  while safely reading a live WAL journal.
+
+
 ## 0.7.23
 
 **Read-only lease inspection.**

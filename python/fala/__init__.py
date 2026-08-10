@@ -47,4 +47,4 @@ __all__ = [
     "record_in_process",
     "sdk",
 ]
-__version__ = "0.7.23"
+__version__ = "0.7.24"
