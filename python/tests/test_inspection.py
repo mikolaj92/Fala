@@ -20,7 +20,7 @@ def _db(path: Path) -> sqlite3.Connection:
       run_id TEXT, id TEXT, status TEXT, lease_owner TEXT,
       lease_expires_at TEXT, attempt INTEGER, max_attempts INTEGER
     );
-    INSERT INTO runs VALUES('active','active'),('terminal','succeeded');
+    INSERT INTO runs VALUES('active','active'),('terminal','completed');
     """)
     return connection
 
@@ -159,3 +159,45 @@ def test_wal_created_after_snapshot_is_not_partially_observed(tmp_path: Path, mo
     result = inspect_leases(path, now='2026-01-01T00:00:00Z')
     assert result['complete']
     assert result['current'] == []
+
+
+def test_malformed_storage_classes_and_statuses_fail_closed_json_safe(tmp_path: Path) -> None:
+    cases = {
+        "blob-status": ('active', 'id', sqlite3.Binary(b'running'), None, None, 1, 2),
+        "blob-id": ('active', sqlite3.Binary(b'id'), 'running', 'worker', '2026-01-02T00:00:00Z', 1, 2),
+        "blob-attempt": ('active', 'id', 'running', 'worker', '2026-01-02T00:00:00Z', sqlite3.Binary(b'1'), 2),
+        "unknown-status": ('active', 'id', 'mystery', None, None, 1, 2),
+    }
+    for name, values in cases.items():
+        path = tmp_path / f"{name}.sqlite"
+        db = _db(path); _insert(db, values); db.commit(); db.close()
+        result = inspect_leases(path, now='2026-01-01T00:00:00Z')
+        assert not result['complete'], name
+        assert result['current'] == [], name
+        assert result['uncertainty'][0]['code'] == 'malformed_process_row', name
+        json.dumps(result, sort_keys=True, allow_nan=False)
+
+
+def test_malformed_run_context_fails_closed_json_safe(tmp_path: Path) -> None:
+    path = tmp_path / 'malformed-run.sqlite'
+    db = _db(path)
+    db.execute("UPDATE runs SET status=? WHERE id='active'", (sqlite3.Binary(b'active'),))
+    _insert(db, ('active', 'id', 'running', 'worker', '2026-01-02T00:00:00Z', 1, 2))
+    db.commit(); db.close()
+    result = inspect_leases(path, now='2026-01-01T00:00:00Z')
+    assert not result['complete']
+    assert result['uncertainty'][0]['code'] == 'malformed_process_row'
+    assert result['uncertainty'][0]['run_status'] == {
+        'storage_class': 'blob', 'hex': b'active'.hex()
+    }
+    json.dumps(result, sort_keys=True, allow_nan=False)
+
+
+def test_known_terminal_rows_are_validated_and_may_be_omitted(tmp_path: Path) -> None:
+    path = tmp_path / 'terminal.sqlite'
+    db = _db(path)
+    _insert(db, ('active', 'done', 'succeeded', None, None, 1, 2))
+    db.commit(); db.close()
+    result = inspect_leases(path, now='2026-01-01T00:00:00Z', max_rows=1)
+    assert result['complete']
+    assert result['current'] == result['expired'] == []
