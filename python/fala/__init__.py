@@ -29,6 +29,8 @@ from fala.host import (
     recover_incomplete,
 )
 from fala.inspection import inspect_leases
+from fala.read import get_run, list_processes, list_runs
+from fala.rehearsal import rehearse_journal_retention
 from fala.journal import (
     LifecycleResult,
     complete_waiting_process,
@@ -54,6 +56,10 @@ __all__ = [
     "host_drive_json",
     "host_run_package",
     "inspect_leases",
+    "get_run",
+    "list_processes",
+    "list_runs",
+    "rehearse_journal_retention",
     "maintain_journal",
     "open_memory",
     "open_sqlite",
@@ -65,4 +71,4 @@ __all__ = [
     "upsert_process",
     "upsert_run_metadata",
 ]
-__version__ = "0.7.25"
+__version__ = "0.7.26"

@@ -1,3 +1,7 @@
+## 0.7.26
+
+- Add bounded, deterministic public journal run/process reads and safe retention rehearsal snapshots.
+
 # Changelog
 
 Fala follows semantic versioning for the product surface (packages, adapters,
