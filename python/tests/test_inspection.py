@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import hashlib
 import sqlite3
 from pathlib import Path
 
 from fala import inspect_leases
+import fala.inspection as inspection
 
 
 def _db(path: Path) -> sqlite3.Connection:
@@ -61,12 +62,13 @@ def test_reads_committed_wal_without_mutation(tmp_path: Path) -> None:
     db.commit()
     wal = Path(str(path) + '-wal')
     assert wal.exists()
-    before = {p.name: (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
-              for p in (path, wal, Path(str(path) + '-shm')) if p.exists()}
+    database_bytes_before = hashlib.sha256(path.read_bytes()).hexdigest()
+    before = db.execute('SELECT quote(run_id), quote(id), quote(status), quote(lease_owner), quote(lease_expires_at), quote(attempt), quote(max_attempts) FROM processes ORDER BY id').fetchall()
     result = inspect_leases(path, now='2026-01-01T00:00:00Z')
-    after = {p.name: (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
-             for p in (path, wal, Path(str(path) + '-shm')) if p.exists()}
+    after = db.execute('SELECT quote(run_id), quote(id), quote(status), quote(lease_owner), quote(lease_expires_at), quote(attempt), quote(max_attempts) FROM processes ORDER BY id').fetchall()
     assert [x['process_id'] for x in result['current']] == ['wal-live']
+    # Read-only inspection may change SQLite lock/SHM metadata, never DB/row content.
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == database_bytes_before
     assert before == after
     db.close()
 
@@ -79,3 +81,81 @@ def test_missing_corrupt_and_invalid_now_fail_closed(tmp_path: Path) -> None:
     assert not damaged['complete'] and damaged['errors'][0]['code'] == 'database_error'
     invalid = inspect_leases(corrupt, now='naive')
     assert invalid['errors'][0]['code'] == 'invalid_now'
+
+
+def test_null_running_is_uncertainty_and_row_limit_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / 'limits.sqlite'
+    db = _db(path)
+    _insert(db, ('active', 'missing', 'running', None, None, 1, 2))
+    _insert(db, ('active', 'live', 'running', 'worker', '2026-01-02T00:00:00Z', 1, 2))
+    db.commit(); db.close()
+
+    result = inspect_leases(path, now='2026-01-01T00:00:00Z')
+    assert not result['complete']
+    assert result['uncertainty'][0]['code'] == 'incomplete_process_lease'
+    limited = inspect_leases(path, now='2026-01-01T00:00:00Z', max_rows=1)
+    assert not limited['complete']
+    assert limited['errors'][0]['code'] == 'row_limit_exceeded'
+
+
+def test_preexisting_wal_commit_survives_concurrent_checkpoint(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / 'checkpoint.sqlite'
+    writer = _db(path)
+    writer.execute('PRAGMA journal_mode=WAL')
+    _insert(writer, ('active', 'preexisting-live', 'running', 'worker', '2026-01-02T00:00:00Z', 1, 2))
+    writer.commit()
+    original = inspection._pin_read_snapshot
+
+    def pin_then_checkpoint(connection):
+        original(connection)
+        # Snapshot is already materialized. A checkpoint cannot tear it.
+        writer.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+
+    monkeypatch.setattr(inspection, '_pin_read_snapshot', pin_then_checkpoint)
+    result = inspect_leases(path, now='2026-01-01T00:00:00Z')
+    assert result['complete']
+    assert [x['process_id'] for x in result['current']] == ['preexisting-live']
+    writer.close()
+
+
+def test_commit_after_snapshot_is_consistently_excluded(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / 'during.sqlite'
+    writer = _db(path)
+    writer.execute('PRAGMA journal_mode=WAL')
+    writer.commit()
+    original = inspection._pin_read_snapshot
+
+    def pin_then_commit(connection):
+        original(connection)
+        _insert(writer, ('active', 'later', 'running', 'worker', '2026-01-02T00:00:00Z', 1, 2))
+        writer.commit()
+
+    monkeypatch.setattr(inspection, '_pin_read_snapshot', pin_then_commit)
+    result = inspect_leases(path, now='2026-01-01T00:00:00Z')
+    assert result['complete']
+    assert result['current'] == []
+    assert writer.execute("SELECT count(*) FROM processes WHERE id='later'").fetchone() == (1,)
+    writer.close()
+
+
+def test_wal_created_after_snapshot_is_not_partially_observed(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / 'wal-created.sqlite'
+    setup = _db(path)
+    setup.execute('PRAGMA journal_mode=WAL')
+    setup.commit(); setup.close()
+    wal = Path(str(path) + '-wal')
+    assert not wal.exists()
+    original = inspection._pin_read_snapshot
+
+    def pin_then_create_wal(connection):
+        original(connection)
+        writer = sqlite3.connect(path)
+        _insert(writer, ('active', 'new-wal-row', 'running', 'worker', '2026-01-02T00:00:00Z', 1, 2))
+        writer.commit()
+        assert wal.exists()
+        writer.close()
+
+    monkeypatch.setattr(inspection, '_pin_read_snapshot', pin_then_create_wal)
+    result = inspect_leases(path, now='2026-01-01T00:00:00Z')
+    assert result['complete']
+    assert result['current'] == []

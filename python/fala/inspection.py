@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import shutil
-import tempfile
 from datetime import datetime, timezone
 from os import fspath
 from pathlib import Path
@@ -19,7 +17,8 @@ SELECT p.run_id, p.id, p.status, p.lease_owner, p.lease_expires_at,
        p.attempt, p.max_attempts, r.status
 FROM processes AS p
 LEFT JOIN runs AS r ON r.id = p.run_id
-WHERE p.lease_owner IS NOT NULL OR p.lease_expires_at IS NOT NULL
+WHERE p.status = 'running'
+   OR p.lease_owner IS NOT NULL OR p.lease_expires_at IS NOT NULL
 ORDER BY p.run_id ASC, p.id ASC
 """
 _SCHEMA_QUERY = """
@@ -75,16 +74,30 @@ def _issue(code: str, message: str, **context: Any) -> dict[str, Any]:
     return result
 
 
-def inspect_leases(
-    db_path: str | bytes | Path, now: datetime | str | None = None
-) -> dict[str, Any]:
-    """Inspect current Fala leases without creating or changing the database.
+def _pin_read_snapshot(connection: sqlite3.Connection) -> None:
+    """Start and materialize a SQLite read transaction.
 
-    The JSON-safe result fails closed: database/schema failures are reported in
-    ``errors`` and ``complete`` remains false. Only schema-v6 ``running``
-    processes with both lease fields are classified current or expired. A
-    read-only connection includes committed WAL records; immutable mode is used
-    only when no WAL sidecar exists because immutable SQLite cannot follow WAL.
+    ``BEGIN`` alone is deferred.  Reading ``schema_version`` establishes the
+    snapshot before inspection performs schema validation or reads lease rows.
+    """
+    connection.execute("BEGIN")
+    connection.execute("PRAGMA schema_version").fetchone()
+
+
+def inspect_leases(
+    db_path: str | bytes | Path,
+    now: datetime | str | None = None,
+    *,
+    max_rows: int = 100_000,
+) -> dict[str, Any]:
+    """Inspect current Fala leases through one pinned read-only transaction.
+
+    The JSON-safe, API-v1 result fails closed: database/schema/limit failures
+    are reported in ``errors`` and ``complete`` remains false.  ``max_rows``
+    bounds in-memory evidence retained by inspection without imposing a limit
+    on the database or WAL file size.  SQLite may update lock/SHM metadata as
+    part of safely reading a live WAL database; application rows are never
+    written by this function.
     """
     result = _envelope()
     try:
@@ -92,6 +105,12 @@ def inspect_leases(
         result["observed_at"] = _stamp(observed)
     except (TypeError, ValueError, OverflowError) as exc:
         result["errors"].append(_issue("invalid_now", str(exc)))
+        return result
+
+    if isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows < 1:
+        result["errors"].append(
+            _issue("invalid_limit", "max_rows must be a positive integer")
+        )
         return result
 
     try:
@@ -102,45 +121,38 @@ def inspect_leases(
         result["errors"].append(_issue("database_unavailable", str(exc)))
         return result
 
-    # mode=ro is mandatory. Avoid immutable when a WAL exists: SQLite's
-    # immutable contract assumes sidecars do not change and may omit WAL data.
-    wal_present = Path(str(path) + "-wal").exists()
+    rows: list[tuple[Any, ...]] = []
+    uri = f"file:{quote(str(path), safe='/')}?mode=ro"
     try:
-        with tempfile.TemporaryDirectory(prefix="fala-inspect-") as temporary:
-            opened_path = path
-            if wal_present:
-                # Read the WAL through a private copy. Even a mode=ro SQLite
-                # connection writes lock bytes in the original -shm file.
-                # Copying all existing members keeps the source byte-for-byte
-                # untouched while retaining committed WAL frames.
-                opened_path = Path(temporary) / path.name
-                for suffix in ("", "-wal", "-shm"):
-                    source = Path(str(path) + suffix)
-                    if source.exists():
-                        shutil.copy2(source, Path(str(opened_path) + suffix))
-                # A writer may commit while sidecars are copied. Validate that
-                # the copied WAL is readable; SQLite failure is fail-closed.
-            uri = f"file:{quote(str(opened_path), safe='/')}?mode=ro"
-            if not wal_present:
-                uri += "&immutable=1"
-            connection = sqlite3.connect(uri, uri=True, timeout=0)
-            try:
-                row = connection.execute(_SCHEMA_QUERY).fetchone()
-                user_version = connection.execute("PRAGMA user_version").fetchone()
-                if (
-                    row is None
-                    or row[0] != _SCHEMA_VERSION
-                    or user_version is None
-                    or user_version[0] != _SCHEMA_VERSION
-                ):
-                    result["errors"].append(
-                        _issue("unsupported_schema", "Fala schema v6 is required")
-                    )
-                    return result
-                rows = connection.execute(_LEASE_QUERY).fetchall()
-            finally:
-                connection.close()
-    except (sqlite3.Error, OSError) as exc:
+        connection = sqlite3.connect(uri, uri=True, timeout=0)
+        try:
+            _pin_read_snapshot(connection)
+            row = connection.execute(_SCHEMA_QUERY).fetchone()
+            user_version = connection.execute("PRAGMA user_version").fetchone()
+            if (
+                row is None
+                or row[0] != _SCHEMA_VERSION
+                or user_version is None
+                or user_version[0] != _SCHEMA_VERSION
+            ):
+                result["errors"].append(
+                    _issue("unsupported_schema", "Fala schema v6 is required")
+                )
+                return result
+
+            cursor = connection.execute(_LEASE_QUERY)
+            for row_number, lease_row in enumerate(cursor, start=1):
+                if row_number > max_rows:
+                    result["errors"].append(_issue(
+                        "row_limit_exceeded",
+                        "lease inspection row limit exceeded",
+                        max_rows=max_rows,
+                    ))
+                    break
+                rows.append(lease_row)
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
         result["errors"].append(_issue("database_error", str(exc)))
         return result
 
@@ -155,13 +167,6 @@ def inspect_leases(
                 status=status, **context,
             ))
             continue
-        if run_status != "active":
-            result["uncertainty"].append(_issue(
-                "lease_outside_active_run",
-                "running process lease does not belong to an active run",
-                run_status=run_status, **context,
-            ))
-            continue
         if not isinstance(owner, str) or not owner:
             result["uncertainty"].append(_issue(
                 "incomplete_process_lease",
@@ -174,6 +179,13 @@ def inspect_leases(
                 "incomplete_process_lease",
                 "running process lease has no expiry",
                 **context,
+            ))
+            continue
+        if run_status != "active":
+            result["uncertainty"].append(_issue(
+                "lease_outside_active_run",
+                "running process lease does not belong to an active run",
+                run_status=run_status, **context,
             ))
             continue
         try:
