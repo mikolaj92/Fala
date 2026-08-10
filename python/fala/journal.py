@@ -269,6 +269,51 @@ _SCHEMA_UNIQUES = {
 }
 
 
+# Exact historical layouts covered by mojo/smoke/schema_migration.mojo.  This is
+# deliberately a closed list: migration acceptance must not become a relaxed
+# version of the schema-v6 validator.
+_LEGACY_RUNTIME_EVENT_SHAPES = (
+    [("run_id", "TEXT", 1, None, 0), ("sequence", "INTEGER", 1, None, 0),
+     ("id", "TEXT", 0, None, 1), ("event_type", "TEXT", 1, None, 0),
+     ("payload", "TEXT", 1, None, 0), ("created_at", "TEXT", 1, None, 0)],
+    [("run_id", "TEXT", 1, None, 0), ("sequence", "INTEGER", 1, None, 0),
+     ("id", "TEXT", 0, None, 1), ("event_type", "TEXT", 1, None, 0),
+     ("process_id", "TEXT", 0, None, 0), ("payload", "TEXT", 1, None, 0),
+     ("created_at", "TEXT", 1, None, 0)],
+    [("run_id", "TEXT", 1, None, 0), ("sequence", "INTEGER", 1, None, 0),
+     ("id", "TEXT", 0, None, 1), ("event_type", "TEXT", 1, None, 0),
+     ("schema_version", "INTEGER", 1, "1", 0),
+     ("payload", "TEXT", 1, None, 0), ("created_at", "TEXT", 1, None, 0)],
+)
+_LEGACY_PROCESS_SHAPE = [
+    (name, type_, 0 if name == "id" else notnull, default, 1 if name == "id" else 0)
+    for name, type_, notnull, default, _ in _SCHEMA_SHAPES["processes"][:-1]
+]
+
+_RUNTIME_EVENTS_V6_SQL = """CREATE TABLE runtime_events (
+    run_id TEXT NOT NULL, sequence INTEGER NOT NULL, id TEXT NOT NULL,
+    event_type TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1,
+    impulse_id TEXT, process_id TEXT, command_id TEXT, actor TEXT,
+    correlation_id TEXT, causation_id TEXT, payload TEXT NOT NULL,
+    created_at TEXT NOT NULL, PRIMARY KEY (run_id, sequence),
+    UNIQUE (run_id, id), FOREIGN KEY (run_id, command_id)
+    REFERENCES runtime_commands (run_id, id))"""
+_PROCESSES_V6_SQL = """CREATE TABLE processes (
+    run_id TEXT NOT NULL, id TEXT NOT NULL, process_type TEXT NOT NULL,
+    impulse_id TEXT, status TEXT NOT NULL, priority INTEGER NOT NULL,
+    attempt INTEGER NOT NULL, max_attempts INTEGER NOT NULL,
+    available_at TEXT NOT NULL, lease_owner TEXT, lease_expires_at TEXT,
+    input_json TEXT NOT NULL, output_json TEXT NOT NULL, error_json TEXT NOT NULL,
+    metadata TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    started_at TEXT, finished_at TEXT, output_schema_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (run_id, id), FOREIGN KEY (run_id, impulse_id)
+    REFERENCES impulses (run_id, id))"""
+
+
+def _is_legacy(table: str, actual: list[tuple[Any, ...]]) -> bool:
+    return ((table == "runtime_events" and actual in _LEGACY_RUNTIME_EVENT_SHAPES)
+            or (table == "processes" and actual == _LEGACY_PROCESS_SHAPE))
+
 def _shape(conn: sqlite3.Connection, table: str) -> list[tuple[Any, ...]]:
     return [(r[1], str(r[2]).upper(), r[3], r[4], r[5]) for r in conn.execute(f"PRAGMA table_info({table})")]
 
@@ -292,32 +337,27 @@ def _validate_schema(conn: sqlite3.Connection, *, before_migration: bool) -> Non
             raise RuntimeError(f"fala journal: schema-v6 table {table!r} is missing")
         actual = _shape(conn, table)
         allowed = [expected]
-        # These are the only legacy shapes the native v6 migration repairs.
+        # Native ALTER migrations also support these canonical-PK omissions.
         if before_migration and table == "processes":
             allowed.append(expected[:-1])
         if before_migration and table == "homeostats":
             allowed.extend([expected[:7] + expected[9:], expected[:8] + expected[9:]])
-        if before_migration and table == "runtime_events":
-            required = {"run_id", "sequence", "id", "event_type", "payload", "created_at"}
-            expected_by_name = {column[0]: column for column in expected}
-            actual_names = {column[0] for column in actual}
-            legacy_ok = required <= actual_names <= set(expected_by_name) and all(
-                column == expected_by_name[column[0]] for column in actual
-            )
-            if legacy_ok:
-                allowed.append(actual)
-        if not any(sorted(actual) == sorted(candidate) for candidate in allowed):
+        legacy = before_migration and _is_legacy(table, actual)
+        if not legacy and not any(sorted(actual) == sorted(candidate) for candidate in allowed):
             raise RuntimeError(f"fala journal: incompatible {table} table; refusing schema-v6 write")
-        expected_fks = _SCHEMA_FOREIGN_KEYS.get(table, [])
-        if _foreign_keys(conn, table) != expected_fks:
-            raise RuntimeError(f"fala journal: incompatible {table} foreign keys; refusing schema-v6 write")
-        uniques = {
-            _index_columns(conn, row[1])
-            for row in conn.execute(f"PRAGMA index_list({table})")
-            if row[3] == "u"
-        }
-        if uniques != _SCHEMA_UNIQUES.get(table, set()):
-            raise RuntimeError(f"fala journal: incompatible {table} unique constraints; refusing schema-v6 write")
+        # Historical single-id-PK fixtures cannot carry v6 table constraints;
+        # they are rebuilt transactionally after this closed-contract preflight.
+        if not legacy:
+            expected_fks = _SCHEMA_FOREIGN_KEYS.get(table, [])
+            if _foreign_keys(conn, table) != expected_fks:
+                raise RuntimeError(f"fala journal: incompatible {table} foreign keys; refusing schema-v6 write")
+            uniques = {
+                _index_columns(conn, row[1])
+                for row in conn.execute(f"PRAGMA index_list({table})")
+                if row[3] == "u"
+            }
+            if uniques != _SCHEMA_UNIQUES.get(table, set()):
+                raise RuntimeError(f"fala journal: incompatible {table} unique constraints; refusing schema-v6 write")
     for name, columns in _SCHEMA_INDEXES.items():
         if ("index", name) not in objects:
             if before_migration:
@@ -333,6 +373,52 @@ def _validate_schema(conn: sqlite3.Connection, *, before_migration: bool) -> Non
         actual_sql = " ".join((objects[("trigger", name)] or "").lower().split())
         if actual_sql != expected_sql:
             raise RuntimeError(f"fala journal: incompatible trigger {name}; refusing schema-v6 write")
+
+
+def _rebuild_legacy_tables(db: Path) -> None:
+    """Upgrade the four documented single-id-PK fixtures without losing rows."""
+    with _connect(db) as conn:
+        legacy = {
+            table for table in ("runtime_events", "processes")
+            if _is_legacy(table, _shape(conn, table))
+        }
+        if not legacy:
+            return
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if "runtime_events" in legacy:
+                columns = [column[0] for column in _shape(conn, "runtime_events")]
+                conn.execute("ALTER TABLE runtime_events RENAME TO _fala_legacy_runtime_events")
+                conn.execute(_RUNTIME_EVENTS_V6_SQL)
+                targets = [
+                    "run_id", "sequence", "id", "event_type", "schema_version",
+                    "impulse_id", "process_id", "command_id", "actor",
+                    "correlation_id", "causation_id", "payload", "created_at",
+                ]
+                expressions = [
+                    name if name in columns else ("1" if name == "schema_version" else "NULL")
+                    for name in targets
+                ]
+                conn.execute(
+                    f"INSERT INTO runtime_events ({','.join(targets)}) "
+                    f"SELECT {','.join(expressions)} FROM _fala_legacy_runtime_events"
+                )
+                conn.execute("DROP TABLE _fala_legacy_runtime_events")
+            if "processes" in legacy:
+                columns = [column[0] for column in _shape(conn, "processes")]
+                conn.execute("ALTER TABLE processes RENAME TO _fala_legacy_processes")
+                conn.execute(_PROCESSES_V6_SQL)
+                targets = columns + ["output_schema_json"]
+                conn.execute(
+                    f"INSERT INTO processes ({','.join(targets)}) "
+                    f"SELECT {','.join(columns)}, '{{}}' FROM _fala_legacy_processes"
+                )
+                conn.execute("DROP TABLE _fala_legacy_processes")
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
 
 def _validate_v6(conn: sqlite3.Connection) -> None:
@@ -351,6 +437,7 @@ def ensure_journal(db_path: str | Path) -> None:
         if db.exists():
             with _connect(db) as conn:
                 _validate_schema(conn, before_migration=True)
+            _rebuild_legacy_tables(db)
         _ensure_durable_schema(db)
         with _connect(db) as conn:
             _validate_v6(conn)

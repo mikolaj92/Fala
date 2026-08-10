@@ -291,3 +291,66 @@ def test_waiting_upsert_rejects_existing_lease_and_terminal_update_clears_it(tmp
     fala.upsert_process(db, run_id="run", process_id="process", status="succeeded")
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT lease_owner,lease_expires_at FROM processes WHERE run_id='run' AND id='process'").fetchone() == (None, None)
+
+
+_RUNTIME_LEGACY = {
+    "minimal": "CREATE TABLE runtime_events (run_id TEXT NOT NULL, sequence INTEGER NOT NULL, id TEXT PRIMARY KEY, event_type TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)",
+    "process-only": "CREATE TABLE runtime_events (run_id TEXT NOT NULL, sequence INTEGER NOT NULL, id TEXT PRIMARY KEY, event_type TEXT NOT NULL, process_id TEXT, payload TEXT NOT NULL, created_at TEXT NOT NULL)",
+    "schema-only": "CREATE TABLE runtime_events (run_id TEXT NOT NULL, sequence INTEGER NOT NULL, id TEXT PRIMARY KEY, event_type TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1, payload TEXT NOT NULL, created_at TEXT NOT NULL)",
+}
+
+
+@pytest.mark.parametrize("label", list(_RUNTIME_LEGACY))
+def test_public_ensure_rebuilds_exact_native_runtime_legacy_and_preserves_rows(tmp_path, label) -> None:
+    import fala
+    db = tmp_path / f"{label}.sqlite"
+    with sqlite3.connect(db) as conn:
+        conn.execute(_RUNTIME_LEGACY[label])
+        conn.execute("INSERT INTO runtime_events (run_id,sequence,id,event_type,payload,created_at) VALUES ('legacy',1,'legacy-event','run.created','{\"kept\":true}','now')")
+    fala.ensure_journal(db)
+    with sqlite3.connect(db) as conn:
+        row = conn.execute("SELECT payload,process_id,schema_version,actor,correlation_id FROM runtime_events WHERE id='legacy-event'").fetchone()
+        assert row == ('{"kept":true}', None, 1, None, None)
+        assert [(r[1], r[5]) for r in conn.execute("PRAGMA table_info(runtime_events)") if r[5]] == [("run_id", 1), ("sequence", 2)]
+        assert conn.execute("PRAGMA foreign_key_list(runtime_events)").fetchall()
+    fala.ensure_journal(db)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM runtime_events WHERE id='legacy-event'").fetchone()[0] == 1
+
+
+def test_public_ensure_rebuilds_exact_native_process_legacy_and_preserves_rows(tmp_path) -> None:
+    import fala
+    db = tmp_path / "process.sqlite"
+    sql = "CREATE TABLE processes (run_id TEXT NOT NULL, id TEXT PRIMARY KEY, process_type TEXT NOT NULL, impulse_id TEXT, status TEXT NOT NULL, priority INTEGER NOT NULL, attempt INTEGER NOT NULL, max_attempts INTEGER NOT NULL, available_at TEXT NOT NULL, lease_owner TEXT, lease_expires_at TEXT, input_json TEXT NOT NULL, output_json TEXT NOT NULL, error_json TEXT NOT NULL, metadata TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, started_at TEXT, finished_at TEXT)"
+    with sqlite3.connect(db) as conn:
+        conn.execute(sql)
+        conn.execute("INSERT INTO processes (run_id,id,process_type,status,priority,attempt,max_attempts,available_at,input_json,output_json,error_json,metadata,created_at,updated_at) VALUES ('legacy','legacy-process','manual','ready',0,0,1,'now','{}','{}','{}','{}','now','now')")
+    fala.ensure_journal(db)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT run_id,id,status,output_schema_json FROM processes").fetchall() == [("legacy", "legacy-process", "ready", "{}")]
+        assert [(r[1], r[5]) for r in conn.execute("PRAGMA table_info(processes)") if r[5]] == [("run_id", 1), ("id", 2)]
+
+
+@pytest.mark.parametrize("mutation", ["extra", "nullable", "wrong-pk"])
+def test_legacy_acceptance_is_closed_and_malformed_lookalikes_are_unchanged(tmp_path, mutation) -> None:
+    import fala
+    db = tmp_path / f"bad-{mutation}.sqlite"
+    sql = _RUNTIME_LEGACY["minimal"]
+    if mutation == "extra":
+        sql = sql[:-1] + ", bogus TEXT)"
+    elif mutation == "nullable":
+        sql = sql.replace("payload TEXT NOT NULL", "payload TEXT")
+    else:
+        sql = sql.replace("id TEXT PRIMARY KEY", "id TEXT")
+    with sqlite3.connect(db) as conn:
+        conn.execute(sql)
+        conn.execute("INSERT INTO runtime_events (run_id,sequence,id,event_type,payload,created_at) VALUES ('legacy',1,'sentinel','type','{}','now')")
+    with pytest.raises(RuntimeError, match="incompatible runtime_events"):
+        fala.ensure_journal(db)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT id,payload FROM runtime_events").fetchall() == [("sentinel", "{}")]
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+        expected = ["run_id", "sequence", "id", "event_type", "payload", "created_at"]
+        if mutation == "extra":
+            expected.append("bogus")
+        assert [r[1] for r in conn.execute("PRAGMA table_info(runtime_events)")] == expected
