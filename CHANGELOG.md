@@ -4,6 +4,19 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.23
+
+**Read-only lease inspection.**
+
+- Add public `inspect_leases(db_path, now=None)` for deterministic, versioned,
+  JSON-safe schema-v6 process lease inspection.
+- Classify active-run running process claims as current or expired while
+  reporting malformed, terminal, and foreign-run lease fields as uncertainty.
+- Open journals read-only and immutable when safe; committed WAL state is read
+  from a private sidecar copy so the source database remains byte-for-byte unchanged.
+- Missing, corrupt, or unsupported databases and invalid timestamps fail closed.
+
+
 ## 0.7.21
 
 **Terminal effector results.**
