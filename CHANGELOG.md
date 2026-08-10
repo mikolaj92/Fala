@@ -4,6 +4,16 @@ Fala follows semantic versioning for the product surface (packages, adapters,
 CLI, journal/driver contracts).
 
 
+## 0.7.25
+
+**Public journal lifecycle operations.**
+
+- Add domain-blind, JSON-safe helpers to ensure a durable journal; upsert run
+  metadata and process rows; transition or finalize runs; park external work;
+  and atomically complete a waiting process, optional homeostat, and run.
+- Keep consumer metadata opaque and completion idempotent while retaining
+  `record_in_process` for execution owned by the calling process.
+
 ## 0.7.24
 
 **Transactionally safe lease inspection.**
