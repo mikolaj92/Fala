@@ -158,6 +158,7 @@ continue to own run creation and finalization policy.
 
 | Doc | Focus |
 | --- | --- |
+| [`AGENTS.md`](AGENTS.md) | composition mandate for agents and consumers |
 | [`CONCEPTUAL_MODEL.md`](docs/CONCEPTUAL_MODEL.md) | canonical ontology and conduction rules |
 | [`CYBERNETIC_MAPPING.md`](docs/CYBERNETIC_MAPPING.md) | historical → current lexicon and Mojo surfaces |
 | [`UNIX_AND_CYBERNETICS.md`](docs/UNIX_AND_CYBERNETICS.md) | Unix composition and cybernetic synthesis |
