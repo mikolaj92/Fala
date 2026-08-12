@@ -602,7 +602,7 @@ def _metadata_without_wait_marker(metadata: String) raises -> String:
         if pair.key != "__correlation_wait_diagnostic": root[pair.key] = pair.value.copy()
     return canonical_json_text(to_string(root^))
 
-def _persist_wait_diagnostic(mut journal: NativeJournal, plan: CorrelationInstantiationPlan, diagnostic: CorrelationWaitDiagnostic) raises SQLiteError:
+def _persist_wait_diagnostic(mut journal: NativeJournal, plan: CorrelationInstantiationPlan, diagnostic: CorrelationWaitDiagnostic) raises:
     """Persist one canonical wait marker, clearing stale markers atomically."""
     var marker = ""
     var holder = ""
@@ -610,7 +610,7 @@ def _persist_wait_diagnostic(mut journal: NativeJournal, plan: CorrelationInstan
         try:
             marker = _wait_marker_json(diagnostic)
         except err:
-            raise SQLiteError(code=1, message="correlation advance: invalid wait diagnostic")
+            raise Error(String(SQLiteError(code=1, message="correlation advance: invalid wait diagnostic")))
         holder = diagnostic.blocked_process_ids[0]
     var rows = journal.list_processes(plan.run_id)
     journal.db.begin()
@@ -634,7 +634,7 @@ def _persist_wait_diagnostic(mut journal: NativeJournal, plan: CorrelationInstan
         journal.db.commit()
     except err:
         journal.db.rollback()
-        raise SQLiteError(code=1, message="correlation advance: wait diagnostic transaction failed")
+        raise Error(String(SQLiteError(code=1, message="correlation advance: wait diagnostic transaction failed")))
 
 def _wait_diagnostic(computed: CorrelationAdvancePlan) -> CorrelationWaitDiagnostic:
     if computed.wait_diagnostic.code != "": return computed.wait_diagnostic.copy()

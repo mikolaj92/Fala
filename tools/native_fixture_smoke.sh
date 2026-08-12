@@ -8,15 +8,9 @@ command -v mojo >/dev/null || {
 }
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-if [ ! -d "$root/vendor/EmberJson" ]; then
-  echo "EmberJson missing under vendor/. Cloning dynamically via git..." >&2
-  git clone --depth 1 https://github.com/bgreni/EmberJson.git "$root/vendor/EmberJson"
-fi
+"$root/tools/setup_ember_json.sh"
 
-if [ ! -d "$root/vendor/sqlite.fire" ]; then
-  echo "sqlite.fire missing under vendor/. Cloning dynamically via git..." >&2
-  git clone --depth 1 https://github.com/mikolaj92/sqlite.fire.git "$root/vendor/sqlite.fire"
-fi
+"$root/tools/setup_sqlite_fire.sh"
 
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/fala-native-fixtures.XXXXXX")
 trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM

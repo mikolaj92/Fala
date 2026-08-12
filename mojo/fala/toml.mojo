@@ -238,7 +238,9 @@ struct TomlParser(Movable):
     def _parse_number(self, token: String) raises -> Value:
         var clean = self._strip_underscores(token)
         var signless = clean
-        if signless.startswith("+") or signless.startswith("-"): signless = String(signless[byte=1:])
+        if signless.startswith("+") or signless.startswith("-"):
+            var unsigned = String(signless[byte=1:])
+            signless = unsigned^
         if signless.startswith("0x") or signless.startswith("0X"):
             return self._parse_integer_base(clean, 16)
         if signless.startswith("0o") or signless.startswith("0O"):
@@ -257,7 +259,9 @@ struct TomlParser(Movable):
             if digits.startswith("0"): self._error("leading zero in decimal integer")
         try:
             var decimal = clean
-            if decimal.startswith("+"): decimal = String(decimal[byte=1:])
+            if decimal.startswith("+"):
+                var unsigned_decimal = String(decimal[byte=1:])
+                decimal = unsigned_decimal^
             var parsed = Value(parse_string=decimal)
             if not parsed.is_int() and not parsed.is_uint(): self._error("invalid decimal integer")
             return parsed^
@@ -322,8 +326,10 @@ struct TomlParser(Movable):
     def _parse_scalar_value(mut self) raises -> Value:
         self._skip_spaces()
         var ch = self._char()
-        if self.text[byte=self.index:self.index + 3] == "\"\"\"" or self.text[byte=self.index:self.index + 3] == "'''":
-            self._error("multiline strings are unsupported")
+        if self.index + 3 <= self.text.byte_length():
+            var prefix = String(self.text[byte=self.index:self.index + 3])
+            if prefix == "\"\"\"" or prefix == "'''":
+                self._error("multiline strings are unsupported")
         if ch == "\"": return Value(self._parse_basic_string())
         if ch == "'": return Value(self._parse_literal_string())
         var start = self.index

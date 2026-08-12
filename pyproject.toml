@@ -37,6 +37,7 @@ include = [
   "examples",
   "docs",
   "tools",
+  "patches",
   "README.md",
   "LICENSE",
   "CHANGELOG.md",

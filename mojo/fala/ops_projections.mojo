@@ -35,16 +35,16 @@ def rebuild_projections_with_command(
     command_type: String, idempotency_key: String, created_at: String,
     updated_at: String = "", events: List[EventInput] = List[EventInput](),
     actor: String = "", correlation_id: String = "", causation_id: String = "",
-) raises SQLiteError -> ProjectionRebuildResult:
+) raises -> ProjectionRebuildResult:
     if command_type != "projection.rebuild":
-        raise SQLiteError(code=1, message="rebuild_projections_with_command requires command_type 'projection.rebuild'")
+        raise Error(String(SQLiteError(code=1, message="rebuild_projections_with_command requires command_type 'projection.rebuild'")))
     store._require_run(run_id)
     var requested = List[String]()
     if len(names) == 0: requested.append("run_summary")
     else:
         for name in names:
-            if name == "": raise SQLiteError(code=1, message="domain store: projection name must not be empty")
-            if name != "run_summary": raise SQLiteError(code=1, message="Unknown projection rebuild name: " + name)
+            if name == "": raise Error(String(SQLiteError(code=1, message="domain store: projection name must not be empty")))
+            if name != "run_summary": raise Error(String(SQLiteError(code=1, message="Unknown projection rebuild name: " + name)))
             var duplicate = False
             for prior in requested:
                 if prior == name: duplicate = True
@@ -67,12 +67,12 @@ def rebuild_projections_with_command(
         for item in events: stored_events.append(store._append_domain_event_in_tx(command, item)^)
         var latest = store.db.query("SELECT COALESCE(MAX(sequence),0) FROM runtime_events WHERE run_id=?")
         latest.bind_text(1, run_id)
-        if not latest.step(): raise SQLiteError(code=1, message="domain store: unable to read event watermark")
+        if not latest.step(): raise Error(String(SQLiteError(code=1, message="domain store: unable to read event watermark")))
         var watermark = latest.column_int(0); latest.close()
         var effective_at = updated_at
         if effective_at == "": effective_at = created_at
         if effective_at == "":
-            raise SQLiteError(code=2, message="domain store: projection rebuild timestamp must not be empty")
+            raise Error(String(SQLiteError(code=2, message="domain store: projection rebuild timestamp must not be empty")))
         for name in requested:
             var data = _run_summary_data(store, run_id, watermark)
             var insert = store.db.query("INSERT INTO projections (run_id,name,id,version,data,source_event_sequence,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(run_id,name) DO UPDATE SET data=excluded.data,source_event_sequence=excluded.source_event_sequence,updated_at=excluded.updated_at")
@@ -83,7 +83,7 @@ def rebuild_projections_with_command(
     except err:
         store.db.rollback(); raise err^
 
-def _count_rows(mut store: NativeDomainStore, table: String, run_id: String) raises SQLiteError -> Int:
+def _count_rows(mut store: NativeDomainStore, table: String, run_id: String) raises -> Int:
     var stmt = store.db.query("SELECT COUNT(*) FROM " + table + " WHERE run_id=?")
     stmt.bind_text(1, run_id)
     if not stmt.step():
@@ -93,7 +93,7 @@ def _count_rows(mut store: NativeDomainStore, table: String, run_id: String) rai
     stmt.close()
     return result
 
-def _group_json(mut store: NativeDomainStore, table: String, column: String, run_id: String) raises SQLiteError -> String:
+def _group_json(mut store: NativeDomainStore, table: String, column: String, run_id: String) raises -> String:
     var stmt = store.db.query("SELECT " + column + ",COUNT(*) FROM " + table + " WHERE run_id=? GROUP BY " + column + " ORDER BY " + column + " ASC")
     stmt.bind_text(1, run_id)
     var result = "{"
@@ -105,7 +105,7 @@ def _group_json(mut store: NativeDomainStore, table: String, column: String, run
     stmt.close()
     return result + "}"
 
-def _run_summary_data(mut store: NativeDomainStore, run_id: String, source_sequence: Int) raises SQLiteError -> String:
+def _run_summary_data(mut store: NativeDomainStore, run_id: String, source_sequence: Int) raises -> String:
     var event_types = _group_json(store, "runtime_events", "event_type", run_id)
     var impulse_types = _group_json(store, "impulses", "impulse_type", run_id)
     var homeostat_status = _group_json(store, "homeostats", "status", run_id)
@@ -135,27 +135,27 @@ def _run_summary_data(mut store: NativeDomainStore, run_id: String, source_seque
     var event_count = _count_rows(store, "runtime_events", run_id)
     return "{\"association_count\":" + String(_count_rows(store, "associations", run_id)) + ",\"event_count\":" + String(event_count) + ",\"event_type_counts\":" + event_types + ",\"homeostat_count\":" + String(_count_rows(store, "homeostats", run_id)) + ",\"homeostat_status_counts\":" + homeostat_status + ",\"impulse_count\":" + String(_count_rows(store, "impulses", run_id)) + ",\"impulse_type_counts\":" + impulse_types + ",\"process_count\":" + String(_count_rows(store, "processes", run_id)) + ",\"process_status_counts\":" + process_status + ",\"reaction_count\":" + String(_count_rows(store, "reactions", run_id)) + ",\"resource_accounting\":{\"bridge_command_count\":" + String(bridge_command_count) + ",\"bridge_delivery_count\":" + String(bridge_delivery_count) + ",\"process_attempts\":" + String(process_attempts) + ",\"process_input_bytes\":" + String(input_bytes) + ",\"process_output_bytes\":" + String(output_bytes) + ",\"reaction_bytes\":" + String(reaction_bytes) + ",\"spawned_run_count\":" + String(spawned) + ",\"subprocess_count\":" + String(subprocesses) + "},\"run_id\":" + _quote(run_id) + ",\"source_event_sequence\":" + String(source_sequence) + "}"
 
-def rebuild_projection(mut store: NativeDomainStore, run_id: String, name: String, updated_at: String = "") raises SQLiteError -> Projection:
+def rebuild_projection(mut store: NativeDomainStore, run_id: String, name: String, updated_at: String = "") raises -> Projection:
     var names = List[String](); names.append(name)
     var rebuilt = rebuild_projections(store, run_id, names, updated_at)
     var result = rebuilt[0].copy()
     return result^
 
-def rebuild_projections(mut store: NativeDomainStore, run_id: String, names: List[String], updated_at: String = "") raises SQLiteError -> List[Projection]:
+def rebuild_projections(mut store: NativeDomainStore, run_id: String, names: List[String], updated_at: String = "") raises -> List[Projection]:
     store._require_run(run_id)
     var requested = names.copy()
     if len(requested) == 0: requested.append("run_summary")
     var result = List[Projection]()
     var effective_updated_at = updated_at
     if effective_updated_at == "":
-        raise SQLiteError(code=2, message="domain store: projection rebuild timestamp must not be empty")
+        raise Error(String(SQLiteError(code=2, message="domain store: projection rebuild timestamp must not be empty")))
     store.db.begin()
     try:
         var latest = store.db.query("SELECT COALESCE(MAX(sequence),0) FROM runtime_events WHERE run_id=?"); latest.bind_text(1, run_id)
-        if not latest.step(): raise SQLiteError(code=1, message="domain store: unable to read event watermark")
+        if not latest.step(): raise Error(String(SQLiteError(code=1, message="domain store: unable to read event watermark")))
         var watermark = latest.column_int(0); latest.close()
         for name in requested:
-            if name == "": raise SQLiteError(code=1, message="domain store: projection name must not be empty")
+            if name == "": raise Error(String(SQLiteError(code=1, message="domain store: projection name must not be empty")))
             var data = ""
             if name == "run_summary": data = _run_summary_data(store, run_id, watermark)
             else: data = "{\"event_count\":" + String(watermark) + ",\"source_event_sequence\":" + String(watermark) + "}"
@@ -163,7 +163,7 @@ def rebuild_projections(mut store: NativeDomainStore, run_id: String, names: Lis
             stmt.bind_text(1, run_id); stmt.bind_text(2, name); stmt.bind_text(3, name + ":" + run_id); stmt.bind_int(4, 1); stmt.bind_text(5, data); stmt.bind_int(6, watermark); stmt.bind_text(7, effective_updated_at); _ = stmt.step()
         store.db.commit()
     except err:
-        store.db.rollback(); raise SQLiteError(code=1, message="domain store: projection rebuild failed")
+        store.db.rollback(); raise Error(String(SQLiteError(code=1, message="domain store: projection rebuild failed")))
     for name in requested: result.append(store.get_projection(run_id, name)^)
     return result^
 

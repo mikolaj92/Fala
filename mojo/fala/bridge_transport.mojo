@@ -39,13 +39,13 @@ def _realpath(path: Path, label: String) raises -> Path:
     var resolved = external_call["realpath", UnsafePointer[UInt8, MutUntrackedOrigin]](source_c.unsafe_ptr(), buffer)
     if Int(resolved) == 0:
         buffer.free()
-        raise SQLiteError(code=2, message="bridge_transport: unable to resolve " + label + " path")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: unable to resolve " + label + " path")))
     var resolved_text = String(unsafe_from_utf8_ptr=resolved)
     buffer.free()
     return Path(resolved_text)
 
 
-def _canonical_local_path(path: String, label: String) raises SQLiteError -> Path:
+def _canonical_local_path(path: String, label: String) raises -> Path:
     _validate_local_path(path, label)
     try:
         var expanded = Path(path).expanduser()
@@ -56,26 +56,26 @@ def _canonical_local_path(path: String, label: String) raises SQLiteError -> Pat
             return _realpath(absolute, label)
         return absolute
     except err:
-        raise SQLiteError(code=2, message="bridge_transport: unable to resolve " + label + " path")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: unable to resolve " + label + " path")))
 
 
-def _reject_same_path(source_path: String, target_path: String) raises SQLiteError:
+def _reject_same_path(source_path: String, target_path: String) raises:
     var source_identity = _canonical_local_path(source_path, "source")
     var target_identity = _canonical_local_path(target_path, "target")
     if source_identity.__fspath__() == target_identity.__fspath__():
-        raise SQLiteError(code=2, message="bridge_transport: source and target paths must differ")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: source and target paths must differ")))
 
 
-def _validate_local_path(path: String, label: String) raises SQLiteError:
+def _validate_local_path(path: String, label: String) raises:
     if path == "":
-        raise SQLiteError(code=2, message="bridge_transport: " + label + " path must not be empty")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: " + label + " path must not be empty")))
     if path.find("\0") >= 0 or path.find("\n") >= 0 or path.find("\r") >= 0:
-        raise SQLiteError(code=2, message="bridge_transport: " + label + " path contains NUL or newline")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: " + label + " path contains NUL or newline")))
     if path == ":memory:" or path.startswith("file:") or path.find("://") >= 0:
-        raise SQLiteError(code=2, message="bridge_transport: " + label + " path must be a local SQLite file")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: " + label + " path must be a local SQLite file")))
 
 
-def _exact_bridge_command(mut store: NativeDomainStore, run_id: String, key: String, command_type: String, payload: String) raises SQLiteError -> Bool:
+def _exact_bridge_command(mut store: NativeDomainStore, run_id: String, key: String, command_type: String, payload: String) raises -> Bool:
     if key == "": return False
     var stmt = store.db.query("SELECT command_type,payload FROM runtime_commands WHERE run_id=? AND idempotency_key=?")
     stmt.bind_text(1, run_id)
@@ -91,12 +91,12 @@ def _exact_bridge_command(mut store: NativeDomainStore, run_id: String, key: Str
     try:
         expected_canonical = canonical_json_text(payload)
     except err:
-        raise SQLiteError(code=1, message="bridge replay payload invalid")
+        raise Error(String(SQLiteError(code=1, message="bridge replay payload invalid")))
     var stored_canonical: String
     try:
         stored_canonical = canonical_json_text(stored_payload)
     except err:
-        raise SQLiteError(code=1, message="bridge replay payload invalid")
+        raise Error(String(SQLiteError(code=1, message="bridge replay payload invalid")))
     return stored_canonical == expected_canonical
 
 
@@ -131,7 +131,7 @@ def deliver_local_bridge(
     updated_at: String,
     delivery_key: String = "",
     import_key: String = "",
-) raises SQLiteError -> BridgeTransportResult:
+) raises -> BridgeTransportResult:
     """Import one source outbox row into a local target SQLite database.
 
     ``source_path`` and ``target_path`` are explicit local paths.  The target
@@ -145,11 +145,11 @@ def deliver_local_bridge(
     """
     _reject_same_path(source_path, target_path)
     if source_run_id == "":
-        raise SQLiteError(code=2, message="bridge_transport: source run id must not be empty")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: source run id must not be empty")))
     if delivery_id == "":
-        raise SQLiteError(code=2, message="bridge_transport: delivery id must not be empty")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: delivery id must not be empty")))
     if updated_at == "":
-        raise SQLiteError(code=2, message="bridge_transport: updated_at must not be empty")
+        raise Error(String(SQLiteError(code=2, message="bridge_transport: updated_at must not be empty")))
 
     var stable_delivery_key = delivery_key
     if stable_delivery_key == "":
@@ -214,7 +214,7 @@ def deliver_local_bridge_delivery(
     updated_at: String,
     delivery_key: String = "",
     import_key: String = "",
-) raises SQLiteError -> BridgeTransportResult:
+) raises -> BridgeTransportResult:
     return deliver_local_bridge(
         source_path,
         target_path,

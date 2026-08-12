@@ -32,15 +32,9 @@ mkdir -p "$(dirname -- "$host")"
 # not mistake a stale artifact for a usable process-host ABI.
 printf '%s\n' "native-semantics sentinel" >"$host"
 
-if [ ! -d "$root/vendor/EmberJson" ]; then
-  echo "EmberJson missing under vendor/. Cloning dynamically via git..." >&2
-  git clone --depth 1 https://github.com/bgreni/EmberJson.git "$root/vendor/EmberJson"
-fi
+"$root/tools/setup_ember_json.sh"
 
-if [ ! -d "$root/vendor/sqlite.fire" ]; then
-  echo "sqlite.fire missing under vendor/. Cloning dynamically via git..." >&2
-  git clone --depth 1 https://github.com/mikolaj92/sqlite.fire.git "$root/vendor/sqlite.fire"
-fi
+"$root/tools/setup_sqlite_fire.sh"
 
 cd "$root/vendor/sqlite.fire"
 export DYLD_LIBRARY_PATH="$root/vendor/sqlite.fire/native${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"

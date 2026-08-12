@@ -186,19 +186,19 @@ def native_process_host_available() -> Bool:
     """Return whether the host loads and exposes the complete ABI."""
     try:
         var library = OwnedDLHandle(_library_path())
-        _ = library.get_function[StartFn]("fala_process_start_blob")
-        _ = library.get_function[DestroyFn]("fala_process_destroy")
-        _ = library.get_function[WaitFn]("fala_process_wait")
-        _ = library.get_function[WaitFn]("fala_process_cancel")
-        _ = library.get_function[StatusFn]("fala_process_get_status")
-        _ = library.get_function[IntGetterFn]("fala_process_get_pid")
-        _ = library.get_function[IntGetterFn]("fala_process_get_exit_code")
-        _ = library.get_function[IntGetterFn]("fala_process_get_term_signal")
-        _ = library.get_function[IntGetterFn]("fala_process_was_timed_out")
-        _ = library.get_function[IntGetterFn]("fala_process_was_cancelled")
-        _ = library.get_function[IntGetterFn]("fala_process_get_error_code")
-        _ = library.get_function[ErrorFn]("fala_process_get_error_message")
-        _ = library.get_function[HostGetEnvFn]("fala_host_getenv")
+        _ = library.get_function[c_int]("fala_process_start_blob")
+        _ = library.get_function[NoneType]("fala_process_destroy")
+        _ = library.get_function[c_int]("fala_process_wait")
+        _ = library.get_function[c_int]("fala_process_cancel")
+        _ = library.get_function[c_int]("fala_process_get_status")
+        _ = library.get_function[c_int]("fala_process_get_pid")
+        _ = library.get_function[c_int]("fala_process_get_exit_code")
+        _ = library.get_function[c_int]("fala_process_get_term_signal")
+        _ = library.get_function[c_int]("fala_process_was_timed_out")
+        _ = library.get_function[c_int]("fala_process_was_cancelled")
+        _ = library.get_function[c_int]("fala_process_get_error_code")
+        _ = library.get_function[CStr]("fala_process_get_error_message")
+        _ = library.get_function[CStr]("fala_host_getenv")
         return True
     except:
         return False
@@ -223,7 +223,7 @@ def host_getenv(name: String) -> HostEnvValue:
     """
     try:
         var library = OwnedDLHandle(_library_path())
-        var get_env = library.get_function[HostGetEnvFn]("fala_host_getenv")
+        var get_env = library.get_function[CStr]("fala_host_getenv")
         var key = name + "\0"
         var ptr = get_env(CStr(unsafe_from_address=Int(key.as_bytes().unsafe_ptr())))
         if Int(ptr) == 0:
@@ -236,18 +236,6 @@ struct ProcessHost(Movable):
     """Move-only owner for a native process and its loaded host library."""
 
     var _library: OwnedDLHandle
-    var _start: StartFn
-    var _destroy: DestroyFn
-    var _wait: WaitFn
-    var _cancel: WaitFn
-    var _status: StatusFn
-    var _pid: IntGetterFn
-    var _exit_code: IntGetterFn
-    var _signal: IntGetterFn
-    var _timed_out: IntGetterFn
-    var _cancelled: IntGetterFn
-    var _error_code: IntGetterFn
-    var _error_message: ErrorFn
     var _process: Int
 
     def __init__(out self, argv: List[String], env: List[String], cwd_path: String, stdin_path: String, stdout_path: String, stderr_path: String, timeout_ms: Int, terminate_grace_ms: Int) raises:
@@ -255,18 +243,6 @@ struct ProcessHost(Movable):
         self._process = 0
         var library_path = _library_path()
         self._library = OwnedDLHandle(library_path)
-        self._start = self._library.get_function[StartFn]("fala_process_start_blob")
-        self._destroy = self._library.get_function[DestroyFn]("fala_process_destroy")
-        self._wait = self._library.get_function[WaitFn]("fala_process_wait")
-        self._cancel = self._library.get_function[WaitFn]("fala_process_cancel")
-        self._status = self._library.get_function[StatusFn]("fala_process_get_status")
-        self._pid = self._library.get_function[IntGetterFn]("fala_process_get_pid")
-        self._exit_code = self._library.get_function[IntGetterFn]("fala_process_get_exit_code")
-        self._signal = self._library.get_function[IntGetterFn]("fala_process_get_term_signal")
-        self._timed_out = self._library.get_function[IntGetterFn]("fala_process_was_timed_out")
-        self._cancelled = self._library.get_function[IntGetterFn]("fala_process_was_cancelled")
-        self._error_code = self._library.get_function[IntGetterFn]("fala_process_get_error_code")
-        self._error_message = self._library.get_function[ErrorFn]("fala_process_get_error_message")
 
         var argv_blob = _blob(argv, "argv")
         var env_blob = _blob(env, "environment")
@@ -281,7 +257,7 @@ struct ProcessHost(Movable):
         var stdout_c = CStr(unsafe_from_address=Int(stdout_blob.as_bytes().unsafe_ptr()))
         var stderr_c = CStr(unsafe_from_address=Int(stderr_blob.as_bytes().unsafe_ptr()))
         var out = alloc[HostPtr](1)
-        var result = self._start(
+        var result = self._library.get_function[c_int]("fala_process_start_blob")(
             argv_c, c_int(len(argv)),
             env_c, c_int(len(env)),
             cwd_c,
@@ -304,8 +280,8 @@ struct ProcessHost(Movable):
             var message = "native process operation failed"
             if self._process != 0:
                 var process_ptr = HostPtr(unsafe_from_address=self._process)
-                message = String(unsafe_from_utf8_ptr=self._error_message(process_ptr))
-                self._destroy(process_ptr)
+                message = String(unsafe_from_utf8_ptr=self._library.get_function[CStr]("fala_process_get_error_message")(process_ptr))
+                self._library.get_function[NoneType]("fala_process_destroy")(process_ptr)
                 self._process = 0
             raise Error(ProcessHostError(code=code, message=message).__str__())
         if self._process == 0:
@@ -313,18 +289,6 @@ struct ProcessHost(Movable):
 
     def __moveinit__(mut self, var other: Self):
         self._library = other._library^
-        self._start = other._start
-        self._destroy = other._destroy
-        self._wait = other._wait
-        self._cancel = other._cancel
-        self._status = other._status
-        self._pid = other._pid
-        self._exit_code = other._exit_code
-        self._signal = other._signal
-        self._timed_out = other._timed_out
-        self._cancelled = other._cancelled
-        self._error_code = other._error_code
-        self._error_message = other._error_message
         self._process = other._process
         other._process = 0
 
@@ -336,7 +300,7 @@ struct ProcessHost(Movable):
         return HostPtr(unsafe_from_address=self._process)
 
     def wait_result(mut self) raises -> Int:
-        return Int(self._wait(self._require()))
+        return Int(self._library.get_function[c_int]("fala_process_wait")(self._require()))
 
     def wait(mut self) raises:
         var result = self.wait_result()
@@ -344,7 +308,7 @@ struct ProcessHost(Movable):
             raise Error(self.error_message())
 
     def cancel_result(mut self) raises -> Int:
-        return Int(self._cancel(self._require()))
+        return Int(self._library.get_function[c_int]("fala_process_cancel")(self._require()))
 
     def cancel(mut self) raises:
         var result = self.cancel_result()
@@ -353,32 +317,35 @@ struct ProcessHost(Movable):
 
     def destroy(mut self):
         if self._process != 0:
-            self._destroy(HostPtr(unsafe_from_address=self._process))
+            try:
+                self._library.get_function[NoneType]("fala_process_destroy")(HostPtr(unsafe_from_address=self._process))
+            except:
+                pass
             self._process = 0
 
     def status(self) raises -> Int:
-        return Int(self._status(self._require()))
+        return Int(self._library.get_function[c_int]("fala_process_get_status")(self._require()))
 
     def pid(self) raises -> Int:
-        return Int(self._pid(self._require()))
+        return Int(self._library.get_function[c_int]("fala_process_get_pid")(self._require()))
 
     def exit_code(self) raises -> Int:
-        return Int(self._exit_code(self._require()))
+        return Int(self._library.get_function[c_int]("fala_process_get_exit_code")(self._require()))
 
     def signal(self) raises -> Int:
-        return Int(self._signal(self._require()))
+        return Int(self._library.get_function[c_int]("fala_process_get_term_signal")(self._require()))
 
     def was_timed_out(self) raises -> Bool:
-        return self._timed_out(self._require()) != 0
+        return self._library.get_function[c_int]("fala_process_was_timed_out")(self._require()) != 0
 
     def was_cancelled(self) raises -> Bool:
-        return self._cancelled(self._require()) != 0
+        return self._library.get_function[c_int]("fala_process_was_cancelled")(self._require()) != 0
 
     def error_code(self) raises -> Int:
-        return Int(self._error_code(self._require()))
+        return Int(self._library.get_function[c_int]("fala_process_get_error_code")(self._require()))
 
     def error_message(self) raises -> String:
-        return String(unsafe_from_utf8_ptr=self._error_message(self._require()))
+        return String(unsafe_from_utf8_ptr=self._library.get_function[CStr]("fala_process_get_error_message")(self._require()))
 
 
 def start(

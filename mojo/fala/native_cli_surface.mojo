@@ -241,7 +241,7 @@ def _known_option(kind: String, item: String) -> Bool:
     return False
 
 
-def _validate_status_value(kind: String, value: String) raises SQLiteError:
+def _validate_status_value(kind: String, value: String) raises:
     if value == "": return
     var valid = False
     if kind == "run-list":
@@ -253,7 +253,7 @@ def _validate_status_value(kind: String, value: String) raises SQLiteError:
     elif kind == "bridge-list":
         valid = value == "pending" or value == "delivered" or value == "imported" or value == "failed"
     if not valid:
-        raise SQLiteError(code=2, message="argument_error: invalid value for --status: " + value)
+        raise Error(String(SQLiteError(code=2, message="argument_error: invalid value for --status: " + value)))
 def _has_option(command: String, name: String) -> Bool:
     var index = 0
     while index < _count(command):
@@ -261,7 +261,7 @@ def _has_option(command: String, name: String) -> Bool:
         if _option_base(item) == name: return True
         index += 1
     return False
-def _bool_option(command: String, name: String) raises SQLiteError -> Bool:
+def _bool_option(command: String, name: String) raises -> Bool:
     """Parse a boolean option without consuming a following token."""
     var index = 0
     while index < _count(command):
@@ -272,13 +272,13 @@ def _bool_option(command: String, name: String) raises SQLiteError -> Bool:
             var value = String(item[byte=equals + 1:])
             if value == "true": return True
             if value == "false": return False
-            raise SQLiteError(code=2, message="argument_error: invalid boolean value for " + name)
+            raise Error(String(SQLiteError(code=2, message="argument_error: invalid boolean value for " + name)))
         index += 1
     return False
 
 
 
-def _limit(command: String) raises SQLiteError -> Int:
+def _limit(command: String) raises -> Int:
     var raw = _flag(command, "--limit", "")
     if raw == "": return -1
     try:
@@ -290,10 +290,10 @@ def _limit(command: String) raises SQLiteError -> Int:
         if value < -1: raise Error("negative")
         return value
     except err:
-        raise SQLiteError(code=2, message="argument_error: invalid integer value for --limit")
+        raise Error(String(SQLiteError(code=2, message="argument_error: invalid integer value for --limit")))
 
 
-def _after_sequence(command: String) raises SQLiteError -> Int:
+def _after_sequence(command: String) raises -> Int:
     var raw = _flag(command, "--after-sequence", "")
     if raw == "": return -1
     try:
@@ -305,12 +305,12 @@ def _after_sequence(command: String) raises SQLiteError -> Int:
         if value < 0: raise Error("negative")
         return value
     except err:
-        raise SQLiteError(code=2, message="argument_error: invalid nonnegative integer value for --after-sequence")
+        raise Error(String(SQLiteError(code=2, message="argument_error: invalid nonnegative integer value for --after-sequence")))
  
  
  
  
-def _maintenance_number(command: String, name: String, default: Float64 = 0.0) raises SQLiteError -> Float64:
+def _maintenance_number(command: String, name: String, default: Float64 = 0.0) raises -> Float64:
     var raw = _flag(command, name, "")
     if raw == "": return default
     try:
@@ -320,10 +320,10 @@ def _maintenance_number(command: String, name: String, default: Float64 = 0.0) r
         if parsed.value.is_uint(): return Float64(parsed.value.uint())
     except err:
         pass
-    raise SQLiteError(code=2, message="argument_error: invalid numeric value for " + name)
+    raise Error(String(SQLiteError(code=2, message="argument_error: invalid numeric value for " + name)))
 
 
-def _maintenance_integer(command: String, name: String, default: Int = -1) raises SQLiteError -> Int:
+def _maintenance_integer(command: String, name: String, default: Int = -1) raises -> Int:
     var raw = _flag(command, name, "")
     if raw == "": return default
     try:
@@ -332,10 +332,10 @@ def _maintenance_integer(command: String, name: String, default: Int = -1) raise
         if parsed.value.is_uint(): return Int(parsed.value.uint())
     except err:
         pass
-    raise SQLiteError(code=2, message="argument_error: invalid integer value for " + name)
+    raise Error(String(SQLiteError(code=2, message="argument_error: invalid integer value for " + name)))
 
 
-def _validate(command: String, kind: String, positional: Bool = False) raises SQLiteError:
+def _validate(command: String, kind: String, positional: Bool = False) raises:
     var index = 0
     var count = _count(command)
     if kind == "run-list" or kind == "run-observe" or kind == "event-schema" or kind == "homeostat-list" or kind == "inspect" or kind == "rows" or kind == "commands-list" or kind == "events-list" or kind == "processes-list" or kind == "impulses-list" or kind == "impulse-types-list" or kind == "impulse-relations-list" or kind == "associations-list" or kind == "reactions-list" or kind == "homeostats-list" or kind == "projections-list" or kind == "bridge-list" or kind == "projection" or kind == "reaction-record" or kind == "bridge-deliver" or kind == "bridge-export" or kind == "bridge-import" or kind == "transition" or kind == "impulse-create" or kind == "process-schedule" or kind == "process-transition" or kind == "association-append" or kind == "homeostat-open" or kind == "homeostat-transition" or kind == "homeostat-domain-open" or kind == "homeostat-domain-transition": index = 2
@@ -349,7 +349,7 @@ def _validate(command: String, kind: String, positional: Bool = False) raises SQ
         var item = _word(command, index)
         if item.startswith("--"):
             if not _known_option(kind, item):
-                raise SQLiteError(code=2, message="argument_error: unknown argument " + item)
+                raise Error(String(SQLiteError(code=2, message="argument_error: unknown argument " + item)))
             var option = _option_base(item)
             if option == "--db": has_db_option = True
             var equals = item.find("=")
@@ -368,71 +368,71 @@ def _validate(command: String, kind: String, positional: Bool = False) raises SQ
                 continue
             if equals >= 0:
                 if equals + 1 >= item.byte_length():
-                    raise SQLiteError(code=2, message="argument_error: missing value for " + option)
+                    raise Error(String(SQLiteError(code=2, message="argument_error: missing value for " + option)))
                 index += 1
                 continue
             if index + 1 >= count or _word(command, index + 1).startswith("--"):
-                raise SQLiteError(code=2, message="argument_error: missing value for " + option)
+                raise Error(String(SQLiteError(code=2, message="argument_error: missing value for " + option)))
             index += 2
         else:
             if not positional or has_positional or has_db_option:
-                raise SQLiteError(code=2, message="argument_error: unknown argument " + item)
+                raise Error(String(SQLiteError(code=2, message="argument_error: unknown argument " + item)))
             has_positional = True
             index += 1
     if kind == "schema" and not has_positional:
-        raise SQLiteError(code=2, message="argument_error: schema model is required")
+        raise Error(String(SQLiteError(code=2, message="argument_error: schema model is required")))
     if kind == "schema":
         var model = _word(command, 1)
         if model != "impulse" and model != "model" and model != "fala-package":
-            raise SQLiteError(code=2, message="argument_error: unknown schema model " + model)
+            raise Error(String(SQLiteError(code=2, message="argument_error: unknown schema model " + model)))
     if kind == "reaction-record":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--run-id", "") == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
-        if _flag(command, "--reaction-root", "") == "": raise SQLiteError(code=2, message="argument_error: --reaction-root is required")
-        if _flag(command, "--path", "") == "": raise SQLiteError(code=2, message="argument_error: --path is required")
-        if _flag(command, "--kind", "") == "": raise SQLiteError(code=2, message="argument_error: --kind is required")
+        if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
+        if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
+        if _flag(command, "--reaction-root", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --reaction-root is required")))
+        if _flag(command, "--path", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --path is required")))
+        if _flag(command, "--kind", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --kind is required")))
     if kind == "bridge-deliver":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--run-id", "") == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
-        if _flag(command, "--delivery-id", "") == "": raise SQLiteError(code=2, message="argument_error: --delivery-id is required")
-        if _flag(command, "--target-db", "") == "": raise SQLiteError(code=2, message="argument_error: --target-db is required")
-        if _flag(command, "--now", "") == "": raise SQLiteError(code=2, message="argument_error: --now is required")
+        if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
+        if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
+        if _flag(command, "--delivery-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --delivery-id is required")))
+        if _flag(command, "--target-db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --target-db is required")))
+        if _flag(command, "--now", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --now is required")))
     if kind == "bridge-export":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--run-id", "") == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+        if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
+        if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "homeostat-list" or kind == "homeostats-list":
-        if _flag(command, "--run-id", "") == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+        if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "homeostat-domain-open" or kind == "homeostat-domain-transition":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--run-id", "") == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+        if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
+        if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "homeostat-domain-open" and _flag(command, "--kind", "") == "":
-        raise SQLiteError(code=2, message="argument_error: --kind is required")
+        raise Error(String(SQLiteError(code=2, message="argument_error: --kind is required")))
     if kind == "homeostat-domain-transition" and _flag(command, "--homeostat-id", "") == "":
-        raise SQLiteError(code=2, message="argument_error: --homeostat-id is required")
+        raise Error(String(SQLiteError(code=2, message="argument_error: --homeostat-id is required")))
     if kind == "commands-list" or kind == "events-list" or kind == "processes-list" or kind == "impulses-list" or kind == "impulse-types-list" or kind == "impulse-relations-list" or kind == "associations-list" or kind == "reactions-list" or kind == "homeostats-list" or kind == "projections-list" or kind == "bridge-list":
-        if _flag(command, "--run-id", "") == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+        if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "bridge-import":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--file", "") == "": raise SQLiteError(code=2, message="argument_error: --file is required")
+        if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
+        if _flag(command, "--file", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --file is required")))
     if kind == "gc":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--reaction-root", "") == "": raise SQLiteError(code=2, message="argument_error: --reaction-root is required")
+        if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
+        if _flag(command, "--reaction-root", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --reaction-root is required")))
     if kind == "rows":
         var first = _word(command, 0)
         var requires_run = first == "runs" or first == "commands" or first == "events" or first == "processes" or first == "bridge" or first == "trace" or first == "diagnose-waits" or first == "impulses" or first == "impulse-types" or first == "impulse-relations" or first == "relations" or first == "associations" or first == "reactions" or first == "homeostats" or first == "projections"
         if requires_run and _flag(command, "--run-id") == "":
-            raise SQLiteError(code=2, message="argument_error: --run-id is required")
+            raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "trace" and _flag(command, "--run-id") == "":
-        raise SQLiteError(code=2, message="argument_error: --run-id is required")
+        raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "diagnose-waits":
-        if _flag(command, "--db", "") == "": raise SQLiteError(code=2, message="argument_error: --db is required")
-        if _flag(command, "--run-id", "") == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+        if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
+        if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
 
     if kind == "projection" and _flag(command, "--run-id", "") == "":
-        raise SQLiteError(code=2, message="argument_error: --run-id is required")
+        raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "create" or kind == "transition" or kind == "impulse-create" or kind == "process-schedule" or kind == "process-transition" or kind == "association-append" or kind == "homeostat-open" or kind == "homeostat-transition" or kind == "projection" or kind == "reaction-record":
         if _flag(command, "--now", "") == "":
-            raise SQLiteError(code=2, message="argument_error: --now is required")
+            raise Error(String(SQLiteError(code=2, message="argument_error: --now is required")))
     if kind == "run-list" or kind == "processes-list" or kind == "homeostats-list" or kind == "bridge-list":
         _validate_status_value(kind, _flag(command, "--status", ""))
 def _positional_path(command: String, start: Int) -> String:
@@ -468,7 +468,7 @@ def _url_decode(value: String) -> String:
     return result
 
 
-def _database_url(value: String) raises SQLiteError -> String:
+def _database_url(value: String) raises -> String:
     var rest = ""
     if value.startswith("sqlite://"):
         rest = String(value[byte=8:])
@@ -476,7 +476,7 @@ def _database_url(value: String) raises SQLiteError -> String:
         rest = String(value[byte=9:])
     else:
         var colon = value.find(":")
-        if colon > 0: raise SQLiteError(code=2, message="argument_error: unsupported database URL scheme")
+        if colon > 0: raise Error(String(SQLiteError(code=2, message="argument_error: unsupported database URL scheme")))
         return value
     var path = ""
     if rest.startswith("/localhost/"):
@@ -484,7 +484,7 @@ def _database_url(value: String) raises SQLiteError -> String:
     elif rest.startswith("localhost/"):
         path = "/" + String(rest[byte=9:])
     elif rest.startswith("localhost"):
-        raise SQLiteError(code=2, message="argument_error: SQLite URL must include a database path")
+        raise Error(String(SQLiteError(code=2, message="argument_error: SQLite URL must include a database path")))
     elif rest.startswith("//"):
         # sqlite:////tmp/db encodes an absolute path.
         path = String(rest[byte=1:])
@@ -492,8 +492,8 @@ def _database_url(value: String) raises SQLiteError -> String:
         # sqlite:///relative.db is relative, matching the reference resolver.
         path = String(rest[byte=1:])
     else:
-        raise SQLiteError(code=2, message="argument_error: SQLite URL host must be empty or localhost")
-    if path == "": raise SQLiteError(code=2, message="argument_error: SQLite URL must include a database path")
+        raise Error(String(SQLiteError(code=2, message="argument_error: SQLite URL host must be empty or localhost")))
+    if path == "": raise Error(String(SQLiteError(code=2, message="argument_error: SQLite URL must include a database path")))
     return _url_decode(path)
 
 
@@ -505,21 +505,21 @@ def _parent_directory(path: String) -> String:
     if last == 0: return "/"
     return String(path[byte=0:last])
 
-def _path(command: String) raises SQLiteError -> String:
+def _path(command: String) raises -> String:
     var path = _flag(command, "--db", "")
     var first = _word(command, 0)
     if path == "":
         if first == "db": path = _positional_path(command, 2)
         elif first == "doctor": path = _positional_path(command, 1)
     if path == "" and first != "doctor" and first != "init":
-        raise SQLiteError(code=2, message="argument_error: --db is required")
+        raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
     if path == "": path = ".fala/state.sqlite"
     path = _database_url(path)
-    if not _safe(path): raise SQLiteError(code=2, message="unsafe_path: invalid database path")
+    if not _safe(path): raise Error(String(SQLiteError(code=2, message="unsafe_path: invalid database path")))
     return path
 
 
-def _require_db_value(command: String, kind: String) raises SQLiteError:
+def _require_db_value(command: String, kind: String) raises:
     var count = _count(command)
     var index = 0
     if kind == "db": index = 2
@@ -528,24 +528,24 @@ def _require_db_value(command: String, kind: String) raises SQLiteError:
         var item = _word(command, index)
         if item == "--db":
             if index + 1 >= count or _word(command, index + 1).startswith("--"):
-                raise SQLiteError(code=2, message="argument_error: missing value for --db")
+                raise Error(String(SQLiteError(code=2, message="argument_error: missing value for --db")))
             return
         if _option_base(item) == "--db":
             var equals = item.find("=")
             if equals < 0 or equals + 1 >= item.byte_length():
-                raise SQLiteError(code=2, message="argument_error: missing value for --db")
+                raise Error(String(SQLiteError(code=2, message="argument_error: missing value for --db")))
             return
         index += 1
 
 
-def _json(value: String) raises SQLiteError:
+def _json(value: String) raises:
     try:
         var parsed = parse_json(value)
         _ = parsed
     except err:
-        raise SQLiteError(code=2, message="invalid_json")
+        raise Error(String(SQLiteError(code=2, message="invalid_json")))
 
-def _metadata_value(command: String) raises SQLiteError -> String:
+def _metadata_value(command: String) raises -> String:
     var values = _repeat_values(command, "--metadata")
     if len(values) == 0: return "{}"
     # Preserve the legacy single JSON-object form. Repeated JSON objects are
@@ -559,26 +559,26 @@ def _metadata_value(command: String) raises SQLiteError -> String:
             pass
     if object_values > 0:
         if len(values) != 1 or object_values != 1:
-            raise SQLiteError(code=2, message="argument_error: repeated --metadata JSON objects are ambiguous")
+            raise Error(String(SQLiteError(code=2, message="argument_error: repeated --metadata JSON objects are ambiguous")))
         try:
             var parsed = parse_json(values[0])
             return canonical_json_text(to_string(parsed.value))
         except err:
-            raise SQLiteError(code=2, message="invalid_json: metadata")
+            raise Error(String(SQLiteError(code=2, message="invalid_json: metadata")))
     var metadata = Object(capacity=len(values))
     for item in values:
         var equals = item.find("=")
         if equals <= 0:
-            raise SQLiteError(code=2, message="argument_error: invalid value " + item + "; expected key=value")
+            raise Error(String(SQLiteError(code=2, message="argument_error: invalid value " + item + "; expected key=value")))
         var key = String(item[byte=0:equals])
         var value = String(item[byte=equals + 1:])
         metadata[key] = Value(value)
     try:
         return canonical_json_text(to_string(Value(metadata^)))
     except err:
-        raise SQLiteError(code=2, message="invalid_json: metadata")
+        raise Error(String(SQLiteError(code=2, message="invalid_json: metadata")))
 
-def _repeat_values(command: String, name: String) raises SQLiteError -> List[String]:
+def _repeat_values(command: String, name: String) raises -> List[String]:
     var values = List[String]()
     var index = 0
     var count = _count(command)
@@ -587,12 +587,12 @@ def _repeat_values(command: String, name: String) raises SQLiteError -> List[Str
         if _option_base(item) == name:
             var equals = item.find("=")
             if equals >= 0:
-                if equals + 1 >= item.byte_length(): raise SQLiteError(code=2, message="argument_error: missing value for " + name)
+                if equals + 1 >= item.byte_length(): raise Error(String(SQLiteError(code=2, message="argument_error: missing value for " + name)))
                 var value = String(item[byte=equals + 1:])
                 values.append(value^)
             else:
                 if index + 1 >= count or _word(command, index + 1).startswith("--"):
-                    raise SQLiteError(code=2, message="argument_error: missing value for " + name)
+                    raise Error(String(SQLiteError(code=2, message="argument_error: missing value for " + name)))
                 values.append(_word(command, index + 1)^)
                 index += 1
         index += 1
@@ -608,20 +608,20 @@ def _string_array(values: List[String]) -> String:
     result += "]"
     return result
 
-def _init(command: String) raises SQLiteError -> String:
+def _init(command: String) raises -> String:
     var db_path = _path(command)
     var reaction_root = _flag(command, "--reaction-root", ".fala/reactions")
     if not _safe(reaction_root):
-        raise SQLiteError(code=2, message="unsafe_path: invalid reaction root path")
+        raise Error(String(SQLiteError(code=2, message="unsafe_path: invalid reaction root path")))
     try:
         makedirs(Path(_parent_directory(db_path)), exist_ok=True)
         makedirs(Path(reaction_root) / "blobs" / "sha256", exist_ok=True)
         _ = initialize_database(db_path)
     except err:
-        raise SQLiteError(code=1, message="init failed: " + String(err))
+        raise Error(String(SQLiteError(code=1, message="init failed: " + String(err))))
     return "{\"ok\":true,\"runtime\":\"mojo\",\"db\":" + _quote(db_path) + ",\"reaction_root\":" + _quote(reaction_root) + ",\"schema_version\":" + String(SCHEMA_VERSION) + "}"
 
-def initialize_database(path: String) raises SQLiteError -> String:
+def initialize_database(path: String) raises -> String:
     var connection = Connection(path)
     initialize_native_schema(connection)
     connection.close()
@@ -654,7 +654,7 @@ def _schema_status_json(status: SchemaStatus) -> String:
     return "{\"current_version\":" + String(status.current_version) + ",\"latest_version\":" + String(status.latest_version) + ",\"user_version\":" + String(status.user_version) + ",\"migration_version\":" + String(status.migration_version) + ",\"missing_tables\":" + missing + ",\"runtime_events_has_process_id\":" + process_id + ",\"runtime_events_has_schema_version\":" + event_schema + ",\"current\":" + current + "}"
 
 
-def _migration_metadata(mut connection: Connection) raises SQLiteError -> String:
+def _migration_metadata(mut connection: Connection) raises -> String:
     var table = connection.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
     if not table.step():
         table.close()
@@ -669,7 +669,7 @@ def _migration_metadata(mut connection: Connection) raises SQLiteError -> String
     return result
 
 
-def _status(path: String) raises SQLiteError -> String:
+def _status(path: String) raises -> String:
     var connection = Connection(path)
     var status = schema_status(connection)
     var current = "false"
@@ -684,27 +684,27 @@ def _status(path: String) raises SQLiteError -> String:
     return "{\"ok\":true,\"runtime\":\"mojo\",\"database\":" + _quote(path) + ",\"schema_version\":" + String(user_version) + ",\"expected_version\":" + String(SCHEMA_VERSION) + ",\"table_count\":" + String(tables) + ",\"schema\":" + status_json + ",\"migration\":" + migration + ",\"current\":" + current + "}"
 
 
-def _vacuum(path: String) raises SQLiteError -> String:
+def _vacuum(path: String) raises -> String:
     var connection = Connection(path)
     connection.execute("VACUUM")
     connection.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"database\":" + _quote(path) + ",\"vacuumed\":true}"
 
 
-def _text(mut stmt: Statement, index: Int) raises SQLiteError -> String:
+def _text(mut stmt: Statement, index: Int) raises -> String:
     if stmt.column_null(index): return String("")
     return stmt.column_text(index)
-def _nullable_text_json(mut stmt: Statement, index: Int) raises SQLiteError -> String:
+def _nullable_text_json(mut stmt: Statement, index: Int) raises -> String:
     if stmt.column_null(index): return "null"
     return _quote(stmt.column_text(index))
 
-def _nullable_int_json(mut stmt: Statement, index: Int) raises SQLiteError -> String:
+def _nullable_int_json(mut stmt: Statement, index: Int) raises -> String:
     if stmt.column_null(index): return "null"
     return String(stmt.column_int(index))
 
 
 
-def _event_schema_max(command: String) raises SQLiteError -> Int:
+def _event_schema_max(command: String) raises -> Int:
     var raw = _flag(command, "--max-schema-version", "1")
     try:
         var parsed = parse_json(raw)
@@ -715,12 +715,12 @@ def _event_schema_max(command: String) raises SQLiteError -> Int:
         if value < 1: raise Error("non-positive")
         return value
     except err:
-        raise SQLiteError(code=2, message="argument_error: --max-schema-version must be greater than zero")
+        raise Error(String(SQLiteError(code=2, message="argument_error: --max-schema-version must be greater than zero")))
 
 
-def _events_validate_schema(path: String, command: String) raises SQLiteError -> String:
+def _events_validate_schema(path: String, command: String) raises -> String:
     var run_id = _flag(command, "--run-id")
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var max_schema_version = _event_schema_max(command)
     var connection = Connection(path)
     initialize_native_schema(connection)
@@ -771,7 +771,7 @@ def _events_validate_schema(path: String, command: String) raises SQLiteError ->
 
 
 
-def _runs(path: String, status: String, run_id: String = "", limit: Int = -1, jsonl: Bool = False) raises SQLiteError -> String:
+def _runs(path: String, status: String, run_id: String = "", limit: Int = -1, jsonl: Bool = False) raises -> String:
     var connection = Connection(path)
     initialize_native_schema(connection)
     var sql = "SELECT id,status,title,package_id,package_version,package_digest,correlation_path_id,correlation_path_digest,runtime_version,backend_version,schema_version,metadata,created_at,updated_at,started_at,finished_at FROM runs"
@@ -808,9 +808,9 @@ def _runs(path: String, status: String, run_id: String = "", limit: Int = -1, js
     if jsonl: return lines
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"runs\",\"count\":" + String(row_count) + ",\"items\":" + items + "}"
 
-def _command_rows(path: String, command: String) raises SQLiteError -> String:
+def _command_rows(path: String, command: String) raises -> String:
     var run_id = _flag(command, "--run-id")
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var command_type = _flag(command, "--command-type")
     var actor = _flag(command, "--actor")
     var limit = _limit(command)
@@ -851,8 +851,8 @@ def _command_rows(path: String, command: String) raises SQLiteError -> String:
 
 
 
-def _run_inspect(path: String, run_id: String) raises SQLiteError -> String:
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+def _run_inspect(path: String, run_id: String) raises -> String:
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var connection = Connection(path)
     initialize_native_schema(connection)
     var stmt = connection.query("SELECT id,status,title,package_id,package_version,package_digest,correlation_path_id,correlation_path_digest,runtime_version,backend_version,schema_version,metadata,created_at,updated_at,started_at,finished_at FROM runs WHERE id=?")
@@ -883,16 +883,16 @@ def _run_inspect(path: String, run_id: String) raises SQLiteError -> String:
     connection.close()
     return result
 
-def _run_observe(path: String, run_id: String) raises SQLiteError -> String:
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+def _run_observe(path: String, run_id: String) raises -> String:
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var journal = NativeJournal.open(path)
     journal.initialize()
     var boundary = observe_run_boundary(journal, run_id)
     journal.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"boundary\":{\"run_id\":" + _quote(boundary.run_id) + ",\"status\":" + _quote(boundary.status) + ",\"derived_status\":" + _quote(boundary.derived_status) + ",\"process_status_counts\":" + boundary.process_status_counts + ",\"event_watermark\":" + String(boundary.event_watermark) + "}}"
 
-def _diagnose_waits(path: String, run_id: String, impulse_id: String = "") raises SQLiteError -> String:
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+def _diagnose_waits(path: String, run_id: String, impulse_id: String = "") raises -> String:
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var journal = NativeJournal.open(path)
     journal.initialize()
     var diagnostic = diagnose_wait_graph(journal, run_id, impulse_id)
@@ -900,9 +900,9 @@ def _diagnose_waits(path: String, run_id: String, impulse_id: String = "") raise
     journal.close()
     return result
 
-def _impulse_inspect(path: String, run_id: String, impulse_id: String) raises SQLiteError -> String:
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
-    if impulse_id == "": raise SQLiteError(code=2, message="argument_error: --impulse-id is required")
+def _impulse_inspect(path: String, run_id: String, impulse_id: String) raises -> String:
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
+    if impulse_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --impulse-id is required")))
     var connection = Connection(path)
     initialize_native_schema(connection)
     var stmt = connection.query("SELECT id,run_id,impulse_type,payload,metadata,created_at,updated_at FROM impulses WHERE run_id=? AND id=?")
@@ -925,9 +925,9 @@ def _impulse_inspect(path: String, run_id: String, impulse_id: String) raises SQ
     connection.close()
     return result
 
-def _command_inspect(path: String, run_id: String, command_id: String) raises SQLiteError -> String:
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
-    if command_id == "": raise SQLiteError(code=2, message="argument_error: --command-id is required")
+def _command_inspect(path: String, run_id: String, command_id: String) raises -> String:
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
+    if command_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --command-id is required")))
     var connection = Connection(path)
     initialize_native_schema(connection)
     var stmt = connection.query("SELECT run_id,id,command_type,idempotency_key,actor,correlation_id,causation_id,payload,created_at FROM runtime_commands WHERE run_id=? AND id=?")
@@ -951,9 +951,9 @@ def _command_inspect(path: String, run_id: String, command_id: String) raises SQ
     connection.close()
     return result
 
-def _process_inspect(path: String, run_id: String, process_id: String) raises SQLiteError -> String:
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
-    if process_id == "": raise SQLiteError(code=2, message="argument_error: --process-id is required")
+def _process_inspect(path: String, run_id: String, process_id: String) raises -> String:
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
+    if process_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --process-id is required")))
     var connection = Connection(path)
     initialize_native_schema(connection)
     var stmt = connection.query("SELECT run_id,id,process_type,impulse_id,status,priority,attempt,max_attempts,available_at,lease_owner,lease_expires_at,input_json,output_json,error_json,metadata,created_at,updated_at,started_at,finished_at,output_schema_json FROM processes WHERE run_id=? AND id=?")
@@ -988,9 +988,9 @@ def _process_inspect(path: String, run_id: String, process_id: String) raises SQ
     stmt.close()
     connection.close()
     return result
-def _domain_inspect(path: String, resource: String, table: String, run_id: String, row_id: String, id_name: String) raises SQLiteError -> String:
-    if row_id == "": raise SQLiteError(code=2, message="argument_error: " + id_name + " is required")
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+def _domain_inspect(path: String, resource: String, table: String, run_id: String, row_id: String, id_name: String) raises -> String:
+    if row_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: " + id_name + " is required")))
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var connection = Connection(path)
     initialize_native_schema(connection)
     var sql = ""
@@ -1000,7 +1000,7 @@ def _domain_inspect(path: String, resource: String, table: String, run_id: Strin
     elif table == "reactions": sql = "SELECT id,run_id,kind,uri,impulse_id,media_type,size_bytes,content_hash,metadata,created_at FROM reactions WHERE run_id=? AND id=?"
     else:
         connection.close()
-        raise SQLiteError(code=2, message="argument_error: unsupported inspect table")
+        raise Error(String(SQLiteError(code=2, message="argument_error: unsupported inspect table")))
     var stmt = connection.query(sql)
     stmt.bind_text(1, run_id)
     stmt.bind_text(2, row_id)
@@ -1017,7 +1017,7 @@ def _domain_inspect(path: String, resource: String, table: String, run_id: Strin
     connection.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"" + resource + "\":" + row + "}"
 
-def _table(path: String, resource: String, table: String, run_id: String) raises SQLiteError -> String:
+def _table(path: String, resource: String, table: String, run_id: String) raises -> String:
     var connection = Connection(path)
     initialize_native_schema(connection)
     var sql = "SELECT COUNT(*) FROM " + table
@@ -1029,7 +1029,7 @@ def _table(path: String, resource: String, table: String, run_id: String) raises
     stmt.close()
     connection.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":" + _quote(resource) + ",\"count\":" + String(count) + "}"
-def _rows(path: String, resource: String, table: String, command: String) raises SQLiteError -> String:
+def _rows(path: String, resource: String, table: String, command: String) raises -> String:
     var run_id = _flag(command, "--run-id")
     var impulse_id = _flag(command, "--impulse-id")
     var impulse_type = _flag(command, "--impulse-type")
@@ -1058,7 +1058,7 @@ def _rows(path: String, resource: String, table: String, command: String) raises
     elif table == "runtime_commands": sql = "SELECT run_id,id,command_type,idempotency_key,actor,correlation_id,causation_id,payload,created_at FROM runtime_commands"
     elif table == "runtime_events": sql = "SELECT run_id,sequence,id,event_type,schema_version,impulse_id,process_id,command_id,actor,correlation_id,causation_id,payload,created_at FROM runtime_events"
     elif table == "processes": sql = "SELECT run_id,id,process_type,impulse_id,status,priority,attempt,max_attempts,available_at,lease_owner,lease_expires_at,input_json,output_json,error_json,metadata,created_at,updated_at,started_at,finished_at,output_schema_json FROM processes"
-    else: raise SQLiteError(code=2, message="argument_error: unsupported row table")
+    else: raise Error(String(SQLiteError(code=2, message="argument_error: unsupported row table")))
     var where = False
     if run_id != "": sql += " WHERE run_id=?"; where = True
     if impulse_id != "":
@@ -1153,47 +1153,47 @@ def _rows(path: String, resource: String, table: String, command: String) raises
     connection.close()
     if jsonl: return jsonl_items
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":" + _quote(resource) + ",\"count\":" + String(row_count) + ",\"items\":" + items + "}"
-def _trace_parse(text: String) raises SQLiteError -> Value:
+def _trace_parse(text: String) raises -> Value:
     try:
         var parsed = parse_json(text)
         return parsed.value.copy()
     except err:
-        raise SQLiteError(code=1, message="trace: invalid persisted JSON")
+        raise Error(String(SQLiteError(code=1, message="trace: invalid persisted JSON")))
 
-def _trace_items(path: String, resource: String, table: String, command: String) raises SQLiteError -> String:
+def _trace_items(path: String, resource: String, table: String, command: String) raises -> String:
     try:
         var envelope = _trace_parse(_rows(path, resource, table, command))
-        if not envelope.is_object(): raise SQLiteError(code=1, message="trace rows envelope is invalid")
+        if not envelope.is_object(): raise Error(String(SQLiteError(code=1, message="trace rows envelope is invalid")))
         var items_text = _trace_value(envelope, "items")
         var items = _trace_parse(items_text)
-        if not items.is_array(): raise SQLiteError(code=1, message="trace rows items are invalid")
+        if not items.is_array(): raise Error(String(SQLiteError(code=1, message="trace rows items are invalid")))
         return items_text
     except err:
-        raise SQLiteError(code=1, message="trace: unable to read " + resource)
+        raise Error(String(SQLiteError(code=1, message="trace: unable to read " + resource)))
 
-def _trace_value(value: Value, key: String) raises SQLiteError -> String:
+def _trace_value(value: Value, key: String) raises -> String:
     try:
         if value.is_object() and key in value.object():
             var child = value.object()[key].copy()
             return to_string(child^)
         return "null"
     except err:
-        raise SQLiteError(code=1, message="trace: invalid row value")
+        raise Error(String(SQLiteError(code=1, message="trace: invalid row value")))
 
-def _trace_run(path: String, run_id: String) raises SQLiteError -> String:
+def _trace_run(path: String, run_id: String) raises -> String:
     try:
         var envelope = _trace_parse(_run_inspect(path, run_id))
-        if not envelope.is_object(): raise SQLiteError(code=1, message="run envelope is invalid")
+        if not envelope.is_object(): raise Error(String(SQLiteError(code=1, message="run envelope is invalid")))
         var run_text = _trace_value(envelope, "run")
         var run = _trace_parse(run_text)
         return run_text
     except err:
-        raise SQLiteError(code=1, message="trace: unable to read run")
+        raise Error(String(SQLiteError(code=1, message="trace: unable to read run")))
 
-def _trace_timeline(events_json: String) raises SQLiteError -> String:
+def _trace_timeline(events_json: String) raises -> String:
     try:
         var events = _trace_parse(events_json)
-        if not events.is_array(): raise SQLiteError(code=1, message="events must be an array")
+        if not events.is_array(): raise Error(String(SQLiteError(code=1, message="events must be an array")))
         var timeline = "["
         var first = True
         for event in events.array():
@@ -1207,19 +1207,19 @@ def _trace_timeline(events_json: String) raises SQLiteError -> String:
             timeline += ",\"created_at\":" + _trace_value(event, "created_at") + "}"
         return timeline + "]"
     except err:
-        raise SQLiteError(code=1, message="trace: unable to build timeline")
-def _trace_count(items_json: String) raises SQLiteError -> Int:
+        raise Error(String(SQLiteError(code=1, message="trace: unable to build timeline")))
+def _trace_count(items_json: String) raises -> Int:
     try:
         var items = _trace_parse(items_json)
-        if not items.is_array(): raise SQLiteError(code=1, message="trace items must be an array")
+        if not items.is_array(): raise Error(String(SQLiteError(code=1, message="trace items must be an array")))
         return len(items.array())
     except err:
-        raise SQLiteError(code=1, message="trace: unable to count rows")
+        raise Error(String(SQLiteError(code=1, message="trace: unable to count rows")))
 
 
-def _trace(path: String, command: String) raises SQLiteError -> String:
+def _trace(path: String, command: String) raises -> String:
     var run_id = _flag(command, "--run-id", "")
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var run = _trace_run(path, run_id)
     var events = _trace_items(path, "events", "runtime_events", command)
     var impulses = _trace_items(path, "impulses", "impulses", command)
@@ -1245,7 +1245,7 @@ def _trace(path: String, command: String) raises SQLiteError -> String:
     trace += ",\"processes\":" + processes + ",\"homeostats\":" + homeostats
     trace += ",\"projections\":" + projections + "}"
     return "{\"ok\":true,\"runtime\":\"mojo\",\"trace\":" + trace + "}"
-def _integer_option(command: String, name: String, default: Int) raises SQLiteError -> Int:
+def _integer_option(command: String, name: String, default: Int) raises -> Int:
     var raw = _flag(command, name, "")
     if raw == "": return default
     try:
@@ -1254,54 +1254,54 @@ def _integer_option(command: String, name: String, default: Int) raises SQLiteEr
         if parsed.value.is_uint(): return Int(parsed.value.uint())
     except err:
         pass
-    raise SQLiteError(code=2, message="argument_error: invalid integer value for " + name)
+    raise Error(String(SQLiteError(code=2, message="argument_error: invalid integer value for " + name)))
 
-def _impulse_create(command: String) raises SQLiteError -> String:
+def _impulse_create(command: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var impulse_id = _flag(command, "--impulse-id"); var impulse_type = _flag(command, "--impulse-type")
-    if run_id == "" or impulse_id == "" or impulse_type == "": raise SQLiteError(code=2, message="argument_error: --run-id, --impulse-id, and --impulse-type are required")
+    if run_id == "" or impulse_id == "" or impulse_type == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --impulse-id, and --impulse-type are required")))
     var payload = _flag_alias(command, "--payload", "--payload-json", "{}"); var metadata = _flag_alias(command, "--metadata", "--metadata-json", "{}"); _json(payload); _json(metadata)
     var now = _flag(command, "--now"); var key = _flag(command, "--idempotency-key", "impulse.accept:" + impulse_id)
     var row = Impulse(id=impulse_id, run_id=run_id, impulse_type=impulse_type, payload=payload, metadata=metadata, created_at=now, updated_at=now)
     var store = NativeDomainStore.open(_path(command)); store.initialize(); var accepted = store.accept_impulse(row, key, now, _flag(command, "--actor"), _flag(command, "--correlation-id"), _flag(command, "--causation-id")); store.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"impulse\",\"id\":" + _quote(accepted.impulse.id) + ",\"run_id\":" + _quote(run_id) + ",\"replayed\":" + ("true" if accepted.replayed else "false") + ",\"command_id\":" + _quote(accepted.command.id) + ",\"event_id\":" + _quote(accepted.events[0].id) + "}"
 
-def _process_schedule(command: String) raises SQLiteError -> String:
+def _process_schedule(command: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var process_id = _flag(command, "--process-id"); var process_type = _flag(command, "--process-type")
-    if run_id == "" or process_id == "" or process_type == "": raise SQLiteError(code=2, message="argument_error: --run-id, --process-id, and --process-type are required")
+    if run_id == "" or process_id == "" or process_type == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --process-id, and --process-type are required")))
     var input_json = _flag_alias(command, "--input", "--input-json", "{}"); var metadata = _flag_alias(command, "--metadata", "--metadata-json", "{}"); var output_schema = _flag(command, "--output-schema", "{}"); _json(input_json); _json(metadata); _json(output_schema)
     var now = _flag(command, "--now"); var journal = NativeJournal.open(_path(command)); journal.initialize()
     var row = journal.schedule_process(run_id, process_id, process_type, now, input_json, metadata, _flag(command, "--impulse-id"), _integer_option(command, "--priority", 0), _integer_option(command, "--max-attempts", 1), _flag(command, "--available-at", now), output_schema, _flag(command, "--idempotency-key", "process.schedule:" + process_id), _flag(command, "--actor")); journal.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"process\",\"id\":" + _quote(row.id) + ",\"run_id\":" + _quote(row.run_id) + ",\"status\":" + _quote(row.status) + "}"
 
-def _process_transition(command: String, target: String) raises SQLiteError -> String:
+def _process_transition(command: String, target: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var process_id = _flag(command, "--process-id"); var actor = _flag(command, "--actor", "cli"); var now = _flag(command, "--now")
-    if run_id == "" or process_id == "": raise SQLiteError(code=2, message="argument_error: --run-id and --process-id are required")
+    if run_id == "" or process_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id and --process-id are required")))
     var error_json = _flag_alias(command, "--error", "--error-json", "{}"); _json(error_json); var journal = NativeJournal.open(_path(command)); journal.initialize(); var row = ProcessRow(run_id="", id="", process_type="", impulse_id="", status="", priority=0, attempt=0, max_attempts=1, available_at="", lease_owner="", lease_expires_at="", input_json="{}", output_json="{}", error_json="{}", metadata="{}", created_at="", updated_at="", started_at="", finished_at="", output_schema_json="{}")
     if target == "cancel": row = journal.cancel_process(run_id, process_id, actor, now, error_json)
     else: row = journal.timeout_process(run_id, process_id, actor, now, error_json)
     journal.close(); return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"process\",\"id\":" + _quote(row.id) + ",\"run_id\":" + _quote(row.run_id) + ",\"status\":" + _quote(row.status) + "}"
 
-def _association_append(command: String) raises SQLiteError -> String:
+def _association_append(command: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var association_id = _flag(command, "--association-id"); var kind = _flag(command, "--kind")
-    if run_id == "" or association_id == "" or kind == "": raise SQLiteError(code=2, message="argument_error: --run-id, --association-id, and --kind are required")
+    if run_id == "" or association_id == "" or kind == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --association-id, and --kind are required")))
     var values = _flag_alias(command, "--values", "--values-json", "{}"); var metadata = _flag_alias(command, "--metadata", "--metadata-json", "{}"); _json(values); _json(metadata)
     var row = Association(id=association_id, run_id=run_id, kind=kind, impulse_id=_flag(command, "--impulse-id"), values=values, metadata=metadata, created_at=_flag(command, "--now")); var store = NativeDomainStore.open(_path(command)); store.initialize(); store.put_association(row); store.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"association\",\"id\":" + _quote(association_id) + ",\"run_id\":" + _quote(run_id) + "}"
-def _reaction_blob(root: String, content: List[UInt8], filename: String, metadata: String) raises SQLiteError -> ReactionBlob:
+def _reaction_blob(root: String, content: List[UInt8], filename: String, metadata: String) raises -> ReactionBlob:
     try:
         var store = FileReactionStore(root)
         return store.put_bytes_raw(content, filename, metadata)
     except err:
-        raise SQLiteError(code=2, message="argument_error: unable to persist reaction: " + String(err))
-def _reaction_record(command: String) raises SQLiteError -> String:
+        raise Error(String(SQLiteError(code=2, message="argument_error: unable to persist reaction: " + String(err))))
+def _reaction_record(command: String) raises -> String:
     var run_id = _flag(command, "--run-id")
     var reaction_kind = _flag(command, "--kind")
     var input_path = _flag(command, "--path")
     var reaction_root = _flag(command, "--reaction-root")
     if run_id == "" or reaction_kind == "" or input_path == "" or reaction_root == "":
-        raise SQLiteError(code=2, message="argument_error: --run-id, --kind, --path, and --reaction-root are required")
+        raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --kind, --path, and --reaction-root are required")))
     if not _safe(input_path) or not _safe(reaction_root):
-        raise SQLiteError(code=2, message="argument_error: invalid reaction path")
+        raise Error(String(SQLiteError(code=2, message="argument_error: invalid reaction path")))
     var metadata_raw = _flag(command, "--metadata-json", "{}")
     var metadata = String("")
     try:
@@ -1309,29 +1309,29 @@ def _reaction_record(command: String) raises SQLiteError -> String:
         var parsed = parse_json(metadata)
         if not parsed.value.is_object(): raise Error("metadata must be an object")
     except err:
-        raise SQLiteError(code=2, message="invalid_json: metadata")
+        raise Error(String(SQLiteError(code=2, message="invalid_json: metadata")))
     var source = Path(input_path)
     if not source.exists() or not source.is_file():
-        raise SQLiteError(code=2, message="argument_error: reaction path must be a file")
+        raise Error(String(SQLiteError(code=2, message="argument_error: reaction path must be a file")))
     var content = List[UInt8]()
     try:
         content = source.read_bytes()
     except err:
-        raise SQLiteError(code=2, message="argument_error: unable to read reaction path")
+        raise Error(String(SQLiteError(code=2, message="argument_error: unable to read reaction path")))
     var blob = _reaction_blob(reaction_root, content, source.name(), metadata)
     var metadata_value = Value()
     try:
         metadata_value = Value(parse_string=blob.metadata)
     except err:
-        raise SQLiteError(code=1, message="reaction metadata serialization failed")
+        raise Error(String(SQLiteError(code=1, message="reaction metadata serialization failed")))
     if not metadata_value.is_object():
-        raise SQLiteError(code=1, message="reaction metadata serialization failed")
+        raise Error(String(SQLiteError(code=1, message="reaction metadata serialization failed")))
     metadata_value.object()["reaction_store"] = Value(reaction_root)
     var persisted_metadata = String("")
     try:
         persisted_metadata = canonical_json_text(to_string(metadata_value))
     except err:
-        raise SQLiteError(code=1, message="reaction metadata serialization failed")
+        raise Error(String(SQLiteError(code=1, message="reaction metadata serialization failed")))
     var reaction_id = _flag(command, "--reaction-id", "")
     if reaction_id == "": reaction_id = "reaction:" + blob.digest
     var key = _flag(command, "--idempotency-key", "")
@@ -1361,9 +1361,9 @@ def _reaction_record(command: String) raises SQLiteError -> String:
         raise err^
 
 
-def _homeostat_transition(command: String, operation: String) raises SQLiteError -> String:
+def _homeostat_transition(command: String, operation: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var homeostat_id = _flag(command, "--homeostat-id"); var process_id = _flag(command, "--process-id"); var actor = _flag(command, "--actor", "cli"); var now = _flag(command, "--now")
-    if run_id == "" or homeostat_id == "" or process_id == "": raise SQLiteError(code=2, message="argument_error: --run-id, --homeostat-id, and --process-id are required")
+    if run_id == "" or homeostat_id == "" or process_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --homeostat-id, and --process-id are required")))
     var output = _flag(command, "--output", "{}"); var error_json = _flag_alias(command, "--error", "--error-json", "{}"); var metadata = _flag_alias(command, "--metadata", "--metadata-json", "{}"); _json(output); _json(error_json); _json(metadata)
     var key = _flag(command, "--idempotency-key", "homeostat." + operation + ":" + homeostat_id)
     if operation == "reopen" and not _has_option(command, "--idempotency-key"): key = ""
@@ -1378,23 +1378,23 @@ def _homeostat_transition(command: String, operation: String) raises SQLiteError
     journal.close(); return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"homeostat\",\"id\":" + _quote(homeostat_id) + ",\"process_id\":" + _quote(row.id) + ",\"status\":" + _quote(row.status) + "}"
 
 
-def _homeostat_domain_values(command: String) raises SQLiteError -> String:
+def _homeostat_domain_values(command: String) raises -> String:
     var items = _repeat_values(command, "--value")
     var values = Object(capacity=len(items))
     for item in items:
         var equals = item.find("=")
         if equals <= 0:
-            raise SQLiteError(code=2, message="Invalid value '" + item + "'; expected key=value")
+            raise Error(String(SQLiteError(code=2, message="Invalid value '" + item + "'; expected key=value")))
         var key = String(item[byte=0:equals])
         var value = String(item[byte=equals + 1:])
         values[key] = Value(value)
     try:
         return canonical_json_text(to_string(Value(values^)))
     except err:
-        raise SQLiteError(code=2, message="invalid_json")
+        raise Error(String(SQLiteError(code=2, message="invalid_json")))
 
 
-def _homeostat_domain(command: String, operation: String) raises SQLiteError -> String:
+def _homeostat_domain(command: String, operation: String) raises -> String:
     if operation == "open":
         var values = _flag(command, "--values-json", "{}")
         var metadata = _flag(command, "--metadata-json", "{}")
@@ -1406,7 +1406,7 @@ def _homeostat_domain(command: String, operation: String) raises SQLiteError -> 
             _ = canonical_json_text(to_string(values_parsed.value))
             _ = canonical_json_text(to_string(metadata_parsed.value))
         except err:
-            raise SQLiteError(code=2, message="invalid_json")
+            raise Error(String(SQLiteError(code=2, message="invalid_json")))
         if _flag(command, "--homeostat-id", "") == "":
             return _error("native_boundary", "homeostat open requires a native identifier generator")
     else:
@@ -1414,11 +1414,11 @@ def _homeostat_domain(command: String, operation: String) raises SQLiteError -> 
     return _error("native_boundary", "homeostat mutations require a native clock source")
 
 
-def _create(command: String) raises SQLiteError -> String:
+def _create(command: String) raises -> String:
     var path = _path(command)
 
     var run_id = _flag(command, "--run-id")
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required; native run-id generation is unavailable")
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required; native run-id generation is unavailable")))
     var metadata = _metadata_value(command)
     var lifecycle = RunLifecycle.open(path)
     lifecycle.initialize()
@@ -1498,7 +1498,7 @@ def _gc_json(plan: ReactionGarbageCollectionPlan) -> String:
     if plan.dry_run: dry_run = "true"
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"gc\",\"dry_run\":" + dry_run + ",\"reaction_root\":" + _quote(plan.reaction_root) + ",\"run_ids\":" + run_ids + ",\"scanned_run_ids\":" + scanned + ",\"referenced_count\":" + String(plan.referenced_count) + ",\"blob_count\":" + String(plan.blob_count) + ",\"kept_count\":" + String(plan.kept_count) + ",\"collectable_count\":" + String(plan.candidate_count) + ",\"deleted_count\":" + String(plan.deleted_count) + ",\"bytes_reclaimable\":" + String(plan.bytes_reclaimable) + ",\"bytes_reclaimed\":" + String(plan.bytes_reclaimed) + ",\"collectable\":" + collectable + ",\"deleted\":" + deleted + "}"
 
-def _gc(command: String) raises SQLiteError -> String:
+def _gc(command: String) raises -> String:
     if _has_option(command, "--older-than"):
         return _error("native_boundary", "gc --older-than requires native filesystem metadata support")
     var path = _path(command)
@@ -1511,12 +1511,12 @@ def _gc(command: String) raises SQLiteError -> String:
     var plan = collect_reaction_garbage(store, reaction_root, run_id, dry_run)
     store.close()
     return _gc_json(plan)
-def _maintain_journal(command: String) raises SQLiteError -> String:
+def _maintain_journal(command: String) raises -> String:
     var path = _path(command)
     var older_than_days = _maintenance_number(command, "--older-than-days", -1.0)
-    if older_than_days < 0.0: raise SQLiteError(code=2, message="argument_error: --older-than-days is required and must be non-negative")
+    if older_than_days < 0.0: raise Error(String(SQLiteError(code=2, message="argument_error: --older-than-days is required and must be non-negative")))
     var retention_keep_last = _maintenance_integer(command, "--keep-last", -1)
-    if retention_keep_last < -1: raise SQLiteError(code=2, message="argument_error: --keep-last must be non-negative")
+    if retention_keep_last < -1: raise Error(String(SQLiteError(code=2, message="argument_error: --keep-last must be non-negative")))
     var vacuum = True
     if _has_option(command, "--no-vacuum"): vacuum = False
     if _has_option(command, "--vacuum"): vacuum = True
@@ -1530,10 +1530,10 @@ def _maintain_journal(command: String) raises SQLiteError -> String:
     store.close()
     return _maintenance_json(plan)
 
-def _projection_rebuild(command: String) raises SQLiteError -> String:
+def _projection_rebuild(command: String) raises -> String:
     var path = _path(command)
     var run_id = _flag(command, "--run-id")
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var names = List[String]()
     var requested = _flag(command, "--name", "")
     if requested != "": names.append(requested)
@@ -1550,16 +1550,16 @@ def _projection_rebuild(command: String) raises SQLiteError -> String:
         items += projection.to_json()
     items += "]"
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"projections\",\"count\":" + String(len(rebuilt)) + ",\"projections\":" + items + "}"
-def _bridge_path(path: String, label: String) raises SQLiteError -> Path:
-    if path == "": raise SQLiteError(code=2, message="argument_error: " + label + " path is required")
+def _bridge_path(path: String, label: String) raises -> Path:
+    if path == "": raise Error(String(SQLiteError(code=2, message="argument_error: " + label + " path is required")))
     if not _safe(path) or path.find("://") >= 0 or path == ":memory:" or path.startswith("file:"):
-        raise SQLiteError(code=2, message="unsafe_path: invalid " + label + " path")
+        raise Error(String(SQLiteError(code=2, message="unsafe_path: invalid " + label + " path")))
     try:
         var value = Path(path).expanduser()
         if not path.startswith("/"): value = cwd() / value
         return value
     except err:
-        raise SQLiteError(code=2, message="unsafe_path: invalid " + label + " path")
+        raise Error(String(SQLiteError(code=2, message="unsafe_path: invalid " + label + " path")))
 
 def _bridge_string(value: Value, path: String) raises -> String:
     if not value.is_string(): raise Error("invalid_type at " + path + ": expected string")
@@ -1620,7 +1620,7 @@ def _bridge_impulse(value: Value, path: String) raises -> Impulse:
 
 def _bridge_budget(value: Value, path: String) raises -> RuntimeBudget:
     var object = _bridge_object(value, path)
-    var names = ["runtime_hops", "spawned_runs", "impulse_count", "wall_time_seconds", "attempts", "reaction_bytes"]
+    var names: List[String] = ["runtime_hops", "spawned_runs", "impulse_count", "wall_time_seconds", "attempts", "reaction_bytes"]
     _bridge_known(object, names, path)
     var values = List[Int](length=6, fill=0); var limited = List[Bool](length=6, fill=False)
     for i in range(6):
@@ -1632,7 +1632,7 @@ def _bridge_budget(value: Value, path: String) raises -> RuntimeBudget:
 def _decode_bridge_delivery(text: String) raises -> BridgeDelivery:
     var root = Value(parse_string=text)
     var object = _bridge_object(root, "/")
-    var names = ["id", "run_id", "idempotency_key", "source", "target", "impulse", "event_ref", "pool_id", "budget", "status", "attempts", "metadata", "created_at", "updated_at"]
+    var names: List[String] = ["id", "run_id", "idempotency_key", "source", "target", "impulse", "event_ref", "pool_id", "budget", "status", "attempts", "metadata", "created_at", "updated_at"]
     _bridge_known(object, names, "")
     for name in names:
         if name not in object: raise Error("missing_field at /" + name)
@@ -1643,7 +1643,7 @@ def _decode_bridge_delivery(text: String) raises -> BridgeDelivery:
     var row = BridgeDelivery(_bridge_string(object["id"].copy(), "/id"), _bridge_string(object["run_id"].copy(), "/run_id"), _bridge_string(object["idempotency_key"].copy(), "/idempotency_key"), _bridge_run(object["source"].copy(), "/source"), _bridge_run(object["target"].copy(), "/target"), _bridge_impulse(object["impulse"].copy(), "/impulse"), _bridge_event(object["event_ref"].copy(), "/event_ref"), pool, _bridge_budget(object["budget"].copy(), "/budget"), _bridge_string(object["status"].copy(), "/status"), _bridge_int(object["attempts"].copy(), "/attempts"), canonical_json_text(to_string(metadata^)), _bridge_string(object["created_at"].copy(), "/created_at"), _bridge_string(object["updated_at"].copy(), "/updated_at"))
     if not row.is_valid(): raise Error("invalid_value at /: invalid BridgeDelivery")
     return row^
-def _bridge_atomic_write(path: Path, text: String) raises SQLiteError:
+def _bridge_atomic_write(path: Path, text: String) raises:
     var temp = Path(path.__fspath__() + ".tmp")
     try:
         temp.write_text(text + "\n")
@@ -1652,15 +1652,15 @@ def _bridge_atomic_write(path: Path, text: String) raises SQLiteError:
         var source_c = CStringSlice(source_text)
         var target_c = CStringSlice(target_text)
         var result = external_call["rename", c_int](source_c, target_c)
-        if result != 0: raise SQLiteError(code=1, message="bridge export failed")
+        if result != 0: raise Error(String(SQLiteError(code=1, message="bridge export failed")))
     except err:
         try: remove(temp)
         except: pass
-        raise SQLiteError(code=1, message="bridge export failed")
-def _bridge_export(command: String) raises SQLiteError -> String:
+        raise Error(String(SQLiteError(code=1, message="bridge export failed")))
+def _bridge_export(command: String) raises -> String:
     var db_path = _bridge_path(_flag(command, "--db"), "database")
     var out_path = _bridge_path(_flag(command, "--out"), "output")
-    if db_path.__fspath__() == out_path.__fspath__(): raise SQLiteError(code=2, message="unsafe_path: database and output paths must differ")
+    if db_path.__fspath__() == out_path.__fspath__(): raise Error(String(SQLiteError(code=2, message="unsafe_path: database and output paths must differ")))
     var store = NativeDomainStore.open(db_path.__fspath__()); store.initialize()
     var delivery_id = _flag(command, "--delivery-id")
     var lookup = store.db.query("SELECT run_id FROM bridge_outbox WHERE id=?")
@@ -1673,28 +1673,28 @@ def _bridge_export(command: String) raises SQLiteError -> String:
     try:
         text = canonical_json_text(row.to_json())
     except err:
-        store.close(); raise SQLiteError(code=1, message="bridge export failed")
+        store.close(); raise Error(String(SQLiteError(code=1, message="bridge export failed")))
     store.close()
     _bridge_atomic_write(out_path, text)
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"bridge\",\"delivery\":" + text + "}"
 
-def _bridge_import(command: String) raises SQLiteError -> String:
+def _bridge_import(command: String) raises -> String:
     var db_path = _bridge_path(_flag(command, "--db"), "database")
     var file_path = _bridge_path(_flag(command, "--file"), "input")
     var text = ""
     try:
         text = file_path.read_text()
     except err:
-        raise SQLiteError(code=1, message="bridge import failed: unable to read input")
+        raise Error(String(SQLiteError(code=1, message="bridge import failed: unable to read input")))
     var row: BridgeDelivery
     try: row = _decode_bridge_delivery(text)
-    except err: raise SQLiteError(code=2, message="invalid_json: malformed BridgeDelivery")
+    except err: raise Error(String(SQLiteError(code=2, message="invalid_json: malformed BridgeDelivery")))
     var key = _flag(command, "--idempotency-key", "bridge.file.import:" + row.id)
-    if key == "": raise SQLiteError(code=2, message="argument_error: idempotency key must not be empty")
+    if key == "": raise Error(String(SQLiteError(code=2, message="argument_error: idempotency key must not be empty")))
     var store = NativeDomainStore.open(db_path.__fspath__()); store.initialize(); var imported = import_bridge_delivery(store, row, key); store.close()
     var serialized = ""
     try: serialized = imported.to_json()
-    except err: raise SQLiteError(code=1, message="bridge import failed")
+    except err: raise Error(String(SQLiteError(code=1, message="bridge import failed")))
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"bridge\",\"delivery\":" + serialized + "}"
 
 
@@ -1704,7 +1704,7 @@ def _error(kind: String, message: String = "") -> String:
     return "{\"ok\":false,\"runtime\":\"mojo\",\"error\":{\"type\":" + _quote(kind) + ",\"message\":" + _quote(detail) + "}}"
 
 
-def _bridge_deliver(command: String) raises SQLiteError -> String:
+def _bridge_deliver(command: String) raises -> String:
     var source_path = _flag(command, "--db")
     var target_path = _flag(command, "--target-db")
     var run_id = _flag(command, "--run-id")
@@ -1719,10 +1719,10 @@ def _bridge_deliver(command: String) raises SQLiteError -> String:
     return "{\"ok\":true,\"runtime\":\"mojo\",\"delivered\":" + result.source_delivery.to_json() + ",\"imported\":" + result.imported_delivery.to_json() + ",\"delivery_replayed\":" + ("true" if result.source_replayed else "false") + ",\"import_replayed\":" + ("true" if result.imported_replayed else "false") + "}"
 
 
-def _transition(command: String, operation: String) raises SQLiteError -> String:
+def _transition(command: String, operation: String) raises -> String:
     var path = _path(command)
     var run_id = _flag(command, "--run-id")
-    if run_id == "": raise SQLiteError(code=2, message="argument_error: --run-id is required")
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     var now = _flag(command, "--now")
     var key = _flag(command, "--idempotency-key", "run." + operation)
     var lifecycle = RunLifecycle.open(path)
@@ -1744,7 +1744,7 @@ def _transition(command: String, operation: String) raises SQLiteError -> String
         row = lifecycle.timeout(run_id, now, key)
     else:
         lifecycle.close()
-        raise SQLiteError(code=2, message="argument_error: unknown lifecycle operation")
+        raise Error(String(SQLiteError(code=2, message="argument_error: unknown lifecycle operation")))
     lifecycle.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"run\",\"id\":" + _quote(row.id) + ",\"status\":" + _quote(row.status) + "}"
 

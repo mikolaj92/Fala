@@ -197,7 +197,7 @@ def delete_run(
     mut store: NativeDomainStore,
     run_id: String,
     terminal_only: Bool = False,
-) raises SQLiteError -> RunDeleteCounts:
+) raises -> RunDeleteCounts:
     """Delete one run and every run-scoped row atomically.
 
     Append-only journal triggers are suspended only inside this transaction
@@ -214,16 +214,16 @@ def delete_run(
         # append-only triggers.  SQLite rolls back trigger DDL together
         # with the row deletes, so every failure restores both triggers.
         if run_id == "":
-            raise SQLiteError(code=1, message="domain store: run_id must not be empty")
+            raise Error(String(SQLiteError(code=1, message="domain store: run_id must not be empty")))
         var run = store.db.query("SELECT status FROM runs WHERE id=?")
         run.bind_text(1, run_id)
         if not run.step():
             run.close()
-            raise SQLiteError(code=1, message="domain store: unknown run")
+            raise Error(String(SQLiteError(code=1, message="domain store: unknown run")))
         var status = store._text(run, 0)
         run.close()
         if terminal_only and not _contains_string(_default_retention_statuses(), status):
-            raise SQLiteError(code=1, message="domain store: run is not terminal")
+            raise Error(String(SQLiteError(code=1, message="domain store: run is not terminal")))
 
         store.db.execute("DROP TRIGGER IF EXISTS runtime_events_no_delete")
         store.db.execute("DROP TRIGGER IF EXISTS runtime_commands_no_delete")
@@ -265,16 +265,16 @@ def delete_run(
         # Preserve specific validation diagnostics for host callers.
         var detail = String(err)
         if detail.find("run_id must not be empty") >= 0:
-            raise SQLiteError(code=1, message="domain store: run_id must not be empty")
+            raise Error(String(SQLiteError(code=1, message="domain store: run_id must not be empty")))
         if detail.find("unknown run") >= 0:
-            raise SQLiteError(code=1, message="domain store: unknown run")
+            raise Error(String(SQLiteError(code=1, message="domain store: unknown run")))
         if detail.find("not terminal") >= 0:
-            raise SQLiteError(code=1, message="domain store: run is not terminal")
-        raise SQLiteError(code=1, message="domain store: delete_run failed")
+            raise Error(String(SQLiteError(code=1, message="domain store: run is not terminal")))
+        raise Error(String(SQLiteError(code=1, message="domain store: delete_run failed")))
     return counts^
 
 
-def delete_terminal_run(mut store: NativeDomainStore, run_id: String) raises SQLiteError -> RunDeleteCounts:
+def delete_terminal_run(mut store: NativeDomainStore, run_id: String) raises -> RunDeleteCounts:
     """Delete one terminal run after BEGIN IMMEDIATE status validation."""
     return delete_run(store, run_id, terminal_only=True)
 
@@ -286,7 +286,7 @@ def run_retention(
     statuses: List[String] = List[String](),
     dry_run: Bool = True,
     keep_run_ids: List[String] = List[String](),
-) raises SQLiteError -> RunRetentionPlan:
+) raises -> RunRetentionPlan:
     """Select old terminal runs and optionally delete them atomically.
 
     Timestamps are compared by SQLite julianday, preserving ISO-8601
@@ -294,19 +294,19 @@ def run_retention(
     dry runs never report deletion counts.
     """
     if before == "":
-        raise SQLiteError(code=1, message="domain store: retention before must not be empty")
+        raise Error(String(SQLiteError(code=1, message="domain store: retention before must not be empty")))
     var cutoff_check = store.db.query("SELECT julianday(?) IS NOT NULL")
     cutoff_check.bind_text(1, before)
     var cutoff_valid = cutoff_check.step() and cutoff_check.column_int(0) == 1
     cutoff_check.close()
     if not cutoff_valid:
-        raise SQLiteError(code=1, message="domain store: retention before must be a valid timestamp")
+        raise Error(String(SQLiteError(code=1, message="domain store: retention before must be a valid timestamp")))
     var selected = statuses.copy()
     if len(selected) == 0:
         selected = _default_retention_statuses()
     for status in selected:
         if not _contains_string(_default_retention_statuses(), status):
-            raise SQLiteError(code=1, message="domain store: retention status must be terminal")
+            raise Error(String(SQLiteError(code=1, message="domain store: retention status must be terminal")))
 
     var plan = RunRetentionPlan(before, selected.copy(), dry_run)
     var stmt = store.db.query("SELECT id,status,created_at,updated_at,finished_at,COALESCE(finished_at,updated_at,created_at) FROM runs WHERE julianday(COALESCE(finished_at,updated_at,created_at)) < julianday(?) ORDER BY created_at ASC,id ASC")
@@ -342,18 +342,18 @@ def maintain_journal(
     vacuum: Bool = True,
     dry_run: Bool = True,
     reaction_root: String = "",
-) raises SQLiteError -> JournalMaintenancePlan:
+) raises -> JournalMaintenancePlan:
     """Run native retention, CAS garbage collection, and optional VACUUM."""
     if older_than_days < 0.0:
-        raise SQLiteError(code=1, message="domain store: older_than_days must be non-negative")
+        raise Error(String(SQLiteError(code=1, message="domain store: older_than_days must be non-negative")))
     if keep_last < -1:
-        raise SQLiteError(code=1, message="domain store: keep_last must be non-negative")
+        raise Error(String(SQLiteError(code=1, message="domain store: keep_last must be non-negative")))
 
     var cutoff = store.db.query("SELECT datetime('now', '-' || ? || ' days')")
     cutoff.bind_real(1, older_than_days)
     if not cutoff.step():
         cutoff.close()
-        raise SQLiteError(code=1, message="domain store: unable to derive maintenance cutoff")
+        raise Error(String(SQLiteError(code=1, message="domain store: unable to derive maintenance cutoff")))
     var before = cutoff.column_text(0)
     cutoff.close()
 
@@ -404,7 +404,7 @@ def maintain_journal(
                             reaction_gc.bytes_reclaimed += candidate_sizes[index]
                             break
         except err:
-            raise SQLiteError(code=1, message="domain store: reaction GC failed: " + String(err))
+            raise Error(String(SQLiteError(code=1, message="domain store: reaction GC failed: " + String(err))))
 
     var plan = JournalMaintenancePlan(
         older_than_days, keep_last, vacuum, dry_run, before, retention, reaction_gc
@@ -414,10 +414,10 @@ def maintain_journal(
         plan.vacuumed = True
     return plan^
 
-def collect_reaction_garbage(mut store: NativeDomainStore, reaction_root: String, run_id: String = "", dry_run: Bool = True) raises SQLiteError -> ReactionGarbageCollectionPlan:
+def collect_reaction_garbage(mut store: NativeDomainStore, reaction_root: String, run_id: String = "", dry_run: Bool = True) raises -> ReactionGarbageCollectionPlan:
     """Plan or delete unreferenced local CAS reaction blobs."""
     if reaction_root == "":
-        raise SQLiteError(code=2, message="argument_error: --reaction-root is required")
+        raise Error(String(SQLiteError(code=2, message="argument_error: --reaction-root is required")))
     if run_id != "": store._require_run(run_id)
     var plan = ReactionGarbageCollectionPlan(dry_run)
     plan.reaction_root = reaction_root
@@ -454,7 +454,7 @@ def collect_reaction_garbage(mut store: NativeDomainStore, reaction_root: String
                     candidate_sizes.append(blob_size)
                     plan.bytes_reclaimable += blob_size
                 except err:
-                    raise SQLiteError(code=1, message="domain store: reaction GC failed to measure blob bytes")
+                    raise Error(String(SQLiteError(code=1, message="domain store: reaction GC failed to measure blob bytes")))
         plan.candidates = plan.collectable.copy()
         plan.candidate_count = len(plan.collectable)
         if not dry_run:
@@ -467,5 +467,5 @@ def collect_reaction_garbage(mut store: NativeDomainStore, reaction_root: String
                         break
         return plan^
     except err:
-        raise SQLiteError(code=1, message="domain store: reaction GC failed: " + String(err))
+        raise Error(String(SQLiteError(code=1, message="domain store: reaction GC failed: " + String(err))))
 

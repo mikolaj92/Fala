@@ -1,0 +1,1375 @@
+diff --git a/src/sqlite_fire/advanced.mojo b/src/sqlite_fire/advanced.mojo
+index c9bbddf..d7456ee 100644
+--- a/src/sqlite_fire/advanced.mojo
++++ b/src/sqlite_fire/advanced.mojo
+@@ -22,9 +22,9 @@ comptime SQLITE_OPEN_CREATE: Int32 = 0x00000004
+ comptime SQLITE_OPEN_URI: Int32 = 0x00000040
+ comptime C_INT_MAX: Int = 2147483647
+ 
+-def _checked_c_int(value: Int, message: String, code: Int = Int(SQLITE_RANGE)) raises SQLiteError -> c_int:
++def _checked_c_int(value: Int, message: String, code: Int = Int(SQLITE_RANGE)) raises -> c_int:
+     if value < 0 or value > C_INT_MAX:
+-        raise _error(code, message)
++        raise Error(String(_error(code, message)))
+     return c_int(value)
+ 
+ comptime DbPtr = MutUnsafePointer[UInt8, MutUntrackedOrigin]
+@@ -67,57 +67,57 @@ comptime LIBRARY_PATH = (
+     else ""
+ )
+ 
+-def _cstring(mut value: String) raises SQLiteError -> CStringSlice[origin_of(value)]:
++def _cstring(mut value: String) raises -> CStringSlice[origin_of(value)]:
+     if value.byte_length() == 0 or (value.as_bytes().unsafe_ptr() + (value.byte_length() - 1)).load() != 0:
+         value += "\0"
+     try:
+         return CStringSlice(value)
+     except e:
+-        raise SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))
++        raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))))
+ 
+ def _error(code: Int, message: String) -> SQLiteError:
+     return SQLiteError(code=code, message=message)
+ 
+-def _check(result: c_int, message: String) raises SQLiteError:
++def _check(result: c_int, message: String) raises:
+     if result != SQLITE_OK:
+-        raise _error(Int(result), message)
++        raise Error(String(_error(Int(result), message)))
+ struct PassthroughVFS(Movable):
+     """Registered passthrough VFS; close after dependent databases close."""
+     var _library: OwnedDLHandle
+     var _vfs: VfsPtr
+     var _closed: Bool
+-    var _unregister: VfsUnregisterFn
+-
+-    def __init__(out self, name: String, base_name: String = "unix", make_default: Bool = False) raises SQLiteError:
++    def __init__(out self, name: String, base_name: String = "unix", make_default: Bool = False) raises:
+         self._closed = True
+         self._vfs = VfsPtr(unsafe_from_address=1)
+         try:
+             self._library = OwnedDLHandle(LIBRARY_PATH)
+-            self._unregister = self._library.get_function[VfsUnregisterFn]("sf_vfs_unregister")
+         except e:
+-            raise _error(Int(SQLITE_MISUSE), String(e))
++            raise Error(String(_error(Int(SQLITE_MISUSE), String(e))))
+         var name_value = name
+         var base_value = base_name
+         var name_c = _cstring(name_value)
+         var base_c = _cstring(base_value)
+         var holder = alloc[VfsPtr](1)
+-        var result = self._library.get_function[VfsRegisterFn]("sf_vfs_register_passthrough")(
++        var result = self._library.get_function[c_int]("sf_vfs_register_passthrough")(
+             CStr(unsafe_from_address=Int(name_c.unsafe_ptr())),
+             CStr(unsafe_from_address=Int(base_c.unsafe_ptr())),
+             c_int(1 if make_default else 0), VfsOut(to=holder[]))
+         if result != SQLITE_OK:
+             holder.free()
+-            raise _error(Int(result), "sqlite.fire: failed to register VFS")
++            raise Error(String(_error(Int(result), "sqlite.fire: failed to register VFS")))
+         self._vfs = holder[]
+         self._closed = False
+         holder.free()
+ 
+     def __del__(deinit self):
+-        if not self._closed: _ = self._unregister(self._vfs)
++        try:
++            if not self._closed: _ = self._library.get_function[c_int]("sf_vfs_unregister")(self._vfs)
++        except:
++            pass
+ 
+-    def close(mut self) raises SQLiteError:
++    def close(mut self) raises:
+         if self._closed: return
+-        var result = self._unregister(self._vfs)
++        var result = self._library.get_function[c_int]("sf_vfs_unregister")(self._vfs)
+         if result == SQLITE_OK: self._closed = True
+         _check(result, "sqlite.fire: failed to unregister VFS")
+ 
+@@ -129,56 +129,32 @@ struct AdvancedDatabase(Movable):
+     var _db: DbPtr
+     var _owns_db: Bool
+     var _closed: Bool
+-    var _close: CloseFn
+-    var _errmsg: ErrorFn
+-    var _interrupt: InterruptFn
+-    var _limit: LimitFn
+-    var _blob_open: BlobOpenFn
+-    var _backup_start: BackupStartFn
+-    var _serialize: SerializeFn
+-    var _serialize_status: SerializeStatusFn
+-    var _deserialize: DeserializeFn
+-    var _free: FreeFn
+-    var _enable_extension: EnableExtensionFn
+-    var _load_extension: LoadExtensionFn
+     var _extensions_enabled: Bool
+ 
+-    def __init__(out self, path: String) raises SQLiteError:
++    def __init__(out self, path: String) raises:
+         self._closed = True
+         self._owns_db = True
+         self._extensions_enabled = False
+         self._db = DbPtr(unsafe_from_address=1)
+         try:
+             self._library = OwnedDLHandle(LIBRARY_PATH)
+-            self._close = self._library.get_function[CloseFn]("sf_close")
+-            self._errmsg = self._library.get_function[ErrorFn]("sf_errmsg")
+-            self._interrupt = self._library.get_function[InterruptFn]("sf_interrupt")
+-            self._limit = self._library.get_function[LimitFn]("sf_limit")
+-            self._blob_open = self._library.get_function[BlobOpenFn]("sf_blob_open")
+-            self._backup_start = self._library.get_function[BackupStartFn]("sf_backup_start")
+-            self._serialize = self._library.get_function[SerializeFn]("sf_serialize")
+-            self._serialize_status = self._library.get_function[SerializeStatusFn]("sf_serialize_status")
+-            self._deserialize = self._library.get_function[DeserializeFn]("sf_deserialize")
+-            self._free = self._library.get_function[FreeFn]("sf_free")
+-            self._enable_extension = self._library.get_function[EnableExtensionFn]("sf_enable_load_extension")
+-            self._load_extension = self._library.get_function[LoadExtensionFn]("sf_load_extension")
+         except e:
+-            raise _error(Int(SQLITE_MISUSE), String(e))
++            raise Error(String(_error(Int(SQLITE_MISUSE), String(e))))
+         var holder = alloc[DbPtr](1)
+         var filename = path
+         var filename_c = _cstring(filename)
+-        var result = self._library.get_function[OpenFn]("sf_open")(
++        var result = self._library.get_function[c_int]("sf_open")(
+             CStr(unsafe_from_address=Int(filename_c.unsafe_ptr())), DbOut(to=holder[])
+         )
+         if result != SQLITE_OK:
+             holder.free()
+-            raise _error(Int(result), "sqlite.fire: failed to open database")
++            raise Error(String(_error(Int(result), "sqlite.fire: failed to open database")))
+         self._db = holder[]
+         self._closed = False
+         holder.free()
+     # Borrow the sf_db owned by a Connection. The Connection must remain open
+     # for this view's entire lifetime; this view never closes that handle.
+-    def __init__(out self, connection: Connection) raises SQLiteError:
++    def __init__(out self, connection: Connection) raises:
+         self._closed = True
+         self._owns_db = False
+         self._extensions_enabled = False
+@@ -186,114 +162,105 @@ struct AdvancedDatabase(Movable):
+         var db = connection._raw_db()
+         try:
+             self._library = OwnedDLHandle(LIBRARY_PATH)
+-            self._close = self._library.get_function[CloseFn]("sf_close")
+-            self._errmsg = self._library.get_function[ErrorFn]("sf_errmsg")
+-            self._interrupt = self._library.get_function[InterruptFn]("sf_interrupt")
+-            self._limit = self._library.get_function[LimitFn]("sf_limit")
+-            self._blob_open = self._library.get_function[BlobOpenFn]("sf_blob_open")
+-            self._backup_start = self._library.get_function[BackupStartFn]("sf_backup_start")
+-            self._serialize = self._library.get_function[SerializeFn]("sf_serialize")
+-            self._serialize_status = self._library.get_function[SerializeStatusFn]("sf_serialize_status")
+-            self._deserialize = self._library.get_function[DeserializeFn]("sf_deserialize")
+-            self._free = self._library.get_function[FreeFn]("sf_free")
+-            self._enable_extension = self._library.get_function[EnableExtensionFn]("sf_enable_load_extension")
+-            self._load_extension = self._library.get_function[LoadExtensionFn]("sf_load_extension")
+         except e:
+-            raise _error(Int(SQLITE_MISUSE), String(e))
++            raise Error(String(_error(Int(SQLITE_MISUSE), String(e))))
+         self._db = db
+         self._closed = False
+ 
+     # Internal constructor: sf_db ownership remains with the caller.
+-    def _from_db(mut self, db: DbPtr) raises SQLiteError:
++    def _from_db(mut self, db: DbPtr) raises:
+         self._db = db
+         self._closed = False
+ 
+     def __del__(deinit self):
+         if not self._closed and self._owns_db:
+-            _ = self._close(self._db)
++            try:
++                _ = self._library.get_function[c_int]("sf_close")(self._db)
++            except:
++                pass
+ 
+-    def close(mut self) raises SQLiteError:
++    def close(mut self) raises:
+         if self._closed: return
+         var result = SQLITE_OK
+         if self._owns_db:
+-            result = self._close(self._db)
++            result = self._library.get_function[c_int]("sf_close")(self._db)
+         self._closed = True
+         _check(result, "sqlite.fire: failed to close database")
+ 
+ 
+-    def _ensure_open(self) raises SQLiteError:
++    def _ensure_open(self) raises:
+         if self._closed:
+-            raise _error(Int(SQLITE_MISUSE), "sqlite.fire: database is closed")
++            raise Error(String(_error(Int(SQLITE_MISUSE), "sqlite.fire: database is closed")))
+ 
+     # Internal raw pointer accessor; the pointer is borrowed and never closed
+     # by this wrapper. Keep the owning database alive while using it.
+-    def _raw_db(self) raises SQLiteError -> DbPtr:
++    def _raw_db(self) raises -> DbPtr:
+         self._ensure_open()
+         return self._db
+-    def interrupt(self) raises SQLiteError:
++    def interrupt(self) raises:
+         self._ensure_open()
+-        self._interrupt(self._db)
++        self._library.get_function[NoneType]("sf_interrupt")(self._db)
+ 
+-    def set_limit(mut self, category: Int, new_value: Int) raises SQLiteError -> Int:
++    def set_limit(mut self, category: Int, new_value: Int) raises -> Int:
+         self._ensure_open()
+         if new_value < 0 or new_value > C_INT_MAX:
+-            raise _error(Int(SQLITE_RANGE), "sqlite.fire: limit value out of range")
+-        return Int(self._limit(self._db, _checked_c_int(category, "sqlite.fire: invalid limit category"), _checked_c_int(new_value, "sqlite.fire: limit value out of range")))
++            raise Error(String(_error(Int(SQLITE_RANGE), "sqlite.fire: limit value out of range")))
++        return Int(self._library.get_function[c_int]("sf_limit")(self._db, _checked_c_int(category, "sqlite.fire: invalid limit category"), _checked_c_int(new_value, "sqlite.fire: limit value out of range")))
+ 
+-    def limit(self, category: Int) raises SQLiteError -> Int:
++    def limit(self, category: Int) raises -> Int:
+         self._ensure_open()
+-        return Int(self._limit(self._db, _checked_c_int(category, "sqlite.fire: invalid limit category"), c_int(-1)))
++        return Int(self._library.get_function[c_int]("sf_limit")(self._db, _checked_c_int(category, "sqlite.fire: invalid limit category"), c_int(-1)))
+ 
+ 
+-    def execute(self, sql: String) raises SQLiteError:
++    def execute(self, sql: String) raises:
+         self._ensure_open()
+-        var exec = self._library.get_function[def(DbPtr, CStr) thin abi("C") -> c_int]("sf_exec")
++        var exec = self._library.get_function[c_int]("sf_exec")
+         var statement = sql
+         var statement_c = _cstring(statement)
+         var result = exec(self._db, CStr(unsafe_from_address=Int(statement_c.unsafe_ptr())))
+         _check(result, "sqlite.fire: failed to execute SQL")
+ 
+-    def open_blob(self, schema: String, table: String, column: String, rowid: Int, writable: Bool = False) raises SQLiteError -> IncrementalBlob:
++    def open_blob(self, schema: String, table: String, column: String, rowid: Int, writable: Bool = False) raises -> IncrementalBlob:
+         self._ensure_open()
+         return IncrementalBlob(self._db, schema, table, column, rowid, writable)
+     # Starts a backup using two independently owned advanced databases. The
+     # returned resource borrows both databases; keep them alive until finish().
+-    def backup_from(mut self, source: AdvancedDatabase, dest_schema: String = "main", source_schema: String = "main") raises SQLiteError -> Backup:
++    def backup_from(mut self, source: AdvancedDatabase, dest_schema: String = "main", source_schema: String = "main") raises -> Backup:
+         self._ensure_open()
+         source._ensure_open()
+         return Backup(self._db, dest_schema, source._db, source_schema)
+ 
+-    def serialize(self, schema: String = "main", flags: Int = 0) raises SQLiteError -> List[UInt8]:
++    def serialize(self, schema: String = "main", flags: Int = 0) raises -> List[UInt8]:
+         self._ensure_open()
+         if flags < 0 or flags > 0:
+-            raise _error(Int(SQLITE_MISUSE), "sqlite.fire: SQLITE_SERIALIZE_NOCOPY is unsupported for copied results")
++            raise Error(String(_error(Int(SQLITE_MISUSE), "sqlite.fire: SQLITE_SERIALIZE_NOCOPY is unsupported for copied results")))
+         return _serialize_copy(self._db, schema, UInt32(flags), self._serialize_status, self._free)
+ 
+-    def deserialize(mut self, schema: String, data: List[UInt8], reserved: Int = 0, flags: Int = 0) raises SQLiteError:
++    def deserialize(mut self, schema: String, data: List[UInt8], reserved: Int = 0, flags: Int = 0) raises:
+         self._ensure_open()
+         if reserved < 0: raise _error(Int(SQLITE_MISUSE), "sqlite.fire: reserved size must be non-negative")
+         var schema_value = schema
+         var schema_c = _cstring(schema_value)
+         var data_ptr = BlobPtr(unsafe_from_address=1)
+         if len(data) != 0: data_ptr = BlobPtr(unsafe_from_address=Int(data.unsafe_ptr()))
+-        var result = self._deserialize(
++        var result = self._library.get_function[c_int]("sf_deserialize")(
+             self._db,
+             CStr(unsafe_from_address=Int(schema_c.unsafe_ptr())),
+             data_ptr, UInt(len(data)), UInt(reserved), UInt32(flags)
+         )
+         _check(result, "sqlite.fire: failed to deserialize database")
+ 
+-    def enable_load_extension(mut self, enabled: Bool) raises SQLiteError:
++    def enable_load_extension(mut self, enabled: Bool) raises:
+         self._ensure_open()
+         if not enabled:
+             self._extensions_enabled = False
+             return
+-        raise _error(Int(SQLITE_ERROR), "sqlite.fire: extension loading is unsupported")
++        raise Error(String(_error(Int(SQLITE_ERROR), "sqlite.fire: extension loading is unsupported")))
+ 
+-    def load_extension(mut self, path: String, entrypoint: String = "") raises SQLiteError:
++    def load_extension(mut self, path: String, entrypoint: String = "") raises:
+         self._ensure_open()
+         if not self._extensions_enabled:
+-            raise _error(Int(SQLITE_MISUSE), "sqlite.fire: extension loading is disabled")
++            raise Error(String(_error(Int(SQLITE_MISUSE), "sqlite.fire: extension loading is disabled")))
+         var path_value = path
+         var path_c = _cstring(path_value)
+         var entry_ptr = CStr(unsafe_from_address=1)
+@@ -304,14 +271,14 @@ struct AdvancedDatabase(Movable):
+             entry_ptr = CStr(unsafe_from_address=Int(entry_c.unsafe_ptr()))
+         var error_holder = alloc[CStr](1)
+         error_holder[] = CStr(unsafe_from_address=1)
+-        var result = self._load_extension(
++        var result = self._library.get_function[c_int]("sf_load_extension")(
+             self._db, CStr(unsafe_from_address=Int(path_c.unsafe_ptr())), entry_ptr,
+             CStrOut(to=error_holder[])
+         )
+         var detail = "sqlite.fire: failed to load extension"
+         if Int(error_holder[]) != 0:
+             detail = String(unsafe_from_utf8_ptr=error_holder[])
+-            self._free(BlobPtr(unsafe_from_address=Int(error_holder[])))
++            self._library.get_function[NoneType]("sf_free")(BlobPtr(unsafe_from_address=Int(error_holder[])))
+         error_holder.free()
+         _check(result, detail)
+ 
+@@ -320,25 +287,14 @@ struct IncrementalBlob(Movable):
+     var _library: OwnedDLHandle
+     var _blob: BlobPtr
+     var _closed: Bool
+-    var _close: BlobCloseFn
+-    var _bytes: BlobBytesFn
+-    var _read: BlobReadFn
+-    var _write: BlobWriteFn
+-    var _reopen: BlobReopenFn
+-
+     # Internal constructor; use AdvancedDatabase.open_blob for a public API.
+-    def __init__(out self, db: DbPtr, schema: String, table: String, column: String, rowid: Int, writable: Bool) raises SQLiteError:
++    def __init__(out self, db: DbPtr, schema: String, table: String, column: String, rowid: Int, writable: Bool) raises:
+         self._closed = True
+         self._blob = BlobPtr(unsafe_from_address=1)
+         try:
+             self._library = OwnedDLHandle(LIBRARY_PATH)
+-            self._close = self._library.get_function[BlobCloseFn]("sf_blob_close")
+-            self._bytes = self._library.get_function[BlobBytesFn]("sf_blob_bytes")
+-            self._read = self._library.get_function[BlobReadFn]("sf_blob_read")
+-            self._write = self._library.get_function[BlobWriteFn]("sf_blob_write")
+-            self._reopen = self._library.get_function[BlobReopenFn]("sf_blob_reopen")
+         except e:
+-            raise _error(Int(SQLITE_MISUSE), String(e))
++            raise Error(String(_error(Int(SQLITE_MISUSE), String(e))))
+         var schema_value = schema
+         var table_value = table
+         var column_value = column
+@@ -346,7 +302,7 @@ struct IncrementalBlob(Movable):
+         var table_c = _cstring(table_value)
+         var column_c = _cstring(column_value)
+         var holder = alloc[BlobPtr](1)
+-        var result = self._library.get_function[BlobOpenFn]("sf_blob_open")(
++        var result = self._library.get_function[c_int]("sf_blob_open")(
+             db, CStr(unsafe_from_address=Int(schema_c.unsafe_ptr())),
+             CStr(unsafe_from_address=Int(table_c.unsafe_ptr())),
+             CStr(unsafe_from_address=Int(column_c.unsafe_ptr())),
+@@ -354,27 +310,30 @@ struct IncrementalBlob(Movable):
+         )
+         if result != SQLITE_OK:
+             holder.free()
+-            raise _error(Int(result), "sqlite.fire: failed to open incremental blob")
++            raise Error(String(_error(Int(result), "sqlite.fire: failed to open incremental blob")))
+         self._blob = holder[]
+         self._closed = False
+         holder.free()
+ 
+     def __del__(deinit self):
+-        if not self._closed: _ = self._close(self._blob)
++        try:
++            if not self._closed: _ = self._library.get_function[c_int]("sf_blob_close")(self._blob)
++        except:
++            pass
+ 
+-    def close(mut self) raises SQLiteError:
++    def close(mut self) raises:
+         if self._closed: return
+         self._closed = True
+-        _check(self._close(self._blob), "sqlite.fire: failed to close incremental blob")
++        _check(self._library.get_function[c_int]("sf_blob_close")(self._blob), "sqlite.fire: failed to close incremental blob")
+ 
+-    def _ensure_open(self) raises SQLiteError:
++    def _ensure_open(self) raises:
+         if self._closed: raise _error(Int(SQLITE_MISUSE), "sqlite.fire: blob is closed")
+ 
+-    def bytes(self) raises SQLiteError -> Int:
++    def bytes(self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._bytes(self._blob))
++        return Int(self._library.get_function[c_int]("sf_blob_bytes")(self._blob))
+ 
+-    def read(self, offset: Int, length: Int) raises SQLiteError -> List[UInt8]:
++    def read(self, offset: Int, length: Int) raises -> List[UInt8]:
+         self._ensure_open()
+         if offset < 0 or length < 0: raise _error(Int(SQLITE_MISUSE), "sqlite.fire: invalid blob range")
+         var result = List[UInt8]()
+@@ -384,37 +343,37 @@ struct IncrementalBlob(Movable):
+         while i < length:
+             buffer.append(0)
+             i += 1
+-        var result_code = self._read(self._blob, BlobPtr(unsafe_from_address=Int(buffer.unsafe_ptr())), _checked_c_int(length, "sqlite.fire: blob length out of range"), _checked_c_int(offset, "sqlite.fire: blob offset out of range"))
++        var result_code = self._library.get_function[c_int]("sf_blob_read")(self._blob, BlobPtr(unsafe_from_address=Int(buffer.unsafe_ptr())), _checked_c_int(length, "sqlite.fire: blob length out of range"), _checked_c_int(offset, "sqlite.fire: blob offset out of range"))
+         _check(result_code, "sqlite.fire: failed to read incremental blob")
+         i = 0
+         while i < length:
+             result.append(buffer[i])
+             i += 1
+         return result^
+-    def write(mut self, offset: Int, data: List[UInt8]) raises SQLiteError:
++    def write(mut self, offset: Int, data: List[UInt8]) raises:
+         self._ensure_open()
+         if offset < 0: raise _error(Int(SQLITE_MISUSE), "sqlite.fire: invalid blob offset")
+         var data_ptr = BlobPtr(unsafe_from_address=1)
+         if len(data) != 0: data_ptr = BlobPtr(unsafe_from_address=Int(data.unsafe_ptr()))
+-        _check(self._write(self._blob, data_ptr, _checked_c_int(len(data), "sqlite.fire: blob length out of range"), _checked_c_int(offset, "sqlite.fire: blob offset out of range")), "sqlite.fire: failed to write incremental blob")
++        _check(self._library.get_function[c_int]("sf_blob_write")(self._blob, data_ptr, _checked_c_int(len(data), "sqlite.fire: blob length out of range"), _checked_c_int(offset, "sqlite.fire: blob offset out of range")), "sqlite.fire: failed to write incremental blob")
+ 
+-    def reopen(mut self, rowid: Int) raises SQLiteError:
++    def reopen(mut self, rowid: Int) raises:
+         self._ensure_open()
+-        _check(self._reopen(self._blob, c_long_long(rowid)), "sqlite.fire: failed to reopen incremental blob")
++        _check(self._library.get_function[c_int]("sf_blob_reopen")(self._blob, c_long_long(rowid)), "sqlite.fire: failed to reopen incremental blob")
+ 
+-def _serialize_copy(db: DbPtr, schema: String, flags: UInt32, serialize_status: SerializeStatusFn, free: FreeFn) raises SQLiteError -> List[UInt8]:
++def _serialize_copy(db: DbPtr, schema: String, flags: UInt32, library: OwnedDLHandle) raises -> List[UInt8]:
+     if flags != 0:
+-        raise _error(Int(SQLITE_MISUSE), "sqlite.fire: SQLITE_SERIALIZE_NOCOPY is unsupported for copied results")
++        raise Error(String(_error(Int(SQLITE_MISUSE), "sqlite.fire: SQLITE_SERIALIZE_NOCOPY is unsupported for copied results")))
+     var schema_value = schema
+     var schema_c = _cstring(schema_value)
+     var size_holder = alloc[UInt](1)
+     var pointer_holder = alloc[BlobPtr](1)
+     pointer_holder[] = BlobPtr(unsafe_from_address=1)
+-    var result_code = serialize_status(db, CStr(unsafe_from_address=Int(schema_c.unsafe_ptr())), SizeOut(to=size_holder[]), flags, BlobOut(to=pointer_holder[]))
++    var result_code = library.get_function[c_int]("sf_serialize_status")(db, CStr(unsafe_from_address=Int(schema_c.unsafe_ptr())), SizeOut(to=size_holder[]), flags, BlobOut(to=pointer_holder[]))
+     if result_code != SQLITE_OK:
+         pointer_holder.free()
+         size_holder.free()
+-        raise _error(Int(result_code), "sqlite.fire: failed to serialize database")
++        raise Error(String(_error(Int(result_code), "sqlite.fire: failed to serialize database")))
+     var size = size_holder[]
+     var pointer = pointer_holder[]
+     var result = List[UInt8]()
+@@ -422,7 +381,7 @@ def _serialize_copy(db: DbPtr, schema: String, flags: UInt32, serialize_status:
+     while i < size:
+         result.append((pointer + i).load())
+         i += 1
+-    if Int(pointer) != 0: free(pointer)
++    if Int(pointer) != 0: library.get_function[NoneType]("sf_free")(pointer)
+     pointer_holder.free()
+     size_holder.free()
+     return result^
+@@ -431,56 +390,50 @@ struct Backup(Movable):
+     var _library: OwnedDLHandle
+     var _backup: BlobPtr
+     var _finished: Bool
+-    var _finish: BackupFinishFn
+-    var _step: BackupStepFn
+-    var _remaining: BackupRemainingFn
+-    var _pagecount: BackupPagecountFn
+-
+     # Internal constructor; db pointers are borrowed and never closed here.
+-    def __init__(out self, dest: DbPtr, dest_schema: String, source: DbPtr, source_schema: String) raises SQLiteError:
++    def __init__(out self, dest: DbPtr, dest_schema: String, source: DbPtr, source_schema: String) raises:
+         self._finished = True
+         self._backup = BlobPtr(unsafe_from_address=1)
+         try:
+             self._library = OwnedDLHandle(LIBRARY_PATH)
+-            self._finish = self._library.get_function[BackupFinishFn]("sf_backup_finish")
+-            self._step = self._library.get_function[BackupStepFn]("sf_backup_step")
+-            self._remaining = self._library.get_function[BackupRemainingFn]("sf_backup_remaining")
+-            self._pagecount = self._library.get_function[BackupPagecountFn]("sf_backup_pagecount")
+         except e:
+-            raise _error(Int(SQLITE_MISUSE), String(e))
++            raise Error(String(_error(Int(SQLITE_MISUSE), String(e))))
+         var dest_value = dest_schema
+         var source_value = source_schema
+         var dest_c = _cstring(dest_value)
+         var source_c = _cstring(source_value)
+         var holder = alloc[BlobPtr](1)
+-        var result = self._library.get_function[BackupStartFn]("sf_backup_start")(
++        var result = self._library.get_function[c_int]("sf_backup_start")(
+             dest, CStr(unsafe_from_address=Int(dest_c.unsafe_ptr())), source,
+             CStr(unsafe_from_address=Int(source_c.unsafe_ptr())), BlobOut(to=holder[])
+         )
+         if result != SQLITE_OK:
+             holder.free()
+-            raise _error(Int(result), "sqlite.fire: failed to start backup")
++            raise Error(String(_error(Int(result), "sqlite.fire: failed to start backup")))
+         self._backup = holder[]
+         self._finished = False
+         holder.free()
+ 
+     def __del__(deinit self):
+-        if not self._finished: _ = self._finish(self._backup)
++        try:
++            if not self._finished: _ = self._library.get_function[c_int]("sf_backup_finish")(self._backup)
++        except:
++            pass
+ 
+-    def finish(mut self) raises SQLiteError:
++    def finish(mut self) raises:
+         if self._finished: return
+         self._finished = True
+-        _check(self._finish(self._backup), "sqlite.fire: failed to finish backup")
++        _check(self._library.get_function[c_int]("sf_backup_finish")(self._backup), "sqlite.fire: failed to finish backup")
+ 
+-    def step(mut self, pages: Int = 1) raises SQLiteError -> Int:
++    def step(mut self, pages: Int = 1) raises -> Int:
+         if self._finished: raise _error(Int(SQLITE_MISUSE), "sqlite.fire: backup is finished")
+         if pages < 1: raise _error(Int(SQLITE_MISUSE), "sqlite.fire: backup pages must be positive")
+-        return Int(self._step(self._backup, _checked_c_int(pages, "sqlite.fire: backup pages out of range")))
++        return Int(self._library.get_function[c_int]("sf_backup_step")(self._backup, _checked_c_int(pages, "sqlite.fire: backup pages out of range")))
+ 
+-    def remaining(self) raises SQLiteError -> Int:
++    def remaining(self) raises -> Int:
+         if self._finished: raise _error(Int(SQLITE_MISUSE), "sqlite.fire: backup is finished")
+-        return Int(self._remaining(self._backup))
++        return Int(self._library.get_function[c_int]("sf_backup_remaining")(self._backup))
+ 
+-    def pagecount(self) raises SQLiteError -> Int:
++    def pagecount(self) raises -> Int:
+         if self._finished: raise _error(Int(SQLITE_MISUSE), "sqlite.fire: backup is finished")
+-        return Int(self._pagecount(self._backup))
++        return Int(self._library.get_function[c_int]("sf_backup_pagecount")(self._backup))
+diff --git a/src/sqlite_fire/sqlite.mojo b/src/sqlite_fire/sqlite.mojo
+index 7dc0116..50c7ad1 100644
+--- a/src/sqlite_fire/sqlite.mojo
++++ b/src/sqlite_fire/sqlite.mojo
+@@ -26,13 +26,13 @@ comptime SQLITE_ROW: Int32 = 100
+ comptime SQLITE_DONE: Int32 = 101
+ comptime C_INT_MAX: Int = 2147483647
+ 
+-def _checked_c_int(value: Int, message: String, code: Int = Int(SQLITE_RANGE)) raises SQLiteError -> c_int:
++def _checked_c_int(value: Int, message: String, code: Int = Int(SQLITE_RANGE)) raises -> c_int:
+     if value < 0 or value > C_INT_MAX:
+-        raise SQLiteError(code=code, message=message)
++        raise Error(String(SQLiteError(code=code, message=message)))
+     return c_int(value)
+-def _validate_savepoint_name(name: String) raises SQLiteError:
++def _validate_savepoint_name(name: String) raises:
+     if name.byte_length() == 0:
+-        raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: savepoint name must not be empty")
++        raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: savepoint name must not be empty")))
+     var bytes = name.as_bytes()
+     var pointer = bytes.unsafe_ptr()
+     var i = 0
+@@ -42,10 +42,10 @@ def _validate_savepoint_name(name: String) raises SQLiteError:
+         var letter = (value >= 65 and value <= 90) or (value >= 97 and value <= 122) or value == 95
+         var digit = value >= 48 and value <= 57
+         if value == 0 or (not letter and (first or not digit)):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: savepoint name must be an ASCII identifier")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: savepoint name must be an ASCII identifier")))
+         i += 1
+ 
+-def _savepoint_sql(prefix: String, name: String) raises SQLiteError -> String:
++def _savepoint_sql(prefix: String, name: String) raises -> String:
+     _validate_savepoint_name(name)
+     var sql = prefix
+     sql += "\""
+@@ -119,80 +119,80 @@ struct Row(Movable):
+ 
+     def count(self) -> Int:
+         return len(self._values)
+-    def name(self, index: Int) raises SQLiteError -> String:
++    def name(self, index: Int) raises -> String:
+         if index < 0 or index >= self.count():
+-            raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: row column index out of range")
++            raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: row column index out of range")))
+         return self._names[index]
+-    def index(self, name: String) raises SQLiteError -> Int:
++    def index(self, name: String) raises -> Int:
+         var i = 0
+         while i < self.count():
+             if self._names[i] == name:
+                 return i
+             i += 1
+-        raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: row column name not found")
+-    def value(self, index: Int) raises SQLiteError -> SQLiteValue:
++        raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: row column name not found")))
++    def value(self, index: Int) raises -> SQLiteValue:
+         if index < 0 or index >= self.count():
+-            raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: row column index out of range")
++            raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: row column index out of range")))
+         return self._values[index].copy()
+-    def value_by_name(self, name: String) raises SQLiteError -> SQLiteValue:
++    def value_by_name(self, name: String) raises -> SQLiteValue:
+         var i = 0
+         while i < self.count():
+             if self._names[i] == name:
+                 return self.value(i)
+             i += 1
+-        raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: row column name not found")
+-    def is_null(self, index: Int) raises SQLiteError -> Bool:
++        raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: row column name not found")))
++    def is_null(self, index: Int) raises -> Bool:
+         return self.value(index).is_null()
+ 
+-    def integer(self, index: Int) raises SQLiteError -> Int:
++    def integer(self, index: Int) raises -> Int:
+         var item = self.value(index)
+         if item.kind != Int(SQLITE_INTEGER):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not INTEGER")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not INTEGER")))
+         return item.integer_value
+ 
+-    def real(self, index: Int) raises SQLiteError -> Float64:
++    def real(self, index: Int) raises -> Float64:
+         var item = self.value(index)
+         if item.kind != Int(SQLITE_REAL):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not REAL")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not REAL")))
+         return item.real_value
+ 
+-    def text(self, index: Int) raises SQLiteError -> String:
++    def text(self, index: Int) raises -> String:
+         var item = self.value(index)
+         if item.kind != Int(SQLITE_TEXT):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not TEXT")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not TEXT")))
+         return item.text_value
+ 
+-    def blob(self, index: Int) raises SQLiteError -> List[UInt8]:
++    def blob(self, index: Int) raises -> List[UInt8]:
+         var item = self.value(index)
+         if item.kind != Int(SQLITE_BLOB):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not BLOB")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not BLOB")))
+         return item.blob_value.copy()
+ 
+-    def integer_by_name(self, name: String) raises SQLiteError -> Int:
++    def integer_by_name(self, name: String) raises -> Int:
+         var item = self.value_by_name(name)
+         if item.kind != Int(SQLITE_INTEGER):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not INTEGER")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not INTEGER")))
+         return item.integer_value
+ 
+-    def real_by_name(self, name: String) raises SQLiteError -> Float64:
++    def real_by_name(self, name: String) raises -> Float64:
+         var item = self.value_by_name(name)
+         if item.kind != Int(SQLITE_REAL):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not REAL")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not REAL")))
+         return item.real_value
+ 
+-    def text_by_name(self, name: String) raises SQLiteError -> String:
++    def text_by_name(self, name: String) raises -> String:
+         var item = self.value_by_name(name)
+         if item.kind != Int(SQLITE_TEXT):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not TEXT")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not TEXT")))
+         return item.text_value
+ 
+-    def blob_by_name(self, name: String) raises SQLiteError -> List[UInt8]:
++    def blob_by_name(self, name: String) raises -> List[UInt8]:
+         var item = self.value_by_name(name)
+         if item.kind != Int(SQLITE_BLOB):
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not BLOB")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: row value is not BLOB")))
+         return item.blob_value.copy()
+ 
+-    def is_null_by_name(self, name: String) raises SQLiteError -> Bool:
++    def is_null_by_name(self, name: String) raises -> Bool:
+         return self.value_by_name(name).is_null()
+ 
+ struct Savepoint(Movable):
+@@ -200,7 +200,7 @@ struct Savepoint(Movable):
+     var _name: String
+     var _active: Bool
+ 
+-    def __init__(out self, name: String) raises SQLiteError:
++    def __init__(out self, name: String) raises:
+         _validate_savepoint_name(name)
+         self._name = name
+         self._active = True
+@@ -208,9 +208,9 @@ struct Savepoint(Movable):
+     def name(self) -> String:
+         return self._name
+ 
+-    def _ensure_active(self) raises SQLiteError:
++    def _ensure_active(self) raises:
+         if not self._active:
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: savepoint is released")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: savepoint is released")))
+ @fieldwise_init
+ struct SQLiteError(Copyable, Writable):
+     var code: Int
+@@ -275,94 +275,54 @@ comptime LIBRARY_PATH = (
+     else ""
+ )
+ 
+-def _cstring(mut value: String) raises SQLiteError -> CStringSlice[origin_of(value)]:
++def _cstring(mut value: String) raises -> CStringSlice[origin_of(value)]:
+     if value.byte_length() == 0 or (value.as_bytes().unsafe_ptr() + (value.byte_length() - 1)).load() != 0:
+         value += "\0"
+     try:
+         return CStringSlice(value)
+     except e:
+-        raise SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))
+-def _string_from_cstr(value: CStr) raises SQLiteError -> String:
++        raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))))
++def _string_from_cstr(value: CStr) raises -> String:
+     if Int(value) == 0:
+-        raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: null text pointer")
++        raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: null text pointer")))
+     return String(unsafe_from_utf8_ptr=value)
+ 
+ struct Connection(Movable):
+     var _library: OwnedDLHandle
+     var _db: DbPtr
+     var _closed: Bool
+-    var _close: CloseFn
+-    var _errmsg: ErrorFn
+-    var _errcode: CodeFn
+-    var _extended_errcode: CodeFn
+-    var _changes: ChangesFn
+-    var _last_insert_rowid: RowidFn
+-    var _total_changes: TotalChangesFn
+-    var _interrupt: InterruptFn
+-    var _limit: LimitFn
+-    var _autocommit: CodeFn
+-    var _busy_timeout: BusyTimeoutFn
+-    var _exec: ExecFn
+-    var _prepare: PrepareFn
+-
+-    def __init__(out self, path: String) raises SQLiteError:
++    def __init__(out self, path: String) raises:
+         self._closed = True
+         self._db = DbPtr(unsafe_from_address=1)
+         var open_result: Int32
+         try:
+             self._library = OwnedDLHandle(LIBRARY_PATH)
+-            self._close = self._library.get_function[CloseFn]("sf_close")
+-            self._errmsg = self._library.get_function[ErrorFn]("sf_errmsg")
+-            self._errcode = self._library.get_function[CodeFn]("sf_errcode")
+-            self._extended_errcode = self._library.get_function[CodeFn]("sf_extended_errcode")
+-            self._changes = self._library.get_function[ChangesFn]("sf_changes")
+-            self._total_changes = self._library.get_function[TotalChangesFn]("sf_total_changes")
+-            self._interrupt = self._library.get_function[InterruptFn]("sf_interrupt")
+-            self._limit = self._library.get_function[LimitFn]("sf_limit")
+-            self._last_insert_rowid = self._library.get_function[RowidFn]("sf_last_insert_rowid")
+-            self._autocommit = self._library.get_function[CodeFn]("sf_autocommit")
+-            self._busy_timeout = self._library.get_function[BusyTimeoutFn]("sf_busy_timeout")
+-            self._exec = self._library.get_function[ExecFn]("sf_exec")
+-            self._prepare = self._library.get_function[PrepareFn]("sf_prepare")
+             var holder = alloc[DbPtr](1)
+             var filename = path
+             var filename_c = _cstring(filename)
+-            var result = self._library.get_function[OpenFn]("sf_open")(CStr(unsafe_from_address=Int(filename_c.unsafe_ptr())), DbOut(to=holder[]))
++            var result = self._library.get_function[c_int]("sf_open")(CStr(unsafe_from_address=Int(filename_c.unsafe_ptr())), DbOut(to=holder[]))
+             open_result = Int32(result)
+             if result == SQLITE_OK:
+                 self._db = holder[]
+                 self._closed = False
+             holder.free()
+         except e:
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))))
+         if open_result != SQLITE_OK:
+-            raise SQLiteError(code=Int(open_result), message="sqlite.fire: failed to open database")
++            raise Error(String(SQLiteError(code=Int(open_result), message="sqlite.fire: failed to open database")))
+ 
+-    def __init__(out self, path: String, options: OpenOptions) raises SQLiteError:
++    def __init__(out self, path: String, options: OpenOptions) raises:
+         self._closed = True
+         self._db = DbPtr(unsafe_from_address=1)
+         var open_result: Int32
+         try:
+             self._library = OwnedDLHandle(LIBRARY_PATH)
+-            self._close = self._library.get_function[CloseFn]("sf_close")
+-            self._errmsg = self._library.get_function[ErrorFn]("sf_errmsg")
+-            self._errcode = self._library.get_function[CodeFn]("sf_errcode")
+-            self._extended_errcode = self._library.get_function[CodeFn]("sf_extended_errcode")
+-            self._changes = self._library.get_function[ChangesFn]("sf_changes")
+-            self._total_changes = self._library.get_function[TotalChangesFn]("sf_total_changes")
+-            self._interrupt = self._library.get_function[InterruptFn]("sf_interrupt")
+-            self._limit = self._library.get_function[LimitFn]("sf_limit")
+-            self._last_insert_rowid = self._library.get_function[RowidFn]("sf_last_insert_rowid")
+-            self._autocommit = self._library.get_function[CodeFn]("sf_autocommit")
+-            self._busy_timeout = self._library.get_function[BusyTimeoutFn]("sf_busy_timeout")
+-            self._exec = self._library.get_function[ExecFn]("sf_exec")
+-            self._prepare = self._library.get_function[PrepareFn]("sf_prepare")
+             var holder = alloc[DbPtr](1)
+             var filename = path
+             var filename_c = _cstring(filename)
+             var vfs = options.vfs
+             var vfs_c = _cstring(vfs)
+-            var result = self._library.get_function[OpenOptionsFn]("sf_open_options")(
++            var result = self._library.get_function[c_int]("sf_open_options")(
+                 CStr(unsafe_from_address=Int(filename_c.unsafe_ptr())),
+                 _checked_c_int(options.flags, "sqlite.fire: open flags out of range", Int(SQLITE_MISUSE)),
+                 CStr(unsafe_from_address=Int(vfs_c.unsafe_ptr())),
+@@ -374,90 +334,93 @@ struct Connection(Movable):
+                 self._closed = False
+             holder.free()
+         except e:
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))))
+         if open_result != SQLITE_OK:
+-            raise SQLiteError(code=Int(open_result), message="sqlite.fire: failed to open database")
++            raise Error(String(SQLiteError(code=Int(open_result), message="sqlite.fire: failed to open database")))
+ 
+     def __del__(deinit self):
+         if not self._closed:
+-            _ = self._close(self._db)
++            try:
++                _ = self._library.get_function[c_int]("sf_close")(self._db)
++            except:
++                pass
+ 
+-    def _ensure_open(self) raises SQLiteError:
++    def _ensure_open(self) raises:
+         if self._closed:
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: connection is closed")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: connection is closed")))
+     # Internal interop hook: callers receive a borrowed handle and must keep this
+     # Connection alive while using any non-owning advanced view.
+-    def _raw_db(self) raises SQLiteError -> DbPtr:
++    def _raw_db(self) raises -> DbPtr:
+         self._ensure_open()
+         return self._db
+ 
+-    def close(mut self) raises SQLiteError:
++    def close(mut self) raises:
+         if self._closed:
+             return
+-        var result = self._close(self._db)
++        var result = self._library.get_function[c_int]("sf_close")(self._db)
+         if result != SQLITE_OK:
+-            raise SQLiteError(code=Int(result), message="sqlite.fire: failed to close database")
++            raise Error(String(SQLiteError(code=Int(result), message="sqlite.fire: failed to close database")))
+         self._closed = True
+ 
+-    def _error(self) raises SQLiteError -> String:
++    def _error(self) raises -> String:
+         self._ensure_open()
+-        return _string_from_cstr(self._errmsg(self._db))
++        return _string_from_cstr(self._library.get_function[CStr]("sf_errmsg")(self._db))
+ 
+-    def error_code(self) raises SQLiteError -> Int:
++    def error_code(self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._errcode(self._db))
++        return Int(self._library.get_function[c_int]("sf_errcode")(self._db))
+ 
+-    def extended_error_code(self) raises SQLiteError -> Int:
++    def extended_error_code(self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._extended_errcode(self._db))
++        return Int(self._library.get_function[c_int]("sf_extended_errcode")(self._db))
+ 
+-    def changes(self) raises SQLiteError -> Int:
++    def changes(self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._changes(self._db))
++        return Int(self._library.get_function[c_int]("sf_changes")(self._db))
+ 
+-    def last_insert_rowid(self) raises SQLiteError -> Int:
++    def last_insert_rowid(self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._last_insert_rowid(self._db))
++        return Int(self._library.get_function[c_long_long]("sf_last_insert_rowid")(self._db))
+ 
+-    def in_transaction(self) raises SQLiteError -> Bool:
++    def in_transaction(self) raises -> Bool:
+         self._ensure_open()
+-        return self._autocommit(self._db) == 0
++        return self._library.get_function[c_int]("sf_autocommit")(self._db) == 0
+ 
+-    def busy_timeout(mut self, milliseconds: Int) raises SQLiteError:
++    def busy_timeout(mut self, milliseconds: Int) raises:
+         self._ensure_open()
+-        var result = self._busy_timeout(self._db, _checked_c_int(milliseconds, "sqlite.fire: busy timeout out of range", Int(SQLITE_RANGE)))
++        var result = self._library.get_function[c_int]("sf_busy_timeout")(self._db, _checked_c_int(milliseconds, "sqlite.fire: busy timeout out of range", Int(SQLITE_RANGE)))
+         if result != SQLITE_OK:
+-            raise SQLiteError(code=Int(result), message="sqlite.fire: failed to set busy timeout")
++            raise Error(String(SQLiteError(code=Int(result), message="sqlite.fire: failed to set busy timeout")))
+ 
+-    def total_changes(self) raises SQLiteError -> Int:
++    def total_changes(self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._total_changes(self._db))
++        return Int(self._library.get_function[c_int]("sf_total_changes")(self._db))
+ 
+-    def interrupt(self) raises SQLiteError:
++    def interrupt(self) raises:
+         self._ensure_open()
+-        self._interrupt(self._db)
++        self._library.get_function[NoneType]("sf_interrupt")(self._db)
+ 
+-    def limit(mut self, category: Int, new_value: Int) raises SQLiteError -> Int:
++    def limit(mut self, category: Int, new_value: Int) raises -> Int:
+         self._ensure_open()
+         var category_c = _checked_c_int(category, "sqlite.fire: invalid limit category")
+         if new_value < -1 or new_value > C_INT_MAX:
+-            raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: limit value out of range")
+-        var result = self._limit(self._db, category_c, c_int(new_value))
++            raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: limit value out of range")))
++        var result = self._library.get_function[c_int]("sf_limit")(self._db, category_c, c_int(new_value))
+         if result < 0:
+-            raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: invalid limit category")
++            raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: invalid limit category")))
+         return Int(result)
+ 
+-    def get_limit(mut self, category: Int) raises SQLiteError -> Int:
++    def get_limit(mut self, category: Int) raises -> Int:
+         return self.limit(category, -1)
+ 
+-    def filename(self, schema: String = "main") raises SQLiteError -> String:
++    def filename(self, schema: String = "main") raises -> String:
+         self._ensure_open()
+         var value = schema
+         var c_schema = _cstring(value)
+-        var getter = self._library.get_function[def(DbPtr, CStr) thin abi("C") -> CStr]("sf_db_filename")
++        var getter = self._library.get_function[CStr]("sf_db_filename")
+         return _string_from_cstr(getter(self._db, CStr(unsafe_from_address=Int(c_schema.unsafe_ptr()))))
+ 
+-    def table_column_metadata(self, schema: String, table: String, column: String) raises SQLiteError -> TableColumnMetadata:
++    def table_column_metadata(self, schema: String, table: String, column: String) raises -> TableColumnMetadata:
+         self._ensure_open()
+         var schema_value = schema
+         var table_value = table
+@@ -470,7 +433,7 @@ struct Connection(Movable):
+         var not_null = alloc[c_int](1)
+         var primary_key = alloc[c_int](1)
+         var auto_increment = alloc[c_int](1)
+-        var getter = self._library.get_function[TableColumnMetadataFn]("sf_table_column_metadata")
++        var getter = self._library.get_function[c_int]("sf_table_column_metadata")
+         var result = getter(self._db, CStr(unsafe_from_address=Int(schema_c.unsafe_ptr())), CStr(unsafe_from_address=Int(table_c.unsafe_ptr())), CStr(unsafe_from_address=Int(column_c.unsafe_ptr())), MutUnsafePointer[CStr, MutUntrackedOrigin](to=data_type[]), MutUnsafePointer[CStr, MutUntrackedOrigin](to=collation[]), MutUnsafePointer[c_int, MutUntrackedOrigin](to=not_null[]), MutUnsafePointer[c_int, MutUntrackedOrigin](to=primary_key[]), MutUnsafePointer[c_int, MutUntrackedOrigin](to=auto_increment[]))
+         if result != SQLITE_OK:
+             data_type.free()
+@@ -478,7 +441,7 @@ struct Connection(Movable):
+             not_null.free()
+             primary_key.free()
+             auto_increment.free()
+-            raise SQLiteError(code=Int(result), message=self._error())
++            raise Error(String(SQLiteError(code=Int(result), message=self._error())))
+         var result_value = TableColumnMetadata(declared_type=_string_from_cstr(data_type[]), collation=_string_from_cstr(collation[]), not_null=not_null[] != 0, primary_key=primary_key[] != 0, auto_increment=auto_increment[] != 0)
+         data_type.free()
+         collation.free()
+@@ -487,46 +450,46 @@ struct Connection(Movable):
+         auto_increment.free()
+         return result_value^
+ 
+-    def execute(mut self, sql: String) raises SQLiteError:
++    def execute(mut self, sql: String) raises:
+         self._ensure_open()
+         var statement = sql
+         var statement_c = _cstring(statement)
+-        var result = self._exec(self._db, CStr(unsafe_from_address=Int(statement_c.unsafe_ptr())))
++        var result = self._library.get_function[c_int]("sf_exec")(self._db, CStr(unsafe_from_address=Int(statement_c.unsafe_ptr())))
+         if result != SQLITE_OK:
+-            raise SQLiteError(code=Int(result), message=self._error())
++            raise Error(String(SQLiteError(code=Int(result), message=self._error())))
+ 
+-    def begin(mut self) raises SQLiteError:
++    def begin(mut self) raises:
+         self.execute("BEGIN")
+ 
+-    def begin_immediate(mut self) raises SQLiteError:
++    def begin_immediate(mut self) raises:
+         self.execute("BEGIN IMMEDIATE")
+ 
+-    def begin_exclusive(mut self) raises SQLiteError:
++    def begin_exclusive(mut self) raises:
+         self.execute("BEGIN EXCLUSIVE")
+ 
+-    def commit(mut self) raises SQLiteError:
++    def commit(mut self) raises:
+         self._ensure_open()
+         if not self.in_transaction(): return
+         self.execute("COMMIT")
+ 
+-    def rollback(mut self) raises SQLiteError:
++    def rollback(mut self) raises:
+         self._ensure_open()
+         if not self.in_transaction(): return
+         self.execute("ROLLBACK")
+ 
+-    def query(mut self, sql: String) raises SQLiteError -> Statement:
++    def query(mut self, sql: String) raises -> Statement:
+         self._ensure_open()
+         var holder = alloc[StmtPtr](1)
+         var statement = sql
+         var statement_c = _cstring(statement)
+-        var result = self._prepare(self._db, CStr(unsafe_from_address=Int(statement_c.unsafe_ptr())), StmtOut(to=holder[]))
++        var result = self._library.get_function[c_int]("sf_prepare")(self._db, CStr(unsafe_from_address=Int(statement_c.unsafe_ptr())), StmtOut(to=holder[]))
+         if result != SQLITE_OK:
+             holder.free()
+-            raise SQLiteError(code=Int(result), message=self._error())
++            raise Error(String(SQLiteError(code=Int(result), message=self._error())))
+         var stmt = holder[]
+         holder.free()
+         return Statement(stmt)
+-    def fetch_all(mut self, sql: String) raises SQLiteError -> List[Row]:
++    def fetch_all(mut self, sql: String) raises -> List[Row]:
+         """Fetch and own every result row from a query."""
+         var statement = self.query(sql)
+         var result = List[Row]()
+@@ -535,33 +498,33 @@ struct Connection(Movable):
+         statement.close()
+         return result^
+ 
+-    def fetch_one(mut self, sql: String) raises SQLiteError -> Row:
++    def fetch_one(mut self, sql: String) raises -> Row:
+         """Fetch one owned result row or raise ``SQLITE_NOTFOUND``."""
+         var statement = self.query(sql)
+         if not statement.step():
+             statement.close()
+-            raise SQLiteError(code=Int(SQLITE_NOTFOUND), message="sqlite.fire: query returned no rows")
++            raise Error(String(SQLiteError(code=Int(SQLITE_NOTFOUND), message="sqlite.fire: query returned no rows")))
+         var result = statement.row()
+         statement.close()
+         return result^
+ 
+-    def fetch_value(mut self, sql: String) raises SQLiteError -> SQLiteValue:
++    def fetch_value(mut self, sql: String) raises -> SQLiteValue:
+         """Fetch the first column of one result row."""
+         var row = self.fetch_one(sql)
+         if row.count() == 0:
+-            raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: query returned no columns")
++            raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: query returned no columns")))
+         return row.value(0)
+-    def savepoint(mut self, name: String) raises SQLiteError -> Savepoint:
++    def savepoint(mut self, name: String) raises -> Savepoint:
+         """Create a savepoint after validating its identifier."""
+         self.execute(_savepoint_sql("SAVEPOINT ", name))
+         return Savepoint(name)
+ 
+-    def rollback_to(mut self, mut point: Savepoint) raises SQLiteError:
++    def rollback_to(mut self, mut point: Savepoint) raises:
+         """Roll back changes made after a savepoint without releasing it."""
+         point._ensure_active()
+         self.execute(_savepoint_sql("ROLLBACK TO ", point._name))
+ 
+-    def release(mut self, mut point: Savepoint) raises SQLiteError:
++    def release(mut self, mut point: Savepoint) raises:
+         """Release a savepoint and make its token unusable."""
+         point._ensure_active()
+         self.execute(_savepoint_sql("RELEASE ", point._name))
+@@ -571,90 +534,38 @@ struct Statement(Movable):
+     var _library: OwnedDLHandle
+     var _stmt: StmtPtr
+     var _closed: Bool
+-    var _bind_null: BindNullFn
+-    var _bind_real: BindDoubleFn
+-    var _bind_int: BindIntFn
+-    var _bind_text: BindTextFn
+-    var _bind_blob: BindBlobFn
+-    var _parameter_count: ParameterCountFn
+-    var _parameter_name: ParameterNameFn
+-    var _reset: ResetFn
+-    var _clear_bindings: ClearBindingsFn
+-    var _step: StepFn
+-    var _finalize: FinalizeFn
+-    var _column_count: ColumnCountFn
+-    var _column_name: ColumnNameFn
+-    var _column_type: ColumnTypeFn
+-    var _column_int: ColumnIntFn
+-    var _column_double: ColumnDoubleFn
+-    var _column_text: ColumnTextFn
+-    var _column_blob: ColumnBlobFn
+-    var _column_bytes: ColumnBytesFn
+-    var _bind_parameter_index: BindParameterIndexFn
+-    var _stmt_sql: StmtSqlFn
+-    var _stmt_readonly: StmtReadonlyFn
+-    var _data_count: DataCountFn
+-    var _column_database_name: ColumnMetadataFn
+-    var _column_table_name: ColumnMetadataFn
+-    var _column_origin_name: ColumnMetadataFn
+-    var _column_decltype: ColumnMetadataFn
+-
+-    def __init__(out self, stmt: StmtPtr) raises SQLiteError:
++    def __init__(out self, stmt: StmtPtr) raises:
+         try:
+             self._library = OwnedDLHandle(LIBRARY_PATH)
+             self._stmt = stmt
+             self._closed = False
+-            self._bind_null = self._library.get_function[BindNullFn]("sf_bind_null")
+-            self._bind_real = self._library.get_function[BindDoubleFn]("sf_bind_double")
+-            self._bind_int = self._library.get_function[BindIntFn]("sf_bind_int64")
+-            self._bind_text = self._library.get_function[BindTextFn]("sf_bind_text")
+-            self._bind_blob = self._library.get_function[BindBlobFn]("sf_bind_blob")
+-            self._parameter_count = self._library.get_function[ParameterCountFn]("sf_parameter_count")
+-            self._parameter_name = self._library.get_function[ParameterNameFn]("sf_parameter_name")
+-            self._bind_parameter_index = self._library.get_function[BindParameterIndexFn]("sf_bind_parameter_index")
+-            self._stmt_sql = self._library.get_function[StmtSqlFn]("sf_stmt_sql")
+-            self._stmt_readonly = self._library.get_function[StmtReadonlyFn]("sf_stmt_readonly")
+-            self._data_count = self._library.get_function[DataCountFn]("sf_data_count")
+-            self._column_database_name = self._library.get_function[ColumnMetadataFn]("sf_column_database_name")
+-            self._column_table_name = self._library.get_function[ColumnMetadataFn]("sf_column_table_name")
+-            self._column_origin_name = self._library.get_function[ColumnMetadataFn]("sf_column_origin_name")
+-            self._column_decltype = self._library.get_function[ColumnMetadataFn]("sf_column_decltype")
+-            self._reset = self._library.get_function[ResetFn]("sf_reset")
+-            self._clear_bindings = self._library.get_function[ClearBindingsFn]("sf_clear_bindings")
+-            self._step = self._library.get_function[StepFn]("sf_step")
+-            self._finalize = self._library.get_function[FinalizeFn]("sf_finalize")
+-            self._column_count = self._library.get_function[ColumnCountFn]("sf_column_count")
+-            self._column_name = self._library.get_function[ColumnNameFn]("sf_column_name")
+-            self._column_type = self._library.get_function[ColumnTypeFn]("sf_column_type")
+-            self._column_int = self._library.get_function[ColumnIntFn]("sf_column_int64")
+-            self._column_double = self._library.get_function[ColumnDoubleFn]("sf_column_double")
+-            self._column_text = self._library.get_function[ColumnTextFn]("sf_column_text")
+-            self._column_blob = self._library.get_function[ColumnBlobFn]("sf_column_blob")
+-            self._column_bytes = self._library.get_function[ColumnBytesFn]("sf_column_bytes")
+         except e:
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))))
+ 
+     def __del__(deinit self):
+         if not self._closed:
+-            _ = self._finalize(self._stmt)
++            try:
++                _ = self._library.get_function[c_int]("sf_finalize")(self._stmt)
++            except:
++                pass
+ 
+-    def _ensure_open(self) raises SQLiteError:
++    def _ensure_open(self) raises:
+         if self._closed:
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: statement is closed")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: statement is closed")))
+ 
+-    def close(mut self) raises SQLiteError:
++    def close(mut self) raises:
+         if self._closed:
+             return
+         self._closed = True
+-        var result = self._finalize(self._stmt)
++        var result = self._library.get_function[c_int]("sf_finalize")(self._stmt)
+         if result != SQLITE_OK:
+-            raise SQLiteError(code=Int(result), message="sqlite.fire: failed to finalize statement")
++            raise Error(String(SQLiteError(code=Int(result), message="sqlite.fire: failed to finalize statement")))
+ 
+-    def bind_null(mut self, index: Int) raises SQLiteError:
++    def bind_null(mut self, index: Int) raises:
+         self._ensure_open()
+-        var result = self._bind_null(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"))
++        var result = self._library.get_function[c_int]("sf_bind_null")(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"))
+         if result != SQLITE_OK: raise SQLiteError(code=Int(result), message="sqlite.fire: failed to bind null")
+-    def bind_value(mut self, index: Int, value: SQLiteValue) raises SQLiteError:
++    def bind_value(mut self, index: Int, value: SQLiteValue) raises:
+         """Bind an owned scalar using SQLite's native type semantics."""
+         if value.kind == Int(SQLITE_NULL):
+             self.bind_null(index)
+@@ -667,12 +578,12 @@ struct Statement(Movable):
+         elif value.kind == Int(SQLITE_BLOB):
+             self.bind_blob(index, value.blob_value.copy())
+         else:
+-            raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: unknown SQLiteValue kind")
++            raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: unknown SQLiteValue kind")))
+ 
+-    def bind(mut self, index: Int, value: SQLiteValue) raises SQLiteError:
++    def bind(mut self, index: Int, value: SQLiteValue) raises:
+         self.bind_value(index, value)
+ 
+-    def column_value(self, index: Int) raises SQLiteError -> SQLiteValue:
++    def column_value(self, index: Int) raises -> SQLiteValue:
+         """Copy one result column while retaining SQL NULL/empty distinctions."""
+         var kind = self.column_type(index)
+         if kind == Int(SQLITE_NULL): return SQLiteValue.null()
+@@ -680,85 +591,85 @@ struct Statement(Movable):
+         if kind == Int(SQLITE_REAL): return SQLiteValue.real(self.column_real(index))
+         if kind == Int(SQLITE_TEXT): return SQLiteValue.text(self.column_text(index))
+         if kind == Int(SQLITE_BLOB): return SQLiteValue.blob(self.column_blob(index))
+-        raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: unknown SQLite column type")
++        raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: unknown SQLite column type")))
+ 
+-    def bind_int(mut self, index: Int, value: Int) raises SQLiteError:
++    def bind_int(mut self, index: Int, value: Int) raises:
+         self._ensure_open()
+-        var result = self._bind_int(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"), c_long_long(value))
++        var result = self._library.get_function[c_int]("sf_bind_int64")(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"), c_long_long(value))
+         if result != SQLITE_OK: raise SQLiteError(code=Int(result), message="sqlite.fire: failed to bind integer")
+ 
+-    def bind_real(mut self, index: Int, value: Float64) raises SQLiteError:
++    def bind_real(mut self, index: Int, value: Float64) raises:
+         self._ensure_open()
+-        var result = self._bind_real(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"), c_double(value))
++        var result = self._library.get_function[c_int]("sf_bind_double")(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"), c_double(value))
+         if result != SQLITE_OK: raise SQLiteError(code=Int(result), message="sqlite.fire: failed to bind real")
+ 
+-    def bind_text(mut self, index: Int, value: String) raises SQLiteError:
++    def bind_text(mut self, index: Int, value: String) raises:
+         self._ensure_open()
+         var text_value = value
+         var text_ptr = text_value.as_bytes().unsafe_ptr()
+-        var result = self._bind_text(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"), CStr(unsafe_from_address=Int(text_ptr)), _checked_c_int(text_value.byte_length(), "sqlite.fire: text length out of range"))
++        var result = self._library.get_function[c_int]("sf_bind_text")(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"), CStr(unsafe_from_address=Int(text_ptr)), _checked_c_int(text_value.byte_length(), "sqlite.fire: text length out of range"))
+         if result != SQLITE_OK: raise SQLiteError(code=Int(result), message="sqlite.fire: failed to bind text")
+ 
+-    def bind_blob(mut self, index: Int, value: List[UInt8]) raises SQLiteError:
++    def bind_blob(mut self, index: Int, value: List[UInt8]) raises:
+         self._ensure_open()
+         var length = len(value)
+         var pointer = value.unsafe_ptr()
+-        var result = self._bind_blob(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"), BlobPtr(unsafe_from_address=Int(pointer)), _checked_c_int(length, "sqlite.fire: blob length out of range"))
++        var result = self._library.get_function[c_int]("sf_bind_blob")(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"), BlobPtr(unsafe_from_address=Int(pointer)), _checked_c_int(length, "sqlite.fire: blob length out of range"))
+         if result != SQLITE_OK: raise SQLiteError(code=Int(result), message="sqlite.fire: failed to bind blob")
+ 
+-    def parameter_count(self) raises SQLiteError -> Int:
++    def parameter_count(self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._parameter_count(self._stmt))
++        return Int(self._library.get_function[c_int]("sf_parameter_count")(self._stmt))
+ 
+-    def parameter_name(self, index: Int) raises SQLiteError -> String:
++    def parameter_name(self, index: Int) raises -> String:
+         self._ensure_open()
+         if index < 1 or index > self.parameter_count():
+-            raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: parameter index out of range")
+-        var name = self._parameter_name(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"))
++            raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: parameter index out of range")))
++        var name = self._library.get_function[CStr]("sf_parameter_name")(self._stmt, _checked_c_int(index, "sqlite.fire: parameter index out of range"))
+         if Int(name) == 0: return ""
+         return _string_from_cstr(name)
+ 
+-    def bind_parameter_index(self, name: String) raises SQLiteError -> Int:
++    def bind_parameter_index(self, name: String) raises -> Int:
+         self._ensure_open()
+         var value = name
+         var c_name = _cstring(value)
+-        return Int(self._bind_parameter_index(self._stmt, CStr(unsafe_from_address=Int(c_name.unsafe_ptr()))))
++        return Int(self._library.get_function[c_int]("sf_bind_parameter_index")(self._stmt, CStr(unsafe_from_address=Int(c_name.unsafe_ptr()))))
+ 
+-    def sql(self) raises SQLiteError -> String:
++    def sql(self) raises -> String:
+         self._ensure_open()
+-        return _string_from_cstr(self._stmt_sql(self._stmt))
++        return _string_from_cstr(self._library.get_function[CStr]("sf_stmt_sql")(self._stmt))
+ 
+-    def readonly(self) raises SQLiteError -> Bool:
++    def readonly(self) raises -> Bool:
+         self._ensure_open()
+-        var result = self._stmt_readonly(self._stmt)
++        var result = self._library.get_function[c_int]("sf_stmt_readonly")(self._stmt)
+         if result < 0: raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: failed to inspect statement")
+         return result != 0
+ 
+-    def data_count(self) raises SQLiteError -> Int:
++    def data_count(self) raises -> Int:
+         self._ensure_open()
+-        var result = self._data_count(self._stmt)
++        var result = self._library.get_function[c_int]("sf_data_count")(self._stmt)
+         if result < 0: raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: failed to inspect statement")
+         return Int(result)
+ 
+-    def _metadata(self, index: Int, getter: ColumnMetadataFn) raises SQLiteError -> String:
++    def _metadata(self, index: Int, symbol: String) raises -> String:
+         self._check_column(index)
+-        var result = getter(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range"))
++        var result = self._library.get_function[CStr](symbol)(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range"))
+         if Int(result) == 0: return ""
+         return _string_from_cstr(result)
+ 
+-    def column_database_name(self, index: Int) raises SQLiteError -> String:
++    def column_database_name(self, index: Int) raises -> String:
+         return self._metadata(index, self._column_database_name)
+ 
+-    def column_table_name(self, index: Int) raises SQLiteError -> String:
++    def column_table_name(self, index: Int) raises -> String:
+         return self._metadata(index, self._column_table_name)
+ 
+-    def column_origin_name(self, index: Int) raises SQLiteError -> String:
++    def column_origin_name(self, index: Int) raises -> String:
+         return self._metadata(index, self._column_origin_name)
+ 
+-    def column_decltype(self, index: Int) raises SQLiteError -> String:
++    def column_decltype(self, index: Int) raises -> String:
+         return self._metadata(index, self._column_decltype)
+ 
+-    def column_index(self, name: String) raises SQLiteError -> Int:
++    def column_index(self, name: String) raises -> Int:
+         """Return the first result-column index matching ``name``."""
+         self._ensure_open()
+         var i = 0
+@@ -767,9 +678,9 @@ struct Statement(Movable):
+             if self.column_name(i) == name:
+                 return i
+             i += 1
+-        raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: column name not found")
++        raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: column name not found")))
+ 
+-    def row(self) raises SQLiteError -> Row:
++    def row(self) raises -> Row:
+         """Copy the current result row and its column names."""
+         self._ensure_open()
+         var values = List[SQLiteValue]()
+@@ -782,67 +693,67 @@ struct Statement(Movable):
+             i += 1
+         return Row(values^, names^)
+ 
+-    def reset(mut self) raises SQLiteError:
++    def reset(mut self) raises:
+         self._ensure_open()
+-        var result = self._reset(self._stmt)
++        var result = self._library.get_function[c_int]("sf_reset")(self._stmt)
+         if result != SQLITE_OK: raise SQLiteError(code=Int(result), message="sqlite.fire: failed to reset statement")
+ 
+-    def clear_bindings(mut self) raises SQLiteError:
++    def clear_bindings(mut self) raises:
+         self._ensure_open()
+-        var result = self._clear_bindings(self._stmt)
++        var result = self._library.get_function[c_int]("sf_clear_bindings")(self._stmt)
+         if result != SQLITE_OK: raise SQLiteError(code=Int(result), message="sqlite.fire: failed to clear bindings")
+ 
+-    def step_code(mut self) raises SQLiteError -> Int:
++    def step_code(mut self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._step(self._stmt))
++        return Int(self._library.get_function[c_int]("sf_step")(self._stmt))
+ 
+-    def step(mut self) raises SQLiteError -> Bool:
++    def step(mut self) raises -> Bool:
+         var result = self.step_code()
+         if result == Int(SQLITE_ROW): return True
+         if result == Int(SQLITE_DONE): return False
+-        raise SQLiteError(code=result, message="sqlite.fire: failed to step query")
++        raise Error(String(SQLiteError(code=result, message="sqlite.fire: failed to step query")))
+ 
+-    def column_count(self) raises SQLiteError -> Int:
++    def column_count(self) raises -> Int:
+         self._ensure_open()
+-        return Int(self._column_count(self._stmt))
++        return Int(self._library.get_function[c_int]("sf_column_count")(self._stmt))
+ 
+-    def _check_column(self, index: Int) raises SQLiteError:
++    def _check_column(self, index: Int) raises:
+         if index < 0 or index >= self.column_count():
+-            raise SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: column index out of range")
++            raise Error(String(SQLiteError(code=Int(SQLITE_RANGE), message="sqlite.fire: column index out of range")))
+ 
+-    def column_name(self, index: Int) raises SQLiteError -> String:
++    def column_name(self, index: Int) raises -> String:
+         self._check_column(index)
+-        return _string_from_cstr(self._column_name(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
++        return _string_from_cstr(self._library.get_function[CStr]("sf_column_name")(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
+ 
+-    def column_null(self, index: Int) raises SQLiteError -> Bool:
++    def column_null(self, index: Int) raises -> Bool:
+         return self.column_type(index) == Int(SQLITE_NULL)
+ 
+-    def column_type(self, index: Int) raises SQLiteError -> Int:
++    def column_type(self, index: Int) raises -> Int:
+         self._check_column(index)
+-        return Int(self._column_type(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
++        return Int(self._library.get_function[c_int]("sf_column_type")(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
+ 
+-    def column_int(self, index: Int) raises SQLiteError -> Int:
++    def column_int(self, index: Int) raises -> Int:
+         self._check_column(index)
+-        return Int(self._column_int(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
++        return Int(self._library.get_function[c_long_long]("sf_column_int64")(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
+ 
+-    def column_real(self, index: Int) raises SQLiteError -> Float64:
++    def column_real(self, index: Int) raises -> Float64:
+         self._check_column(index)
+-        return Float64(self._column_double(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
++        return Float64(self._library.get_function[c_double]("sf_column_double")(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
+ 
+-    def column_text(self, index: Int) raises SQLiteError -> String:
++    def column_text(self, index: Int) raises -> String:
+         self._check_column(index)
+         if self.column_null(index): return ""
+-        return _string_from_cstr(self._column_text(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
++        return _string_from_cstr(self._library.get_function[CStr]("sf_column_text")(self._stmt, _checked_c_int(index, "sqlite.fire: column index out of range")))
+ 
+-    def column_blob(self, index: Int) raises SQLiteError -> List[UInt8]:
++    def column_blob(self, index: Int) raises -> List[UInt8]:
+         self._check_column(index)
+         var result = List[UInt8]()
+         if self.column_null(index): return result^
+         var index_c = _checked_c_int(index, "sqlite.fire: column index out of range")
+-        var length = Int(self._column_bytes(self._stmt, index_c))
++        var length = Int(self._library.get_function[c_int]("sf_column_bytes")(self._stmt, index_c))
+         if length < 0: raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: invalid blob length")
+         if length == 0: return result^
+-        var pointer = self._column_blob(self._stmt, index_c)
++        var pointer = self._library.get_function[BlobPtr]("sf_column_blob")(self._stmt, index_c)
+         if Int(pointer) == 0: raise SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: null blob pointer")
+         var i = 0
+         while i < length:

@@ -1,16 +1,16 @@
 [workspace]
 name = "fala"
 version = "0.7.25"
-channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+channels = ["https://conda.modular.com/max", "conda-forge"]
 platforms = ["osx-arm64"]
 
 [dependencies]
-mojo = "==1.0.0b3.dev2026071505"
+mojo = "==1.0.0"
 sqlite = ">=3.51"
 
 [tasks]
-setup-ember-json = "test -d vendor/EmberJson || git clone --depth 1 https://github.com/bgreni/EmberJson.git vendor/EmberJson"
-setup-sqlite-fire = { cmd = "test -d vendor/sqlite.fire || git clone --depth 1 https://github.com/mikolaj92/sqlite.fire.git vendor/sqlite.fire", depends-on = ["setup-ember-json"] }
+setup-ember-json = "./tools/setup_ember_json.sh"
+setup-sqlite-fire = { cmd = "./tools/setup_sqlite_fire.sh", depends-on = ["setup-ember-json"] }
 core-status = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_status.mojo"
 core-journal-memory = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_journal_memory.mojo"
 core-correlation-pure = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_correlation_pure.mojo"

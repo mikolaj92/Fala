@@ -382,7 +382,7 @@ struct SchemaStatus(Movable):
             and self.runtime_events_has_schema_version
         )
 
-def _object_exists(mut connection: Connection, object_type: String, name: String) raises SQLiteError -> Bool:
+def _object_exists(mut connection: Connection, object_type: String, name: String) raises -> Bool:
     var stmt = connection.query("SELECT 1 FROM sqlite_master WHERE type=? AND name=?")
     stmt.bind_text(1, object_type)
     stmt.bind_text(2, name)
@@ -390,10 +390,10 @@ def _object_exists(mut connection: Connection, object_type: String, name: String
     stmt.close()
     return result
 
-def _table_exists(mut connection: Connection, name: String) raises SQLiteError -> Bool:
+def _table_exists(mut connection: Connection, name: String) raises -> Bool:
     return _object_exists(connection, "table", name)
 
-def _has_runtime_event_column(mut connection: Connection, column: String) raises SQLiteError -> Bool:
+def _has_runtime_event_column(mut connection: Connection, column: String) raises -> Bool:
     if not _table_exists(connection, "runtime_events"):
         return False
     var stmt = connection.query("PRAGMA table_info(runtime_events)")
@@ -404,7 +404,7 @@ def _has_runtime_event_column(mut connection: Connection, column: String) raises
             break
     stmt.close()
     return found
-def _has_table_column(mut connection: Connection, table: String, column: String) raises SQLiteError -> Bool:
+def _has_table_column(mut connection: Connection, table: String, column: String) raises -> Bool:
     if not _table_exists(connection, table):
         return False
     var stmt = connection.query("PRAGMA table_info(" + table + ")")
@@ -416,7 +416,7 @@ def _has_table_column(mut connection: Connection, table: String, column: String)
     stmt.close()
     return found
 
-def _validate_legacy_metadata(mut connection: Connection) raises SQLiteError:
+def _validate_legacy_metadata(mut connection: Connection) raises:
     # An existing metadata table is part of the durable contract.  SQLite's
     # CREATE TABLE IF NOT EXISTS cannot repair a partial legacy definition;
     # fail before touching event columns so the surrounding transaction can
@@ -426,9 +426,9 @@ def _validate_legacy_metadata(mut connection: Connection) raises SQLiteError:
     var required = ["id", "version", "name", "applied_at"]
     for column in required:
         if not _has_table_column(connection, "schema_migrations", column):
-            raise SQLiteError(code=1, message="schema migration metadata is missing column: " + column)
+            raise Error(String(SQLiteError(code=1, message="schema migration metadata is missing column: " + column)))
 
-def _validate_legacy_runtime_events(mut connection: Connection) raises SQLiteError:
+def _validate_legacy_runtime_events(mut connection: Connection) raises:
     if not _table_exists(connection, "runtime_events"):
         return
     # These columns existed in every reference runtime_events shape.  Optional
@@ -437,9 +437,9 @@ def _validate_legacy_runtime_events(mut connection: Connection) raises SQLiteErr
     var required = ["run_id", "sequence", "id", "event_type", "payload", "created_at"]
     for column in required:
         if not _has_table_column(connection, "runtime_events", column):
-            raise SQLiteError(code=1, message="legacy runtime_events is missing column: " + column)
+            raise Error(String(SQLiteError(code=1, message="legacy runtime_events is missing column: " + column)))
 
-def _validate_schema_versions(mut connection: Connection) raises SQLiteError:
+def _validate_schema_versions(mut connection: Connection) raises:
     var metadata_present = False
     var metadata_version = 0
     if _table_exists(connection, "schema_migrations"):
@@ -450,17 +450,17 @@ def _validate_schema_versions(mut connection: Connection) raises SQLiteError:
         metadata.close()
     var user_version = _user_version(connection)
     if metadata_present and metadata_version <= 0:
-        raise SQLiteError(code=1, message="schema migration version must be positive")
+        raise Error(String(SQLiteError(code=1, message="schema migration version must be positive")))
     if metadata_present and metadata_version > SCHEMA_VERSION:
-        raise SQLiteError(code=1, message="schema migration version is newer than this runtime")
+        raise Error(String(SQLiteError(code=1, message="schema migration version is newer than this runtime")))
     if user_version < 0 or user_version > SCHEMA_VERSION:
-        raise SQLiteError(code=1, message="schema user_version is unsupported")
+        raise Error(String(SQLiteError(code=1, message="schema user_version is unsupported")))
     if metadata_present and user_version != metadata_version:
-        raise SQLiteError(code=1, message="schema migration version does not match PRAGMA user_version")
+        raise Error(String(SQLiteError(code=1, message="schema migration version does not match PRAGMA user_version")))
     if not metadata_present and user_version != 0:
-        raise SQLiteError(code=1, message="schema user_version has no migration metadata")
+        raise Error(String(SQLiteError(code=1, message="schema user_version has no migration metadata")))
 
-def _migration_version(mut connection: Connection) raises SQLiteError -> Int:
+def _migration_version(mut connection: Connection) raises -> Int:
     if not _table_exists(connection, "schema_migrations"):
         return 0
     var stmt = connection.query("SELECT version FROM schema_migrations WHERE id='runtime_backend'")
@@ -470,7 +470,7 @@ def _migration_version(mut connection: Connection) raises SQLiteError -> Int:
     stmt.close()
     return result
 
-def _migration_applied_at(mut connection: Connection) raises SQLiteError -> String:
+def _migration_applied_at(mut connection: Connection) raises -> String:
     if not _table_exists(connection, "schema_migrations"):
         return String("")
     var stmt = connection.query("SELECT applied_at FROM schema_migrations WHERE id='runtime_backend'")
@@ -480,16 +480,16 @@ def _migration_applied_at(mut connection: Connection) raises SQLiteError -> Stri
     stmt.close()
     return result
 
-def _user_version(mut connection: Connection) raises SQLiteError -> Int:
+def _user_version(mut connection: Connection) raises -> Int:
     var stmt = connection.query("PRAGMA user_version")
     if not stmt.step():
         stmt.close()
-        raise SQLiteError(code=1, message="schema: PRAGMA user_version returned no row")
+        raise Error(String(SQLiteError(code=1, message="schema: PRAGMA user_version returned no row")))
     var result = stmt.column_int(0)
     stmt.close()
     return result
 
-def schema_status(mut connection: Connection) raises SQLiteError -> SchemaStatus:
+def schema_status(mut connection: Connection) raises -> SchemaStatus:
     var missing = List[String]()
     if not _table_exists(connection, "runs"): missing.append("runs")
     if not _table_exists(connection, "schema_migrations"): missing.append("schema_migrations")
@@ -538,12 +538,12 @@ def schema_status(mut connection: Connection) raises SQLiteError -> SchemaStatus
         runtime_events_has_schema_version=_has_runtime_event_column(connection, "schema_version"),
     )
 
-def _require_current_schema(mut connection: Connection) raises SQLiteError:
+def _require_current_schema(mut connection: Connection) raises:
     var status = schema_status(connection)
     if not status.is_current():
-        raise SQLiteError(code=1, message="schema initialization incomplete")
+        raise Error(String(SQLiteError(code=1, message="schema initialization incomplete")))
 
-def _prepare_schema_connection(mut connection: Connection) raises SQLiteError:
+def _prepare_schema_connection(mut connection: Connection) raises:
     connection.execute("PRAGMA busy_timeout = 30000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
 
 
@@ -599,7 +599,7 @@ def _initialize_connection_schema(mut connection: Connection) raises:
     _migrate_schema_in_transaction(connection)
     _require_current_schema(connection)
 
-def initialize_native_schema(mut connection: Connection) raises SQLiteError:
+def initialize_native_schema(mut connection: Connection) raises:
     """Initialize the complete schema atomically with native storage errors."""
     _prepare_schema_connection(connection)
     connection.begin_immediate()
@@ -608,4 +608,4 @@ def initialize_native_schema(mut connection: Connection) raises SQLiteError:
         connection.commit()
     except err:
         connection.rollback()
-        raise SQLiteError(code=1, message="schema initialization failed: " + String(err))
+        raise Error(String(SQLiteError(code=1, message="schema initialization failed: " + String(err))))

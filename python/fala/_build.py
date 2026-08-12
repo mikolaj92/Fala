@@ -28,7 +28,7 @@ _NATIVE_MOJO = _PACKAGE_DIR / "_native.mojo"
 _CACHE_DIR_NAME = "__mojocache__"
 _SKIP_NATIVE_BUILD_ENV = "FALA_SKIP_NATIVE_BUILD"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
-_EMBER_JSON_REV = "91e35260578dcf6a3f96f36a0e166e1bca15ccd6"
+_EMBER_JSON_REV = "951f4ef28d0c2748a30b2c5e43e139411ccca5ef"
 _SQLITE_FIRE_REV = "3d482362c863e769d018443045b27ca5db645b3c"
 _NATIVE_BUILD_LOCK = threading.Lock()
 
@@ -301,6 +301,7 @@ def _source_is_pinned(source_dir: Path, revision: str) -> bool:
 
 def _ensure_ember_json_sources(root: Path) -> None:
     source_dir = root / "vendor" / "EmberJson"
+    patch = root / "patches" / "emberjson-mojo-1.0.patch"
     if not _source_is_pinned(source_dir, _EMBER_JSON_REV):
         shutil.rmtree(source_dir, ignore_errors=True)
         _clone_pinned_source(
@@ -308,10 +309,22 @@ def _ensure_ember_json_sources(root: Path) -> None:
             revision=_EMBER_JSON_REV,
             destination=source_dir,
         )
+    reverse_check = subprocess.run(
+        ["git", "-C", str(source_dir), "apply", "--check", "--reverse", str(patch)],
+        capture_output=True,
+        check=False,
+    )
+    if reverse_check is None or reverse_check.returncode != 0:
+        subprocess.run(
+            ["git", "-C", str(source_dir), "apply", str(patch)],
+            check=True,
+            capture_output=True,
+        )
 
 
 def _ensure_sqlite_fire_sources(root: Path) -> None:
     source_dir = root / "vendor" / "sqlite.fire"
+    patch = root / "patches" / "sqlite-fire-mojo-1.0.patch"
     if not _source_is_pinned(source_dir, _SQLITE_FIRE_REV):
         shutil.rmtree(source_dir, ignore_errors=True)
         _clone_pinned_source(
@@ -319,6 +332,20 @@ def _ensure_sqlite_fire_sources(root: Path) -> None:
             revision=_SQLITE_FIRE_REV,
             destination=source_dir,
         )
+    if patch.is_file():
+        reverse_check = subprocess.run(
+            ["git", "-C", str(source_dir), "apply", "--check", "--reverse", str(patch)],
+            capture_output=True,
+            check=False,
+        )
+        if reverse_check is None or reverse_check.returncode != 0:
+            subprocess.run(
+                ["git", "-C", str(source_dir), "apply", str(patch)],
+                check=True,
+                capture_output=True,
+            )
+
+
 def _build_native_extension(root: Path, so_path: Path) -> None:
     """Build the Mojo extension to a unique temp path and publish atomically."""
     env = _mojo_env(root)

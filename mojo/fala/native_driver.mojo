@@ -164,10 +164,10 @@ def _boundary_counts_json(rows: List[ProcessRow]) -> String:
     result += "}"
     return result
 
-def observe_run_boundary(mut target: NativeJournal, run_id: String) raises SQLiteError -> RunBoundaryResult:
+def observe_run_boundary(mut target: NativeJournal, run_id: String) raises -> RunBoundaryResult:
     """Observe a child run using only its durable run/process/event rows."""
     if run_id == "":
-        raise SQLiteError(code=1, message="driver: boundary run_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: boundary run_id must not be empty")))
     var run = target.get_run_record(run_id)
     var rows = target.list_processes(run_id)
     var derived = run.status
@@ -212,10 +212,10 @@ def close_delegations(
     parent_run_id: String,
     actor: String,
     at: String,
-) raises SQLiteError -> List[ProcessRow]:
+) raises -> List[ProcessRow]:
     """Close parent delegation waits from an explicitly supplied target journal."""
     if parent_run_id == "" or actor == "" or at == "":
-        raise SQLiteError(code=1, message="driver: delegation closure requires parent run, actor, and timestamp")
+        raise Error(String(SQLiteError(code=1, message="driver: delegation closure requires parent run, actor, and timestamp")))
     var closed = List[ProcessRow]()
     var waiting = parent.list_processes(parent_run_id, "waiting", "")
     for process in waiting:
@@ -369,15 +369,15 @@ def _has_process_status(rows: List[ProcessRow], candidate: ProcessRow) -> Bool:
 
 
 
-def resume_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, output_json: String = "{}") raises SQLiteError -> ProcessRow:
+def resume_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, output_json: String = "{}") raises -> ProcessRow:
     return journal.transition_homeostat_process(run_id, homeostat_id, process_id, "completed", "succeeded", actor, at, output_json, "{}", "homeostat.complete:" + homeostat_id)
 
-def cancel_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, error_json: String = "{}") raises SQLiteError -> ProcessRow:
+def cancel_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, error_json: String = "{}") raises -> ProcessRow:
     return journal.transition_homeostat_process(run_id, homeostat_id, process_id, "cancelled", "cancelled", actor, at, "{}", error_json, "homeostat.cancel:" + homeostat_id)
 
-def expire_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, error_json: String = "{}") raises SQLiteError -> ProcessRow:
+def expire_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, error_json: String = "{}") raises -> ProcessRow:
     return journal.transition_homeostat_process(run_id, homeostat_id, process_id, "expired", "timed_out", actor, at, "{}", error_json, "homeostat.expire:" + homeostat_id)
-def reopen_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, idempotency_key: String = "") raises SQLiteError -> ProcessRow:
+def reopen_homeostat(mut journal: NativeJournal, run_id: String, homeostat_id: String, process_id: String, actor: String, at: String, idempotency_key: String = "") raises -> ProcessRow:
     return journal.reopen_homeostat_process(run_id, homeostat_id, process_id, actor, at, idempotency_key)
 
 
@@ -389,7 +389,7 @@ def rearm_homeostat(
     actor: String,
     at: String,
     idempotency_key: String = "",
-) raises SQLiteError -> ProcessRow:
+) raises -> ProcessRow:
     """Atomically re-arm a terminal homeostat on a waiting run (#68).
 
     Requires the run to be waiting; reopens the homeostat and resets the
@@ -411,10 +411,10 @@ def transition_homeostat_terminal(
     output_json: String = "{}",
     error_json: String = "{}",
     idempotency_key: String = "",
-) raises SQLiteError -> ProcessRow:
+) raises -> ProcessRow:
     """Atomically finish a homeostat, then reconcile its explicit correlation plan."""
     if run_id != plan.run_id:
-        raise SQLiteError(code=1, message="driver: homeostat correlation plan run_id differs from transition run_id")
+        raise Error(String(SQLiteError(code=1, message="driver: homeostat correlation plan run_id differs from transition run_id")))
     var row = journal.transition_homeostat_process(
         run_id, homeostat_id, process_id, homeostat_status, process_status,
         actor, at, output_json, error_json, idempotency_key,
@@ -422,7 +422,7 @@ def transition_homeostat_terminal(
     try:
         _ = advance_after_terminal(journal, plan, row.id)
     except err:
-        raise SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))
+        raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
     return row^
 def _dispatch(request: EffectorRequest, registry: NativeFunctionRegistry) -> EffectorResult:
     # Direct callers must observe the same boundary as durable drive_once.
@@ -471,7 +471,7 @@ def _metadata_with_binding(metadata: String, encoded: String) raises -> String:
     return to_string(root^)
 
 
-def _binding_from_metadata(metadata: String, process_id: String, run_id: String) raises SQLiteError -> AdapterBinding:
+def _binding_from_metadata(metadata: String, process_id: String, run_id: String) raises -> AdapterBinding:
     try:
         var parsed = Value(parse_string=metadata)
         if not parsed.is_object(): raise Error("adapter binding metadata must be an object")
@@ -479,24 +479,24 @@ def _binding_from_metadata(metadata: String, process_id: String, run_id: String)
         if "__adapter_binding" not in root: raise Error("adapter binding metadata is absent")
         return AdapterBinding(process_id=process_id, adapter=adapter_spec_from_json(to_string(root["__adapter_binding"].copy())), run_id=run_id)
     except err:
-        raise SQLiteError(code=1, message="driver: invalid adapter binding metadata")
+        raise Error(String(SQLiteError(code=1, message="driver: invalid adapter binding metadata")))
 
 
-def persist_adapter_bindings(mut journal: NativeJournal, bindings: List[AdapterBinding], at: String) raises SQLiteError:
+def persist_adapter_bindings(mut journal: NativeJournal, bindings: List[AdapterBinding], at: String) raises:
     """Atomically persist a complete explicit adapter-binding set."""
     if len(bindings) == 0 or at == "":
-        raise SQLiteError(code=2, message="driver: bindings and timestamp must not be empty")
+        raise Error(String(SQLiteError(code=2, message="driver: bindings and timestamp must not be empty")))
     var encoded = List[String]()
     for binding in bindings:
         if binding.run_id == "" or binding.process_id == "":
-            raise SQLiteError(code=2, message="driver: binding run_id and process_id must not be empty")
+            raise Error(String(SQLiteError(code=2, message="driver: binding run_id and process_id must not be empty")))
         var validation = binding.adapter.validate()
         if not validation.is_ok():
-            raise SQLiteError(code=2, message=validation.message)
+            raise Error(String(SQLiteError(code=2, message=validation.message)))
         try:
             encoded.append(adapter_spec_json(binding.adapter))
         except err:
-            raise SQLiteError(code=2, message="driver: encode adapter binding failed")
+            raise Error(String(SQLiteError(code=2, message="driver: encode adapter binding failed")))
     journal.db.begin_immediate()
     try:
         for index in range(len(bindings)):
@@ -504,22 +504,22 @@ def persist_adapter_bindings(mut journal: NativeJournal, bindings: List[AdapterB
             var row = journal.get_process(binding.run_id, binding.process_id)
             var marker_state = _binding_metadata_state(row.metadata)
             if marker_state < 0:
-                raise SQLiteError(code=1, message="driver: existing adapter binding metadata is invalid")
+                raise Error(String(SQLiteError(code=1, message="driver: existing adapter binding metadata is invalid")))
             if marker_state > 0:
                 var existing_binding = _binding_from_metadata(row.metadata, binding.process_id, binding.run_id)
                 var existing_encoded = ""
                 try:
                     existing_encoded = adapter_spec_json(existing_binding.adapter)
                 except err:
-                    raise SQLiteError(code=1, message="driver: existing adapter binding metadata is invalid")
+                    raise Error(String(SQLiteError(code=1, message="driver: existing adapter binding metadata is invalid")))
                 if existing_encoded != encoded[index]:
-                    raise SQLiteError(code=1, message="driver: adapter binding conflict for process")
+                    raise Error(String(SQLiteError(code=1, message="driver: adapter binding conflict for process")))
                 continue
             var metadata = ""
             try:
                 metadata = _metadata_with_binding(row.metadata, encoded[index])
             except err:
-                raise SQLiteError(code=1, message="driver: process metadata is invalid")
+                raise Error(String(SQLiteError(code=1, message="driver: process metadata is invalid")))
             var stmt = journal.db.query("UPDATE processes SET metadata=?,updated_at=? WHERE run_id=? AND id=?")
             stmt.bind_text(1, metadata)
             stmt.bind_text(2, at)
@@ -528,14 +528,14 @@ def persist_adapter_bindings(mut journal: NativeJournal, bindings: List[AdapterB
             _ = stmt.step()
             stmt.close()
             if journal.db.changes() != 1:
-                raise SQLiteError(code=1, message="driver: process not found for adapter binding")
+                raise Error(String(SQLiteError(code=1, message="driver: process not found for adapter binding")))
         journal.db.commit()
     except err:
         journal.db.rollback()
-        raise SQLiteError(code=1, message="driver: persist adapter bindings failed: " + String(err))
+        raise Error(String(SQLiteError(code=1, message="driver: persist adapter bindings failed: " + String(err))))
 
 
-def persist_adapter_binding(mut journal: NativeJournal, binding: AdapterBinding, at: String) raises SQLiteError:
+def persist_adapter_binding(mut journal: NativeJournal, binding: AdapterBinding, at: String) raises:
     """Persist one explicit mapping through the atomic batch boundary."""
     var bindings = List[AdapterBinding]()
     bindings.append(binding.copy())
@@ -574,9 +574,9 @@ def _automatic_retry_allowed(metadata: String) -> Bool:
         return metadata.find("\"retry_policy\"") < 0
 
 
-def load_adapter_bindings(mut journal: NativeJournal, run_id: String) raises SQLiteError -> List[AdapterBinding]:
+def load_adapter_bindings(mut journal: NativeJournal, run_id: String) raises -> List[AdapterBinding]:
     """Reload explicit mappings from process metadata without inferring adapters."""
-    if run_id == "": raise SQLiteError(code=2, message="driver: run_id must not be empty")
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="driver: run_id must not be empty")))
     var result = List[AdapterBinding]()
     var stmt = journal.db.query("SELECT id,metadata FROM processes WHERE run_id=? ORDER BY id ASC")
     stmt.bind_text(1, run_id)
@@ -585,13 +585,13 @@ def load_adapter_bindings(mut journal: NativeJournal, run_id: String) raises SQL
         var marker_state = _binding_metadata_state(metadata)
         if marker_state < 0:
             stmt.close()
-            raise SQLiteError(code=1, message="driver: invalid adapter binding metadata")
+            raise Error(String(SQLiteError(code=1, message="driver: invalid adapter binding metadata")))
         if marker_state > 0:
             result.append(_binding_from_metadata(metadata, stmt.column_text(0), run_id)^)
     stmt.close()
     return result^
 
-def _wait_refs(process: ProcessRow, first: String, second: String, third: String) raises SQLiteError -> List[String]:
+def _wait_refs(process: ProcessRow, first: String, second: String, third: String) raises -> List[String]:
     var result = List[String]()
     var sources = List[String]()
     sources.append(process.input_json.copy())
@@ -601,7 +601,7 @@ def _wait_refs(process: ProcessRow, first: String, second: String, third: String
         try:
             parsed = Value(parse_string=source)
         except err:
-            raise SQLiteError(code=1, message="driver: invalid persisted wait metadata")
+            raise Error(String(SQLiteError(code=1, message="driver: invalid persisted wait metadata")))
         if not parsed.is_object(): continue
         for key in [first, second, third]:
             if key not in parsed.object(): continue
@@ -613,7 +613,7 @@ def _wait_refs(process: ProcessRow, first: String, second: String, third: String
                     for item in value.array():
                         if item.is_string(): result.append(item.string())
             except err:
-                raise SQLiteError(code=1, message="driver: invalid persisted wait metadata")
+                raise Error(String(SQLiteError(code=1, message="driver: invalid persisted wait metadata")))
     var unique = List[String]()
     for item in result:
         var seen = False
@@ -691,8 +691,8 @@ def _wait_status(values: Dict[String, String], key: String) -> String:
     except err:
         return ""
 
-def diagnose_wait_graph(mut journal: NativeJournal, run_id: String, impulse_id: String = "") raises SQLiteError -> WaitGraphDiagnostic:
-    if run_id == "": raise SQLiteError(code=2, message="driver: run_id must not be empty")
+def diagnose_wait_graph(mut journal: NativeJournal, run_id: String, impulse_id: String = "") raises -> WaitGraphDiagnostic:
+    if run_id == "": raise Error(String(SQLiteError(code=2, message="driver: run_id must not be empty")))
     var rows = journal.list_processes(run_id, impulse_id=impulse_id)
     var row_index = 1
     while row_index < len(rows):
@@ -761,7 +761,7 @@ def diagnose_wait_graph(mut journal: NativeJournal, run_id: String, impulse_id: 
     try:
         deadlocks = _wait_cycles(wait_edges)
     except err:
-        raise SQLiteError(code=1, message="driver: wait graph unavailable")
+        raise Error(String(SQLiteError(code=1, message="driver: wait graph unavailable")))
     var blocked_process_ids = List[String]()
     for issue in blocked: blocked_process_ids.append(issue.process_id)
     var reason = ""; var code = ""
@@ -847,7 +847,7 @@ def recover_incomplete_processes(
     worker_id: String,
     now: String,
     retry_available_at: String = "",
-) raises SQLiteError -> IncompleteRecoveryResult:
+) raises -> IncompleteRecoveryResult:
     """Resolve only expired running claims owned by ``worker_id``.
 
     Live claims and claims owned by another worker are not selected. Every
@@ -857,10 +857,10 @@ def recover_incomplete_processes(
     timestamp is a no-op because resolved rows are no longer running.
     """
     if worker_id == "" or now == "":
-        raise SQLiteError(code=1, message="driver: recovery requires worker_id and now")
+        raise Error(String(SQLiteError(code=1, message="driver: recovery requires worker_id and now")))
     var due = retry_available_at if retry_available_at != "" else now
     if due < now:
-        raise SQLiteError(code=1, message="driver: retry availability must not precede recovery timestamp")
+        raise Error(String(SQLiteError(code=1, message="driver: retry availability must not precede recovery timestamp")))
     var selected = List[ProcessRow]()
     var stmt = journal.db.query("SELECT run_id,id,process_type,impulse_id,status,priority,attempt,max_attempts,available_at,lease_owner,lease_expires_at,input_json,output_json,error_json,metadata,created_at,updated_at,started_at,finished_at,output_schema_json FROM processes WHERE status='running' AND lease_owner=? AND lease_expires_at IS NOT NULL AND lease_expires_at<=? ORDER BY run_id ASC,id ASC")
     stmt.bind_text(1, worker_id)
@@ -887,7 +887,7 @@ def recover_incomplete_processes(
         if resolved.status == "retry_wait": requeued += 1
         elif resolved.status == "failed": unrecoverable += 1
         else:
-            raise SQLiteError(code=1, message="driver: recovery produced unsupported process status")
+            raise Error(String(SQLiteError(code=1, message="driver: recovery produced unsupported process status")))
         items.append(IncompleteRecoveryItem(
             run_id=resolved.run_id, process_id=resolved.id, previous_status="running",
             status=resolved.status, attempt=resolved.attempt, max_attempts=resolved.max_attempts,
@@ -905,7 +905,7 @@ def maintain_process(
     now: String,
     retry_available_at: String = "",
     error_json: String = "",
-) raises SQLiteError -> ProcessRow:
+) raises -> ProcessRow:
     """Resolve an expired lease without executing the effector.
 
     Expired work with attempts remaining is returned to retry_wait unless the
@@ -914,10 +914,10 @@ def maintain_process(
     perform the transition, matching the journal's ownership checks.
     """
     if worker_id == "":
-        raise SQLiteError(code=1, message="driver: worker_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: worker_id must not be empty")))
     var current = journal.get_process(process.run_id, process.id)
     if current.status != process.status or current.attempt != process.attempt or current.lease_owner != process.lease_owner or current.lease_expires_at != process.lease_expires_at:
-        raise SQLiteError(code=1, message="driver: process lease changed concurrently")
+        raise Error(String(SQLiteError(code=1, message="driver: process lease changed concurrently")))
     if current.status != "running":
         return current.copy()
     var failure = error_json if error_json != "" else "{\"code\":\"lease_expired\",\"message\":\"process lease expired\"}"
@@ -925,7 +925,7 @@ def maintain_process(
         return journal.fail_process(current.run_id, current.id, worker_id, now, failure)
     var due = retry_available_at if retry_available_at != "" else now
     if due < now:
-        raise SQLiteError(code=1, message="driver: retry availability must not precede transition timestamp")
+        raise Error(String(SQLiteError(code=1, message="driver: retry availability must not precede transition timestamp")))
     return journal.retry_process(current.run_id, current.id, worker_id, now, due, failure)
 
 
@@ -965,11 +965,11 @@ def drive_once(
     now: String,
     lease_expires_at: String,
     registry: NativeFunctionRegistry,
-) raises SQLiteError -> DriverResult:
+) raises -> DriverResult:
     """Claim one supplied process and dispatch it without unsupported transports."""
     var preflight = _preflight_adapter(adapter)
     if worker_id == "":
-        raise SQLiteError(code=1, message="driver: worker_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: worker_id must not be empty")))
     var claimed = journal.claim_process(
         process.run_id, process.id, worker_id, now, lease_expires_at
     )
@@ -1073,18 +1073,18 @@ def _supplied_process_index(processes: List[ProcessRow], run_id: String, process
             return index
         index += 1
     return -1
-def _validate_supplied_processes(processes: List[ProcessRow]) raises SQLiteError:
+def _validate_supplied_processes(processes: List[ProcessRow]) raises:
     """Reject ambiguous process mappings before selecting a run or row."""
     if len(processes) == 0: return
     var run_id = processes[0].run_id
     var index = 1
     while index < len(processes):
         if processes[index].run_id != run_id:
-            raise SQLiteError(code=1, message="driver: all processes must target one run")
+            raise Error(String(SQLiteError(code=1, message="driver: all processes must target one run")))
         var prior = 0
         while prior < index:
             if processes[prior].run_id == run_id and processes[prior].id == processes[index].id:
-                raise SQLiteError(code=1, message="driver: duplicate process id")
+                raise Error(String(SQLiteError(code=1, message="driver: duplicate process id")))
             prior += 1
         index += 1
 
@@ -1099,7 +1099,7 @@ def drive_until_idle(
     max_ticks: Int,
     registry: NativeFunctionRegistry,
     claims_per_round: Int = 1,
-) raises SQLiteError -> DriverResult:
+) raises -> DriverResult:
     """Drive supplied adapters against durable rows until idle or bounded.
 
     Process rows are reloaded for the supplied run before every tick.  A
@@ -1111,17 +1111,17 @@ def drive_until_idle(
     composition inside a single journal (still one lease owner; not a fleet).
     """
     if max_ticks < 1:
-        raise SQLiteError(code=1, message="driver: max_ticks must be greater than zero")
+        raise Error(String(SQLiteError(code=1, message="driver: max_ticks must be greater than zero")))
     if claims_per_round < 1:
-        raise SQLiteError(code=1, message="driver: claims_per_round must be greater than zero")
+        raise Error(String(SQLiteError(code=1, message="driver: claims_per_round must be greater than zero")))
     if worker_id == "":
-        raise SQLiteError(code=1, message="driver: worker_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: worker_id must not be empty")))
     if now == "":
-        raise SQLiteError(code=1, message="driver: now must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: now must not be empty")))
     if lease_expires_at == "" or lease_expires_at <= now:
-        raise SQLiteError(code=1, message="driver: lease must expire after now")
+        raise Error(String(SQLiteError(code=1, message="driver: lease must expire after now")))
     if len(processes) != len(adapters):
-        raise SQLiteError(code=1, message="driver: process and adapter lists differ in length")
+        raise Error(String(SQLiteError(code=1, message="driver: process and adapter lists differ in length")))
     _validate_supplied_processes(processes)
     var aggregate = DriverResult(idle=True)
     var run_id = processes[0].run_id if len(processes) != 0 else ""
@@ -1189,14 +1189,14 @@ def drive_ready_batch(
     lease_expires_at: String,
     max_claims: Int,
     registry: NativeFunctionRegistry,
-) raises SQLiteError -> DriverResult:
+) raises -> DriverResult:
     """Claim and drive up to ``max_claims`` ready processes in one batch.
 
     First-class multi-claim entry for composition; equivalent to one round of
     ``drive_until_idle(..., claims_per_round=max_claims, max_ticks=max_claims)``.
     """
     if max_claims < 1:
-        raise SQLiteError(code=1, message="driver: max_claims must be greater than zero")
+        raise Error(String(SQLiteError(code=1, message="driver: max_claims must be greater than zero")))
     return drive_until_idle(
         journal, processes, adapters, worker_id, now, lease_expires_at,
         max_claims, registry, claims_per_round=max_claims,
@@ -1212,18 +1212,18 @@ def run_until_idle(
     max_ticks: Int,
     registry: NativeFunctionRegistry,
     stop: Bool = False,
-) raises SQLiteError -> RunUntilIdleResult:
+) raises -> RunUntilIdleResult:
     """Drive a run and return durable rows with a deterministic stop reason."""
     if worker_id == "":
-        raise SQLiteError(code=1, message="driver: worker_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: worker_id must not be empty")))
     if now == "":
-        raise SQLiteError(code=1, message="driver: now must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: now must not be empty")))
     if lease_expires_at == "" or lease_expires_at <= now:
-        raise SQLiteError(code=1, message="driver: lease must expire after now")
+        raise Error(String(SQLiteError(code=1, message="driver: lease must expire after now")))
     if max_ticks < 1:
-        raise SQLiteError(code=1, message="driver: max_ticks must be greater than zero")
+        raise Error(String(SQLiteError(code=1, message="driver: max_ticks must be greater than zero")))
     if len(processes) != len(adapters):
-        raise SQLiteError(code=1, message="driver: process and adapter lists differ in length")
+        raise Error(String(SQLiteError(code=1, message="driver: process and adapter lists differ in length")))
     _validate_supplied_processes(processes)
     var run_id = processes[0].run_id if len(processes) > 0 else ""
     if run_id != "":
@@ -1282,7 +1282,7 @@ def drive_bound_queue(
     max_ticks: Int,
     registry: NativeFunctionRegistry,
     run_id: String = "",
-) raises SQLiteError -> DriverResult:
+) raises -> DriverResult:
     """Drive claimable durable rows using only explicit id-to-adapter bindings.
 
     Rows are reloaded from SQLite on entry, so callers need not retain stale
@@ -1290,13 +1290,13 @@ def drive_bound_queue(
     mixed-run bindings are rejected rather than scanning an unintended run.
     """
     if max_ticks < 1:
-        raise SQLiteError(code=1, message="driver: max_ticks must be greater than zero")
+        raise Error(String(SQLiteError(code=1, message="driver: max_ticks must be greater than zero")))
     if worker_id == "":
-        raise SQLiteError(code=1, message="driver: worker_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: worker_id must not be empty")))
     if now == "":
-        raise SQLiteError(code=1, message="driver: now must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: now must not be empty")))
     if lease_expires_at == "" or lease_expires_at <= now:
-        raise SQLiteError(code=1, message="driver: lease must expire after now")
+        raise Error(String(SQLiteError(code=1, message="driver: lease must expire after now")))
     var effective_bindings = bindings.copy()
     if len(effective_bindings) == 0:
         if run_id == "": return DriverResult(idle=True)
@@ -1305,14 +1305,14 @@ def drive_bound_queue(
     var effective_run = run_id
     if effective_run == "": effective_run = effective_bindings[0].run_id
     if effective_run == "":
-        raise SQLiteError(code=1, message="driver: run_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: run_id must not be empty")))
     var rows = List[ProcessRow]()
     var adapters = List[AdapterSpec]()
     var index = 0
     while index < len(effective_bindings):
         var binding = effective_bindings[index].copy()
         if binding.run_id != "" and binding.run_id != effective_run:
-            raise SQLiteError(code=1, message="driver: all adapter bindings must target one run")
+            raise Error(String(SQLiteError(code=1, message="driver: all adapter bindings must target one run")))
         rows.append(journal.get_process(effective_run, binding.process_id))
         adapters.append(binding.adapter.copy())
         index += 1
@@ -1401,7 +1401,7 @@ def drive_all_runs(
     registry: NativeFunctionRegistry,
     max_ticks: Int = 0,
     stop: Bool = False,
-) raises SQLiteError -> AllRunDriverResult:
+) raises -> AllRunDriverResult:
     """Scan and drive all runs represented by explicit adapter bindings.
 
     The scanner never derives an adapter from process_type or capabilities.
@@ -1411,17 +1411,17 @@ def drive_all_runs(
     provides an immediate, side-effect-free stop control.
     """
     if worker_id == "":
-        raise SQLiteError(code=1, message="driver: worker_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: worker_id must not be empty")))
     if now == "":
-        raise SQLiteError(code=1, message="driver: now must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: now must not be empty")))
     if max_ticks < 0:
-        raise SQLiteError(code=1, message="driver: max_ticks must be non-negative")
+        raise Error(String(SQLiteError(code=1, message="driver: max_ticks must be non-negative")))
     var report = AllRunDriverResult(stopped=stop, bounded=max_ticks > 0)
     if stop or len(bindings) == 0: return report^
     var first = 0
     while first < len(bindings):
         if bindings[first].run_id == "":
-            raise SQLiteError(code=1, message="driver: all-run bindings require an explicit run_id")
+            raise Error(String(SQLiteError(code=1, message="driver: all-run bindings require an explicit run_id")))
         first += 1
     # Duplicate process mappings must agree byte-for-byte; never infer which
     # adapter wins when callers provide conflicting explicit bindings.
@@ -1435,13 +1435,13 @@ def drive_all_runs(
                 try:
                     left_json = adapter_spec_json(bindings[binding_check].adapter)
                 except err:
-                    raise SQLiteError(code=1, message="driver: invalid adapter binding")
+                    raise Error(String(SQLiteError(code=1, message="driver: invalid adapter binding")))
                 try:
                     right_json = adapter_spec_json(bindings[duplicate_check].adapter)
                 except err:
-                    raise SQLiteError(code=1, message="driver: invalid adapter binding")
+                    raise Error(String(SQLiteError(code=1, message="driver: invalid adapter binding")))
                 if left_json != right_json:
-                    raise SQLiteError(code=1, message="driver: conflicting adapter bindings for process")
+                    raise Error(String(SQLiteError(code=1, message="driver: conflicting adapter bindings for process")))
             duplicate_check += 1
         binding_check += 1
 
@@ -1553,14 +1553,14 @@ def finalize_run(
     max_ticks: Int,
     now: String,
     idempotency_key: String = "",
-) raises SQLiteError -> RunFinalizationResult:
+) raises -> RunFinalizationResult:
     """Derive and persist the run boundary from every durable effector row."""
     if run_id == "" or stopped_reason == "" or now == "":
-        raise SQLiteError(code=1, message="driver: run finalization requires run_id, stopped_reason, and timestamp")
+        raise Error(String(SQLiteError(code=1, message="driver: run finalization requires run_id, stopped_reason, and timestamp")))
     if stopped_reason != "idle" and stopped_reason != "max_ticks" and stopped_reason != "failed" and stopped_reason != "waiting" and stopped_reason != "stopped" and stopped_reason != "already_terminal":
-        raise SQLiteError(code=1, message="driver: unknown run finalization reason " + stopped_reason)
+        raise Error(String(SQLiteError(code=1, message="driver: unknown run finalization reason " + stopped_reason)))
     if max_ticks < 0:
-        raise SQLiteError(code=1, message="driver: max_ticks must be non-negative")
+        raise Error(String(SQLiteError(code=1, message="driver: max_ticks must be non-negative")))
     var run = journal.get_run_record(run_id)
     var rows = journal.list_processes(run_id)
     var total = len(rows)
@@ -1602,7 +1602,7 @@ def finalize_run(
 def advance_after_terminal(mut journal: NativeJournal, plan: CorrelationInstantiationPlan, process_id: String = "") raises -> Bool:
     """Reconcile correlation readiness after a terminal process transition."""
     if plan.run_id == "":
-        raise SQLiteError(code=1, message="driver: correlation plan run_id must not be empty")
+        raise Error(String(SQLiteError(code=1, message="driver: correlation plan run_id must not be empty")))
     if process_id != "":
         var row = journal.get_process(plan.run_id, process_id)
         if row.status != "succeeded" and row.status != "failed" and row.status != "cancelled" and row.status != "timed_out":
@@ -1619,14 +1619,14 @@ def drive_correlation_once(
     lease_expires_at: String,
     registry: NativeFunctionRegistry,
     plan: CorrelationInstantiationPlan,
-) raises SQLiteError -> DriverResult:
+) raises -> DriverResult:
     """Drive one effector and immediately reconcile downstream readiness."""
     var result = drive_once(journal, process, adapter, worker_id, now, lease_expires_at, registry)
     if result.completed or result.failed or result.timed_out:
         try:
             _ = advance_after_terminal(journal, plan, result.process_id)
         except err:
-            raise SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))
+            raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
     return result^
 
 def drive_correlation_until_idle(
@@ -1639,25 +1639,25 @@ def drive_correlation_until_idle(
     max_ticks: Int,
     registry: NativeFunctionRegistry,
     plan: CorrelationInstantiationPlan,
-) raises SQLiteError -> RunUntilIdleResult:
+) raises -> RunUntilIdleResult:
     """Advance and drive a correlation queue to a deterministic fixed point."""
     if max_ticks < 1:
-        raise SQLiteError(code=1, message="driver: max_ticks must be greater than zero")
+        raise Error(String(SQLiteError(code=1, message="driver: max_ticks must be greater than zero")))
     if len(processes) != len(adapters):
-        raise SQLiteError(code=1, message="driver: process and adapter lists differ in length")
+        raise Error(String(SQLiteError(code=1, message="driver: process and adapter lists differ in length")))
     var ticks = 0
     var last = DriverResult(idle=True)
     while ticks < max_ticks:
         try:
             _ = advance_correlation(journal, plan)
         except err:
-            raise SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))
+            raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
         var before = journal.list_processes(plan.run_id)
         var current_adapters = List[AdapterSpec]()
         for durable_process in before:
             var adapter_index = _supplied_process_index(processes, plan.run_id, durable_process.id)
             if adapter_index < 0:
-                raise SQLiteError(code=1, message="driver: correlation adapter mapping missing for " + durable_process.id)
+                raise Error(String(SQLiteError(code=1, message="driver: correlation adapter mapping missing for " + durable_process.id)))
             current_adapters.append(adapters[adapter_index].copy())
         var result = drive_until_idle(journal, before, current_adapters, worker_id, now, lease_expires_at, 1, registry)
         last = result.copy()
@@ -1667,7 +1667,7 @@ def drive_correlation_until_idle(
         try:
             _ = advance_after_terminal(journal, plan, result.process_id)
         except err:
-            raise SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))
+            raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
     # Reconcile once more before deriving the run boundary.  External terminal
     # transitions (for example homeostat or delegation closure) may not have a
     # process_id in this drive loop; the existing helper safely replays durable
@@ -1675,7 +1675,7 @@ def drive_correlation_until_idle(
     try:
         _ = advance_after_terminal(journal, plan)
     except err:
-        raise SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))
+        raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
     var final = run_until_idle(journal, processes, adapters, worker_id, now, lease_expires_at, 1, registry, stop=True)
     final.ticks = ticks
     var durable_final = journal.list_processes(plan.run_id)
