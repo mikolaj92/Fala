@@ -12,6 +12,30 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FALA_HOME", str(root))
 
 
+def test_native_extension_exports_python_objects_and_keeps_json_compatibility() -> None:
+    import json
+
+    from fala._build import ensure_native
+
+    native = ensure_native()
+    request = json.dumps(
+        {
+            "run_id": "run_native_object",
+            "path": {
+                "id": "single",
+                "effectors": [{"id": "step", "capability": "source"}],
+            },
+            "outputs": {"step": {"value": 1}},
+        }
+    )
+    result = native.host_drive(request)
+    serialized = native.host_drive_json(request)
+    assert isinstance(result, dict)
+    assert result["ok"] is True
+    assert isinstance(serialized, str)
+    assert json.loads(serialized) == result
+
+
 def test_host_drive_memory_e2e() -> None:
     import fala
 

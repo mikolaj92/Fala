@@ -65,10 +65,7 @@ def host_drive_json(request: str | Mapping[str, Any]) -> dict[str, Any]:
     else:
         payload = request
     native = ensure_native()
-    raw = native.host_drive_json(payload)
-    if not isinstance(raw, str):
-        raw = str(raw)
-    out = json.loads(raw)
+    out = native.host_drive(payload)
     if not isinstance(out, dict):
         raise RuntimeError("fala: host_drive result is not an object")
     return out
@@ -219,12 +216,9 @@ def open_sqlite(path: str | Path) -> dict[str, Any]:
     native = ensure_native()
 
     def _call() -> dict[str, Any]:
-        raw = native.open_sqlite_journal(str(p))
-        if not isinstance(raw, str):
-            raw = str(raw)
-        out = json.loads(raw)
+        out = native.open_sqlite_journal(str(p))
         if not isinstance(out, dict) or not out.get("ok"):
-            raise RuntimeError(f"fala.open_sqlite failed: {raw!r}")
+            raise RuntimeError(f"fala.open_sqlite failed: {out!r}")
         return out
 
     return _with_sqlite_cwd(_call)
@@ -476,12 +470,9 @@ def host_run_package(
     native = ensure_native()
 
     def _call() -> dict[str, Any]:
-        raw = native.host_run_package_json(json.dumps(request))
-        if not isinstance(raw, str):
-            raw = str(raw)
-        out = json.loads(raw)
+        out = native.host_run_package(json.dumps(request))
         if not isinstance(out, dict):
-            raise RuntimeError(f"fala.host_run_package failed: {raw!r}")
+            raise RuntimeError(f"fala.host_run_package failed: {out!r}")
         return out
 
     return _with_sqlite_cwd(_call, process_host_library)
@@ -577,12 +568,11 @@ def maintain_journal(
 
     def _call() -> JournalMaintenanceResult:
         try:
-            raw = native.maintain_journal_json(json.dumps(request, sort_keys=True))
+            out = native.maintain_journal(json.dumps(request, sort_keys=True))
         except Exception as exc:
             raise RuntimeError(f"fala.maintain_journal failed: {exc}") from exc
-        out = json.loads(str(raw))
         if not isinstance(out, dict) or out.get("ok") is not True:
-            raise RuntimeError(f"fala.maintain_journal failed: {raw!r}")
+            raise RuntimeError(f"fala.maintain_journal failed: {out!r}")
         return out  # type: ignore[return-value]
 
     return _with_sqlite_cwd(_call)
@@ -628,12 +618,11 @@ def recover_incomplete(
 
     def _call() -> IncompleteRecoveryResult:
         try:
-            raw = native.recover_incomplete_json(json.dumps(request, sort_keys=True))
+            out = native.recover_incomplete(json.dumps(request, sort_keys=True))
         except Exception as exc:
             raise RuntimeError(f"fala.recover_incomplete failed: {exc}") from exc
-        out = json.loads(str(raw))
         if not isinstance(out, dict) or out.get("ok") is not True:
-            raise RuntimeError(f"fala.recover_incomplete failed: {raw!r}")
+            raise RuntimeError(f"fala.recover_incomplete failed: {out!r}")
         return out  # type: ignore[return-value]
 
     return _with_sqlite_cwd(_call)
@@ -663,7 +652,7 @@ def delete_terminal_run(db_path: str | Path, run_id: str) -> dict[str, Any]:
 
     def _call() -> dict[str, Any]:
         try:
-            raw = native.delete_terminal_run_json(json.dumps(request))
+            out = native.delete_terminal_run(json.dumps(request))
         except Exception as exc:  # Mojo raises Error → Python exception
             message = str(exc)
             if "run_id must not be empty" in message:
@@ -679,11 +668,8 @@ def delete_terminal_run(db_path: str | Path, run_id: str) -> dict[str, Any]:
                     f"fala.delete_terminal_run: run is not terminal: {rid}"
                 ) from exc
             raise RuntimeError(f"fala.delete_terminal_run failed: {message}") from exc
-        if not isinstance(raw, str):
-            raw = str(raw)
-        out = json.loads(raw)
         if not isinstance(out, dict) or not out.get("ok"):
-            raise RuntimeError(f"fala.delete_terminal_run failed: {raw!r}")
+            raise RuntimeError(f"fala.delete_terminal_run failed: {out!r}")
         return out
 
     return _with_sqlite_cwd(_call)

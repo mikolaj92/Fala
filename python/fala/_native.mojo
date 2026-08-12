@@ -10,7 +10,7 @@ Heavy multi-organ CLI / bridge / projections stay on the Mojo CLI surface.
 from std.collections import Dict, List
 from std.os import abort
 from std.pathlib import Path
-from std.python import PythonObject
+from std.python import Python, PythonObject
 from std.python.bindings import PythonModuleBuilder
 from std.runtime import initialize_runtime
 
@@ -182,7 +182,20 @@ def host_drive_json(request: PythonObject) raises -> PythonObject:
 
 
 
-def open_sqlite_journal(path: PythonObject) raises -> PythonObject:
+def _python_object_from_json(result: PythonObject) raises -> PythonObject:
+    """Decode a native JSON result at the extension boundary.
+
+    Durable journal fields and subprocess protocols remain JSON, but callers of
+    the CPython extension should receive ordinary dict/list/scalar objects.
+    """
+    return Python.import_module("json").loads(result)
+
+
+def host_drive(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(host_drive_json(request))
+
+
+def open_sqlite_journal_json(path: PythonObject) raises -> PythonObject:
     """Open (create) a durable SQLite journal at path; close after probe."""
     var p = String(py=path)
     if p == "":
@@ -191,6 +204,10 @@ def open_sqlite_journal(path: PythonObject) raises -> PythonObject:
     journal.close()
     var out = "{\"ok\":true,\"kind\":\"sqlite\",\"path\":\"" + p + "\"}"
     return PythonObject(out)
+
+
+def open_sqlite_journal(path: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(open_sqlite_journal_json(path))
 
 
 def host_run_package_json(request: PythonObject) raises -> PythonObject:
@@ -469,6 +486,10 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     return PythonObject(out)
 
 
+def host_run_package(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(host_run_package_json(request))
+
+
 def _quote_json(value: String) -> String:
     var result = "\""
     for i in range(value.byte_length()):
@@ -610,6 +631,10 @@ def maintain_journal_json(request: PythonObject) raises -> PythonObject:
     return PythonObject(out)
 
 
+def maintain_journal_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(maintain_journal_json(request))
+
+
 def _recovery_json(result: IncompleteRecoveryResult) -> String:
     var items = "["
     var first = True
@@ -660,6 +685,10 @@ def recover_incomplete_json(request: PythonObject) raises -> PythonObject:
 
 
 
+def recover_incomplete(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(recover_incomplete_json(request))
+
+
 def delete_terminal_run_json(request: PythonObject) raises -> PythonObject:
     """Delete one terminal durable run via NativeDomainStore transaction.
 
@@ -699,13 +728,25 @@ def delete_terminal_run_json(request: PythonObject) raises -> PythonObject:
     return PythonObject(out)
 
 
+def delete_terminal_run_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(delete_terminal_run_json(request))
+
+
 @export
 def PyInit__native() abi("C") -> PythonObject:
     initialize_runtime()
     try:
         var m = PythonModuleBuilder("_native")
+        # Object-first CPython API. JSON-named entries remain as a compatible,
+        # explicit serialization boundary for low-level consumers.
+        m.def_function[host_drive]("host_drive")
+        m.def_function[host_run_package]("host_run_package")
+        m.def_function[delete_terminal_run_object]("delete_terminal_run")
+        m.def_function[maintain_journal_object]("maintain_journal")
+        m.def_function[recover_incomplete]("recover_incomplete")
         m.def_function[host_drive_json]("host_drive_json")
         m.def_function[open_sqlite_journal]("open_sqlite_journal")
+        m.def_function[open_sqlite_journal_json]("open_sqlite_journal_json")
         m.def_function[host_run_package_json]("host_run_package_json")
         m.def_function[delete_terminal_run_json]("delete_terminal_run_json")
         m.def_function[maintain_journal_json]("maintain_journal_json")
