@@ -12,6 +12,7 @@ from std.os import abort
 from std.pathlib import Path
 from std.python import PythonObject
 from std.python.bindings import PythonModuleBuilder
+from std.runtime import initialize_runtime
 
 from emberjson import Value, to_string
 from fala.adapters import (
@@ -700,6 +701,7 @@ def delete_terminal_run_json(request: PythonObject) raises -> PythonObject:
 
 @export
 def PyInit__native() abi("C") -> PythonObject:
+    initialize_runtime()
     try:
         var m = PythonModuleBuilder("_native")
         m.def_function[host_drive_json]("host_drive_json")

@@ -230,7 +230,7 @@ struct NativeJournal(Movable):
 
     def __init__(out self, path: String) raises:
         self.db = Connection(path)
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         try:
             self.db.close()
         except e:

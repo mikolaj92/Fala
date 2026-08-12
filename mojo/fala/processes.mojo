@@ -34,28 +34,29 @@ struct ProcessRecord(Copyable, Movable):
     var created_at: Float64
     var lease_owner: String
     var lease_expires_at: Float64
-    def __copyinit__(mut self, other: Self):
-        self.id = other.id
-        self.run_id = other.run_id
-        self.status = ProcessStatus(other.status.value)
-        self.priority = other.priority
-        self.attempt = other.attempt
-        self.max_attempts = other.max_attempts
-        self.available_at = other.available_at
-        self.created_at = other.created_at
-        self.lease_owner = other.lease_owner
-        self.lease_expires_at = other.lease_expires_at
-    def __moveinit__(mut self, var other: Self):
-        self.id = other.id
-        self.run_id = other.run_id
-        self.status = ProcessStatus(other.status.value)
-        self.priority = other.priority
-        self.attempt = other.attempt
-        self.max_attempts = other.max_attempts
-        self.available_at = other.available_at
-        self.created_at = other.created_at
-        self.lease_owner = other.lease_owner
-        self.lease_expires_at = other.lease_expires_at
+    def __init__(out self, *, copy: Self):
+        self.id = copy.id
+        self.run_id = copy.run_id
+        self.status = ProcessStatus(copy.status.value)
+        self.priority = copy.priority
+        self.attempt = copy.attempt
+        self.max_attempts = copy.max_attempts
+        self.available_at = copy.available_at
+        self.created_at = copy.created_at
+        self.lease_owner = copy.lease_owner
+        self.lease_expires_at = copy.lease_expires_at
+
+    def __init__(out self, *, deinit move: Self):
+        self.id = move.id^
+        self.run_id = move.run_id^
+        self.status = move.status^
+        self.priority = move.priority
+        self.attempt = move.attempt
+        self.max_attempts = move.max_attempts
+        self.available_at = move.available_at
+        self.created_at = move.created_at
+        self.lease_owner = move.lease_owner^
+        self.lease_expires_at = move.lease_expires_at
 
 
 

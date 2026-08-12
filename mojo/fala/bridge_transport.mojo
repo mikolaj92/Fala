@@ -8,7 +8,7 @@ this is not a network transport and does not claim two-database atomicity.
 """
 
 from std.ffi import CStringSlice, external_call
-from std.memory import UnsafePointer, alloc
+from std.memory.alloc import alloc, Layout
 from std.pathlib import Path, cwd
 from fala.domain import BridgeDelivery
 from fala.domain_store import NativeDomainStore
@@ -35,13 +35,14 @@ def _json_quote(value: String) -> String:
 def _realpath(path: Path, label: String) raises -> Path:
     var source_text = path.__fspath__() + "\0"
     var source_c = CStringSlice(source_text)
-    var buffer = alloc[UInt8](4096)
-    var resolved = external_call["realpath", UnsafePointer[UInt8, MutUntrackedOrigin]](source_c.unsafe_ptr(), buffer)
+    var buffer = alloc(Layout[UInt8](count=4096)).into_managed()
+    var resolved = external_call["realpath", Pointer[UInt8, MutUntrackedOrigin]](
+        source_c.unsafe_ptr(), buffer.unsafe_ptr().as_unsafe_any_origin()
+    )
     if Int(resolved) == 0:
-        buffer.free()
         raise Error(String(SQLiteError(code=2, message="bridge_transport: unable to resolve " + label + " path")))
     var resolved_text = String(unsafe_from_utf8_ptr=resolved)
-    buffer.free()
+    _ = buffer
     return Path(resolved_text)
 
 

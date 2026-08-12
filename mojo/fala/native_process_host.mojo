@@ -6,15 +6,15 @@ library for at least as long as each process handle and never invokes a shell.
 
 from std.collections import List
 from std.ffi import CStringSlice, OwnedDLHandle, c_int, c_long_long, external_call
-from std.memory import MutUnsafePointer, UnsafePointer, alloc
+from std.memory.alloc import alloc, Layout
 from std.pathlib import Path
 from std.os import getenv
 from std.sys import CompilationTarget
 from std.sys import argv
 
-comptime CStr = MutUnsafePointer[Int8, MutUntrackedOrigin]
-comptime HostPtr = MutUnsafePointer[UInt8, MutUntrackedOrigin]
-comptime HostOut = MutUnsafePointer[HostPtr, MutUntrackedOrigin]
+comptime CStr = MutPointer[Int8, MutUntrackedOrigin]
+comptime HostPtr = MutPointer[UInt8, MutUntrackedOrigin]
+comptime HostOut = MutPointer[HostPtr, MutUntrackedOrigin]
 
 comptime StartFn = def(CStr, c_int, CStr, c_int, CStr, CStr, CStr, CStr, c_long_long, c_long_long, HostOut) thin abi("C") -> c_int
 comptime DestroyFn = def(HostPtr) thin abi("C")
@@ -113,53 +113,52 @@ def _directory_of(path: String) raises -> String:
 
 def _realpath_string(path: String) raises -> String:
     var raw_text = path + "\0"
-    var canonical_buffer = alloc[UInt8](4096)
-    var canonical = external_call["realpath", UnsafePointer[UInt8, MutUntrackedOrigin]](
-        raw_text.as_bytes().unsafe_ptr(), canonical_buffer
+    var canonical_buffer = alloc(Layout[UInt8](count=4096)).into_managed()
+    var canonical = external_call["realpath", Pointer[UInt8, MutUntrackedOrigin]](
+        raw_text.as_bytes().unsafe_ptr(), canonical_buffer.unsafe_ptr().as_unsafe_any_origin()
     )
     if Int(canonical) == 0:
-        canonical_buffer.free()
         return path
     var resolved = String(unsafe_from_utf8_ptr=canonical)
-    canonical_buffer.free()
+    _ = canonical_buffer
     return resolved
 
 
 def _executable_path() raises -> String:
     """Resolve the current process executable (Darwin or Linux)."""
     if CompilationTarget.is_macos():
-        var size = alloc[UInt32](1)
-        size[] = UInt32(1)
-        var probe = alloc[UInt8](1)
-        var result = external_call["_NSGetExecutablePath", c_int](probe, size)
-        probe.free()
+        var size = alloc(Layout[UInt32].single()).into_managed()
+        size.unsafe_ptr().unsafe_write(UInt32(1))
+        var probe = alloc(Layout[UInt8].single()).into_managed()
+        var result = external_call["_NSGetExecutablePath", c_int](
+            probe.unsafe_ptr().as_unsafe_any_origin(),
+            size.unsafe_ptr().as_unsafe_any_origin(),
+        )
         if result == 0:
-            size.free()
             raise Error("fala process host: unable to determine executable path")
-        var buffer = alloc[UInt8](Int(size[]))
-        result = external_call["_NSGetExecutablePath", c_int](buffer, size)
+        var buffer = alloc(Layout[UInt8](count=Int(size.unsafe_ptr()[]))).into_managed()
+        result = external_call["_NSGetExecutablePath", c_int](
+            buffer.unsafe_ptr().as_unsafe_any_origin(),
+            size.unsafe_ptr().as_unsafe_any_origin(),
+        )
         if result != 0:
-            size.free()
-            buffer.free()
             raise Error("fala process host: unable to determine executable path")
-        var raw = String(unsafe_from_utf8_ptr=buffer)
-        size.free()
-        buffer.free()
+        var raw = String(unsafe_from_utf8_ptr=buffer.unsafe_ptr())
+        _ = buffer
         return _realpath_string(raw)
     # Linux / other POSIX: /proc/self/exe
     var link = "/proc/self/exe\0"
-    var buffer = alloc[UInt8](4096)
+    var buffer = alloc(Layout[UInt8](count=4096)).into_managed()
     var n = external_call["readlink", c_int](
         CStr(unsafe_from_address=Int(link.as_bytes().unsafe_ptr())),
-        buffer,
+        buffer.unsafe_ptr().as_unsafe_any_origin(),
         c_int(4095),
     )
     if n < 0:
-        buffer.free()
         raise Error("fala process host: unable to read /proc/self/exe (POSIX host requires Linux or Darwin)")
-    buffer[Int(n)] = 0
-    var raw = String(unsafe_from_utf8_ptr=buffer)
-    buffer.free()
+    buffer.unsafe_ptr()[unsafe_offset=Int(n)] = 0
+    var raw = String(unsafe_from_utf8_ptr=buffer.unsafe_ptr())
+    _ = buffer
     return _realpath_string(raw)
 
 
@@ -256,7 +255,7 @@ struct ProcessHost(Movable):
         var stdin_c = CStr(unsafe_from_address=Int(stdin_blob.as_bytes().unsafe_ptr()))
         var stdout_c = CStr(unsafe_from_address=Int(stdout_blob.as_bytes().unsafe_ptr()))
         var stderr_c = CStr(unsafe_from_address=Int(stderr_blob.as_bytes().unsafe_ptr()))
-        var out = alloc[HostPtr](1)
+        var out = alloc(Layout[HostPtr].single()).into_managed()
         var result = self._library.get_function[c_int]("fala_process_start_blob")(
             argv_c, c_int(len(argv)),
             env_c, c_int(len(env)),
@@ -264,11 +263,11 @@ struct ProcessHost(Movable):
             stdin_c,
             stdout_c,
             stderr_c,
-            c_long_long(timeout_ms), c_long_long(terminate_grace_ms), HostOut(to=out[]))
+            c_long_long(timeout_ms), c_long_long(terminate_grace_ms),
+            out.unsafe_ptr().as_unsafe_any_origin())
         _ = argv_blob
         _ = env_blob
-        self._process = Int(out[])
-        out.free()
+        self._process = Int(out.unsafe_ptr()[])
         _ = argv_c
         _ = env_c
         _ = cwd_blob
@@ -287,12 +286,11 @@ struct ProcessHost(Movable):
         if self._process == 0:
             raise Error("native process start returned a null handle")
 
-    def __moveinit__(mut self, var other: Self):
-        self._library = other._library^
-        self._process = other._process
-        other._process = 0
+    def __init__(out self, *, deinit move: Self):
+        self._library = move._library^
+        self._process = move._process
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         self.destroy()
     def _require(self) raises -> HostPtr:
         if self._process == 0:

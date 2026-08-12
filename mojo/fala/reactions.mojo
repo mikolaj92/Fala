@@ -8,7 +8,7 @@ loaded.  Files are written to a temporary sibling and committed with POSIX
 
 from std.collections import List
 from std.ffi import CStringSlice, c_int, c_uint, external_call
-from std.memory import UnsafePointer, alloc
+from std.memory.alloc import alloc, Layout
 from std.os import listdir, makedirs, remove
 from std.pathlib import Path, cwd
 from emberjson import Array, Object, Value, to_string
@@ -87,15 +87,14 @@ def _realpath(path: Path) raises -> Path:
     """Resolve an existing path through symlinks using Darwin realpath."""
     var source_text = path.__fspath__() + "\0"
     var source_c = CStringSlice(source_text)
-    var buffer = alloc[UInt8](4096)
-    var resolved = external_call["realpath", UnsafePointer[UInt8, MutUntrackedOrigin]](
-        source_c.unsafe_ptr(), buffer
+    var buffer = alloc(Layout[UInt8](count=4096)).into_managed()
+    var resolved = external_call["realpath", Pointer[UInt8, MutUntrackedOrigin]](
+        source_c.unsafe_ptr(), buffer.unsafe_ptr().as_unsafe_any_origin()
     )
     if Int(resolved) == 0:
-        buffer.free()
         raise Error("Unable to resolve reaction path")
     var resolved_text = String(unsafe_from_utf8_ptr=resolved)
-    buffer.free()
+    _ = buffer
     return Path(resolved_text)
 
 def _reaction_metadata(digest: String, size_bytes: Int, filename: String) -> String:
@@ -119,17 +118,16 @@ def _reaction_metadata_with_caller(digest: String, size_bytes: Int, filename: St
     return canonical_json_text(to_string(Value(metadata^)))
 
 def _sha256_raw_bytes(bytes: List[UInt8]) raises -> String:
-    var output = alloc[UInt8](32)
+    var output = alloc(Layout[UInt8](count=32)).into_managed()
     var input = bytes.unsafe_ptr()
-    _ = external_call["CC_SHA256", UnsafePointer[UInt8, MutUntrackedOrigin]](
-        input, c_uint(len(bytes)), output
+    _ = external_call["CC_SHA256", Pointer[UInt8, MutUntrackedOrigin]](
+        input, c_uint(len(bytes)), output.unsafe_ptr().as_unsafe_any_origin()
     )
     var digest = String()
     for i in range(32):
-        var value = output[i]
+        var value = output.unsafe_ptr()[unsafe_offset=i]
         digest += _HEX[byte=Int(value >> 4)]
         digest += _HEX[byte=Int(value & 15)]
-    output.free()
     return digest
 
 

@@ -55,7 +55,7 @@ struct ReactionRootGuard:
                 raise Error("domain store maintenance smoke: reaction root still exists")
             self.root = ""
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         if self.root != "":
             try:
                 _remove_tree(Path(self.root))
