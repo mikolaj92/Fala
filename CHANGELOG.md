@@ -1,6 +1,7 @@
 ## 0.7.26
 
 - Add bounded, deterministic public journal run/process reads and safe retention rehearsal snapshots.
+- Correct `src/README.md` to point at the existing `python/fala` host binding and align product version stamps to 0.7.26.
 
 # Changelog
 

@@ -1,6 +1,9 @@
-# No CPython product package
+# `src/` is not a product package
 
 Fala’s product engine is **Mojo only** (`../mojo/fala`).
 
-There is no historical CPython tree and no optional Python demos in this
-repository. Examples live under `../examples/` as native TOML packages.
+The former CPython engine (`src/fala`) was removed. The optional thin Python
+host binding lives at `../python/fala/` and tracks the product version. It is a
+JSON bridge to Mojo, not a second engine.
+
+Examples live under `../examples/` as native TOML packages.
