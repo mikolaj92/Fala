@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "fala"
-version = "0.7.13"
+version = "0.7.27"
 source = { editable = "." }
 
 [package.optional-dependencies]

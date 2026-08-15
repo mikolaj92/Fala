@@ -71,4 +71,4 @@ __all__ = [
     "upsert_process",
     "upsert_run_metadata",
 ]
-__version__ = "0.7.26"
+__version__ = "0.7.27"

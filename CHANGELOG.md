@@ -1,6 +1,14 @@
+## 0.7.27
+
+- Close public journal/read/rehearsal SQLite connections after each use
+  (`sqlite3.Connection.__exit__` does not close FDs).
+- Same Mojo toolchain as v0.7.26 (`mojo==1.0.0b3` / max-nightly). Stable
+  Mojo 1.0 on `main` is a later tag once this host can compile it.
+
 ## 0.7.26
 
 - Add bounded, deterministic public journal run/process reads and safe retention rehearsal snapshots.
+
 
 # Changelog
 
