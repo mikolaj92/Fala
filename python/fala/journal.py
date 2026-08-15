@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict
@@ -74,11 +75,18 @@ def _json(value: Mapping[str, Any] | None, label: str) -> str:
         raise TypeError(f"fala journal: {label} is not JSON-recordable") from exc
 
 
-def _connect(db: Path) -> sqlite3.Connection:
+@contextmanager
+def _connect(db: Path) -> Iterator[sqlite3.Connection]:
+    # sqlite3.Connection.__exit__ commits/rolls back but does not close.
+    # Leaving those FDs open exhausts the process during the journal suite.
     conn = sqlite3.connect(db, timeout=30.0)
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=30000")
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 # Canonical schema-v6 structural contract, mirrored from mojo/fala/schema.mojo.
 _SCHEMA_SHAPES = {'runs': [('id', 'TEXT', 0, None, 1),

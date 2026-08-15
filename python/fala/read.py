@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from os import fspath
 from pathlib import Path
 from typing import Any
@@ -49,7 +51,8 @@ def _safe(value: Any, field: str) -> Any:
     raise RuntimeError(f"fala read: non-JSON-safe value in {field}")
 
 
-def _open(path: Path) -> sqlite3.Connection:
+@contextmanager
+def _open(path: Path) -> Iterator[sqlite3.Connection]:
     uri = f"file:{quote(str(path), safe='/')}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=30.0)
     try:
@@ -61,10 +64,9 @@ def _open(path: Path) -> sqlite3.Connection:
         migration = conn.execute("SELECT version FROM schema_migrations WHERE id='runtime_backend'").fetchone()
         if version is None or version[0] != _SCHEMA_VERSION or migration is None or migration[0] != _SCHEMA_VERSION:
             raise RuntimeError("fala read: schema v6 is required")
-        return conn
-    except BaseException:
+        yield conn
+    finally:
         conn.close()
-        raise
 
 
 def _row(row: sqlite3.Row, columns: tuple[str, ...]) -> dict[str, Any]:
