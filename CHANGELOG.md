@@ -1,6 +1,9 @@
 ## 0.7.26
 
 - Add bounded, deterministic public journal run/process reads and safe retention rehearsal snapshots.
+- Correct `src/README.md` to point at the existing `python/fala` host binding and align product version stamps to 0.7.26.
+- Add `src/check_stamps.py` (`pixi run version-stamps`) so `src/README.md` and product banners fail closed if they drift.
+- Close public journal/read/rehearsal SQLite connections after each use so `with sqlite3.connect` cannot leak FDs across the suite.
 
 # Changelog
 

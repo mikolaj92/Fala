@@ -1,6 +1,6 @@
 [workspace]
 name = "fala"
-version = "0.7.25"
+version = "0.7.26"
 channels = ["https://conda.modular.com/max", "conda-forge"]
 platforms = ["osx-arm64"]
 
@@ -9,6 +9,7 @@ mojo = "==1.0.0"
 sqlite = ">=3.51"
 
 [tasks]
+version-stamps = "python3 src/check_stamps.py"
 setup-ember-json = "./tools/setup_ember_json.sh"
 setup-sqlite-fire = { cmd = "./tools/setup_sqlite_fire.sh", depends-on = ["setup-ember-json"] }
 core-status = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/core_status.mojo"

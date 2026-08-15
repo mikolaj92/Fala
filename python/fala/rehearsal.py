@@ -7,7 +7,8 @@ import os
 import shutil
 import sqlite3
 import stat
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -84,9 +85,19 @@ def _source_set(source: Path) -> dict[str, dict[str, Any]]:
     return _stable_sqlite_set(source)
 
 
+@contextmanager
+def _sqlite(path: str | Path, **kwargs: Any) -> Iterator[sqlite3.Connection]:
+    connection = sqlite3.connect(path, **kwargs)
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
 def _normalize_snapshot(snapshot: Path) -> None:
     """Checkpoint all committed state into main and leave DELETE/no sidecars."""
-    with sqlite3.connect(snapshot) as connection:
+    with _sqlite(snapshot) as connection:
         checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         if checkpoint is not None and checkpoint[0] != 0:
             raise RuntimeError(f"fala rehearsal: snapshot checkpoint failed: {checkpoint!r}")
@@ -162,11 +173,11 @@ def rehearse_journal_retention(source: str | Path, destination: str | Path, poli
         snap_fd = os.open(snapshot, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         snap_stat = os.fstat(snap_fd); os.close(snap_fd)
         uri = f"file:{quote(str(source_path), safe='/')}?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=30.0) as live:
+        with _sqlite(uri, uri=True, timeout=30.0) as live:
             live.execute("PRAGMA query_only=ON")
             live.execute("BEGIN")
             live.execute("SELECT count(*) FROM sqlite_master").fetchone()  # pin live+committed WAL
-            with sqlite3.connect(snapshot) as copy:
+            with _sqlite(snapshot) as copy:
                 live.backup(copy)
         current_snap = os.stat(snapshot, follow_symlinks=False)
         if (current_snap.st_dev, current_snap.st_ino) != (snap_stat.st_dev, snap_stat.st_ino):
@@ -178,7 +189,7 @@ def rehearse_journal_retention(source: str | Path, destination: str | Path, poli
         # private, offline copy before measuring it so a committed dry-run write
         # cannot hide exclusively in a newly-created WAL sidecar.
         _normalize_snapshot(snapshot)
-        with sqlite3.connect(f"file:{quote(str(snapshot), safe='/')}?mode=ro", uri=True) as check:
+        with _sqlite(f"file:{quote(str(snapshot), safe='/')}?mode=ro", uri=True) as check:
             integrity = [row[0] for row in check.execute("PRAGMA integrity_check")]
             foreign_keys = [list(row) for row in check.execute("PRAGMA foreign_key_check")]
         if integrity != ["ok"]: raise RuntimeError(f"fala rehearsal: snapshot integrity check failed: {integrity!r}")
@@ -195,7 +206,7 @@ def rehearse_journal_retention(source: str | Path, destination: str | Path, poli
         snapshot_after = _database_identity(snapshot)
         if snapshot_before != snapshot_after:
             raise RuntimeError("fala rehearsal: dry-run mutated the rehearsal snapshot")
-        with sqlite3.connect(f"file:{quote(str(snapshot), safe='/')}?mode=ro", uri=True) as check:
+        with _sqlite(f"file:{quote(str(snapshot), safe='/')}?mode=ro", uri=True) as check:
             post_integrity = [row[0] for row in check.execute("PRAGMA integrity_check")]
             post_foreign_keys = [list(row) for row in check.execute("PRAGMA foreign_key_check")]
         if post_integrity != ["ok"] or post_foreign_keys:
