@@ -7,3 +7,6 @@ host binding lives at `../python/fala/` (package `fala` 0.7.26) and tracks the
 product version. It is a JSON bridge to Mojo, not a second engine.
 
 Examples live under `../examples/` as native TOML packages.
+
+`check_stamps.py` fails closed if `src/README.md` stops naming that binding or
+if product version banners drift away from `pyproject.toml`.
