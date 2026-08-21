@@ -1,5 +1,8 @@
 ## 0.7.26
 
+- Pin sqlite.fire to upstream Mojo 1.0.0 `v0.1.1` (`2cb4da9`) and drop
+  `patches/sqlite-fire-mojo-1.0.patch`. The 1.0 port lives in sqlite.fire;
+  Fala clones that SHA and does not keep a local wrapper patch.
 - Add bounded, deterministic public journal run/process reads and safe retention rehearsal snapshots.
 - Correct `src/README.md` to point at the existing `python/fala` host binding and align product version stamps to 0.7.26.
 - Add `src/check_stamps.py` (`pixi run version-stamps`) so `src/README.md` and product banners fail closed if they drift.
