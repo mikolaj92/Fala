@@ -1,6 +1,6 @@
 # Fala Architecture Status
 
-**Product: 0.7.26** · Mojo-native engine + optional thin Python host binding.
+**Product: 0.7.28** · Mojo-native engine + optional thin Python host binding.
 
 Fala is a local autonomous Correlator: a cybernetic organ that conducts
 Impulses between Effectors and records their Associations and Reactions. Its
