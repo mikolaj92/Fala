@@ -9,6 +9,8 @@ __pycache__/
 *.db
 .DS_Store
 mojo/fala/native/
+native/
+
 
 python/fala/__mojocache__/
 .venv-pybind/
