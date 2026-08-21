@@ -1,3 +1,10 @@
+## 0.7.28
+
+- Mojo **1.0.0** product tag from `main`. Stop tracking a committed `.pixi` symlink
+  (it pointed at another machine and blocked `pixi install`).
+- sqlite.fire pin remains upstream `v0.1.1` (`2cb4da9`).
+- Proven on mini-m4-1: `core-status`, `open_sqlite`, and `host_run_package`.
+
 ## 0.7.26
 
 - Pin sqlite.fire to upstream Mojo 1.0.0 `v0.1.1` (`2cb4da9`) and drop

@@ -14,4 +14,4 @@ python/fala/__mojocache__/
 .venv-pybind/
 
 vendor/
-
+.pixi/
