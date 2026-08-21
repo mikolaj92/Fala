@@ -266,3 +266,20 @@ def test_preload_mojo_runtime_loads_cached_extension_dependencies(
     _build._preload_mojo_runtime(tmp_path)
 
     assert loaded == [str(library) for library in libraries]
+
+
+def test_sqlite_fire_has_no_local_mojo_1_patch() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    patch = root / "patches" / "sqlite-fire-mojo-1.0.patch"
+    assert not patch.is_file()
+    assert "3d482362c863e769d018443045b27ca5db645b3c" not in (
+        (root / "python" / "fala" / "_build.py").read_text()
+    )
+    assert "3d482362c863e769d018443045b27ca5db645b3c" not in (
+        (root / "tools" / "setup_sqlite_fire.sh").read_text()
+    )
+    assert "2cb4da921f590f170f6431ab873cd8200384f09a" in (
+        (root / "python" / "fala" / "_build.py").read_text()
+    )
