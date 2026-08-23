@@ -155,7 +155,7 @@ def _boundary_counts_json(rows: List[ProcessRow]) -> String:
     # boundary stable without relying on map iteration order.
     var result = "{"
     var first = True
-    for status in ["cancel_requested", "cancelled", "failed", "pending", "ready", "retry_wait", "running", "succeeded", "timed_out", "waiting"]:
+    for status in ["cancel_requested", "cancelled", "failed", "pending", "ready", "retry_wait", "running", "skipped", "succeeded", "timed_out", "waiting"]:
         var count = _boundary_count(rows, status)
         if count > 0:
             if not first: result += ","
@@ -178,7 +178,7 @@ def observe_run_boundary(mut target: NativeJournal, run_id: String) raises -> Ru
         var waiting = False
         for row in rows:
             if row.status == "failed" or row.status == "cancelled" or row.status == "timed_out": failed = True
-            if row.status != "succeeded": all_succeeded = False
+            if row.status != "succeeded" and row.status != "skipped": all_succeeded = False
             if row.status == "waiting": waiting = True
         if failed: derived = "failed"
         elif all_succeeded: derived = "completed"
@@ -1243,14 +1243,14 @@ def run_until_idle(
     if run_id != "": final_rows = journal.list_processes(run_id)
     var final_all_terminal = len(final_rows) > 0
     for row in final_rows:
-        if row.status != "succeeded" and row.status != "failed" and row.status != "cancelled" and row.status != "timed_out": final_all_terminal = False
+        if row.status != "succeeded" and row.status != "skipped" and row.status != "failed" and row.status != "cancelled" and row.status != "timed_out": final_all_terminal = False
     var completed = List[ProcessRow]()
     var failed = List[ProcessRow]()
     var waiting = List[ProcessRow]()
     for historical in aggregate.failure_rows:
         if not _has_process_status(failed, historical): failed.append(historical.copy())
     for row in final_rows:
-        if row.status == "succeeded": completed.append(row.copy())
+        if row.status == "succeeded" or row.status == "skipped": completed.append(row.copy())
         elif row.status == "failed" or row.status == "cancelled" or row.status == "timed_out" or row.status == "retry_wait":
             if not _has_process_status(failed, row): failed.append(row.copy())
         elif row.status == "waiting": waiting.append(row.copy())
@@ -1569,7 +1569,7 @@ def finalize_run(
     var waiting = 0
     var incomplete = 0
     for row in rows:
-        if row.status == "succeeded":
+        if row.status == "succeeded" or row.status == "skipped":
             completed += 1
         elif row.status == "failed" or row.status == "cancelled" or row.status == "timed_out":
             failed += 1
@@ -1605,7 +1605,7 @@ def advance_after_terminal(mut journal: NativeJournal, plan: CorrelationInstanti
         raise Error(String(SQLiteError(code=1, message="driver: correlation plan run_id must not be empty")))
     if process_id != "":
         var row = journal.get_process(plan.run_id, process_id)
-        if row.status != "succeeded" and row.status != "failed" and row.status != "cancelled" and row.status != "timed_out":
+        if row.status != "succeeded" and row.status != "skipped" and row.status != "failed" and row.status != "cancelled" and row.status != "timed_out":
             return False
     _ = advance_correlation(journal, plan)
     return True
@@ -1682,7 +1682,7 @@ def drive_correlation_until_idle(
     var all_succeeded = len(durable_final) > 0
     var has_failure = False
     for row in durable_final:
-        if row.status != "succeeded": all_succeeded = False
+        if row.status != "succeeded" and row.status != "skipped": all_succeeded = False
         if row.status == "failed" or row.status == "cancelled" or row.status == "timed_out": has_failure = True
     if has_failure:
         final.ok = False

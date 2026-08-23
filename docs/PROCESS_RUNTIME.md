@@ -27,6 +27,26 @@ worker lease. Its default driver is deliberately sequential: one process per
 tick (`claims_per_round=1`). Logical independence in a correlation graph does
 not itself promise simultaneous execution.
 
+## Conditional conduction
+
+An effector may declare one deterministic condition over a direct upstream
+output:
+
+```toml
+when = { upstream = "review", path = "decision.verdict", equals = "approve" }
+```
+
+Fala waits for every declared conduction dependency. It then reads the named
+object path from the schema-projected output of the successful upstream.
+A match makes the effector ready. A non-match records the effector as
+`skipped` with `condition_not_met`, without executing its adapter. Missing
+keys, malformed declarations, non-scalar values, and a non-successful condition
+source fail closed. The comparison has no domain semantics: Fala compares the
+declared JSON scalar and leaves the status vocabulary to the product graph.
+
+`when.upstream` must also appear in the effector's direct `conduction` list.
+This keeps branch evidence local, durable, and visible in the correlation path.
+
 ### Serial multi-claim loop (same journal)
 Pass `claims_per_round > 1` to `drive_until_idle`, or call
 `drive_ready_batch` with `max_claims`, to permit several claim/execute/complete

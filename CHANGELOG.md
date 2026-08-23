@@ -1,3 +1,8 @@
+## Unreleased
+
+- Add strict conditional conduction (`when = { upstream, path, equals }`) so Fala can select closed-set result branches directly from durable upstream output.
+- Record nonmatching effectors as terminal `skipped` without invoking their adapters; missing or malformed condition evidence fails closed.
+
 ## 0.7.28
 
 - Mojo **1.0.0** product tag from `main`. Stop tracking a committed `.pixi` symlink

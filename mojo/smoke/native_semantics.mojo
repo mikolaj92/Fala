@@ -43,7 +43,7 @@ def main() raises:
     # Run creation is idempotent for the same command key and rejects a
     # conflicting command for an already existing run.
     var lifecycle = RunLifecycle.open(":memory:\0")
-    _check(ProcessStatus("succeeded").is_terminal() and not ProcessStatus("running").is_terminal(), "process terminal status predicates")
+    _check(ProcessStatus("succeeded").is_terminal() and ProcessStatus("skipped").is_terminal() and not ProcessStatus("running").is_terminal(), "process terminal status predicates")
     _check(RunStatus("completed").is_terminal() and not RunStatus("active").is_terminal(), "run terminal status predicates")
     _check(can_replay_terminal_process(ProcessStatus("failed"), ProcessStatus("failed")) and not can_replay_terminal_process(ProcessStatus("failed"), ProcessStatus("cancelled")), "terminal replay predicate")
     lifecycle.initialize()
@@ -582,6 +582,14 @@ def main() raises:
     var failed_lease_after = journal.get_process("run-semantics", "failed-held-lease")
     var failed_retry_commands = journal.list_events("run-semantics", "", "failed-held-lease", -1, 0, "process.retry_scheduled")
     _check(failed_lease_claim.status == "running" and failed_lease_before.status == "failed" and failed_lease_before.lease_owner == "failed-worker" and failed_retry_rejected and failed_lease_after.status == failed_lease_before.status and failed_lease_after.lease_owner == failed_lease_before.lease_owner and len(failed_retry_commands) == 0, "failed leased process rejects foreign retry")
+    # Conditional routing can terminal-skip a pending process without claiming its adapter.
+    _ = journal.schedule_process("run-semantics", "skip-route", "native", "2026-01-01T00:00:25Z", "{}", "{}", "", 0, 1, "2026-01-01T00:00:25Z", status="pending")
+    var skipped_route = journal.skip_process("run-semantics", "skip-route", "correlation", "2026-01-01T00:00:25Z", "{\"reason\":\"condition_not_met\"}", "skip-route-once")
+    var skipped_replay = journal.skip_process("run-semantics", "skip-route", "correlation", "2026-01-01T00:00:25Z", "{\"reason\":\"condition_not_met\"}", "skip-route-once")
+    var skip_events = journal.list_events("run-semantics", "", "skip-route", -1, 0, "process.skipped")
+    _check(skipped_route.status == "skipped" and skipped_route.attempt == 0 and skipped_route.output_json == "{\"reason\":\"condition_not_met\"}" and skipped_route.error_json == "{}" and skipped_route.finished_at != "", "pending process terminal skip preserves typed output without execution")
+    _check(skipped_replay.status == "skipped" and len(skip_events) == 1, "process skip replays idempotently")
+
     # Cancel and timeout preserve an existing output payload, matching the reference transition contract.
     _ = journal.schedule_process(
         "run-semantics", "cancel-output", "native", "2026-01-01T00:00:26Z",

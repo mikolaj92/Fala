@@ -279,6 +279,7 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
             "{}",
             "{\"retry_policy\":\"" + item.retry_policy + "\"}",
             List[String](),
+            item.when_json,
         )
         effectors.append(spec^)
     var path = CorrelationPathSpec(

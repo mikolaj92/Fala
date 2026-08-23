@@ -337,4 +337,39 @@ def main() raises:
     driver_adapters.append(driver_adapter.copy())
     var driven = drive_correlation_until_idle(driver_journal, driver_processes, driver_adapters, "driver-worker", "2026-01-01T00:00:03Z", "2026-01-01T00:10:00Z", 4, driver_registry, driver_plan)
     _check(driven.ticks == 1 and driver_journal.get_process("advance-driver", "advance-driver:chain:leaf").status == "succeeded", "correlation driver drains downstream")
+    # Fala, not a consumer dispatcher, selects one closed-set result branch.
+    var conditional_journal = NativeJournal(":memory:\0")
+    conditional_journal.initialize()
+    _ = conditional_journal.create_run("advance-conditional", "created", "{}", "2026-01-01T00:00:00Z")
+    var conditional_effectors = List[CorrelationEffectorSpec]()
+    conditional_effectors.append(CorrelationEffectorSpec.create("review", "source", output_schema_json="{\"type\":\"object\",\"properties\":{\"decision\":{\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}},\"required\":[\"verdict\"]}},\"required\":[\"decision\"]}").copy())
+    conditional_effectors.append(CorrelationEffectorSpec.create("merge", "merge", _one("review"), when_json="{\"upstream\":\"review\",\"path\":\"decision.verdict\",\"equals\":\"approve\"}").copy())
+    conditional_effectors.append(CorrelationEffectorSpec.create("repair", "repair", _one("review"), when_json="{\"upstream\":\"review\",\"path\":\"decision.verdict\",\"equals\":\"request_changes\"}").copy())
+    var conditional_plan = instantiate_correlation_path(CorrelationPathSpec("conditional", conditional_effectors^), "advance-conditional")
+    _ = persist_correlation_plan(conditional_journal, conditional_plan, "2026-01-01T00:00:00Z")
+    var review_row = conditional_journal.claim_process("advance-conditional", "advance-conditional:conditional:review", "smoke", "2026-01-01T00:00:01Z", "2026-01-01T00:10:00Z")
+    _ = conditional_journal.complete_process(review_row.run_id, review_row.id, "smoke", "2026-01-01T00:00:02Z", "{\"decision\":{\"verdict\":\"request_changes\"}}")
+    var conditional_result = advance_correlation(conditional_journal, conditional_plan)
+    _check(conditional_result.rows[1].status == "skipped" and conditional_result.rows[1].output_json.find("condition_not_met") >= 0, "nonmatching branch is durably skipped without adapter execution")
+    _check(conditional_result.rows[2].status == "ready", "matching branch becomes ready")
+    var conditional_replay = advance_correlation(conditional_journal, conditional_plan)
+    _check(conditional_replay.rows[1].status == "skipped" and conditional_replay.rows[2].status == "ready", "conditional selection replays without changing branch")
+
+    var missing_journal = NativeJournal(":memory:\0")
+    missing_journal.initialize()
+    _ = missing_journal.create_run("advance-condition-missing", "created", "{}", "2026-01-01T00:00:00Z")
+    var missing_effectors = List[CorrelationEffectorSpec]()
+    missing_effectors.append(CorrelationEffectorSpec.create("review", "source").copy())
+    missing_effectors.append(CorrelationEffectorSpec.create("merge", "merge", _one("review"), when_json="{\"upstream\":\"review\",\"path\":\"decision.verdict\",\"equals\":\"approve\"}").copy())
+    var missing_plan = instantiate_correlation_path(CorrelationPathSpec("conditional", missing_effectors^), "advance-condition-missing")
+    _ = persist_correlation_plan(missing_journal, missing_plan, "2026-01-01T00:00:00Z")
+    var missing_source = missing_journal.claim_process("advance-condition-missing", "advance-condition-missing:conditional:review", "smoke", "2026-01-01T00:00:01Z", "2026-01-01T00:10:00Z")
+    _ = missing_journal.complete_process(missing_source.run_id, missing_source.id, "smoke", "2026-01-01T00:00:02Z", "{\"decision\":{}}")
+    var missing_failed_closed = False
+    try:
+        _ = advance_correlation(missing_journal, missing_plan)
+    except err:
+        missing_failed_closed = String(err).find("condition_path_missing") >= 0
+    _check(missing_failed_closed and missing_journal.get_process("advance-condition-missing", "advance-condition-missing:conditional:merge").status == "pending", "missing condition evidence fails closed without selecting a branch")
+
     print("correlation advancement smoke ok")

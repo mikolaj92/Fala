@@ -44,6 +44,10 @@ struct ProcessStatus(Copyable, Movable):
         return ProcessStatus("failed")
 
     @staticmethod
+    def skipped() -> ProcessStatus:
+        return ProcessStatus("skipped")
+
+    @staticmethod
     def cancel_requested() -> ProcessStatus:
         return ProcessStatus("cancel_requested")
 
@@ -59,6 +63,7 @@ struct ProcessStatus(Copyable, Movable):
         return (
             self.value == "succeeded"
             or self.value == "failed"
+            or self.value == "skipped"
             or self.value == "cancelled"
             or self.value == "timed_out"
         )
@@ -72,6 +77,7 @@ struct ProcessStatus(Copyable, Movable):
             or self.value == "retry_wait"
             or self.value == "succeeded"
             or self.value == "failed"
+            or self.value == "skipped"
             or self.value == "cancel_requested"
             or self.value == "cancelled"
             or self.value == "timed_out"
@@ -148,7 +154,7 @@ def can_transition_process(from_status: ProcessStatus, to_status: ProcessStatus)
         return False
     if from_status.is_terminal():
         return False
-    if to_status.value == "cancelled" or to_status.value == "timed_out":
+    if to_status.value == "cancelled" or to_status.value == "timed_out" or to_status.value == "skipped":
         return True
     if from_status.value == "pending":
         return (

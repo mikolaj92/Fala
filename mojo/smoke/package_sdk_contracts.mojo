@@ -90,6 +90,23 @@ adapter = { kind = "manual_homeostat" }
     _write(toml_manifest_path, toml_text)
     var toml_manifest = load_package_toml(toml_manifest_path)
     _check(toml_manifest.id == "toml_pkg" and toml_manifest.version == "2" and len(toml_manifest.correlation_paths) == 1, "TOML package loading")
+    var conditional_toml = """
+id = "conditional_toml"
+[[correlation_paths]]
+id = "route"
+[[correlation_paths.effectors]]
+id = "review"
+adapter = { kind = "manual_homeostat" }
+[[correlation_paths.effectors]]
+id = "merge"
+conduction = ["review"]
+when = { upstream = "review", path = "decision.verdict", equals = "approve" }
+adapter = { kind = "manual_homeostat" }
+"""
+    var conditional_toml_path = "/tmp/fala-package-sdk-conditional.toml"
+    _write(conditional_toml_path, conditional_toml)
+    var loaded_conditional_toml = load_package_toml(conditional_toml_path)
+    _check(loaded_conditional_toml.correlation_paths[0].effectors[1].when_json.find("decision.verdict") >= 0, "TOML condition retention")
     _expect_toml_error("a = 1\na = 2\n", "duplicate key")
     _expect_toml_error("a = 2026-01-01\n", "date/time values are unsupported")
     _expect_package_error("id: pkg\nversion: '1'\n", "manifest.invalid")

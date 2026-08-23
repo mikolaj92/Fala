@@ -62,6 +62,16 @@ def main() raises:
     _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"retry_policy\":\"sometimes\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
     _expect_error(valid, "expected automatic or none")
 
+    # Conditional conduction is strict, direct-upstream-only, and canonical.
+    _write(valid, "{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"source\",\"adapter\":{\"kind\":\"manual_homeostat\"}},{\"id\":\"merge\",\"conduction\":[\"source\"],\"when\":{\"upstream\":\"source\",\"path\":\"decision.verdict\",\"equals\":\"approve\"},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    var conditional = load_package_json(valid)
+    _check(conditional.correlation_paths[0].effectors[1].when_json == "{\"equals\":\"approve\",\"path\":\"decision.verdict\",\"upstream\":\"source\"}", "condition canonical retention")
+    _check(serialize_package_json(conditional).find("\"when\":{\"equals\":\"approve\"") >= 0, "condition canonical round trip")
+    _write(valid, "{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"source\",\"adapter\":{\"kind\":\"manual_homeostat\"}},{\"id\":\"merge\",\"when\":{\"upstream\":\"source\",\"path\":\"verdict\",\"equals\":\"approve\"},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    _expect_error(valid, "condition upstream must be a direct conduction dependency")
+    _write(valid, "{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"source\",\"adapter\":{\"kind\":\"manual_homeostat\"}},{\"id\":\"merge\",\"conduction\":[\"source\"],\"when\":{\"upstream\":\"source\",\"path\":\"verdict\",\"equals\":[]},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    _expect_error(valid, "expected JSON scalar")
+
     # Root, path, effector, adapter, and array fields are strict.
     _write(valid, "[]")
     _expect_error(valid, "manifest.type at /: manifest must be a JSON object")
