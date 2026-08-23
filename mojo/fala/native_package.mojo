@@ -49,11 +49,12 @@ struct PackageEffector(Copyable, Movable):
     var timeout_seconds: Float64
     var config_json: String
     var retry_policy: String
+    var when_json: String
     var title: String
     var description: String
     var tags: List[String]
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic"):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = ""):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
@@ -65,6 +66,7 @@ struct PackageEffector(Copyable, Movable):
         self.adapter_inherit_env = adapter_inherit_env.copy()
         self.timeout_seconds = timeout_seconds
         self.retry_policy = retry_policy
+        self.when_json = when_json
         self.config_json = config_json
         self.title = title
         self.description = description
@@ -534,7 +536,7 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
 
 def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String]()) raises -> PackageEffector:
     if not value.is_object(): _error("manifest.type", path, "expected effector object")
-    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "config"], path)
+    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "effector id")
     var conduction = List[String]()
     var item = _optional(value, "conduction")
@@ -569,12 +571,30 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     if not item.is_null():
         retry_policy = _string(item^, path + "/retry_policy")
         if retry_policy != "automatic" and retry_policy != "none": _error("manifest.value", path + "/retry_policy", "expected automatic or none")
+    var when_json = String("")
+    item = _optional(value, "when")
+    if not item.is_null():
+        if not item.is_object(): _error("manifest.type", path + "/when", "expected object")
+        var condition = item.object().copy()
+        for pair in condition.items():
+            if pair.key != "upstream" and pair.key != "path" and pair.key != "equals":
+                _error("manifest.unknown", path + "/when/" + _pointer_token(pair.key), "unknown field")
+        var upstream = _runtime_id(_required_nonnull(item, "upstream", path + "/when"), path + "/when/upstream", "condition upstream")
+        if not _contains(conduction, upstream): _error("manifest.dangling_reference", path + "/when/upstream", "condition upstream must be a direct conduction dependency")
+        var field_path = _string(_required_nonnull(item, "path", path + "/when"), path + "/when/path")
+        if field_path == "": _error("manifest.value", path + "/when/path", "must not be empty")
+        for segment in field_path.split("."):
+            if segment.byte_length() == 0: _error("manifest.value", path + "/when/path", "must contain nonempty dot-separated object keys")
+        var expected = _required_nonnull(item, "equals", path + "/when")
+        if not expected.is_string() and not expected.is_bool() and not expected.is_int() and not expected.is_uint() and not expected.is_float() and not expected.is_null():
+            _error("manifest.type", path + "/when/equals", "expected JSON scalar")
+        when_json = canonical_json_text(to_string(item^))
     var config_json = String("{}")
     item = _optional(value, "config")
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json)
 def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String]()) raises -> PackageCorrelationPath:
     if not value.is_object(): _error("manifest.type", path, "expected correlation path object")
     _known(value, ["id", "title", "description", "tags", "effectors", "accumulate_upstream_reactions"], path)
@@ -665,6 +685,7 @@ def _effector_json(effector: PackageEffector) raises -> Value:
         result["conduction"] = _json_value(conduction_json^)
     if effector.timeout_seconds > 0.0: result["timeout_seconds"] = Value(effector.timeout_seconds)
     if effector.retry_policy != "automatic": result["retry_policy"] = Value(effector.retry_policy)
+    if effector.when_json != "": result["when"] = _json_value(effector.when_json)
     result["config"] = _json_value(effector.config_json)
     return Value(result^)
 

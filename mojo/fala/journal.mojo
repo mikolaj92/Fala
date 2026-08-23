@@ -873,7 +873,7 @@ struct NativeJournal(Movable):
     ) raises -> ProcessTransitionResult:
         if command.run_id != run_id: raise Error(String(SQLiteError(code=1, message="process transition command run_id must match run_id")))
         if command.id == "" or command.idempotency_key == "" or command.created_at == "": raise Error(String(SQLiteError(code=1, message="journal: command id, idempotency_key, and created_at must not be empty")))
-        var expected_type = "process.ready" if target_status == "ready" else ("process.complete" if target_status == "succeeded" else ("process.fail" if target_status == "failed" else ("process.retry" if target_status == "retry_wait" else ("process.wait" if target_status == "waiting" else ("process.cancel_requested" if target_status == "cancel_requested" else ("process.cancel" if target_status == "cancelled" else ("process.timeout" if target_status == "timed_out" else "")))))))
+        var expected_type = "process.ready" if target_status == "ready" else ("process.complete" if target_status == "succeeded" else ("process.fail" if target_status == "failed" else ("process.retry" if target_status == "retry_wait" else ("process.wait" if target_status == "waiting" else ("process.cancel_requested" if target_status == "cancel_requested" else ("process.skip" if target_status == "skipped" else ("process.cancel" if target_status == "cancelled" else ("process.timeout" if target_status == "timed_out" else ""))))))))
         if expected_type == "" or command.command_type != expected_type: raise Error(String(SQLiteError(code=1, message="journal: invalid process transition command")))
         self.db.begin_immediate()
         try:
@@ -919,7 +919,7 @@ struct NativeJournal(Movable):
                 if current.lease_owner != "" and current.lease_owner != command.actor: raise Error(String(SQLiteError(code=1, message="journal: process lease is held by another actor")))
             elif target_status == "ready":
                 if current.status != "pending": raise Error(String(SQLiteError(code=1, message="journal: process cannot become ready")))
-            elif target_status == "cancel_requested" or target_status == "cancelled" or target_status == "timed_out":
+            elif target_status == "cancel_requested" or target_status == "skipped" or target_status == "cancelled" or target_status == "timed_out":
                 if not can_transition_process(ProcessStatus(current.status), ProcessStatus(target_status)):
                     raise Error(String(SQLiteError(code=1, message="journal: illegal process cancellation transition")))
                 if current.lease_owner != "" and current.lease_owner != command.actor:
@@ -941,7 +941,7 @@ struct NativeJournal(Movable):
             else: insert.bind_text(6,command.correlation_id)
             if command.causation_id == "": insert.bind_null(7)
             else: insert.bind_text(7,command.causation_id)
-            var update = self.db.query("UPDATE processes SET status=?,output_json=CASE WHEN ? IN ('succeeded','waiting') THEN ? WHEN ?='failed' THEN '{}' ELSE output_json END,error_json=CASE WHEN ? IN ('failed','cancelled','timed_out','cancel_requested') THEN ? WHEN ?='retry_wait' AND ?<>'{}' THEN ? ELSE error_json END,available_at=CASE WHEN ?='retry_wait' THEN CASE WHEN ?='' THEN ? ELSE ? END ELSE available_at END,input_json=CASE WHEN ?='ready' AND ?<>'' THEN ? ELSE input_json END,lease_owner=NULL,lease_expires_at=NULL,finished_at=CASE WHEN ?='retry_wait' THEN NULL WHEN ? IN ('succeeded','failed','cancelled','timed_out') THEN ? ELSE finished_at END,updated_at=? WHERE run_id=? AND id=? AND status=?")
+            var update = self.db.query("UPDATE processes SET status=?,output_json=CASE WHEN ? IN ('succeeded','skipped','waiting') THEN ? WHEN ?='failed' THEN '{}' ELSE output_json END,error_json=CASE WHEN ? IN ('failed','cancelled','timed_out','cancel_requested') THEN ? WHEN ?='retry_wait' AND ?<>'{}' THEN ? ELSE error_json END,available_at=CASE WHEN ?='retry_wait' THEN CASE WHEN ?='' THEN ? ELSE ? END ELSE available_at END,input_json=CASE WHEN ?='ready' AND ?<>'' THEN ? ELSE input_json END,lease_owner=NULL,lease_expires_at=NULL,finished_at=CASE WHEN ?='retry_wait' THEN NULL WHEN ? IN ('succeeded','failed','skipped','cancelled','timed_out') THEN ? ELSE finished_at END,updated_at=? WHERE run_id=? AND id=? AND status=?")
             insert.bind_text(8,payload); insert.bind_text(9,command.created_at); _ = insert.step()
             update.bind_text(1,target_status); update.bind_text(2,target_status); update.bind_text(3,normalized_output); update.bind_text(4,target_status); update.bind_text(5,target_status); update.bind_text(6,normalized_error); update.bind_text(7,target_status); update.bind_text(8,normalized_error); update.bind_text(9,normalized_error); update.bind_text(10,target_status); update.bind_text(11,available_at); update.bind_text(12,command.created_at); update.bind_text(13,available_at); update.bind_text(14,target_status); update.bind_text(15,input_json); update.bind_text(16,input_json); update.bind_text(17,target_status); update.bind_text(18,target_status); update.bind_text(19,command.created_at); update.bind_text(20,command.created_at); update.bind_text(21,run_id); update.bind_text(22,process_id); update.bind_text(23,current.status); _ = update.step()
             if self.db.changes() != 1: raise Error(String(SQLiteError(code=1, message="journal: process transition changed concurrently")))
@@ -1182,7 +1182,7 @@ struct NativeJournal(Movable):
         var target_status = ProcessStatus(to_status)
         if not target_status.is_known():
             raise Error(String(SQLiteError(code=1, message="journal: unsupported process transition status " + to_status)))
-        var expected_type = "process.wait" if to_status == "waiting" else ("process.complete" if to_status == "succeeded" else ("process.fail" if to_status == "failed" else ("process.retry" if to_status == "retry_wait" else ("process.cancel_requested" if to_status == "cancel_requested" else ("process.cancel" if to_status == "cancelled" else ("process.timeout" if to_status == "timed_out" else "process.ready"))))))
+        var expected_type = "process.wait" if to_status == "waiting" else ("process.complete" if to_status == "succeeded" else ("process.fail" if to_status == "failed" else ("process.retry" if to_status == "retry_wait" else ("process.cancel_requested" if to_status == "cancel_requested" else ("process.skip" if to_status == "skipped" else ("process.cancel" if to_status == "cancelled" else ("process.timeout" if to_status == "timed_out" else "process.ready")))))))
         self._require_run(run_id)
         var current = self.get_process(run_id, process_id)
         if actor == "": raise Error(String(SQLiteError(code=1, message="journal: actor must not be empty")))
@@ -1201,7 +1201,7 @@ struct NativeJournal(Movable):
             # transition payloads carry attempt identity and must reject a
             # malformed stored payload before any replay is returned.
             var payload_conflict = to_status != "ready" and stored_attempt < 0
-            if to_status == "succeeded" or to_status == "waiting":
+            if to_status == "succeeded" or to_status == "skipped" or to_status == "waiting":
                 payload_conflict = payload_conflict or self._json_field_from_payload(stored_payload, "output", "") != normalized_output
             if to_status == "failed" or to_status == "cancel_requested" or to_status == "cancelled" or to_status == "timed_out":
                 payload_conflict = payload_conflict or self._json_field_from_payload(stored_payload, "error", "") != normalized_error
@@ -1216,7 +1216,7 @@ struct NativeJournal(Movable):
         if to_status == "failed": stored_output = "{}"
         elif to_status == "cancelled" or to_status == "timed_out" or to_status == "retry_wait": stored_output = current.output_json
         var stored_error = normalized_error
-        if to_status == "succeeded" or to_status == "waiting": stored_error = "{}"
+        if to_status == "succeeded" or to_status == "skipped" or to_status == "waiting": stored_error = "{}"
         if to_status == "retry_wait" and normalized_error == "{}": stored_error = current.error_json
         var expected_payload_raw = "{\"process_id\":" + self._json_quote(process_id) + ",\"attempt\":" + String(current.attempt) + ",\"output\":" + stored_output + ",\"error\":" + stored_error
         if to_status == "retry_wait": expected_payload_raw += ",\"available_at\":" + self._json_quote(due)
@@ -1234,13 +1234,13 @@ struct NativeJournal(Movable):
             var tx_current = self.get_process(run_id, process_id)
             if tx_current.status != current.status or tx_current.attempt != current.attempt or tx_current.lease_owner != current.lease_owner or tx_current.lease_expires_at != current.lease_expires_at or tx_current.output_json != current.output_json or tx_current.error_json != current.error_json:
                 raise Error(String(SQLiteError(code=1, message="journal: process transition changed concurrently")))
-            var stmt = self.db.query("UPDATE processes SET status=?,output_json=CASE WHEN ?='succeeded' THEN ? WHEN ?='failed' THEN '{}' WHEN ?='waiting' THEN ? ELSE output_json END,error_json=CASE WHEN ? IN ('succeeded','waiting') THEN '{}' WHEN ? IN ('failed','cancelled','timed_out','cancel_requested') THEN ? WHEN ?='retry_wait' AND ?<>'{}' THEN ? ELSE error_json END,available_at=CASE WHEN ?='retry_wait' THEN ? ELSE available_at END,lease_owner=NULL,lease_expires_at=NULL,finished_at=CASE WHEN ?='retry_wait' THEN NULL WHEN ? IN ('succeeded','failed','cancelled','timed_out') THEN ? ELSE finished_at END,updated_at=? WHERE run_id=? AND id=? AND status=?")
+            var stmt = self.db.query("UPDATE processes SET status=?,output_json=CASE WHEN ? IN ('succeeded','skipped') THEN ? WHEN ?='failed' THEN '{}' WHEN ?='waiting' THEN ? ELSE output_json END,error_json=CASE WHEN ? IN ('succeeded','waiting') THEN '{}' WHEN ? IN ('failed','cancelled','timed_out','cancel_requested') THEN ? WHEN ?='retry_wait' AND ?<>'{}' THEN ? ELSE error_json END,available_at=CASE WHEN ?='retry_wait' THEN ? ELSE available_at END,lease_owner=NULL,lease_expires_at=NULL,finished_at=CASE WHEN ?='retry_wait' THEN NULL WHEN ? IN ('succeeded','failed','skipped','cancelled','timed_out') THEN ? ELSE finished_at END,updated_at=? WHERE run_id=? AND id=? AND status=?")
             stmt.bind_text(1,to_status); stmt.bind_text(2,to_status); stmt.bind_text(3,stored_output); stmt.bind_text(4,to_status); stmt.bind_text(5,to_status); stmt.bind_text(6,normalized_output); stmt.bind_text(7,to_status); stmt.bind_text(8,to_status); stmt.bind_text(9,stored_error); stmt.bind_text(10,to_status); stmt.bind_text(11,stored_error); stmt.bind_text(12,stored_error); stmt.bind_text(13,to_status); stmt.bind_text(14,due); stmt.bind_text(15,to_status); stmt.bind_text(16,to_status); stmt.bind_text(17,at); stmt.bind_text(18,at); stmt.bind_text(19,run_id); stmt.bind_text(20,process_id); stmt.bind_text(21,current.status); _ = stmt.step()
             if self.db.changes() != 1:
                 raise Error(String(SQLiteError(code=1, message="journal: process transition changed concurrently")))
             var command = self.db.query("INSERT INTO runtime_commands (run_id,id,command_type,idempotency_key,actor,payload,created_at) VALUES (?,?,?,?,?,?,?)")
             command.bind_text(1,run_id); command.bind_text(2,effective_key); command.bind_text(3,expected_type); command.bind_text(4,effective_key); command.bind_text(5,actor); command.bind_text(6,expected_payload_raw); command.bind_text(7,at); _ = command.step()
-            var event_type = "process.waiting" if to_status == "waiting" else ("process.completed" if to_status == "succeeded" else ("process.failed" if to_status == "failed" else ("process.retry_scheduled" if to_status == "retry_wait" else ("process.cancel_requested" if to_status == "cancel_requested" else ("process.cancelled" if to_status == "cancelled" else ("process.timed_out" if to_status == "timed_out" else "process.ready"))))))
+            var event_type = "process.waiting" if to_status == "waiting" else ("process.completed" if to_status == "succeeded" else ("process.failed" if to_status == "failed" else ("process.retry_scheduled" if to_status == "retry_wait" else ("process.cancel_requested" if to_status == "cancel_requested" else ("process.skipped" if to_status == "skipped" else ("process.cancelled" if to_status == "cancelled" else ("process.timed_out" if to_status == "timed_out" else "process.ready")))))))
             _ = self._append_event_in_tx(run_id, effective_key + ":event", event_type, expected_payload_raw, at, current.impulse_id, process_id, effective_key, 1, actor, "", "")
             self.db.commit()
         except err:
@@ -1252,6 +1252,9 @@ struct NativeJournal(Movable):
 
     def retry_process(mut self, run_id: String, process_id: String, actor: String, at: String, available_at: String, error_json: String = "{}") raises -> ProcessRow:
         return self._transition_process(run_id,process_id,"retry_wait",actor,at,"{}",error_json,available_at)
+
+    def skip_process(mut self, run_id: String, process_id: String, actor: String, at: String, output_json: String = "{}", idempotency_key: String = "") raises -> ProcessRow:
+        return self._transition_process(run_id,process_id,"skipped",actor,at,output_json,"{}", "", idempotency_key)
 
     def cancel_process(mut self, run_id: String, process_id: String, actor: String, at: String, error_json: String = "{}") raises -> ProcessRow:
         return self._transition_process(run_id,process_id,"cancelled",actor,at,"{}",error_json)

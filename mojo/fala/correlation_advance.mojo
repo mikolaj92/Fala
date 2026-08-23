@@ -189,11 +189,11 @@ def _same_durable_row(row: ProcessRow, item: CorrelationProcessPlan) raises -> B
                 _ = binding
             except err:
                 raise Error("correlation.advance.invalid_metadata at /processes/" + item.id + "/metadata/__adapter_binding: invalid adapter binding")
-        elif pair.key != "__correlation_config" and pair.key != "__correlation_output_schema" and pair.key != "__correlation_conduction" and pair.key != "__correlation_timeout_seconds" and pair.key != "__correlation_wait_diagnostic":
+        elif pair.key != "__correlation_config" and pair.key != "__correlation_output_schema" and pair.key != "__correlation_conduction" and pair.key != "__correlation_when" and pair.key != "__correlation_timeout_seconds" and pair.key != "__correlation_wait_diagnostic":
             persisted_marker[pair.key] = pair.value.copy()
     var expected_marker = Object(capacity=len(expected_metadata.object()))
     for pair in expected_metadata.object().items():
-        if pair.key != "__correlation_config" and pair.key != "__correlation_output_schema" and pair.key != "__correlation_conduction" and pair.key != "__correlation_timeout_seconds" and pair.key != "__correlation_wait_diagnostic":
+        if pair.key != "__correlation_config" and pair.key != "__correlation_output_schema" and pair.key != "__correlation_conduction" and pair.key != "__correlation_when" and pair.key != "__correlation_timeout_seconds" and pair.key != "__correlation_wait_diagnostic":
             expected_marker[pair.key] = pair.value.copy()
     if canonical_json_text(to_string(persisted_marker^)) != canonical_json_text(to_string(expected_marker^)):
         return False
@@ -212,19 +212,21 @@ def _same_durable_row(row: ProcessRow, item: CorrelationProcessPlan) raises -> B
         return False
     if "effector_id" not in expected_metadata.object() or not expected_metadata.object()["effector_id"].is_string() or expected_metadata.object()["effector_id"].string() != item.effector_id:
         return False
-    var config = ""; var schema = ""; var conduction = ""; var timeout = ""
+    var config = ""; var schema = ""; var conduction = ""; var condition = "null"; var timeout = ""
     for pair in metadata.object().items():
         if pair.key == "__correlation_config": config = canonical_json_text(to_string(pair.value.copy()))
         elif pair.key == "__correlation_output_schema": schema = canonical_json_text(to_string(pair.value.copy()))
         elif pair.key == "__correlation_conduction": conduction = canonical_json_text(to_string(pair.value.copy()))
+        elif pair.key == "__correlation_when": condition = canonical_json_text(to_string(pair.value.copy()))
         elif pair.key == "__correlation_timeout_seconds": timeout = canonical_json_text(to_string(pair.value.copy()))
     var expected_config = _canonical_object(item.config_json)
     var expected_schema = _canonical_object(item.output_schema_json)
     var expected_conduction = Array(capacity=len(item.conduction))
     for upstream in item.conduction: expected_conduction.append(Value(upstream))
     var expected_conduction_json = canonical_json_text(to_string(Value(expected_conduction^)))
+    var expected_condition = canonical_json_text(item.when_json) if item.when_json != "" else "null"
     var expected_timeout = canonical_json_text(to_string(Value(item.timeout_seconds)))
-    return config == expected_config and schema == expected_schema and conduction == expected_conduction_json and timeout == expected_timeout
+    return config == expected_config and schema == expected_schema and conduction == expected_conduction_json and condition == expected_condition and timeout == expected_timeout
 
 def _states(plan: CorrelationInstantiationPlan, rows: List[ProcessRow]) raises -> List[CorrelationExecutionState]:
     var states = List[CorrelationExecutionState]()
@@ -244,6 +246,13 @@ def _states(plan: CorrelationInstantiationPlan, rows: List[ProcessRow]) raises -
                 _validate_projected_schema(_project_output(output_value, item.output_schema_json), Value(parse_string=item.output_schema_json), "/processes/" + item.id + "/output_json")
             except err:
                 raise Error("correlation.advance.invalid_output at /processes/" + item.id + "/output_json: succeeded output is invalid")
+        elif row.status == "skipped":
+            try:
+                var skipped_output = Value(parse_string=output)
+                if not skipped_output.is_object(): raise Error("skipped output must be an object")
+                output = canonical_json_text(output)
+            except err:
+                raise Error("correlation.advance.invalid_output at /processes/" + item.id + "/output_json: skipped output is invalid")
         elif row.status == "failed" or row.status == "cancelled" or row.status == "timed_out":
             output = row.error_json
         states.append(CorrelationExecutionState(process_id=row.id, effector_id=item.effector_id, status=row.status, attempt=row.attempt, max_attempts=row.max_attempts, output_json=output, input_json=row.input_json, reactions_json="{}", conduction=item.conduction.copy()))
@@ -643,6 +652,50 @@ def _wait_diagnostic(computed: CorrelationAdvancePlan) -> CorrelationWaitDiagnos
     for item in computed.blocked: ids.append(item.process_id)
     return CorrelationWaitDiagnostic(ids^, False, "wait_graph_unavailable", "wait_graph_unavailable")
 
+
+def _condition_matches(item: CorrelationProcessPlan, plan: CorrelationInstantiationPlan, states: List[CorrelationExecutionState]) raises -> Bool:
+    """Compare one declared upstream output scalar. Domain meaning stays outside Fala."""
+    if item.when_json == "": return True
+    var condition = Value(parse_string=item.when_json)
+    if not condition.is_object():
+        raise Error("correlation.advance.invalid_condition at /processes/" + item.id + "/when: expected object")
+    var object = condition.object().copy()
+    if "upstream" not in object or not object["upstream"].is_string() or "path" not in object or not object["path"].is_string() or "equals" not in object:
+        raise Error("correlation.advance.invalid_condition at /processes/" + item.id + "/when: upstream, path, and equals are required")
+    var upstream_id = object["upstream"].string()
+    var direct = False
+    for dependency in item.conduction:
+        if dependency == upstream_id: direct = True
+    if not direct:
+        raise Error("correlation.advance.invalid_condition at /processes/" + item.id + "/when/upstream: source must be a direct conduction dependency")
+    var state_index = -1
+    var plan_index = -1
+    for index in range(len(states)):
+        if states[index].effector_id == upstream_id: state_index = index
+    for index in range(len(plan.processes)):
+        if plan.processes[index].effector_id == upstream_id: plan_index = index
+    if state_index < 0 or plan_index < 0:
+        raise Error("correlation.advance.invalid_condition at /processes/" + item.id + "/when/upstream: source is missing")
+    if states[state_index].status != "succeeded":
+        raise Error("correlation.advance.condition_source_not_succeeded at /processes/" + item.id + "/when/upstream: source status is " + states[state_index].status)
+    var output = Value(parse_string=states[state_index].output_json)
+    var current = _project_output(output, plan.processes[plan_index].output_schema_json)
+    var field_path = object["path"].string()
+    if field_path == "":
+        raise Error("correlation.advance.invalid_condition at /processes/" + item.id + "/when/path: path must not be empty")
+    for segment_slice in field_path.split("."):
+        var segment = String(segment_slice)
+        if segment == "" or not current.is_object() or segment not in current.object():
+            raise Error("correlation.advance.condition_path_missing at /processes/" + item.id + "/when/path: missing object key " + segment)
+        var next_value = current.object()[segment].copy()
+        current = next_value^
+    if current.is_object() or current.is_array():
+        raise Error("correlation.advance.condition_value_not_scalar at /processes/" + item.id + "/when/path: selected value must be scalar")
+    var expected = object["equals"].copy()
+    if expected.is_object() or expected.is_array():
+        raise Error("correlation.advance.invalid_condition at /processes/" + item.id + "/when/equals: expected value must be scalar")
+    return canonical_json_text(to_string(current^)) == canonical_json_text(to_string(expected^))
+
 def advance_correlation(mut journal: NativeJournal, plan: CorrelationInstantiationPlan) raises -> CorrelationAdvanceResult:
     """Reconcile durable correlation rows to a deterministic fixed point."""
     _validate(plan)
@@ -678,9 +731,14 @@ def advance_correlation(mut journal: NativeJournal, plan: CorrelationInstantiati
                 if plan_index < 0:
                     raise Error("correlation.advance.missing_plan at /processes/" + item.id + ": canonical process plan is missing")
                 var canonical_item = plan.processes[plan_index].copy()
-                var merged_input = _merged_input(canonical_item, plan, states)
-                children.append(CorrelationChildTransition(process_id=item.id, target_status="ready", input_json=merged_input, error_json="{}"))
-                child_plans.append(canonical_item^)
+                if _condition_matches(canonical_item, plan, states):
+                    var merged_input = _merged_input(canonical_item, plan, states)
+                    children.append(CorrelationChildTransition(process_id=item.id, target_status="ready", input_json=merged_input, error_json="{}"))
+                    child_plans.append(canonical_item.copy())
+                else:
+                    var skipped_output = '{"reason":"condition_not_met","when":' + canonical_item.when_json + '}'
+                    _ = journal.skip_process(plan.run_id, item.id, "correlation", rows[row_index].created_at, skipped_output, "process.skip:" + item.id)
+                    changed = True
         if len(children) > 0:
             _ = journal.apply_correlation_children(plan.run_id, children)
             for item in child_plans: all_promoted.append(item.copy())
@@ -701,5 +759,5 @@ def _path_for_plan(plan: CorrelationInstantiationPlan) raises -> CorrelationPath
         if metadata.is_object():
             if "accumulate_upstream_reactions" in metadata.object() and metadata.object()["accumulate_upstream_reactions"].is_bool():
                 accumulate_upstream_reactions = accumulate_upstream_reactions or metadata.object()["accumulate_upstream_reactions"].bool()
-        effectors.append(CorrelationEffectorSpec.create(item.effector_id, "", item.conduction.copy()))
+        effectors.append(CorrelationEffectorSpec.create(item.effector_id, "", item.conduction.copy(), when_json=item.when_json))
     return CorrelationPathSpec(plan.correlation_path_id, effectors^, accumulate_upstream_reactions)

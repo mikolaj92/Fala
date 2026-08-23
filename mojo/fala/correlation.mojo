@@ -222,9 +222,10 @@ struct CorrelationEffectorSpec(Copyable, Movable):
     # Optional native propagation metadata; kept as JSON to avoid inventing a reaction schema.
     var regulation_json: String
     var accepted_reaction_kinds: List[String]
+    var when_json: String
 
     @staticmethod
-    def create(id: String, capability: String = "", var conduction: List[String] = List[String](), timeout_seconds: Float64 = 0.0, config_json: String = "{}", output_schema_json: String = "{}", regulation_json: String = "{}", var accepted_reaction_kinds: List[String] = List[String]()) raises -> CorrelationEffectorSpec:
+    def create(id: String, capability: String = "", var conduction: List[String] = List[String](), timeout_seconds: Float64 = 0.0, config_json: String = "{}", output_schema_json: String = "{}", regulation_json: String = "{}", var accepted_reaction_kinds: List[String] = List[String](), when_json: String = "") raises -> CorrelationEffectorSpec:
         if id == "": raise Error("correlation effector id must not be empty")
         if timeout_seconds < 0.0: raise Error("correlation effector timeout must not be negative")
         var seen = List[String]()
@@ -232,7 +233,12 @@ struct CorrelationEffectorSpec(Copyable, Movable):
             if upstream == id: raise Error("correlation effector cannot depend on itself: " + id)
             if _contains(seen, upstream): raise Error("duplicate conduction reference: " + upstream)
             seen.append(upstream)
-        return CorrelationEffectorSpec(id=id, conduction=conduction^, capability=capability, timeout_seconds=timeout_seconds, config_json=config_json, output_schema_json=output_schema_json, regulation_json=regulation_json, accepted_reaction_kinds=accepted_reaction_kinds^)
+        var canonical_when = when_json
+        if when_json != "":
+            var condition = Value(parse_string=when_json)
+            if not condition.is_object(): raise Error("correlation effector when must be a JSON object")
+            canonical_when = canonical_json_text(to_string(condition^))
+        return CorrelationEffectorSpec(id=id, conduction=conduction^, capability=capability, timeout_seconds=timeout_seconds, config_json=config_json, output_schema_json=output_schema_json, regulation_json=regulation_json, accepted_reaction_kinds=accepted_reaction_kinds^, when_json=canonical_when)
 
 
 struct CorrelationPathSpec(Copyable, Movable):
@@ -267,6 +273,7 @@ struct CorrelationProcessPlan(Copyable, Movable):
     var config_json: String
     var output_schema_json: String
     var conduction: List[String]
+    var when_json: String
     var metadata_json: String
     var idempotency_key: String
 
@@ -482,7 +489,7 @@ def instantiate_correlation_path_plan(
         config = canonical_json_text(to_string(config_value^))
         if effector.id in per_effector_configs: config = _merge_config(config, per_effector_configs[effector.id], "/per_effector_configs/" + effector.id)
         var authored = _effector_input(input_fields, per_effector_inputs, effector.id)
-        plans.append(CorrelationProcessPlan(id=process_id, run_id=run_id, effector_id=effector.id, declaration_seq=index, status=status, priority=priority, max_attempts=attempts, timeout_seconds=timeout, input_json=authored, config_json=config, output_schema_json=canonical_json_text(effector.output_schema_json), conduction=effector.conduction.copy(), metadata_json=marker, idempotency_key="process.schedule:" + path_id + ":" + effector.id))
+        plans.append(CorrelationProcessPlan(id=process_id, run_id=run_id, effector_id=effector.id, declaration_seq=index, status=status, priority=priority, max_attempts=attempts, timeout_seconds=timeout, input_json=authored, config_json=config, output_schema_json=canonical_json_text(effector.output_schema_json), conduction=effector.conduction.copy(), when_json=effector.when_json, metadata_json=marker, idempotency_key="process.schedule:" + path_id + ":" + effector.id))
     return CorrelationInstantiationPlan(correlation_path_id=path_id, run_id=run_id, processes=plans^, replayed=all_existing)
 
 
@@ -512,7 +519,7 @@ def project_conduction(states: List[CorrelationExecutionState], downstream: Corr
         for state in states:
             if state.effector_id == upstream_id:
                 found = True
-                if state.status == "succeeded" or state.status == "failed" or state.status == "cancelled" or state.status == "timed_out":
+                if state.status == "succeeded" or state.status == "failed" or state.status == "skipped" or state.status == "cancelled" or state.status == "timed_out":
                     projected.append(CorrelationConductionValue(upstream_effector_id=upstream_id, output_json=state.output_json))
                 break
         if not found: raise Error("unknown conduction upstream: " + upstream_id)
@@ -554,7 +561,7 @@ def advance_correlation_states(path: CorrelationPathSpec, states: List[Correlati
             for upstream in states:
                 if upstream.effector_id == upstream_id:
                     found = True
-                    if upstream.status == "succeeded" or upstream.status == "failed" or upstream.status == "cancelled" or upstream.status == "timed_out":
+                    if upstream.status == "succeeded" or upstream.status == "skipped" or upstream.status == "failed" or upstream.status == "cancelled" or upstream.status == "timed_out":
                         values.append(CorrelationConductionValue(upstream_effector_id=upstream_id, output_json=upstream.output_json))
                     else:
                         unmet.append(upstream_id)
@@ -566,7 +573,7 @@ def advance_correlation_states(path: CorrelationPathSpec, states: List[Correlati
             blocked.append(CorrelationBlocked(process_id=state.process_id, effector_id=state.effector_id, unmet=unmet^, reason="unmet_dependencies"))
         else:
             for item in values: projected.append(item.copy())
-            readied.append(CorrelationProcessPlan(id=state.process_id, run_id="", effector_id=state.effector_id, declaration_seq=0, status="ready", priority=0, max_attempts=state.max_attempts, timeout_seconds=0.0, input_json=state.input_json, config_json="{}", output_schema_json="{}", conduction=state.conduction.copy(), metadata_json="{}", idempotency_key="process.ready:" + state.process_id))
+            readied.append(CorrelationProcessPlan(id=state.process_id, run_id="", effector_id=state.effector_id, declaration_seq=0, status="ready", priority=0, max_attempts=state.max_attempts, timeout_seconds=0.0, input_json=state.input_json, config_json="{}", output_schema_json="{}", conduction=state.conduction.copy(), when_json="", metadata_json="{}", idempotency_key="process.ready:" + state.process_id))
     
     if len(blocked) > 0:
         # Only pending members of an actual dependency cycle are deadlocked.

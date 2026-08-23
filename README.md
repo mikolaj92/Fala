@@ -102,6 +102,9 @@ See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md).
 Fala is a mediator, not a workflow tyrant: terminal upstreams conduct success
 or error payloads to dependents, and the receiving effector decides what the
 payload means. A failed upstream does not silently cancel its dependents.
+Package authors may add `when = { upstream, path, equals }` to select a branch
+from a successful direct-upstream JSON scalar. Fala records a nonmatching branch
+as `skipped`; it does not assign meaning to the compared domain value.
 
 ## Quick proof
 

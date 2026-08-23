@@ -179,7 +179,7 @@ def _terminal_result(mut journal: NativeJournal, run_id: String, status: String)
     var waiting = 0
     var incomplete = 0
     for row in rows:
-        if row.status == "succeeded":
+        if row.status == "succeeded" or row.status == "skipped":
             completed += 1
         elif row.status == "failed" or row.status == "cancelled" or row.status == "timed_out":
             failed += 1

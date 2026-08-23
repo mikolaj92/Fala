@@ -97,6 +97,21 @@ def validate_correlation_persistence_plan(plan: CorrelationInstantiationPlan) ->
                     return CorrelationPersistenceError("correlation.persistence.duplicate_conflict", "/processes/" + String(index) + "/conduction", "duplicate conduction reference: " + upstream)
             if not _contains(effectors, upstream):
                 return CorrelationPersistenceError("correlation.persistence.unknown_upstream", "/processes/" + String(index) + "/conduction", "unknown upstream " + upstream)
+        if item.when_json != "":
+            try:
+                var condition = Value(parse_string=item.when_json)
+                if not condition.is_object() or "upstream" not in condition.object() or not condition.object()["upstream"].is_string() or "path" not in condition.object() or not condition.object()["path"].is_string() or "equals" not in condition.object():
+                    return CorrelationPersistenceError("correlation.persistence.invalid_condition", "/processes/" + String(index) + "/when", "upstream, path, and equals are required")
+                var condition_upstream = condition.object()["upstream"].string()
+                if not _contains(item.conduction, condition_upstream):
+                    return CorrelationPersistenceError("correlation.persistence.invalid_condition", "/processes/" + String(index) + "/when/upstream", "condition upstream must be a direct conduction dependency")
+                if condition.object()["path"].string() == "":
+                    return CorrelationPersistenceError("correlation.persistence.invalid_condition", "/processes/" + String(index) + "/when/path", "path must not be empty")
+                var expected = condition.object()["equals"].copy()
+                if expected.is_object() or expected.is_array():
+                    return CorrelationPersistenceError("correlation.persistence.invalid_condition", "/processes/" + String(index) + "/when/equals", "expected value must be scalar")
+            except err:
+                return CorrelationPersistenceError("correlation.persistence.invalid_condition", "/processes/" + String(index) + "/when", "malformed condition JSON")
     return CorrelationPersistenceError("", "", "")
 
 
@@ -196,7 +211,7 @@ def _metadata_for_item(item: CorrelationProcessPlan) raises -> String:
     var source = parsed.object().copy()
     var metadata = Object(capacity=len(source) + 4)
     for pair in source.items():
-        if pair.key == "__correlation_config" or pair.key == "__correlation_output_schema" or pair.key == "__correlation_conduction" or pair.key == "__correlation_timeout_seconds" or pair.key == "__adapter_binding" or pair.key == "__correlation_wait_diagnostic":
+        if pair.key == "__correlation_config" or pair.key == "__correlation_output_schema" or pair.key == "__correlation_conduction" or pair.key == "__correlation_when" or pair.key == "__correlation_timeout_seconds" or pair.key == "__adapter_binding" or pair.key == "__correlation_wait_diagnostic":
             raise Error("correlation.persistence.invalid_metadata at /processes/" + item.id + "/metadata/" + pair.key + ": reserved key")
         metadata[pair.key] = pair.value.copy()
     var config = Value(parse_string=item.config_json)
@@ -212,6 +227,7 @@ def _metadata_for_item(item: CorrelationProcessPlan) raises -> String:
     metadata["__correlation_config"] = config^
     metadata["__correlation_output_schema"] = output_schema^
     metadata["__correlation_conduction"] = Value(conduction^)
+    metadata["__correlation_when"] = Value(parse_string=item.when_json) if item.when_json != "" else Value(None)
     metadata["__correlation_timeout_seconds"] = Value(item.timeout_seconds)
     return canonical_json_text(to_string(metadata^))
 
@@ -236,6 +252,7 @@ def _same_metadata(row: ProcessRow, item: CorrelationProcessPlan) raises -> Bool
     var config = ""
     var output_schema = ""
     var conduction = ""
+    var condition = "null"
     var timeout = ""
     for pair in source.items():
         if pair.key == "__adapter_binding":
@@ -249,6 +266,7 @@ def _same_metadata(row: ProcessRow, item: CorrelationProcessPlan) raises -> Bool
         elif pair.key == "__correlation_config": config = canonical_json_text(to_string(pair.value.copy()))
         elif pair.key == "__correlation_output_schema": output_schema = canonical_json_text(to_string(pair.value.copy()))
         elif pair.key == "__correlation_conduction": conduction = canonical_json_text(to_string(pair.value.copy()))
+        elif pair.key == "__correlation_when": condition = canonical_json_text(to_string(pair.value.copy()))
         elif pair.key == "__correlation_timeout_seconds": timeout = canonical_json_text(to_string(pair.value.copy()))
         else: metadata[pair.key] = pair.value.copy()
     var expected_config = _canonical_object(item.config_json, "/processes/" + item.id + "/config_json")
@@ -258,8 +276,9 @@ def _same_metadata(row: ProcessRow, item: CorrelationProcessPlan) raises -> Bool
     for upstream in item.conduction:
         expected_conduction.append(Value(upstream))
     var expected_conduction_json = canonical_json_text(to_string(Value(expected_conduction^)))
+    var expected_condition_json = canonical_json_text(item.when_json) if item.when_json != "" else "null"
     var expected_timeout_json = canonical_json_text(to_string(Value(item.timeout_seconds)))
-    return expected_metadata and config == expected_config and output_schema == expected_output_schema and conduction == expected_conduction_json and timeout == expected_timeout_json
+    return expected_metadata and config == expected_config and output_schema == expected_output_schema and conduction == expected_conduction_json and condition == expected_condition_json and timeout == expected_timeout_json
 
 def _same_row(row: ProcessRow, item: CorrelationProcessPlan) raises -> Bool:
     var expected_output_schema = _canonical_object(item.output_schema_json, "/processes/" + item.id + "/output_schema_json")
@@ -323,6 +342,11 @@ def _conducted_upstream_payload(row: ProcessRow, upstream_item: CorrelationProce
             wrapped["error"] = error.copy()
             return Value(wrapped^)
         return error^
+    if row.status == "skipped":
+        var skipped = Value(parse_string=row.output_json)
+        if not skipped.is_object():
+            raise Error("correlation.persistence.invalid_output at " + path + ": skipped output must be an object")
+        return skipped^
     if row.status != "succeeded":
         raise Error("correlation.persistence.invalid_output at " + path + ": upstream is not terminal")
     var schema_path = "/processes/" + row.id + "/output_schema_json"
@@ -506,10 +530,12 @@ def refresh_correlation_readiness(mut journal: NativeJournal, plan: CorrelationI
             if upstream_index < 0:
                 raise Error("correlation.persistence.unknown_path at /processes/" + upstream_id + ": durable process row is missing")
             var status = rows[upstream_index].status
-            if status != "succeeded" and status != "failed" and status != "cancelled" and status != "timed_out":
+            if status != "succeeded" and status != "skipped" and status != "failed" and status != "cancelled" and status != "timed_out":
                 all_terminal = False
                 break
         if all_terminal:
+            if item.when_json != "":
+                raise Error("correlation.persistence.conditional_requires_advance at /processes/" + item.id + ": use advance_correlation for conditional conduction")
             candidates.append(item.id)
             merged_inputs.append(_merged_input(item, plan, rows))
     journal.db.begin()

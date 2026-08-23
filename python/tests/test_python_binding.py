@@ -174,6 +174,63 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert terminal["ping"]["error"] == {}
 
 
+def test_host_run_package_conditional_conduction_skips_nonmatching_adapter(tmp_path) -> None:
+    import json
+    import sys
+
+    import fala
+
+    source = tmp_path / "source.py"
+    source.write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
+        "json.dumps({'values': {'decision': {'verdict': 'request_changes'}}}))\n",
+        encoding="utf-8",
+    )
+    sentinel = tmp_path / "merge-ran"
+    merge = tmp_path / "merge.py"
+    merge.write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('ran')\n",
+        encoding="utf-8",
+    )
+    repair = tmp_path / "repair.py"
+    repair.write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
+        "json.dumps({'values': {'repaired': True}}))\n",
+        encoding="utf-8",
+    )
+    package = {
+        "version": "2",
+        "id": "conditional_host",
+        "capabilities": [{"id": name} for name in ("review", "merge", "repair")],
+        "correlation_paths": [{
+            "id": "route",
+            "effectors": [
+                {"id": "review", "capability": "review", "adapter": {"kind": "subprocess", "command": [sys.executable, str(source)]}},
+                {"id": "merge", "capability": "merge", "conduction": ["review"], "when": {"upstream": "review", "path": "decision.verdict", "equals": "approve"}, "adapter": {"kind": "subprocess", "command": [sys.executable, str(merge)]}},
+                {"id": "repair", "capability": "repair", "conduction": ["review"], "when": {"upstream": "review", "path": "decision.verdict", "equals": "request_changes"}, "adapter": {"kind": "subprocess", "command": [sys.executable, str(repair)]}},
+            ],
+        }],
+    }
+    package_path = tmp_path / "conditional.fala-package.json"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+    result = fala.host_run_package(
+        db_path=tmp_path / "conditional.sqlite",
+        package_path=package_path,
+        path_id="route",
+        run_id="conditional",
+        max_ticks=8,
+    )
+    assert result["run_status"] == "completed"
+    assert result["effector_results"]["merge"]["status"] == "skipped"
+    assert result["effector_results"]["merge"]["output"]["reason"] == "condition_not_met"
+    assert result["effector_results"]["repair"]["status"] == "succeeded"
+    assert not sentinel.exists()
+
+
 def test_host_run_package_exposes_decoded_failed_effector_result(tmp_path) -> None:
     import fala
     from pathlib import Path
