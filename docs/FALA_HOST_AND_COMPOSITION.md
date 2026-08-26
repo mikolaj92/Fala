@@ -5,6 +5,9 @@
 **Single engine: Mojo.** There is no dual-runtime product and no CPython
 engine tree. The optional `python/fala` package is a thin JSON host binding to
 the Mojo engine, not another journal, driver, or runtime implementation.
+The official Mojo 1.0 bridge is `PyInit_*` + `PythonModuleBuilder`;
+`ensure_native` stays because `import mojo.importer` cannot pass package
+import paths.
 
 This document separates **what every Fala is** from the historical fleet
 machinery once associated with `fala_runtime`.
