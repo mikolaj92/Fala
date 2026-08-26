@@ -90,17 +90,6 @@ def _skip_native_build() -> bool:
     return os.environ.get(_SKIP_NATIVE_BUILD_ENV, "").strip().lower() in _TRUTHY
 
 
-def _prepend_library_path(native_lib: Path) -> None:
-    if not native_lib.is_dir():
-        return
-    prefix = str(native_lib)
-    for key in ("DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"):
-        cur = os.environ.get(key, "")
-        parts = [p for p in cur.split(os.pathsep) if p]
-        if prefix not in parts:
-            os.environ[key] = prefix + (os.pathsep + cur if cur else "")
-
-
 def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
     """Ensure ``libsqlite_fire`` exists for the durable SQLite journal sink (#106).
 
@@ -111,12 +100,12 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
 
     Returns the absolute path to the shared library.
     """
-    root = root or repo_root()
+    root = (root or repo_root()).resolve()
     native_dir = sqlite_fire_native_dir(root)
     lib_path = sqlite_fire_library_path(root)
 
     if lib_path.is_file():
-        _prepend_library_path(native_dir)
+        ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
         return lib_path
 
     if _skip_native_build():
@@ -173,7 +162,7 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
             f"stderr:\n{proc.stderr}"
         )
 
-    _prepend_library_path(native_dir)
+    ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
     return lib_path
 
 
