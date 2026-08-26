@@ -93,6 +93,31 @@ def test_ensure_sqlite_fire_preserves_caller_library_paths(
     assert loaded == [(str(library), ctypes.RTLD_GLOBAL)]
 
 
+def test_ensure_sqlite_fire_loads_absolute_library_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fala import _build
+
+    root = tmp_path / "fala"
+    library = _build.sqlite_fire_library_path(root)
+    library.parent.mkdir(parents=True)
+    library.write_bytes(b"cached")
+    loaded: list[str] = []
+    monkeypatch.setattr(
+        _build.ctypes,
+        "CDLL",
+        lambda path, *, mode: loaded.append(path),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = _build.ensure_sqlite_fire_library(Path("fala"))
+
+    assert result == library
+    assert result.is_absolute()
+    assert loaded == [str(library)]
+
+
 def test_ensure_sqlite_fire_skip_env_fails_closed(
     fake_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

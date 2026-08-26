@@ -100,7 +100,7 @@ def ensure_sqlite_fire_library(root: Path | None = None) -> Path:
 
     Returns the absolute path to the shared library.
     """
-    root = root or repo_root()
+    root = (root or repo_root()).resolve()
     native_dir = sqlite_fire_native_dir(root)
     lib_path = sqlite_fire_library_path(root)
 
