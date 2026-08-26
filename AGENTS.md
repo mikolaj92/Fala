@@ -3,6 +3,16 @@
 Fala exists to compose **small Unix-style process steps**. It does not hide fat
 multi-stage work inside one effector.
 
+Fala's engine is Mojo; Python is a thin host. New work that does not need
+Word, LLM, or OOXML gymnastics is written in Mojo. The official Mojo 1.0
+bridge is `PyInit_*` + `PythonModuleBuilder` in `python/fala/_native.mojo`.
+The official `import mojo.importer` hook cannot pass package import paths
+(`EmberJson`, `sqlite.fire`) — that is a 1.0 limitation, so `ensure_native`
+stays: same `PyInit`, same `__mojocache__`, explicit `-I` on
+`mojo build --emit shared-lib`. Do not replace it with the importer until
+Modular adds import paths. Do not grow a second Python orchestrator. Model
+kernels (dflash / M5 Ultra) do not belong in Fala.
+
 ## Non-negotiable
 
 1. **Single-purpose effectors.** One effector does one job. Multi-step work is
