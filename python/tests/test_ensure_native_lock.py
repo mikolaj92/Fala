@@ -113,6 +113,22 @@ def isolated_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return package
 
 
+def _checkout_home(tmp_path: Path) -> Path:
+    """Minimal FALA_HOME tree with a checkout host package."""
+    root = tmp_path / "fala-home"
+    checkout = root / "python" / "fala"
+    checkout.mkdir(parents=True)
+    (root / "mojo" / "fala").mkdir(parents=True)
+    (root / "vendor" / "EmberJson" / "emberjson").mkdir(parents=True)
+    (root / "vendor" / "sqlite.fire" / "src").mkdir(parents=True)
+    (checkout / "_native.mojo").write_text("fn checkout(): pass\n", encoding="utf-8")
+    (root / "mojo" / "fala" / "core.mojo").write_text("fn core(): pass\n", encoding="utf-8")
+    (root / "vendor" / "EmberJson" / "emberjson" / "__init__.mojo").write_text(
+        "", encoding="utf-8"
+    )
+    return root
+
+
 def test_source_hash_ignores_effector_leftovers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -135,6 +151,107 @@ def test_source_hash_ignores_effector_leftovers(
     (leftover / "more.mojo").write_text("fn more(): pass\n", encoding="utf-8")
     second = _source_hash(root)
     assert first == second
+
+
+def test_source_hash_follows_checkout_native_not_installed_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Installed-wheel _native.mojo must not change the FALA_HOME source hash (#178)."""
+    from fala import _build as build
+
+    root = _checkout_home(tmp_path)
+    wheel = tmp_path / "site-packages" / "fala"
+    wheel.mkdir(parents=True)
+    (wheel / "_native.mojo").write_text(
+        "fn wheel(): pass\nwhen_json\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(build, "_PACKAGE_DIR", wheel)
+    monkeypatch.setattr(build, "_NATIVE_MOJO", wheel / "_native.mojo")
+    monkeypatch.setenv("FALA_HOME", str(root))
+
+    digest = build._source_hash(root)
+    (wheel / "_native.mojo").write_text("fn wheel_changed(): pass\n", encoding="utf-8")
+    assert build._source_hash(root) == digest
+
+    checkout = root / "python" / "fala"
+    monkeypatch.setattr(build, "_PACKAGE_DIR", checkout)
+    monkeypatch.setattr(build, "_NATIVE_MOJO", checkout / "_native.mojo")
+    assert build._source_hash(root) == digest
+
+
+def test_ensure_native_loads_matching_checkout_cache_without_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Consumer venv + FALA_HOME must load checkout __mojocache__ as-is (#178)."""
+    from fala import _build as build
+
+    root = _checkout_home(tmp_path)
+    wheel = tmp_path / "site-packages" / "fala"
+    wheel.mkdir(parents=True)
+    (wheel / "_native.mojo").write_text(
+        "fn wheel(): pass\nwhen_json\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(build, "_PACKAGE_DIR", wheel)
+    monkeypatch.setattr(build, "_NATIVE_MOJO", wheel / "_native.mojo")
+    monkeypatch.setenv("FALA_HOME", str(root))
+
+    digest = build._source_hash(root)
+    cache = root / "python" / "fala" / build._CACHE_DIR_NAME
+    cache.mkdir()
+    artifact = cache / f"_native.hash-{digest}.so"
+    artifact.write_bytes(b"checkout-native")
+
+    def boom_vendor(_root: Path) -> None:
+        raise AssertionError("must not fetch vendor when checkout cache matches")
+
+    def boom_build(_root: Path, _so_path: Path) -> None:
+        raise AssertionError("must not rebuild wheel native against FALA_HOME")
+
+    monkeypatch.setattr(build, "_ensure_ember_json_sources", boom_vendor)
+    monkeypatch.setattr(build, "_ensure_sqlite_fire_sources", boom_vendor)
+    monkeypatch.setattr(build, "_build_native_extension", boom_build)
+
+    path = build._ensure_native_artifact(root)
+    assert path == artifact
+    assert path.read_bytes() == b"checkout-native"
+    assert list((wheel / build._CACHE_DIR_NAME).glob("*")) == []
+
+
+def test_native_rebuild_publishes_checkout_native_not_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A miss still compiles checkout _native.mojo, not the installed wheel (#178)."""
+    from fala import _build as build
+
+    root = _checkout_home(tmp_path)
+    wheel = tmp_path / "site-packages" / "fala"
+    wheel.mkdir(parents=True)
+    (wheel / "_native.mojo").write_text("fn wheel(): pass\n", encoding="utf-8")
+    monkeypatch.setattr(build, "_PACKAGE_DIR", wheel)
+    monkeypatch.setattr(build, "_NATIVE_MOJO", wheel / "_native.mojo")
+    monkeypatch.setattr(build, "_mojo_env", lambda _root: {"PATH": os.environ.get("PATH", "")})
+    monkeypatch.setattr(build, "_mojo_bin", lambda _env: "fake-mojo")
+    monkeypatch.setattr(build, "_ensure_ember_json_sources", lambda _root: None)
+    monkeypatch.setattr(build, "_ensure_sqlite_fire_sources", lambda _root: None)
+    monkeypatch.setenv("FALA_HOME", str(root))
+
+    seen: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: Any) -> SimpleNamespace:
+        seen.append(cmd)
+        Path(cmd[cmd.index("-o") + 1]).write_bytes(b"from-checkout")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    path = build._ensure_native_artifact(root)
+    checkout_native = root / "python" / "fala" / "_native.mojo"
+    assert seen
+    assert str(checkout_native) in seen[0]
+    assert str(wheel / "_native.mojo") not in seen[0]
+    assert path.is_relative_to(root / "python" / "fala" / build._CACHE_DIR_NAME)
+    assert path.read_bytes() == b"from-checkout"
+    assert list((wheel / build._CACHE_DIR_NAME).glob("*.so")) == []
 
 
 def test_build_native_extension_publishes_atomically(
@@ -279,6 +396,64 @@ def test_ensure_native_preserves_caller_library_paths(
 
     assert result is native
     assert builds == ([] if cached else [artifact])
+    assert loaded == [str(library) for library in runtime_libraries]
+    assert os.environ["DYLD_LIBRARY_PATH"] == "/caller/dyld"
+    assert os.environ["LD_LIBRARY_PATH"] == "/caller/ld"
+
+
+def test_ensure_native_checkout_cache_preserves_caller_library_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Loading FALA_HOME's cached artifact must not guess caller library dirs (#177/#178)."""
+    from fala import _build as build
+
+    root = _checkout_home(tmp_path)
+    toolchain = root / ".pixi" / "envs" / "default"
+    (toolchain / "bin").mkdir(parents=True)
+    (toolchain / "bin" / "mojo").write_text("", encoding="utf-8")
+    (toolchain / "lib").mkdir()
+    suffix = ".dylib" if build.sys.platform == "darwin" else ".so"
+    runtime_libraries = [
+        toolchain / "lib" / f"libKGENCompilerRTShared{suffix}",
+        toolchain / "lib" / f"libAsyncRTMojoBindings{suffix}",
+    ]
+    for library in runtime_libraries:
+        library.write_bytes(b"")
+
+    wheel = tmp_path / "site-packages" / "fala"
+    wheel.mkdir(parents=True)
+    (wheel / "_native.mojo").write_text("fn wheel(): pass\nwhen_json\n", encoding="utf-8")
+    monkeypatch.setattr(build, "_PACKAGE_DIR", wheel)
+    monkeypatch.setattr(build, "_NATIVE_MOJO", wheel / "_native.mojo")
+    monkeypatch.setattr(build, "repo_root", lambda: root)
+    monkeypatch.setenv("FALA_HOME", str(root))
+
+    digest = build._source_hash(root)
+    cache = root / "python" / "fala" / build._CACHE_DIR_NAME
+    cache.mkdir()
+    artifact = cache / f"_native.hash-{digest}.so"
+    artifact.write_bytes(b"checkout-native")
+
+    def boom_build(_root: Path, _so_path: Path) -> None:
+        raise AssertionError("must not rebuild when checkout cache matches")
+
+    loaded: list[str] = []
+    native = SimpleNamespace()
+    monkeypatch.setattr(build, "_ensure_ember_json_sources", lambda _root: None)
+    monkeypatch.setattr(build, "_ensure_sqlite_fire_sources", lambda _root: None)
+    monkeypatch.setattr(build, "_build_native_extension", boom_build)
+    monkeypatch.setattr(
+        build.ctypes,
+        "CDLL",
+        lambda path, *, mode: loaded.append(path),
+    )
+    monkeypatch.setitem(build.sys.modules, "fala._native", native)
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", "/caller/dyld")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/caller/ld")
+
+    result = build.ensure_native()
+
+    assert result is native
     assert loaded == [str(library) for library in runtime_libraries]
     assert os.environ["DYLD_LIBRARY_PATH"] == "/caller/dyld"
     assert os.environ["LD_LIBRARY_PATH"] == "/caller/ld"

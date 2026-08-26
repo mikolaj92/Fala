@@ -1,5 +1,9 @@
 ## Unreleased
 
+- `ensure_native()` from a consumer wheel + `FALA_HOME` loads a matching checkout
+  `__mojocache__` artifact by absolute path. It hashes checkout `_native.mojo`
+  (not site-packages) and does not fetch vendor or rebuild against pixi Mojo
+  when that artifact exists (#178). Caller library paths stay unchanged (#177).
 - Add strict conditional conduction (`when = { upstream, path, equals }`) so Fala can select closed-set result branches directly from durable upstream output.
 - Record nonmatching effectors as terminal `skipped` without invoking their adapters; missing or malformed condition evidence fails closed.
 
