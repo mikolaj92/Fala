@@ -13,6 +13,13 @@ stays: same `PyInit`, same `__mojocache__`, explicit `-I` on
 Modular adds import paths. Do not grow a second Python orchestrator. Model
 kernels (dflash / M5 Ultra) do not belong in Fala.
 
+The product is the graph (call graph, behavior graph). Small Unix effectors
+exist so a human can operate on that graph. An effector is an executor: a
+function, a process, or a non-deterministic step that returns a deterministic
+result. Payload format (JSON, TOML, anything else) is a twenty-minute stub.
+Fala constructs graphs; the rest can be generated. Lokay and Temida are twin
+graphs on this same bet.
+
 ## Non-negotiable
 
 1. **Single-purpose effectors.** One effector does one job. Multi-step work is
