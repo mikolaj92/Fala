@@ -425,9 +425,6 @@ def ensure_native() -> ModuleType:
     toolchain_root = _mojo_toolchain_root(env, root)
     if toolchain_root is not None:
         _preload_mojo_runtime(toolchain_root)
-    native_lib = sqlite_fire_native_dir(root)
-    if native_lib.is_dir():
-        _prepend_library_path(native_lib)
 
     # Reuse a loaded module if the same .so is already mapped.
     existing = sys.modules.get("fala._native")
@@ -464,7 +461,6 @@ def _mojo_toolchain_root(env: dict[str, str], root: Path) -> Path | None:
 def _preload_mojo_runtime(toolchain_root: Path) -> None:
     """Make Mojo runtime dylibs available before importing a cached extension."""
     lib_dir = toolchain_root / "lib"
-    _prepend_library_path(lib_dir)
     suffix = ".dylib" if sys.platform == "darwin" else ".so"
     for stem in ("libKGENCompilerRTShared", "libAsyncRTMojoBindings"):
         library = lib_dir / f"{stem}{suffix}"

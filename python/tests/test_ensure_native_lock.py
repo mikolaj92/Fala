@@ -224,6 +224,66 @@ def test_failed_native_build_does_not_delete_previous_artifact(
     assert previous.name in result["cache"]
 
 
+@pytest.mark.parametrize("cached", [True, False], ids=["cached", "fresh"])
+def test_ensure_native_preserves_caller_library_paths(
+    isolated_package: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cached: bool,
+) -> None:
+    import fala._build as build
+
+    root = Path(os.environ["FALA_HOME"])
+    toolchain = root / ".pixi" / "envs" / "default"
+    (toolchain / "bin").mkdir(parents=True)
+    (toolchain / "bin" / "mojo").write_text("", encoding="utf-8")
+    (toolchain / "lib").mkdir()
+    suffix = ".dylib" if build.sys.platform == "darwin" else ".so"
+    runtime_libraries = [
+        toolchain / "lib" / f"libKGENCompilerRTShared{suffix}",
+        toolchain / "lib" / f"libAsyncRTMojoBindings{suffix}",
+    ]
+    for library in runtime_libraries:
+        library.write_bytes(b"")
+    (root / "vendor" / "sqlite.fire" / "native").mkdir(parents=True)
+
+    cache = isolated_package / build._CACHE_DIR_NAME
+    cache.mkdir()
+    artifact = cache / "_native.hash-deadbeefcafebabe.so"
+    if cached:
+        artifact.write_bytes(b"cached-native")
+    builds: list[Path] = []
+
+    def fake_build(_root: Path, so_path: Path) -> None:
+        builds.append(so_path)
+        so_path.write_bytes(b"fresh-native")
+
+    loaded: list[str] = []
+    native = SimpleNamespace()
+    monkeypatch.setattr(build, "_PACKAGE_DIR", isolated_package)
+    monkeypatch.setattr(build, "_NATIVE_MOJO", isolated_package / "_native.mojo")
+    monkeypatch.setattr(build, "repo_root", lambda: root)
+    monkeypatch.setattr(build, "_source_hash", lambda _root: "deadbeefcafebabe")
+    monkeypatch.setattr(build, "_ensure_ember_json_sources", lambda _root: None)
+    monkeypatch.setattr(build, "_ensure_sqlite_fire_sources", lambda _root: None)
+    monkeypatch.setattr(build, "_build_native_extension", fake_build)
+    monkeypatch.setattr(
+        build.ctypes,
+        "CDLL",
+        lambda path, *, mode: loaded.append(path),
+    )
+    monkeypatch.setitem(build.sys.modules, "fala._native", native)
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", "/caller/dyld")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/caller/ld")
+
+    result = build.ensure_native()
+
+    assert result is native
+    assert builds == ([] if cached else [artifact])
+    assert loaded == [str(library) for library in runtime_libraries]
+    assert os.environ["DYLD_LIBRARY_PATH"] == "/caller/dyld"
+    assert os.environ["LD_LIBRARY_PATH"] == "/caller/ld"
+
+
 def test_concurrent_ensure_native_builds_once(
     isolated_package: Path, tmp_path: Path
 ) -> None:
@@ -318,6 +378,7 @@ def test_with_sqlite_cwd_serializes_concurrent_callers(
 ) -> None:
     """Concurrent ``_with_sqlite_cwd`` callers must not race chdir restore (#128)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from fala import host
 
     root = tmp_path / "root"
