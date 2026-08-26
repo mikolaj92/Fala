@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -61,6 +64,35 @@ def test_ensure_sqlite_fire_builds_when_missing(
     assert again == lib
 
 
+@pytest.mark.parametrize("cached", [False, True])
+def test_ensure_sqlite_fire_preserves_caller_library_paths(
+    fake_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cached: bool,
+) -> None:
+    from fala import _build
+
+    library = _build.sqlite_fire_library_path(fake_root)
+    if cached:
+        library.write_bytes(b"cached")
+    loaded: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        _build.ctypes,
+        "CDLL",
+        lambda path, *, mode: loaded.append((path, mode)),
+    )
+    monkeypatch.setenv("DYLD_LIBRARY_PATH", "/caller/dyld")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/caller/ld")
+
+    result = _build.ensure_sqlite_fire_library(fake_root)
+
+    assert result == library
+    assert os.environ["DYLD_LIBRARY_PATH"] == "/caller/dyld"
+    assert os.environ["LD_LIBRARY_PATH"] == "/caller/ld"
+    assert loaded == [(str(library), ctypes.RTLD_GLOBAL)]
+
+
 def test_ensure_sqlite_fire_skip_env_fails_closed(
     fake_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -78,7 +110,6 @@ def test_ensure_sqlite_fire_missing_sources_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from fala._build import ensure_sqlite_fire_library
-    import shutil
 
     monkeypatch.delenv("FALA_SKIP_NATIVE_BUILD", raising=False)
     monkeypatch.setattr(shutil, "which", lambda x: None if x == "git" else "/usr/bin/make")
