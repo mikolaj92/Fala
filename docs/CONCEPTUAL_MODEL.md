@@ -20,6 +20,14 @@ The core object is an **Impulse**: a typed information impulse moving through a
 run-scoped `CorrelationPath` of autonomous `Effector`s. Domain packs map their
 own language onto this vocabulary; they do not redefine the core.
 
+The product is the graph (call graph, behavior graph). `CorrelationPath` is
+that graph — the authored value — not a recipe. Small Unix effectors exist so
+a human can operate on that graph. An effector is a replaceable executor: a
+function, a process, or a non-deterministic step that returns a deterministic
+result. Payload format (JSON, TOML, anything else) is a twenty-minute stub.
+Fala constructs graphs; the rest can be generated. Lokay and Temida are twin
+graphs on this same bet.
+
 | Record | Cybernetic role |
 | --- | --- |
 | **Impulse** | Typed information entering the receptor (signal, payload, or token) |
