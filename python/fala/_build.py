@@ -227,11 +227,58 @@ def ensure_process_host_library(root: Path | None = None) -> Path:
     return lib_path
 
 
+def _checkout_host_package(root: Path) -> Path | None:
+    """Return ``FALA_HOME/python/fala`` when it is a complete host package.
+
+    Installed wheels live in site-packages. Hashing and cache lookup must follow
+    the checkout so a consumer venv can load a matching ``__mojocache__``
+    artifact instead of compiling the wheel against a foreign Mojo (#178).
+    """
+    candidate = root / "python" / "fala"
+    if (candidate / "_native.mojo").is_file():
+        return candidate
+    return None
+
+
+def _native_source_package(root: Path) -> Path:
+    checkout = _checkout_host_package(root)
+    return checkout if checkout is not None else _PACKAGE_DIR
+
+
+def _native_mojo_path(root: Path) -> Path:
+    return _native_source_package(root) / "_native.mojo"
+
+
+def _native_cache_dirs(root: Path) -> list[Path]:
+    """Prefer the FALA_HOME checkout cache, then the imported package cache."""
+    dirs: list[Path] = []
+    seen: set[Path] = set()
+    checkout = _checkout_host_package(root)
+    if checkout is not None:
+        cache = checkout / _CACHE_DIR_NAME
+        dirs.append(cache)
+        seen.add(cache.resolve())
+    package_cache = _PACKAGE_DIR / _CACHE_DIR_NAME
+    if package_cache.resolve() not in seen:
+        dirs.append(package_cache)
+    return dirs
+
+
+def _find_native_artifact(root: Path, digest: str) -> Path | None:
+    name = f"_native.hash-{digest}.so"
+    for cache_dir in _native_cache_dirs(root):
+        candidate = cache_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _source_hash(root: Path) -> str:
+    package_dir = _native_source_package(root)
     paths = sorted(
         path
         for path in (
-            list(_PACKAGE_DIR.glob("*.mojo"))
+            list(package_dir.glob("*.mojo"))
             + list((root / "mojo" / "fala").rglob("*.mojo"))
             + list((root / "vendor" / "EmberJson").rglob("*.mojo"))
             + list((root / "vendor" / "sqlite.fire").rglob("*.mojo"))
@@ -349,7 +396,7 @@ def _build_native_extension(root: Path, so_path: Path) -> None:
         cmd = [
             mojo,
             "build",
-            str(_NATIVE_MOJO),
+            str(_native_mojo_path(root)),
             "--emit",
             "shared-lib",
             "-I",
@@ -387,15 +434,32 @@ def _prune_stale_native_artifacts(cache_dir: Path, keep: Path) -> None:
 
 
 def _ensure_native_artifact(root: Path | None = None) -> Path:
-    """Return the published native extension path, building once under lock (#119)."""
-    if not _NATIVE_MOJO.is_file():
-        raise RuntimeError(f"missing {_NATIVE_MOJO}")
+    """Return the published native extension path, building once under lock (#119).
+
+    Look for a matching FALA_HOME checkout artifact before fetching vendor
+    sources or compiling. A consumer wheel must not rebuild ``_native.mojo``
+    against checkout vendor + pixi Mojo when the checkout already has a
+    matching ``__mojocache__`` (#178).
+    """
     active_root = root if root is not None else repo_root()
+    native_mojo = _native_mojo_path(active_root)
+    if not native_mojo.is_file():
+        raise RuntimeError(f"missing {native_mojo}")
+
+    digest = _source_hash(active_root)
+    existing = _find_native_artifact(active_root, digest)
+    if existing is not None:
+        return existing
+
     _ensure_ember_json_sources(active_root)
     _ensure_sqlite_fire_sources(active_root)
     digest = _source_hash(active_root)
-    cache_dir = _PACKAGE_DIR / _CACHE_DIR_NAME
-    cache_dir.mkdir(exist_ok=True)
+    existing = _find_native_artifact(active_root, digest)
+    if existing is not None:
+        return existing
+
+    cache_dir = _native_cache_dirs(active_root)[0]
+    cache_dir.mkdir(parents=True, exist_ok=True)
     so_path = cache_dir / f"_native.hash-{digest}.so"
     lock_path = cache_dir / "ensure_native.lock"
 
@@ -417,6 +481,11 @@ def ensure_native() -> ModuleType:
 
     Concurrent callers share one cross-process lock and only the winner builds.
     Failed builds leave any previously published artifact intact (#119).
+
+    When ``FALA_HOME`` has a matching checkout ``__mojocache__`` artifact, that
+    file is loaded by absolute path. Vendor fetch and rebuild are skipped so a
+    pinned consumer wheel does not compile against a foreign Mojo (#178).
+    Caller ``DYLD_LIBRARY_PATH`` / ``LD_LIBRARY_PATH`` stay unchanged (#177).
     """
     root = repo_root()
     so_path = _ensure_native_artifact(root)
