@@ -251,16 +251,8 @@ struct NativeJournal(Movable):
             return String("")
         return stmt.column_text(index)
     def _json_quote(mut self, value: String) -> String:
-        var result = String("\"")
-        for i in range(value.byte_length()):
-            var ch = value[byte=i]
-            if ch == '\\': result += "\\\\"
-            elif ch == '"': result += "\\\""
-            elif ch == '\n': result += "\\n"
-            elif ch == '\r': result += "\\r"
-            elif ch == '\t': result += "\\t"
-            else: result += ch
-        return result + "\""
+        """Quote a JSON string via EmberJson so C0 controls stay parseable (#186)."""
+        return to_string(Value(value.copy()))
     def _bind_nullable(mut self, mut stmt: Statement, index: Int, value: String) raises:
         if value == "":
             stmt.bind_null(index)

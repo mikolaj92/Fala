@@ -313,23 +313,18 @@ def _request_input_json(input_json: String) -> String:
 def _json_quote(value: String) -> String:
     """JSON-quote a string for adapter error payloads.
 
-    Must walk **codepoints** (not bytes). Error messages carry multi-byte UTF-8
-    (Polish legal text, paths). Byte-indexed ``value[byte=i]`` aborts Mojo when
-    ``i`` is mid-codepoint (Fala#121 follow-up on durable subprocess failures).
+    EmberJson serialization is UTF-8 safe (Fala#121) and emits JSON unicode
+    escapes for remaining C0 controls so constructed process error JSON stays
+    parseable (Fala#186). Manual byte/codepoint loops used to leave BEL/CSI raw,
+    then ``fail_process`` rolled back and stranded the row as ``running`` with ``{}``.
     """
-    var result = "\""
-    for ch in value.codepoint_slices():
-        if ch == "\"": result += "\\\""
-        elif ch == "\\": result += "\\\\"
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        else: result += ch
-    result += "\""
-    return result^
+    return to_string(Value(value.copy()))
 
 def _adapter_error_json(error: AdapterError) -> String:
-    return "{\"code\":" + _json_quote(error.code) + ",\"message\":" + _json_quote(error.message) + "}"
+    var payload = Object()
+    payload["code"] = Value(error.code.copy())
+    payload["message"] = Value(error.message.copy())
+    return to_string(payload^)
 
 
 def _row_claimable(process: ProcessRow, now: String) -> Bool:
@@ -774,15 +769,7 @@ def diagnose_wait_graph(mut journal: NativeJournal, run_id: String, impulse_id: 
     return WaitGraphDiagnostic(run_id=run_id, impulse_id=impulse_id, deadlocked=len(deadlocks) > 0, deadlocks=deadlocks^, wait_edges=wait_edges^, blocked=blocked^, open_homeostats=open_homeostats^, pending=pending^, ready=ready^, running=running^, waiting=waiting^, retry_wait=retry_wait^, succeeded=succeeded^, failed=failed^, cancel_requested=cancel_requested^, cancelled=cancelled^, timed_out=timed_out^, blocked_process_ids=blocked_process_ids^, reason=reason, code=code)
 
 def _json_quote_driver(value: String) -> String:
-    var result = "\""
-    for ch in value.codepoint_slices():
-        if ch == "\"": result += "\\\""
-        elif ch == "\\": result += "\\\\"
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        else: result += ch
-    return result + "\""
+    return _json_quote(value)
 
 def _persisted_correlation_wait(mut journal: NativeJournal, run_id: String, impulse_id: String = "") raises -> CorrelationWaitDiagnostic:
     """Read a correlation wait marker persisted on a pending process row."""
@@ -931,15 +918,7 @@ def maintain_process(
 
 
 def _driver_json_quoted(value: String) -> String:
-    var escaped = String()
-    for ch in value.codepoint_slices():
-        if ch == "\\": escaped += "\\\\"
-        elif ch == "\"": escaped += "\\\""
-        elif ch == "\n": escaped += "\\n"
-        elif ch == "\r": escaped += "\\r"
-        elif ch == "\t": escaped += "\\t"
-        else: escaped += ch
-    return "\"" + escaped + "\""
+    return _json_quote(value)
 def _success_output_json(result: EffectorResult) -> String:
     """Persist effector output while reserving adapter telemetry separately."""
     try:

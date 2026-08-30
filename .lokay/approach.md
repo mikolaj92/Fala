@@ -1,23 +1,31 @@
 # Approach plan
 
-<!-- lokay-approach source=deterministic repo=mikolaj92/Fala issue=164 -->
+<!-- lokay-approach source=deterministic repo=mikolaj92/Fala issue=186 -->
 
 Repository: `mikolaj92/Fala`  
-Issue: #164 — src/README kłamie że nie ma paczki Python; tree ma python/fala 0.7.26
+Issue: #186 — host_run_package rejects active process placeholder as invalid error JSON
 
 ## Goal
 
-`src/README.md` mówi, że nie ma paczki Python. `python/fala/` istnieje, `__version__ = \"0.7.26\"`.
+`fala.host_run_package` in Fala `0.7.28` can raise `sqlite.fire: code=1: journal: invalid process error JSON` while a real subprocess effector is still active, even though the persisted `error_json` is valid JSON text `{}`. The host exception strands the active process row and prevents the consumer from safely continuing or reporting the run.
 
 ## Files likely touched
 
-- `src/README.md`
-- `pixi.toml`
-- `pyproject.toml`
+- `mojo/fala/native_driver.mojo` — EmberJson-quote adapter error JSON so C0 controls stay parseable
+- `mojo/fala/journal.mojo` — same quoting for journal-built JSON strings
+- `python/fala/_native.mojo` — decode `{}` placeholders; fail-closed stored JSON names run/process/field
+- `python/fala/host.py` — document the non-terminal `{}` contract
+- `python/tests/test_python_binding.py` — active-placeholder, control-stderr, and fail-closed regressions
+- `python/tests/conftest.py` — pin `FALA_HOME` to this checkout and compile the argv subprocess fixture before collection
+- `python/tests/fixtures/subprocess_one.fala-package.toml` — control package from the issue (unchanged)
 
 ## Test plan
 
-- Run the smallest useful tests for files touched
+- A regression test reproduces the active-process state that currently throws.
+- `{}` for a non-terminal process is handled according to a documented typed contract.
+- No host exception or forced consumer-level failed run occurs for a valid active snapshot.
+- Re-drive reaches and returns the eventual terminal process result.
+- Existing fail-closed coverage for genuinely malformed stored result JSON remains green.
 
 ## Non-goals
 

@@ -411,6 +411,11 @@ def host_run_package(
     loading the Mojo host.  The returned ``effector_results`` mapping is keyed by
     package effector id; each value contains process ``id`` and ``status`` plus
     decoded ``output`` and ``error`` JSON values for the stored process.
+
+    For a non-terminal process, stored ``{}`` is the typed no-result / no-error
+    placeholder and is returned as empty objects. Malformed stored JSON fails
+    closed naming ``run_id``, ``process_id``, and the field, without embedding
+    payload text.
     """
     from datetime import datetime, timezone
 
