@@ -697,6 +697,295 @@ root = "{rx}"
     assert "codepoint boundary" not in err.lower()
 
 
+def test_host_run_package_control_stderr_failure_does_not_strand_running(
+    tmp_path,
+) -> None:
+    """C0 controls in adapter stderr must not strand a running placeholder (#186).
+
+    ``native_driver._json_quote`` used to leave U+0000–U+001F (except ``\\n``/
+    ``\\r``/``\\t``) raw. BEL/CSI in Posejdon-style stderr made the constructed
+    adapter error JSON invalid; ``fail_process`` rolled back and left the row
+    ``running`` with ``output_json``/``error_json`` placeholders ``{}``.
+    """
+    import json
+    import sqlite3
+    import sys
+    from pathlib import Path
+
+    import fala
+
+    work = tmp_path / "control_fail"
+    work.mkdir()
+    rx = work / "reactions"
+    rx.mkdir()
+    db = work / "f.sqlite"
+    step = work / "step.py"
+    step.write_text(
+        "import sys\n"
+        "sys.stderr.buffer.write(b'posejdon\\x07\\x1b[31mfail\\n')\n"
+        "sys.stderr.buffer.flush()\n"
+        "raise SystemExit(9)\n",
+        encoding="utf-8",
+    )
+    package = {
+        "version": "2",
+        "id": "control_fail",
+        "capabilities": [{"id": "step"}],
+        "correlation_paths": [{
+            "id": "path",
+            "effectors": [{
+                "id": "step",
+                "capability": "step",
+                "adapter": {
+                    "kind": "subprocess",
+                    "command": [sys.executable, str(step)],
+                },
+            }],
+        }],
+        "runtime": {
+            "backend": {"kind": "sqlite", "path": str(db)},
+            "reaction_store": {"kind": "filesystem", "root": str(rx)},
+        },
+    }
+    pkg = work / "pkg.fala-package.json"
+    pkg.write_text(json.dumps(package), encoding="utf-8")
+    result = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="path",
+        run_id="control-fail",
+        max_ticks=8,
+    )
+    assert result.get("ok") is True, result
+    assert result.get("run_status") == "failed", result
+    terminal = result["effector_results"]["step"]
+    assert terminal["id"] == "path:step"
+    assert terminal["status"] == "failed"
+    assert isinstance(terminal["output"], dict)
+    assert isinstance(terminal["error"], dict)
+    assert terminal["error"]
+    row = sqlite3.connect(db).execute(
+        "select status, output_json, error_json from processes where run_id=?",
+        ("control-fail",),
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "failed", row
+    json.loads(row[1])
+    stored_error = json.loads(row[2])
+    assert isinstance(stored_error, dict)
+    assert stored_error
+
+    replay = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="path",
+        run_id="control-fail",
+        max_ticks=8,
+    )
+    assert replay.get("ok") is True, replay
+    assert replay.get("run_status") == "failed", replay
+    assert replay["effector_results"]["step"]["status"] == "failed"
+    assert isinstance(replay["effector_results"]["step"]["error"], dict)
+    assert replay["effector_results"]["step"]["error"]
+
+
+def test_host_run_package_active_placeholder_is_decodable_and_re_driveable(
+    tmp_path,
+) -> None:
+    """Non-terminal ``{}`` output/error placeholders are a typed empty snapshot (#186)."""
+    import json
+    import sqlite3
+    import sys
+    from pathlib import Path
+
+    import fala
+
+    work = tmp_path / "active_placeholder"
+    work.mkdir()
+    rx = work / "reactions"
+    rx.mkdir()
+    db = work / "f.sqlite"
+    step = work / "step.py"
+    step.write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
+        "json.dumps({'values': {'ok': True}}))\n",
+        encoding="utf-8",
+    )
+    package = {
+        "version": "2",
+        "id": "active_placeholder",
+        "capabilities": [{"id": "step"}],
+        "correlation_paths": [{
+            "id": "path",
+            "effectors": [{
+                "id": "step",
+                "capability": "step",
+                "adapter": {
+                    "kind": "subprocess",
+                    "command": [sys.executable, str(step)],
+                },
+            }],
+        }],
+        "runtime": {
+            "backend": {"kind": "sqlite", "path": str(db)},
+            "reaction_store": {"kind": "filesystem", "root": str(rx)},
+        },
+    }
+    pkg = work / "pkg.fala-package.json"
+    pkg.write_text(json.dumps(package), encoding="utf-8")
+    first = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="path",
+        run_id="active-placeholder",
+        max_ticks=8,
+    )
+    assert first["run_status"] == "completed"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "update runs set status=?, finished_at=null where id=?",
+            ("active", "active-placeholder"),
+        )
+        conn.execute(
+            "update processes set status=?, output_json=?, error_json=?, "
+            "finished_at=null, lease_owner=?, lease_expires_at=? "
+            "where run_id=? and id=?",
+            (
+                "running",
+                "{}",
+                "{}",
+                "python-host",
+                "2099-01-01T00:00:00Z",
+                "active-placeholder",
+                "path:step",
+            ),
+        )
+    snapshot = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="path",
+        run_id="active-placeholder",
+        max_ticks=8,
+    )
+    assert snapshot.get("ok") is True, snapshot
+    assert snapshot.get("run_status") in {"active", "waiting", "timed_out"}, snapshot
+    held = snapshot["effector_results"]["step"]
+    assert held["id"] == "path:step"
+    assert held["status"] == "running"
+    assert held["output"] == {}
+    assert held["error"] == {}
+    row = sqlite3.connect(db).execute(
+        "select status, output_json, error_json from processes where run_id=?",
+        ("active-placeholder",),
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "running", row
+    assert row[1] == "{}"
+    assert row[2] == "{}"
+
+    # Expired lease lets a later drive finish the still-live effector.
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "update processes set lease_expires_at=? where run_id=? and id=?",
+            ("2000-01-01T00:00:00Z", "active-placeholder", "path:step"),
+        )
+    terminal = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="path",
+        run_id="active-placeholder",
+        max_ticks=8,
+    )
+    assert terminal.get("ok") is True, terminal
+    assert terminal.get("run_status") in {"completed", "failed"}, terminal
+    finished = terminal["effector_results"]["step"]
+    assert finished["status"] in {"succeeded", "failed"}
+    assert isinstance(finished["output"], dict)
+    assert isinstance(finished["error"], dict)
+    final_row = sqlite3.connect(db).execute(
+        "select status from processes where run_id=?",
+        ("active-placeholder",),
+    ).fetchone()
+    assert final_row is not None
+    assert final_row[0] != "running", final_row
+
+
+def test_host_run_package_malformed_error_json_names_process_not_payload(
+    tmp_path,
+) -> None:
+    """Malformed stored process JSON names run/process/field, not the payload."""
+    import json
+    import sqlite3
+    import sys
+
+    import fala
+
+    work = tmp_path / "malformed_error"
+    work.mkdir()
+    rx = work / "reactions"
+    rx.mkdir()
+    db = work / "f.sqlite"
+    step = work / "step.py"
+    step.write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
+        "json.dumps({'values': {'ok': True}}))\n",
+        encoding="utf-8",
+    )
+    package = {
+        "version": "2",
+        "id": "malformed_error",
+        "capabilities": [{"id": "step"}],
+        "correlation_paths": [{
+            "id": "one_step",
+            "effectors": [{
+                "id": "step",
+                "capability": "step",
+                "adapter": {
+                    "kind": "subprocess",
+                    "command": [sys.executable, str(step)],
+                },
+            }],
+        }],
+        "runtime": {
+            "backend": {"kind": "sqlite", "path": str(db)},
+            "reaction_store": {"kind": "filesystem", "root": str(rx)},
+        },
+    }
+    pkg = work / "malformed.fala-package.json"
+    pkg.write_text(json.dumps(package), encoding="utf-8")
+    first = fala.host_run_package(
+        db_path=db,
+        package_path=pkg,
+        path_id="one_step",
+        run_id="malformed-error",
+        max_ticks=8,
+    )
+    assert first["run_status"] == "completed"
+    secret = "not-json-PAYLOAD-SECRET"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "update processes set error_json=? where run_id=? and id=?",
+            (secret, "malformed-error", "one_step:step"),
+        )
+    with pytest.raises(Exception) as excinfo:
+        fala.host_run_package(
+            db_path=db,
+            package_path=pkg,
+            path_id="one_step",
+            run_id="malformed-error",
+            max_ticks=8,
+        )
+    message = str(excinfo.value)
+    assert "malformed-error" in message
+    assert "one_step:step" in message
+    assert "error" in message.lower()
+    assert "PAYLOAD-SECRET" not in message
+
+
 def _ensure_schema(db_path) -> None:
     """Open journal probe then initialize full schema-v6 via native store."""
     import json

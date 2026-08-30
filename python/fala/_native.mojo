@@ -434,8 +434,21 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
 
         # Validate before embedding the stored JSON.  Invalid journal data must
         # fail closed instead of becoming a quoted or partially decoded value.
-        _ = Value(parse_string=procs[i].output_json)
-        _ = Value(parse_string=procs[i].error_json)
+        # Name run/process/field only — EmberJson parse errors include payload
+        # fragments and must not reach the host (Fala#186).
+        try:
+            _validate_process_result_json(
+                run_id, procs[i].id, "output", procs[i].output_json
+            )
+            _validate_process_result_json(
+                run_id, procs[i].id, "error", procs[i].error_json
+            )
+        except err:
+            try:
+                journal.close()
+            except close_err:
+                pass
+            raise err^
         if effector_results != "{":
             effector_results += ","
         effector_results += (
@@ -489,6 +502,23 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
 
 def host_run_package(request: PythonObject) raises -> PythonObject:
     return _python_object_from_json(host_run_package_json(request))
+
+
+def _validate_process_result_json(
+    run_id: String, process_id: String, field: String, json_text: String
+) raises:
+    """Fail closed on malformed stored process JSON without leaking payload."""
+    try:
+        _ = Value(parse_string=json_text)
+    except err:
+        raise Error(
+            "fala.host_run_package_json: invalid process "
+            + field
+            + " JSON for run_id="
+            + run_id
+            + " process_id="
+            + process_id
+        )
 
 
 def _quote_json(value: String) -> String:
