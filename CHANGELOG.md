@@ -1,11 +1,18 @@
 ## Unreleased
 
+## 0.7.29
+
+- Durable hosts keep caller `DYLD_LIBRARY_PATH` / `LD_LIBRARY_PATH` unchanged
+  while loading Mojo and sqlite.fire natives from absolute paths (#176/#177/#184/#185).
 - `ensure_native()` from a consumer wheel + `FALA_HOME` loads a matching checkout
   `__mojocache__` artifact by absolute path. It hashes checkout `_native.mojo`
   (not site-packages) and does not fetch vendor or rebuild against pixi Mojo
-  when that artifact exists (#178). Caller library paths stay unchanged (#177).
+  when that artifact exists (#178).
+- Ignore host-local `native/` dylib links in the checkout (#172).
 - Add strict conditional conduction (`when = { upstream, path, equals }`) so Fala can select closed-set result branches directly from durable upstream output.
 - Record nonmatching effectors as terminal `skipped` without invoking their adapters; missing or malformed condition evidence fails closed.
+- `host_run_package` treats an active process `{}` placeholder as waiting, not as
+  invalid error JSON (#186).
 
 ## 0.7.28
 
