@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pathlib import Path
-
     root = Path(__file__).resolve().parents[2]
     monkeypatch.chdir(root)
     monkeypatch.setenv("FALA_HOME", str(root))
