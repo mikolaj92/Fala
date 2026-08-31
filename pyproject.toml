@@ -47,3 +47,6 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]
 pythonpath = ["python"]
+
+[tool.lokay]
+test = ["mise", "exec", "--", "pixi", "run", "full-smoke"]
