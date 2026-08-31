@@ -9,7 +9,7 @@ from .native_process_host import (
     PROCESS_STATUS_TIMED_OUT, PROCESS_STATUS_CANCELLED, PROCESS_STATUS_ERROR,
 )
 from .status import ProcessStatus, RunStatus, can_transition_process, can_transition_run
-from .json import JsonValue, parse_json, serialize_json, canonical_json_text
+from .json import JsonValue, parse_json, serialize_json, canonical_json_text, quote_json_string
 from .adapters import (
     AdapterKind, AdapterError, NativeFunctionRegistry, AdapterSpec,
     EffectorRequest, EffectorResult, SubprocessBoundary,

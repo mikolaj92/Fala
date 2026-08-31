@@ -12,7 +12,7 @@ from std.memory.alloc import alloc, Layout
 from std.os import listdir, makedirs, remove
 from std.pathlib import Path, cwd
 from emberjson import Array, Object, Value, to_string
-from fala.json import canonical_json_text
+from fala.json import canonical_json_text, quote_json_string as _json_quote
 
 comptime FALA_REACTION_SCHEME = "fala-reaction"
 comptime _URI_PREFIX = "fala-reaction://sha256/"
@@ -63,25 +63,6 @@ struct ReactionStoreUnavailable(Copyable, Movable):
 def put_fileobj_unavailable() -> ReactionStoreUnavailable:
     """Return a typed diagnostic because Mojo has no portable file-object API."""
     return ReactionStoreUnavailable.fileobj()
-
-def _json_quote(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\"": result += "\\\""
-        elif ch == "\\": result += "\\\\"
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        elif ch < " ":
-            var byte_value = Int(String(ch).as_bytes()[0])
-            result += "\\u00"
-            result += _HEX[byte=byte_value >> 4]
-            result += _HEX[byte=byte_value & 15]
-        else: result += String(ch)
-    result += "\""
-    return result
-
 
 def _realpath(path: Path) raises -> Path:
     """Resolve an existing path through symlinks using Darwin realpath."""

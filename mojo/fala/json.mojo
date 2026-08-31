@@ -47,6 +47,15 @@ def serialize_json(value: JsonValue) -> String:
     return value.serialize()
 
 
+def quote_json_string(value: String) -> String:
+    """Quote a JSON string through EmberJson's encoder.
+
+    One spelling for quotes, backslashes, and C0 controls so CLI, journal,
+    and adapter envelopes stay parseable and comparable.
+    """
+    return to_string(Value(value.copy()))
+
+
 def canonical_json_text(json_text: String) raises -> String:
     var parsed = Value(parse_string=json_text)
     var canonical = _canonical_value(parsed^)

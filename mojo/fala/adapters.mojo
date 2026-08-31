@@ -6,7 +6,7 @@ from emberjson import Value
 from std.collections import List
 from std.pathlib import Path, cwd
 from std.os import getenv, makedirs, remove
-from .json import canonical_json_text
+from .json import canonical_json_text, quote_json_string as _json_quoted
 from .native_process_host import ProcessHost, start as start_native_process
 from .reactions import sha256_bytes
 
@@ -440,20 +440,6 @@ struct SubprocessBoundary(Movable):
         self.environment["FALA_EFFECTOR_OUTPUT_DIR"] = self.output_dir
         self.environment["FALA_EFFECTOR_MANIFEST"] = self.manifest_path
 
-
-def _json_escape(value: String) -> String:
-    var result = String()
-    for ch in value.codepoint_slices():
-        if ch == "\\": result += "\\\\"
-        elif ch == "\"": result += "\\\""
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        else: result += ch
-    return result^
-
-def _json_quoted(value: String) -> String:
-    return "\"" + _json_escape(value) + "\""
 
 def _json_string_list(values: List[String]) -> String:
     var result = "["

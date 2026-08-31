@@ -13,21 +13,7 @@ from fala.domain import (
 )
 from fala.journal import CommandRow, EventInput, EventRow, CommandSubmission
 from fala.domain_store import NativeDomainStore
-from fala.json import canonical_json_text
-
-def _quote(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\"": result += "\\\""
-        elif ch == "\\": result += "\\\\"
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        elif ch < " ": result += "\\u0000"
-        else: result += String(ch)
-    result += "\""
-    return result
+from fala.json import canonical_json_text, quote_json_string as _quote
 
 def _bind_nullable(mut stmt: Statement, index: Int, value: String) raises:
     if value == "":

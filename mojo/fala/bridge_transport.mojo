@@ -12,24 +12,9 @@ from std.memory.alloc import alloc, Layout
 from std.pathlib import Path, cwd
 from fala.domain import BridgeDelivery
 from fala.domain_store import NativeDomainStore
-from fala.json import canonical_json_text
+from fala.json import canonical_json_text, quote_json_string as _json_quote
 from fala.sqlite import SQLiteError
 from fala.ops_bridge import import_bridge_delivery, deliver_bridge_delivery, get_outbox_delivery, get_inbox_delivery
-
-
-def _json_quote(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\"": result += "\\\""
-        elif ch == "\\": result += "\\\\"
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        elif ch < " ": result += "\\u0000"
-        else: result += String(ch)
-    result += "\""
-    return result
 
 
 def _realpath(path: Path, label: String) raises -> Path:

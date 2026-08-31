@@ -29,7 +29,7 @@ from fala.correlation import (
 from fala.correlation_runtime import run_correlation_path
 from fala.domain import Impulse
 from fala.journal import NativeJournal
-from fala.json import parse_json
+from fala.json import parse_json, quote_json_string as _quote_json
 from fala.memory_driver import MemoryDriver
 from fala.package import PackageManifest, load_package_json, load_package_toml
 from fala.domain_store import NativeDomainStore
@@ -519,26 +519,6 @@ def _validate_process_result_json(
             + " process_id="
             + process_id
         )
-
-
-def _quote_json(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\"":
-            result += "\\\""
-        elif ch == "\\":
-            result += "\\\\"
-        elif ch == "\n":
-            result += "\\n"
-        elif ch == "\r":
-            result += "\\r"
-        elif ch == "\t":
-            result += "\\t"
-        else:
-            result += String(ch)
-    result += "\""
-    return result
 
 
 def _delete_counts_json(run_id: String, counts: RunDeleteCounts) -> String:

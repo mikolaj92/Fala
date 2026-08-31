@@ -8,25 +8,11 @@ Factories validate the same structural invariants as the Python source models.
 
 from std.collections import Dict
 from std.collections import List
-from .json import canonical_json_text
+from .json import canonical_json_text, quote_json_string as _json_quote
 def _canonical(value: String) raises -> String:
     return canonical_json_text(value)
 
 
-def _json_escape(value: String) -> String:
-    var result = String()
-    for ch in value.codepoint_slices():
-        if ch == "\\": result += "\\\\"
-        elif ch == "\"": result += "\\\""
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        else: result += ch
-    return result^
-
-
-def _json_quote(value: String) -> String:
-    return "\"" + _json_escape(value) + "\""
 def _json_optional(value: String) -> String:
     if value == "": return "null"
     return _json_quote(value)

@@ -3,7 +3,7 @@ from std.collections import List
 from fala.journal import RunRow, NativeJournal, EventInput, ProcessRow
 from fala.schema import initialize_native_schema, SCHEMA_VERSION, table_names, SchemaStatus, schema_status
 from fala.sqlite import Connection, Statement, SQLiteError
-from fala.json import parse_json, canonical_json_text
+from fala.json import parse_json, canonical_json_text, quote_json_string as _quote
 from fala.domain import Impulse, Association, Reaction, RuntimeBudget, BridgeDelivery, EventRef, RuntimeRef, RunRef
 from fala.native_driver import diagnose_waits, diagnose_wait_graph, observe_run_boundary
 from fala.reactions import FileReactionStore, ReactionBlob
@@ -20,48 +20,6 @@ from std.os import makedirs, remove
 from std.ffi import CStringSlice, c_int, external_call
 from fala.bridge_transport import deliver_local_bridge
 from fala.runs import RunLifecycle, RunLifecycleRecord
-def _quote(value: String) -> String:
-    var result = "\""
-    for ch in value.codepoint_slices():
-        if ch == "\"": result += "\\\""
-        elif ch == "\\": result += "\\\\"
-        elif ch == "\b": result += "\\b"
-        elif ch == "\f": result += "\\f"
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        elif ch == "\0": result += "\\u0000"
-        elif ch == "\x01": result += "\\u0001"
-        elif ch == "\x02": result += "\\u0002"
-        elif ch == "\x03": result += "\\u0003"
-        elif ch == "\x04": result += "\\u0004"
-        elif ch == "\x05": result += "\\u0005"
-        elif ch == "\x06": result += "\\u0006"
-        elif ch == "\a": result += "\\u0007"
-        elif ch == "\x0b": result += "\\u000b"
-        elif ch == "\x0e": result += "\\u000e"
-        elif ch == "\x0f": result += "\\u000f"
-        elif ch == "\x10": result += "\\u0010"
-        elif ch == "\x11": result += "\\u0011"
-        elif ch == "\x12": result += "\\u0012"
-        elif ch == "\x13": result += "\\u0013"
-        elif ch == "\x14": result += "\\u0014"
-        elif ch == "\x15": result += "\\u0015"
-        elif ch == "\x16": result += "\\u0016"
-        elif ch == "\x17": result += "\\u0017"
-        elif ch == "\x18": result += "\\u0018"
-        elif ch == "\x19": result += "\\u0019"
-        elif ch == "\x1a": result += "\\u001a"
-        elif ch == "\x1b": result += "\\u001b"
-        elif ch == "\x1c": result += "\\u001c"
-        elif ch == "\x1d": result += "\\u001d"
-        elif ch == "\x1e": result += "\\u001e"
-        elif ch == "\x1f": result += "\\u001f"
-        else: result += ch
-    result += "\""
-    return result
-
-
 def _safe(path: String) -> Bool:
     if path == "": return False
     for i in range(path.byte_length()):

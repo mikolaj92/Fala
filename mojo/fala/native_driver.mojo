@@ -24,6 +24,7 @@ from fala.status import RunStatus
 from fala.correlation import CorrelationWaitDiagnostic, CorrelationInstantiationPlan, CorrelationProcessPlan
 from fala.models import WaitDiagnosticIssue, WaitGraphDiagnostic
 from fala.correlation_advance import advance_correlation
+from fala.json import quote_json_string as _json_quote
 
 def _empty_wait_graph() -> WaitGraphDiagnostic:
     return WaitGraphDiagnostic(run_id="", impulse_id="", deadlocked=False, deadlocks=List[List[String]](), wait_edges=Dict[String, List[String]](), blocked=List[WaitDiagnosticIssue](), open_homeostats=List[String](), pending=List[String](), ready=List[String](), running=List[String](), waiting=List[String](), retry_wait=List[String](), succeeded=List[String](), failed=List[String](), cancel_requested=List[String](), cancelled=List[String](), timed_out=List[String](), blocked_process_ids=List[String](), reason="", code="")
@@ -309,16 +310,6 @@ def _request_input_json(input_json: String) -> String:
         return to_string(input^)
     except e:
         return input_json
-
-def _json_quote(value: String) -> String:
-    """JSON-quote a string for adapter error payloads.
-
-    EmberJson serialization is UTF-8 safe (Fala#121) and emits JSON unicode
-    escapes for remaining C0 controls so constructed process error JSON stays
-    parseable (Fala#186). Manual byte/codepoint loops used to leave BEL/CSI raw,
-    then ``fail_process`` rolled back and stranded the row as ``running`` with ``{}``.
-    """
-    return to_string(Value(value.copy()))
 
 def _adapter_error_json(error: AdapterError) -> String:
     var payload = Object()

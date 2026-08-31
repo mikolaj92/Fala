@@ -6,33 +6,13 @@ Homeostat / Projection values with Splot vocabulary.
 
 from emberjson import Value, to_string
 from fala.domain import Association, Homeostat, Impulse, Projection
-from fala.json import canonical_json_text
+from fala.json import canonical_json_text, quote_json_string as _quote
 
 
 comptime SPLOT_DOMAIN_PACK_ID = "splot"
 comptime SPLOT_ARBITRATION_CASE = "splot.arbitration_case"
 comptime SPLOT_JURISDICTION = "splot.jurisdiction"
 comptime SPLOT_REVIEW = "splot.review"
-
-
-def _quote(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\\":
-            result += "\\\\"
-        elif ch == "\"":
-            result += "\\\""
-        elif ch == "\n":
-            result += "\\n"
-        elif ch == "\r":
-            result += "\\r"
-        elif ch == "\t":
-            result += "\\t"
-        else:
-            result += String(ch)
-    result += "\""
-    return result
 
 
 def _json_string(obj: Value, key: String, default: String = "") raises -> String:

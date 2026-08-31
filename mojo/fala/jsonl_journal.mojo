@@ -8,7 +8,7 @@ from std.collections import List
 from std.pathlib import Path
 from std.os import remove
 from emberjson import Value, to_string
-from fala.json import canonical_json_text
+from fala.json import canonical_json_text, quote_json_string as _json_quote
 from fala.journal_port import (
     AppendResult,
     ClaimRequest,
@@ -21,29 +21,6 @@ from fala.journal_port import (
 )
 from fala.memory_journal import InMemoryJournal
 from fala.processes import ProcessRecord
-
-
-def _json_escape(value: String) -> String:
-    var result = String()
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\\":
-            result += "\\\\"
-        elif ch == "\"":
-            result += "\\\""
-        elif ch == "\n":
-            result += "\\n"
-        elif ch == "\r":
-            result += "\\r"
-        elif ch == "\t":
-            result += "\\t"
-        else:
-            result += String(ch)
-    return result^
-
-
-def _json_quote(value: String) -> String:
-    return "\"" + _json_escape(value) + "\""
 
 
 def _json_string_field(obj: Value, key: String, default: String = "") raises -> String:

@@ -6,6 +6,7 @@ result, never invoking a shell or Python runtime.
 """
 
 from std.sys import argv
+from fala.json import quote_json_string as _json_quote
 from fala.native_cli_surface import dispatch_native_command, initialize_database
 
 
@@ -19,17 +20,6 @@ def _shell_quote(value: String) -> String:
     result += "'"
     return result
 
-def _json_quote(value: String) -> String:
-    var result = "\""
-    for ch in value.codepoint_slices():
-        if ch == "\"": result += "\\\""
-        elif ch == "\\": result += "\\\\"
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        else: result += ch
-    result += "\""
-    return result
 def dispatch_command(command: String) raises -> String:
     """Compatibility entrypoint retained for embedded callers."""
     return dispatch_native_command(command)

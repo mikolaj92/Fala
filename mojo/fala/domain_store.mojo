@@ -8,7 +8,7 @@ from std.collections import List
 from emberjson import Value, Object, to_string
 from fala.sqlite import Connection, Statement, SQLiteError
 from fala.schema import initialize_native_schema
-from fala.json import canonical_json_text
+from fala.json import canonical_json_text, quote_json_string as _quote
 from fala.reactions import reaction_digest_or_empty
 
 from fala.domain import (
@@ -20,27 +20,6 @@ from fala.domain import (
     Homeostat,
     Projection,
 )
-
-def _quote(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\"":
-            result += "\\\""
-        elif ch == "\\":
-            result += "\\\\"
-        elif ch == "\n":
-            result += "\\n"
-        elif ch == "\r":
-            result += "\\r"
-        elif ch == "\t":
-            result += "\\t"
-        elif ch < " ":
-            result += "\\u0000"
-        else:
-            result += String(ch)
-    result += "\""
-    return result
 
 def _bind_nullable(mut stmt: Statement, index: Int, value: String) raises:
     if value == "":
