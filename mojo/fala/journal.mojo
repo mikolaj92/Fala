@@ -7,7 +7,7 @@ idempotency, event ordering, and process leases.
 from std.collections import List
 from fala.sqlite import Connection, Statement, SQLiteError
 from emberjson import Value, Object, to_string
-from fala.json import canonical_json_text, json_values_equal
+from fala.json import canonical_json_text, json_values_equal, quote_json_string
 from fala.reactions import content_address_json
 from fala.schema import initialize_native_schema
 
@@ -252,7 +252,7 @@ struct NativeJournal(Movable):
         return stmt.column_text(index)
     def _json_quote(mut self, value: String) -> String:
         """Quote a JSON string via EmberJson so C0 controls stay parseable (#186)."""
-        return to_string(Value(value.copy()))
+        return quote_json_string(value)
     def _bind_nullable(mut self, mut stmt: Statement, index: Int, value: String) raises:
         if value == "":
             stmt.bind_null(index)

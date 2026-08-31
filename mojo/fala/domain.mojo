@@ -4,27 +4,8 @@ Records deliberately keep object, array, and timestamp payloads as JSON-shaped
 String values.  This module has no persistence or Python dependencies.
 """
 
+from fala.json import quote_json_string as _quote
 
-def _quote(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\"":
-            result += "\\\""
-        elif ch == "\\":
-            result += "\\\\"
-        elif ch == "\n":
-            result += "\\n"
-        elif ch == "\r":
-            result += "\\r"
-        elif ch == "\t":
-            result += "\\t"
-        elif ch < " ":
-            result += "\\u0000"
-        else:
-            result += String(ch)
-    result += "\""
-    return result
 def _optional_json(value: String) -> String:
     if value == "": return "null"
     return _quote(value)

@@ -6,33 +6,13 @@ Projection without embedding signal-processing logic in Fala core.
 
 from emberjson import Value, to_string
 from fala.domain import Association, Homeostat, Impulse, Projection
-from fala.json import canonical_json_text
+from fala.json import canonical_json_text, quote_json_string as _quote
 
 
 comptime SIGNALS_DOMAIN_PACK_ID = "signals"
 comptime SIGNALS_READING = "signals.reading"
 comptime SIGNALS_CHANNEL = "signals.channel"
 comptime SIGNALS_THRESHOLD = "signals.threshold_review"
-
-
-def _quote(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\\":
-            result += "\\\\"
-        elif ch == "\"":
-            result += "\\\""
-        elif ch == "\n":
-            result += "\\n"
-        elif ch == "\r":
-            result += "\\r"
-        elif ch == "\t":
-            result += "\\t"
-        else:
-            result += String(ch)
-    result += "\""
-    return result
 
 
 struct SignalReading(Copyable, Movable):

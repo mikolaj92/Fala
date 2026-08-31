@@ -9,21 +9,7 @@ from fala.sqlite import SQLiteError
 from fala.domain import Projection
 from fala.journal import EventInput, EventRow, CommandSubmission
 from fala.domain_store import NativeDomainStore
-
-# local quote for summary JSON keys
-def _quote(value: String) -> String:
-    var result = "\""
-    for i in range(value.byte_length()):
-        var ch = value[byte=i]
-        if ch == "\"": result += "\\\""
-        elif ch == "\\": result += "\\\\"
-        elif ch == "\n": result += "\\n"
-        elif ch == "\r": result += "\\r"
-        elif ch == "\t": result += "\\t"
-        elif ch < " ": result += "\\u0000"
-        else: result += String(ch)
-    result += "\""
-    return result
+from fala.json import quote_json_string as _quote
 
 @fieldwise_init
 struct ProjectionRebuildResult(Copyable, Movable):

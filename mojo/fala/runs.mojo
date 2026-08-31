@@ -6,6 +6,7 @@ and event append in one explicit transaction.  Idempotency is resolved before
 mutating a run, so replays are no-ops.
 """
 from .journal import NativeJournal, RunRow, CommandRow
+from .json import quote_json_string
 from .sqlite import Statement, SQLiteError
 from .status import RunStatus, can_transition_run
 
@@ -134,15 +135,7 @@ struct RunLifecycle(Movable):
         statement.bind_text(2, key)
         return statement.step()
     def _json_quote(self, value: String) -> String:
-        var result = String("\"")
-        for ch in value.codepoint_slices():
-            if ch == '\\': result += "\\\\"
-            elif ch == '"': result += "\\\""
-            elif ch == '\n': result += "\\n"
-            elif ch == '\r': result += "\\r"
-            elif ch == '\t': result += "\\t"
-            else: result += ch
-        return result + "\""
+        return quote_json_string(value)
 
     def _transition_payload(mut self, target: String, reason: String, reason_present: Bool = True) -> String:
         var encoded_reason = self._json_quote(reason) if reason_present else "null"
