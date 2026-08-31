@@ -245,9 +245,8 @@ def record_in_process(
     callback, and a non-JSON-recordable return value turns the row into a
     failure.  Calls for the same database are single-flight and reject rather
     than wait when another callback is active.  The referenced run must already
-    exist.
+    exist. Durable INSERT/UPDATE is native (#189).
     """
-    import sqlite3
     from datetime import datetime, timezone
 
     db = Path(db_path).expanduser().resolve()
@@ -261,11 +260,9 @@ def record_in_process(
     if not callable(operation):
         raise TypeError("fala.record_in_process: operation must be callable")
 
-    # Validate diagnostics before doing durable work or invoking user code.
     input_json = _record_json(dict(inputs or {}), "inputs")
     metadata_json = _record_json(dict(metadata or {}), "metadata")
     db.parent.mkdir(parents=True, exist_ok=True)
-    _ensure_durable_schema(db)
 
     with _IN_PROCESS_LOCKS_GUARD:
         flight = _IN_PROCESS_LOCKS.setdefault(db, threading.Lock())
@@ -279,33 +276,40 @@ def record_in_process(
             .replace("+00:00", "Z")
         )
 
-    conn: sqlite3.Connection | None = None
-    try:
-        conn = sqlite3.connect(db, timeout=30.0)
-        conn.execute("PRAGMA foreign_keys = ON")
-        started = now()
-        conn.execute("BEGIN IMMEDIATE")
-        if conn.execute("SELECT 1 FROM runs WHERE id=?", (rid,)).fetchone() is None:
-            raise ValueError(f"fala.record_in_process: unknown run: {rid}")
-        conn.execute(
-            "INSERT INTO processes "
-            "(run_id,id,process_type,status,priority,attempt,max_attempts,available_at,"
-            "input_json,output_json,error_json,metadata,created_at,updated_at,started_at,output_schema_json) "
-            "VALUES (?,?,?,'running',0,1,1,?,?,'{}','{}',?,?,?,?, '{}')",
-            (
-                rid,
-                pid,
-                ptype,
-                started,
-                input_json,
-                metadata_json,
-                started,
-                started,
-                started,
-            ),
-        )
-        conn.commit()
+    def _native(operation_name: str, request: dict[str, Any]) -> None:
+        ensure_sqlite_fire_library()
+        native = ensure_native()
+        fn = getattr(native, operation_name)
 
+        def _call() -> None:
+            try:
+                fn(json.dumps(request, ensure_ascii=False, sort_keys=True))
+            except Exception as exc:
+                message = str(exc)
+                if "disappeared" in message:
+                    raise RuntimeError(message) from exc
+                if message.startswith("fala.record_in_process:"):
+                    raise ValueError(message) from exc
+                raise RuntimeError(
+                    f"fala.record_in_process: {operation_name} failed: {message}"
+                ) from exc
+
+        _with_sqlite_cwd(_call)
+
+    try:
+        started = now()
+        _native(
+            "record_process_start",
+            {
+                "db_path": str(db),
+                "run_id": rid,
+                "process_id": pid,
+                "process_type": ptype,
+                "input_json": input_json,
+                "metadata_json": metadata_json,
+                "now": started,
+            },
+        )
         try:
             result = operation()
         except BaseException as exc:
@@ -313,7 +317,18 @@ def record_in_process(
                 {"message": str(exc), "type": type(exc).__name__}, "exception"
             )
             try:
-                _finish_in_process(conn, rid, pid, "failed", "{}", error_json, now())
+                _native(
+                    "record_process_finish",
+                    {
+                        "db_path": str(db),
+                        "run_id": rid,
+                        "process_id": pid,
+                        "status": "failed",
+                        "output_json": "{}",
+                        "error_json": error_json,
+                        "now": now(),
+                    },
+                )
             except Exception as recording_error:
                 exc.add_note(
                     f"Fala could not record process failure: {recording_error}"
@@ -326,34 +341,41 @@ def record_in_process(
             error_json = _record_json(
                 {"message": str(exc), "type": type(exc).__name__}, "exception"
             )
-            _finish_in_process(conn, rid, pid, "failed", "{}", error_json, now())
+            _native(
+                "record_process_finish",
+                {
+                    "db_path": str(db),
+                    "run_id": rid,
+                    "process_id": pid,
+                    "status": "failed",
+                    "output_json": "{}",
+                    "error_json": error_json,
+                    "now": now(),
+                },
+            )
             raise
-        _finish_in_process(conn, rid, pid, "succeeded", output_json, "{}", now())
+        _native(
+            "record_process_finish",
+            {
+                "db_path": str(db),
+                "run_id": rid,
+                "process_id": pid,
+                "status": "succeeded",
+                "output_json": output_json,
+                "error_json": "{}",
+                "now": now(),
+            },
+        )
         return result
     finally:
-        if conn is not None:
-            conn.close()
         flight.release()
 
 
 def _ensure_durable_schema(db: Path) -> None:
-    """Initialize the native schema through a harmless unknown-run transaction."""
-    open_sqlite(db)
-    ensure_sqlite_fire_library()
-    native = ensure_native()
+    """Initialize the native schema through the host journal contract."""
+    from fala.journal import ensure_journal
 
-    def _call() -> None:
-        try:
-            native.delete_terminal_run_json(
-                json.dumps({"db_path": str(db), "run_id": "__fala_schema_probe__"})
-            )
-        except Exception as exc:
-            if "unknown run" not in str(exc):
-                raise RuntimeError(
-                    f"fala.record_in_process: schema initialization failed: {exc}"
-                ) from exc
-
-    _with_sqlite_cwd(_call)
+    ensure_journal(db)
 
 
 def _record_json(value: Any, label: str) -> str:
@@ -369,27 +391,6 @@ def _record_json(value: Any, label: str) -> str:
         raise TypeError(
             f"fala.record_in_process: {label} is not JSON-recordable"
         ) from exc
-
-
-def _finish_in_process(
-    conn: Any,
-    run_id: str,
-    process_id: str,
-    status: str,
-    output_json: str,
-    error_json: str,
-    finished_at: str,
-) -> None:
-    conn.execute("BEGIN IMMEDIATE")
-    cursor = conn.execute(
-        "UPDATE processes SET status=?,output_json=?,error_json=?,updated_at=?,finished_at=? "
-        "WHERE run_id=? AND id=? AND status='running'",
-        (status, output_json, error_json, finished_at, finished_at, run_id, process_id),
-    )
-    if cursor.rowcount != 1:
-        conn.rollback()
-        raise RuntimeError("fala.record_in_process: active process row disappeared")
-    conn.commit()
 
 
 def host_run_package(

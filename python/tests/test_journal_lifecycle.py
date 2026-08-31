@@ -354,3 +354,15 @@ def test_legacy_acceptance_is_closed_and_malformed_lookalikes_are_unchanged(tmp_
         if mutation == "extra":
             expected.append("bogus")
         assert [r[1] for r in conn.execute("PRAGMA table_info(runtime_events)")] == expected
+
+
+def test_host_journal_module_does_not_copy_schema() -> None:
+    import inspect
+
+    import fala.journal as journal
+
+    source = inspect.getsource(journal)
+    assert "sqlite3" not in source
+    assert "_SCHEMA_SHAPES" not in source
+    assert "INSERT INTO" not in source
+    assert "UPDATE runs" not in source

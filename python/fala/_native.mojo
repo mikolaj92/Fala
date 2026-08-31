@@ -29,7 +29,16 @@ from fala.correlation import (
 from fala.correlation_runtime import run_correlation_path
 from fala.domain import Impulse
 from fala.journal import NativeJournal
+from fala.host_journal import (
+    complete_waiting_process as native_complete_waiting_process,
+    record_process_finish as native_record_process_finish,
+    record_process_start as native_record_process_start,
+    transition_run as native_transition_run,
+    upsert_process as native_upsert_process,
+    upsert_run_metadata as native_upsert_run_metadata,
+)
 from fala.json import parse_json, quote_json_string as _quote_json
+from fala.schema_contract import ensure_host_journal
 from fala.memory_driver import MemoryDriver
 from fala.package import PackageManifest, load_package_json, load_package_toml
 from fala.domain_store import NativeDomainStore
@@ -44,7 +53,7 @@ from fala.reactions import content_address_json, sha256_raw_bytes
 
 # Durable host identity constants for package-driven runs.
 # Keep aligned with published package version (pyproject / releases).
-comptime FALA_RUNTIME_VERSION: String = "0.7.29"
+comptime FALA_RUNTIME_VERSION: String = "0.7.30"
 comptime FALA_BACKEND_VERSION: String = "native-sqlite"
 
 
@@ -744,6 +753,170 @@ def delete_terminal_run_object(request: PythonObject) raises -> PythonObject:
 
 
 @export
+
+def _obj_bool(obj: Value, key: String, default: Bool = False) raises -> Bool:
+    if not obj.is_object() or key not in obj.object():
+        return default
+    var item = obj.object()[key].copy()
+    if item.is_bool():
+        return item.bool()
+    return default
+
+
+def ensure_journal_json(request: PythonObject) raises -> PythonObject:
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.ensure_journal: root must be object")
+    var db_path = _obj_string(root, "db_path")
+    if db_path == "":
+        raise Error("fala journal: db_path must not be blank")
+    ensure_host_journal(db_path)
+    return PythonObject("{\"ok\":true}")
+
+
+def upsert_run_metadata_json(request: PythonObject) raises -> PythonObject:
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.upsert_run_metadata: root must be object")
+    var db_path = _obj_string(root, "db_path")
+    var run_id = _obj_string(root, "run_id")
+    var status = _obj_string(root, "status", "active")
+    var metadata = _obj_string(root, "metadata_json", "{}")
+    var now = _obj_string(root, "now")
+    var title = _obj_string(root, "title")
+    var title_present = _obj_bool(root, "title_present", False)
+    native_upsert_run_metadata(db_path, run_id, status, metadata, now, title, title_present)
+    return PythonObject("{\"ok\":true}")
+
+
+def transition_run_json(request: PythonObject) raises -> PythonObject:
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.transition_run: root must be object")
+    native_transition_run(
+        _obj_string(root, "db_path"),
+        _obj_string(root, "run_id"),
+        _obj_string(root, "status"),
+        _obj_string(root, "updates_json", "{}"),
+        _obj_string(root, "now"),
+    )
+    return PythonObject("{\"ok\":true}")
+
+
+def upsert_process_json(request: PythonObject) raises -> PythonObject:
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.upsert_process: root must be object")
+    native_upsert_process(
+        _obj_string(root, "db_path"),
+        _obj_string(root, "run_id"),
+        _obj_string(root, "process_id"),
+        _obj_string(root, "status"),
+        _obj_string(root, "process_type", "external"),
+        _obj_int(root, "attempt", 1),
+        _obj_string(root, "input_json", "{}"),
+        _obj_string(root, "output_json", "{}"),
+        _obj_string(root, "error_json", "{}"),
+        _obj_string(root, "metadata_json", "{}"),
+        _obj_string(root, "now"),
+    )
+    return PythonObject("{\"ok\":true}")
+
+
+def complete_waiting_process_json(request: PythonObject) raises -> PythonObject:
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.complete_waiting_process: root must be object")
+    var out = native_complete_waiting_process(
+        _obj_string(root, "db_path"),
+        _obj_string(root, "run_id"),
+        _obj_string(root, "process_id"),
+        _obj_string(root, "process_status", "succeeded"),
+        _obj_string(root, "run_status", "completed"),
+        _obj_string(root, "blocker_id"),
+        _obj_bool(root, "has_blocker", False),
+        _obj_string(root, "blocker_status", "completed"),
+        _obj_string(root, "output_json", "{}"),
+        _obj_string(root, "now"),
+    )
+    return PythonObject(out)
+
+
+def record_process_start_json(request: PythonObject) raises -> PythonObject:
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.record_in_process: root must be object")
+    native_record_process_start(
+        _obj_string(root, "db_path"),
+        _obj_string(root, "run_id"),
+        _obj_string(root, "process_id"),
+        _obj_string(root, "process_type", "in_process"),
+        _obj_string(root, "input_json", "{}"),
+        _obj_string(root, "metadata_json", "{}"),
+        _obj_string(root, "now"),
+    )
+    return PythonObject("{\"ok\":true}")
+
+
+def record_process_finish_json(request: PythonObject) raises -> PythonObject:
+    var text = String(py=request)
+    var parsed = parse_json(text)
+    var root = parsed.value.copy()
+    if not root.is_object():
+        raise Error("fala.record_in_process: root must be object")
+    native_record_process_finish(
+        _obj_string(root, "db_path"),
+        _obj_string(root, "run_id"),
+        _obj_string(root, "process_id"),
+        _obj_string(root, "status"),
+        _obj_string(root, "output_json", "{}"),
+        _obj_string(root, "error_json", "{}"),
+        _obj_string(root, "now"),
+    )
+    return PythonObject("{\"ok\":true}")
+
+
+def ensure_journal_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(ensure_journal_json(request))
+
+
+def upsert_run_metadata_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(upsert_run_metadata_json(request))
+
+
+def transition_run_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(transition_run_json(request))
+
+
+def upsert_process_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(upsert_process_json(request))
+
+
+def complete_waiting_process_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(complete_waiting_process_json(request))
+
+
+def record_process_start_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(record_process_start_json(request))
+
+
+def record_process_finish_object(request: PythonObject) raises -> PythonObject:
+    return _python_object_from_json(record_process_finish_json(request))
+
+
+@export
 def PyInit__native() abi("C") -> PythonObject:
     initialize_runtime()
     try:
@@ -762,6 +935,20 @@ def PyInit__native() abi("C") -> PythonObject:
         m.def_function[delete_terminal_run_json]("delete_terminal_run_json")
         m.def_function[maintain_journal_json]("maintain_journal_json")
         m.def_function[recover_incomplete_json]("recover_incomplete_json")
+        m.def_function[ensure_journal_object]("ensure_journal")
+        m.def_function[upsert_run_metadata_object]("upsert_run_metadata")
+        m.def_function[transition_run_object]("transition_run")
+        m.def_function[upsert_process_object]("upsert_process")
+        m.def_function[complete_waiting_process_object]("complete_waiting_process")
+        m.def_function[record_process_start_object]("record_process_start")
+        m.def_function[record_process_finish_object]("record_process_finish")
+        m.def_function[ensure_journal_json]("ensure_journal_json")
+        m.def_function[upsert_run_metadata_json]("upsert_run_metadata_json")
+        m.def_function[transition_run_json]("transition_run_json")
+        m.def_function[upsert_process_json]("upsert_process_json")
+        m.def_function[complete_waiting_process_json]("complete_waiting_process_json")
+        m.def_function[record_process_start_json]("record_process_start_json")
+        m.def_function[record_process_finish_json]("record_process_finish_json")
         return m.finalize()
     except e:
         abort(String("fala._native init failed: ", e))

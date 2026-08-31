@@ -1,6 +1,6 @@
 [workspace]
 name = "fala"
-version = "0.7.29"
+version = "0.7.30"
 channels = ["https://conda.modular.com/max", "conda-forge"]
 platforms = ["osx-arm64"]
 
@@ -36,6 +36,7 @@ sqlite-schema = "./tools/mojo_sql_run.sh mojo/smoke/sqlite_schema.mojo"
 sqlite-claim = "./tools/mojo_sql_run.sh mojo/smoke/sqlite_claim.mojo"
 sqlite-journal-port = "./tools/mojo_sql_run.sh mojo/smoke/sqlite_journal_port.mojo 1"
 schema-migration = "./tools/mojo_sql_run.sh mojo/smoke/schema_migration.mojo"
+host-journal = "./tools/mojo_sql_run.sh mojo/smoke/host_journal.mojo"
 domain-bridge = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_bridge.mojo"
 domain-maintenance = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_maintenance.mojo"
 domain-accept-impulse = "./tools/mojo_sql_run.sh mojo/smoke/domain_store_accept_impulse.mojo"
@@ -69,7 +70,7 @@ native-subprocess = "./tools/mojo_sql_run.sh mojo/smoke/native_subprocess.mojo 1
 # Pure unit regressions for UTF-8 StringSlice boundaries (Fala#121) — no process host.
 utf8-adapter-boundaries = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/utf8_adapter_boundaries.mojo"
 host-smoke = "pixi run native-process-host && pixi run native-subprocess && pixi run utf8-adapter-boundaries"
-adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke && pixi run thin-core-layers && pixi run host-smoke"
+adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run host-journal && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke && pixi run thin-core-layers && pixi run host-smoke"
 
 # Broader historical suite (fleet/runtime-policy intentionally absent)
 extended-adapter-smoke = "pixi run adapter-smoke && pixi run native-cli-semantics && pixi run correlation-execution && pixi run correlation-persistence && pixi run correlation-runtime && pixi run correlation-advance && pixi run native-driver && pixi run adapter-persistence && pixi run finalization && pixi run runtime-contracts && pixi run package-sdk-contracts && pixi run example-basic-native && pixi run bridge-transport && pixi run splot-domain && pixi run concurrency-composition && pixi run homeostat-rearm && pixi run homeostat-regulation && pixi run signals-domain && pixi run multi-organ-example && pixi run takt-domain"
