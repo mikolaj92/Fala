@@ -369,25 +369,14 @@ def _contains_name(names: List[String], wanted: String) -> Bool:
     return False
 
 
-comptime _RUNTIME_EVENTS_V6_SQL: String = """CREATE TABLE runtime_events (
-    run_id TEXT NOT NULL, sequence INTEGER NOT NULL, id TEXT NOT NULL,
-    event_type TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1,
-    impulse_id TEXT, process_id TEXT, command_id TEXT, actor TEXT,
-    correlation_id TEXT, causation_id TEXT, payload TEXT NOT NULL,
-    created_at TEXT NOT NULL, PRIMARY KEY (run_id, sequence),
-    UNIQUE (run_id, id), FOREIGN KEY (run_id, command_id)
-    REFERENCES runtime_commands (run_id, id))"""
-
-comptime _PROCESSES_V6_SQL: String = """CREATE TABLE processes (
-    run_id TEXT NOT NULL, id TEXT NOT NULL, process_type TEXT NOT NULL,
-    impulse_id TEXT, status TEXT NOT NULL, priority INTEGER NOT NULL,
-    attempt INTEGER NOT NULL, max_attempts INTEGER NOT NULL,
-    available_at TEXT NOT NULL, lease_owner TEXT, lease_expires_at TEXT,
-    input_json TEXT NOT NULL, output_json TEXT NOT NULL, error_json TEXT NOT NULL,
-    metadata TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    started_at TEXT, finished_at TEXT, output_schema_json TEXT NOT NULL DEFAULT '{}',
-    PRIMARY KEY (run_id, id), FOREIGN KEY (run_id, impulse_id)
-    REFERENCES impulses (run_id, id))"""
+def _canonical_table_sql(mut reference: Connection, table: String) raises -> String:
+    # The reference database is built from SCHEMA_SQL. Reading its sqlite_master
+    # entry keeps legacy rebuilds on the same complete table declaration without
+    # maintaining a second DDL copy here.
+    var sql = _object_sql(reference, "table", table)
+    if sql == "":
+        _error("fala journal: canonical table " + _quote_ident(table) + " is missing")
+    return sql^
 
 
 def _rebuild_legacy_tables(mut db: Connection, mut reference: Connection) raises:
@@ -406,7 +395,7 @@ def _rebuild_legacy_tables(mut db: Connection, mut reference: Connection) raises
         if rebuild_events:
             var columns = _column_names(_shape(db, "runtime_events"))
             db.execute("ALTER TABLE runtime_events RENAME TO _fala_legacy_runtime_events")
-            db.execute(_RUNTIME_EVENTS_V6_SQL)
+            db.execute(_canonical_table_sql(reference, "runtime_events"))
             var targets = List[String]()
             targets.append("run_id")
             targets.append("sequence")
@@ -441,7 +430,7 @@ def _rebuild_legacy_tables(mut db: Connection, mut reference: Connection) raises
         if rebuild_processes:
             var columns = _column_names(_shape(db, "processes"))
             db.execute("ALTER TABLE processes RENAME TO _fala_legacy_processes")
-            db.execute(_PROCESSES_V6_SQL)
+            db.execute(_canonical_table_sql(reference, "processes"))
             var insert = String("INSERT INTO processes (")
             var select = String(" SELECT ")
             var first = True
