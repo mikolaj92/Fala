@@ -43,3 +43,7 @@ graphs on this same bet.
 - [`docs/FALA_HOST_AND_COMPOSITION.md`](docs/FALA_HOST_AND_COMPOSITION.md) — host boundary and nested composition
 - [`docs/UNIX_AND_CYBERNETICS.md`](docs/UNIX_AND_CYBERNETICS.md) — Unix composition model
 - [`docs/CONCEPTUAL_MODEL.md`](docs/CONCEPTUAL_MODEL.md) — ontology and conduction
+
+## Local proof
+
+The mill runs `[tool.lokay] test` → `mise exec -- pixi run full-smoke`. That is the documented Mojo gate in README/`pixi.toml`. Do not invent `uv run --extra dev pytest` as the Fala verifier.

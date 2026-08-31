@@ -108,7 +108,7 @@ as `skipped`; it does not assign meaning to the compared domain value.
 
 ## Quick proof
 
-Requires Pixi/Mojo (see `pixi.toml`):
+Requires Pixi/Mojo (see `pixi.toml`). The mill gate is the same command, declared as `[tool.lokay] test` in `pyproject.toml`:
 
 ```bash
 mise exec -- pixi run full-smoke
