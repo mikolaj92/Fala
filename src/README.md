@@ -3,7 +3,7 @@
 Fala’s product engine is **Mojo only** (`../mojo/fala`).
 
 The former CPython engine (`src/fala`) was removed. The optional thin Python
-host binding lives at `../python/fala/` (package `fala` 0.7.29) and tracks the
+host binding lives at `../python/fala/` (package `fala` 0.7.30) and tracks the
 product version. It is a JSON bridge to Mojo, not a second engine.
 
 Examples live under `../examples/` as native TOML packages.

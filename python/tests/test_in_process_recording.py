@@ -168,3 +168,14 @@ def test_record_in_process_is_single_flight_per_database(tmp_path) -> None:
     assert not errors
     assert _process(db, "first")[0] == "succeeded"
     assert _process(db, "second") is None
+
+
+def test_record_in_process_does_not_write_sqlite_from_cpython() -> None:
+    import inspect
+
+    from fala import host
+
+    source = inspect.getsource(host.record_in_process)
+    assert "sqlite3" not in source
+    assert "INSERT INTO processes" not in source
+    assert "UPDATE processes" not in source

@@ -1,5 +1,12 @@
 ## Unreleased
 
+## 0.7.30
+
+- Host Python lifecycle writes (`ensure_journal`, `upsert_run_metadata`,
+  `transition_run`, `upsert_process`, `complete_waiting_process`,
+  `record_in_process`) go through the Mojo journal. The copied schema-v6
+  contract is gone from `python/fala/journal.py` (#189).
+
 ## 0.7.29
 
 - Durable hosts keep caller `DYLD_LIBRARY_PATH` / `LD_LIBRARY_PATH` unchanged

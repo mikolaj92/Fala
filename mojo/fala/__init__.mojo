@@ -80,6 +80,11 @@ from .schema import (
     SCHEMA_VERSION, SCHEMA_SQL, table_names, initialize_schema,
     SchemaStatus, schema_status, migrate_schema, initialize_native_schema,
 )
+from .schema_contract import ensure_host_journal
+from .host_journal import (
+    upsert_run_metadata, transition_run, upsert_process,
+    complete_waiting_process, record_process_start, record_process_finish,
+)
 from .domain import (
     Impulse, ImpulseType, ImpulseRelation, Association, Reaction, Homeostat,
     Projection, RuntimeRef, RunRef, EventRef, RuntimeBudget,
