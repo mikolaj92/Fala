@@ -1,5 +1,12 @@
 ## Unreleased
 
+## 0.7.31
+
+- Rebuild closed legacy `runtime_events` and `processes` shapes from the
+  canonical schema-v6 reference DDL instead of copied table definitions.
+- Exercise both supported rebuilds and malformed lookalikes in the host-journal
+  smoke while validating columns, composite keys, foreign keys, indexes, and
+  append-only triggers.
 ## 0.7.30
 
 - Host Python lifecycle writes (`ensure_journal`, `upsert_run_metadata`,
