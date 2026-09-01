@@ -53,7 +53,7 @@ from fala.reactions import content_address_json, sha256_raw_bytes
 
 # Durable host identity constants for package-driven runs.
 # Keep aligned with published package version (pyproject / releases).
-comptime FALA_RUNTIME_VERSION: String = "0.7.30"
+comptime FALA_RUNTIME_VERSION: String = "0.7.31"
 comptime FALA_BACKEND_VERSION: String = "native-sqlite"
 
 
