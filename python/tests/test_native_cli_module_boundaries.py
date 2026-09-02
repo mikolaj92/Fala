@@ -32,3 +32,13 @@ def test_native_cli_ops_has_its_own_module() -> None:
         assert definition in ops
         assert definition not in surface
     assert "from fala.native_cli_ops import" in surface
+
+
+def test_native_cli_surface_remains_the_public_dispatch_facade() -> None:
+    surface = (FALA / "native_cli_surface.mojo").read_text(encoding="utf-8")
+    package = (FALA / "__init__.mojo").read_text(encoding="utf-8")
+
+    assert "def dispatch_native_command(" in surface
+    assert "def dispatch_command(" in surface
+    assert "from .native_cli_surface import cli_surface_help, dispatch_native_command, dispatch_command" in package
+    assert len(surface.splitlines()) < 700
