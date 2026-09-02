@@ -22,3 +22,13 @@ def test_native_cli_inspect_has_its_own_module() -> None:
         assert definition in inspect
         assert definition not in surface
     assert "from fala.native_cli_inspect import" in surface
+
+
+def test_native_cli_ops_has_its_own_module() -> None:
+    ops = (FALA / "native_cli_ops.mojo").read_text(encoding="utf-8")
+    surface = (FALA / "native_cli_surface.mojo").read_text(encoding="utf-8")
+
+    for definition in ("def _maintain_journal(", "def _gc(", "def _projection_rebuild(", "def _bridge_export(", "def _bridge_import(", "def _bridge_deliver("):
+        assert definition in ops
+        assert definition not in surface
+    assert "from fala.native_cli_ops import" in surface
