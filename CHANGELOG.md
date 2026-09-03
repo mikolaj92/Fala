@@ -1,5 +1,11 @@
 ## Unreleased
 
+## 0.7.32
+
+- Skip a `when` child when its upstream is skipped, failed, cancelled, or
+  timed out. Do not throw `condition_source_not_succeeded` and leave the
+  row pending (#206).
+
 ## 0.7.31
 
 - Rebuild closed legacy `runtime_events` and `processes` shapes from the

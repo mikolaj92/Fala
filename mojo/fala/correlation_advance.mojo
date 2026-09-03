@@ -676,8 +676,17 @@ def _condition_matches(item: CorrelationProcessPlan, plan: CorrelationInstantiat
         if plan.processes[index].effector_id == upstream_id: plan_index = index
     if state_index < 0 or plan_index < 0:
         raise Error("correlation.advance.invalid_condition at /processes/" + item.id + "/when/upstream: source is missing")
-    if states[state_index].status != "succeeded":
-        raise Error("correlation.advance.condition_source_not_succeeded at /processes/" + item.id + "/when/upstream: source status is " + states[state_index].status)
+    var upstream_status = states[state_index].status
+    if upstream_status != "succeeded":
+        # Finished misses are closed `when` misses, not wait errors.
+        if (
+            upstream_status == "skipped"
+            or upstream_status == "failed"
+            or upstream_status == "cancelled"
+            or upstream_status == "timed_out"
+        ):
+            return False
+        raise Error("correlation.advance.condition_source_not_succeeded at /processes/" + item.id + "/when/upstream: source status is " + upstream_status)
     var output = Value(parse_string=states[state_index].output_json)
     var current = _project_output(output, plan.processes[plan_index].output_schema_json)
     var field_path = object["path"].string()
