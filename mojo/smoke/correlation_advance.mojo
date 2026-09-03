@@ -372,4 +372,24 @@ def main() raises:
         missing_failed_closed = String(err).find("condition_path_missing") >= 0
     _check(missing_failed_closed and missing_journal.get_process("advance-condition-missing", "advance-condition-missing:conditional:merge").status == "pending", "missing condition evidence fails closed without selecting a branch")
 
+    # Skipped/failed upstream is a finished miss. A `when` child must skip,
+    # not throw condition_source_not_succeeded and leave the row pending.
+    var skipped_journal = NativeJournal(":memory:\0")
+    skipped_journal.initialize()
+    _ = skipped_journal.create_run("advance-skipped-when", "created", "{}", "2026-01-01T00:00:00Z")
+    var skipped_effectors = List[CorrelationEffectorSpec]()
+    skipped_effectors.append(CorrelationEffectorSpec.create("coding", "source", output_schema_json="{\"type\":\"object\",\"properties\":{\"route\":{\"type\":\"string\"}},\"required\":[\"route\"]}").copy())
+    skipped_effectors.append(CorrelationEffectorSpec.create("relocalize", "relocalize", _one("coding"), when_json="{\"upstream\":\"coding\",\"path\":\"route\",\"equals\":\"implemented\"}").copy())
+    skipped_effectors.append(CorrelationEffectorSpec.create("summarize", "summarize", _one("coding")).copy())
+    var skipped_plan = instantiate_correlation_path(CorrelationPathSpec("delivery", skipped_effectors^), "advance-skipped-when")
+    _ = persist_correlation_plan(skipped_journal, skipped_plan, "2026-01-01T00:00:00Z")
+    var coding_row = skipped_journal.get_process("advance-skipped-when", "advance-skipped-when:delivery:coding")
+    _ = skipped_journal.skip_process(coding_row.run_id, coding_row.id, "correlation", "2026-01-01T00:00:01Z", "{\"reason\":\"condition_not_met\"}", "process.skip:" + coding_row.id)
+    var skipped_when_result = advance_correlation(skipped_journal, skipped_plan)
+    _check(skipped_when_result.rows[0].status == "skipped", "skipped upstream stays skipped")
+    _check(skipped_when_result.rows[1].status == "skipped" and skipped_when_result.rows[1].output_json.find("condition_not_met") >= 0, "when on skipped upstream skips the child instead of throwing")
+    _check(skipped_when_result.rows[2].status == "ready", "unconditional sibling of a skipped upstream still becomes ready")
+    var skipped_when_replay = advance_correlation(skipped_journal, skipped_plan)
+    _check(skipped_when_replay.rows[1].status == "skipped" and skipped_when_replay.rows[2].status == "ready", "skipped-when selection replays without throwing")
+
     print("correlation advancement smoke ok")
