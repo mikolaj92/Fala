@@ -1,5 +1,11 @@
 ## Unreleased
 
+## 0.7.33
+
+- Include the EmberJson Mojo 1.0 compatibility patch in built wheels so clean
+  consumer environments can bootstrap the native host.
+- Verify the required patch by inspecting a real wheel artifact in tests.
+
 ## 0.7.32
 
 - Skip a `when` child when its upstream is skipped, failed, cancelled, or
