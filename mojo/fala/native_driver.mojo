@@ -25,6 +25,7 @@ from fala.correlation import CorrelationWaitDiagnostic, CorrelationInstantiation
 from fala.models import WaitDiagnosticIssue, WaitGraphDiagnostic
 from fala.correlation_advance import advance_correlation
 from fala.json import quote_json_string as _json_quote
+from fala.execution_metadata import validate_usage_json
 
 def _empty_wait_graph() -> WaitGraphDiagnostic:
     return WaitGraphDiagnostic(run_id="", impulse_id="", deadlocked=False, deadlocks=List[List[String]](), wait_edges=Dict[String, List[String]](), blocked=List[WaitDiagnosticIssue](), open_homeostats=List[String](), pending=List[String](), ready=List[String](), running=List[String](), waiting=List[String](), retry_wait=List[String](), succeeded=List[String](), failed=List[String](), cancel_requested=List[String](), cancelled=List[String](), timed_out=List[String](), blocked_process_ids=List[String](), reason="", code="")
@@ -910,6 +911,11 @@ def maintain_process(
 
 def _driver_json_quoted(value: String) -> String:
     return _json_quote(value)
+def _validate_result_usage(result: EffectorResult) raises:
+    var output = Value(parse_string=result.output_json)
+    if output.is_object() and "usage" in output.object():
+        _ = validate_usage_json(to_string(output.object()["usage"].copy()))
+
 def _success_output_json(result: EffectorResult) -> String:
     """Persist effector output while reserving adapter telemetry separately."""
     try:
@@ -985,6 +991,13 @@ def drive_once(
         _ = parked
         return DriverResult(waiting=True, ticks=1, process_id=claimed.id, error=result.error)
     if result.success and result.error.is_ok():
+        try:
+            _validate_result_usage(result)
+        except err:
+            var invalid_usage = AdapterError("usage_invalid", String(err))
+            var failed_row = journal.fail_process(claimed.run_id, claimed.id, worker_id, now, _adapter_error_json(invalid_usage))
+            var invalid_rows = List[ProcessRow](); invalid_rows.append(failed_row^)
+            return DriverResult(failed=True, ticks=1, process_id=claimed.id, error=invalid_usage, failure_rows=invalid_rows^)
         _ = journal.complete_process(
             claimed.run_id,
             claimed.id,

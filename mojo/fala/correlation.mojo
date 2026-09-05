@@ -467,7 +467,7 @@ def instantiate_correlation_path_plan(
         if effector.id in regulation_by_effector: regulation = canonical_json_text(regulation_by_effector[effector.id])
         var regulation_value = Value(parse_string=regulation)
         if not regulation_value.is_object(): raise Error("correlation regulation must be a JSON object")
-        var marker = '{"correlation_path_id":"' + path_id + '","correlation_path_spec_id":"' + path.id + '","effector_id":"' + effector.id + '","seq":' + String(index) + ',"accumulate_upstream_reactions":' + ("true" if path.accumulate_upstream_reactions else "false") + ',"regulation":' + regulation + ',"accepted_reaction_kinds":['
+        var marker = '{"correlation_path_id":"' + path_id + '","correlation_path_spec_id":"' + path.id + '","effector_id":"' + effector.id + '","capability":"' + effector.capability + '","seq":' + String(index) + ',"accumulate_upstream_reactions":' + ("true" if path.accumulate_upstream_reactions else "false") + ',"regulation":' + regulation + ',"accepted_reaction_kinds":['
         for reaction_index in range(len(effector.accepted_reaction_kinds)):
             if reaction_index > 0: marker += ','
             marker += '"' + effector.accepted_reaction_kinds[reaction_index] + '"'

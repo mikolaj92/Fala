@@ -41,8 +41,22 @@ The runtime gives every attempt an isolated work directory scoped by run,
 process, impulse, and attempt. It writes the manifest, captures stdout/stderr,
 validates `output/result.json` as a JSON object, and structurally canonicalizes
 that object before committing the runtime result; the submitted JSON bytes are
-not byte-preserved. Resolved secrets are redacted only from the
-operator-facing stdout/stderr streams. Adapters never mutate a JournalPort,
+not byte-preserved. Capabilities may declare `secret_handles`; a subprocess may resolve only those
+handles for its concrete attempt. Package and journal metadata retain handle
+names, never values. An undeclared handle fails package validation before
+execution. Resolved values are scoped to that adapter environment and redacted
+from operator-facing stdout/stderr streams; public graph inspection and
+`explain` never include values.
+
+Terminal execution metadata uses a provider-neutral provenance envelope:
+package/path fingerprints, capability, adapter identity/version, stable
+execution ID, attempt, timestamps, optional model/tool IDs, and validated
+`usage`. Usage supports non-negative duration, input/output tokens, and cost
+with a required unit. Aggregation preserves per-effector provenance and sums
+compatible units; malformed usage fails the attempt closed. Packages without
+secret or usage declarations retain the existing behavior.
+
+Adapters never mutate a JournalPort,
 NativeJournal, SQLite database, or other Fala journal directly.
 
 The native `doctor --package` / `--output` filesystem checks are currently a

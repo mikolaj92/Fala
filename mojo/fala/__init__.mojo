@@ -29,6 +29,7 @@ from .explain import explain_run
 from .graph_rehearsal import rehearse_graph
 from .effect_protocol import EffectIntent, EffectObservation, EffectDecision, record_effect_intent, reconcile_effect
 from .durable_subprocess import wait_durable_subprocess
+from .execution_metadata import validate_usage_json, provenance_json, aggregate_usage
 from .journal import (
     RunRow, RunRecord, CommandRow, CommandResult, EventRow, ProcessRow,
     NativeJournal,

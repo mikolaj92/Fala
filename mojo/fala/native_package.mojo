@@ -416,11 +416,11 @@ def _optional_array(ref root: Value, key: String, path: String) raises -> Value:
 
 
 def _validate_ontology_fields(ref item: Value, path: String) raises:
-    _reject_null_fields(item, ["title", "description", "tags", "media_types", "source_impulse_types", "target_impulse_types", "accepts_impulse_types", "accepts_reaction_kinds", "emits_impulse_types", "emits_reaction_kinds", "emits_association_kinds", "value_schema", "metadata_schema", "config_schema", "output_schema"], path)
+    _reject_null_fields(item, ["title", "description", "tags", "media_types", "source_impulse_types", "target_impulse_types", "accepts_impulse_types", "accepts_reaction_kinds", "emits_impulse_types", "emits_reaction_kinds", "emits_association_kinds", "secret_handles", "value_schema", "metadata_schema", "config_schema", "output_schema"], path)
     for key in ["title", "description"]:
         var text = _optional(item, key)
         if not text.is_null(): _ = _string(text^, path + "/" + key)
-    for key in ["tags", "media_types", "source_impulse_types", "target_impulse_types", "accepts_impulse_types", "accepts_reaction_kinds", "emits_impulse_types", "emits_reaction_kinds", "emits_association_kinds"]:
+    for key in ["tags", "media_types", "source_impulse_types", "target_impulse_types", "accepts_impulse_types", "accepts_reaction_kinds", "emits_impulse_types", "emits_reaction_kinds", "emits_association_kinds", "secret_handles"]:
         var values = _optional(item, key)
         if not values.is_null(): _ = _strings(values^, path + "/" + key)
     for key in ["value_schema", "metadata_schema", "config_schema", "output_schema"]:
@@ -572,7 +572,16 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
     return _AdapterData(kind=kind, reference=reference, command=command^, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=timeout, child_path_json=child_path_json)
 
 
-def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String]()) raises -> PackageEffector:
+def _capability_secret_handles(capabilities: Value, capability: String) raises -> List[String]:
+    var result = List[String]()
+    if not capabilities.is_array() or capability == "": return result^
+    for declared in capabilities.array():
+        if not declared.is_object() or "id" not in declared.object() or not declared.object()["id"].is_string() or declared.object()["id"].string() != capability: continue
+        if "secret_handles" in declared.object(): result = _strings(declared.object()["secret_handles"].copy(), "/capabilities/" + capability + "/secret_handles")
+    return result^
+
+
+def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), capability_contracts: Value = Value()) raises -> PackageEffector:
     if not value.is_object(): _error("manifest.type", path, "expected effector object")
     _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "effector id")
@@ -598,6 +607,15 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     item = _optional(value, "adapter")
     if item.is_null(): _error("manifest.missing", path + "/adapter", "required field is missing")
     var adapter = _adapter(item^, path + "/adapter", manifest_parent)
+    var allowed_secrets = _capability_secret_handles(capability_contracts, capability)
+    if len(capabilities) != 0:
+        for index in range(len(adapter.inherit_env)):
+            var handle = adapter.inherit_env[index]
+            if not _contains(allowed_secrets, handle) and not _base_env_key(handle): _error("manifest.secret_scope", path + "/adapter/inherit_env/" + String(index), "secret handle '" + handle + "' is not declared by capability '" + capability + "'")
+        for pair in adapter.env.items():
+            if pair.value.startswith("${env:") and pair.value.endswith("}"):
+                var handle = String(pair.value[byte=6:pair.value.byte_length() - 1])
+                if not _contains(allowed_secrets, handle) and not _base_env_key(handle): _error("manifest.secret_scope", path + "/adapter/env/" + _pointer_token(pair.key), "secret handle '" + handle + "' is not declared by capability '" + capability + "'")
     var timeout = adapter.timeout_seconds
     item = _optional(value, "timeout_seconds")
     if not item.is_null():
@@ -726,7 +744,7 @@ def _template_effectors(template: Value, expansion: Value, path: String) raises 
     return _json_value(result_text^)
 
 
-def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), templates: Value = Value()) raises -> PackageCorrelationPath:
+def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), templates: Value = Value(), capability_contracts: Value = Value()) raises -> PackageCorrelationPath:
     if not value.is_object(): _error("manifest.type", path, "expected correlation path object")
     _known(value, ["id", "title", "description", "tags", "effectors", "expansion", "accumulate_upstream_reactions", "input_schema", "terminals"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "correlation path id")
@@ -748,7 +766,7 @@ def _path(value: Value, path: String, manifest_parent: String, capabilities: Lis
     if not effects_value.is_array() or len(effects_value.array()) == 0: _error("manifest.value", path + "/effectors", "must be nonempty array")
     var effectors = List[PackageEffector](); var i = 0
     for item in effects_value.array():
-        var effector = _effector(item.copy(), path + "/effectors/" + String(i), manifest_parent, capabilities)
+        var effector = _effector(item.copy(), path + "/effectors/" + String(i), manifest_parent, capabilities, capability_contracts.copy())
         for prior in effectors:
             if prior.id == effector.id: _error("manifest.duplicate", path + "/effectors/" + String(i) + "/id", "duplicate effector id")
         effectors.append(effector.copy()); i += 1
@@ -983,7 +1001,7 @@ def _load_package_value(root: Value, path: String) raises -> PackageManifest:
     var version = _package_version(root)
     var manifest_parent = _manifest_parent(path)
     var capabilities_value = _optional(root, "capabilities")
-    var capability_ids = _ontology_list(capabilities_value.copy(), "/capabilities", ["id", "title", "description", "tags", "accepts_impulse_types", "accepts_reaction_kinds", "emits_impulse_types", "emits_reaction_kinds", "emits_association_kinds", "config_schema", "output_schema"])
+    var capability_ids = _ontology_list(capabilities_value.copy(), "/capabilities", ["id", "title", "description", "tags", "accepts_impulse_types", "accepts_reaction_kinds", "emits_impulse_types", "emits_reaction_kinds", "emits_association_kinds", "config_schema", "output_schema", "secret_handles"])
     var templates = _optional(root, "path_templates")
     if not templates.is_null():
         if not templates.is_array(): _error("manifest.type", "/path_templates", "expected array")
@@ -1010,7 +1028,7 @@ def _load_package_value(root: Value, path: String) raises -> PackageManifest:
     if len(paths_value.array()) == 0: _error("manifest.value", "/correlation_paths", "must be nonempty array")
     var paths = List[PackageCorrelationPath](); var i = 0
     for item in paths_value.array():
-        var path_item = _path(item.copy(), "/correlation_paths/" + String(i), manifest_parent, capability_ids, templates.copy())
+        var path_item = _path(item.copy(), "/correlation_paths/" + String(i), manifest_parent, capability_ids, templates.copy(), capabilities_value.copy())
         for prior in paths:
             if prior.id == path_item.id: _error("manifest.duplicate", "/correlation_paths/" + String(i) + "/id", "duplicate correlation path id")
         paths.append(path_item.copy()); i += 1
