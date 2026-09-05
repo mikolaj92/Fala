@@ -94,6 +94,24 @@ tests and embedded callables. It is **not** a substitute for the host in
 product identity: packages, examples, and isolation assume subprocess
 boundaries (manifests, redaction, no open parent DB handles).
 
+### Graph authoring CLI
+
+Treat the expanded graph like code before opening a runtime journal:
+
+```bash
+fala graph expand --package lokay.fala-package.toml
+fala graph validate --package lokay.fala-package.toml
+fala graph fingerprint --package lokay.fala-package.toml
+fala graph diff --before old.fala-package.toml --after new.fala-package.toml
+```
+
+All four commands emit stable JSON. Expansion materializes bounded templates;
+fingerprints cover that canonical topology plus contracts and policies; diff
+classifies nodes, edges, conditions, terminals, capabilities, adapters, retry,
+timeout, and runtime-policy changes. Validation reports source JSON
+pointer/TOML paths. These authoring operations only read package files: they do
+not open journals or execute adapters.
+
 ### Declarative child paths without multi-runtime
 
 A package may author `adapter.kind = "child_path"`. The loader requires a

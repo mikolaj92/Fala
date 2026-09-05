@@ -752,12 +752,14 @@ def _path(value: Value, path: String, manifest_parent: String, capabilities: Lis
         for prior in effectors:
             if prior.id == effector.id: _error("manifest.duplicate", path + "/effectors/" + String(i) + "/id", "duplicate effector id")
         effectors.append(effector.copy()); i += 1
-    for effector in effectors:
-        for reference in effector.conduction:
+    for effector_index in range(len(effectors)):
+        var effector = effectors[effector_index].copy()
+        for reference_index in range(len(effector.conduction)):
+            var reference = effector.conduction[reference_index]
             var found = False
             for candidate in effectors:
                 if candidate.id == reference: found = True
-            if not found: _error("manifest.dangling_reference", path + "/effectors/" + _pointer_token(effector.id) + "/conduction", "unknown effector '" + reference + "'")
+            if not found: _error("manifest.dangling_reference", path + "/effectors/" + String(effector_index) + "/conduction/" + String(reference_index), "unknown effector '" + reference + "'")
     var input_schema_json = String("")
     var schema_value = _optional(value, "input_schema")
     if not schema_value.is_null():

@@ -144,6 +144,7 @@ def _known_option(kind: String, item: String) -> Bool:
     if kind == "db" and option == "--ensure-schema": return True
     if kind == "doctor" and option == "--ensure-schema": return True
     if kind == "schema": return False
+    if kind == "graph" and (option == "--package" or option == "--before" or option == "--after"): return True
     if kind == "init" and (option == "--db" or option == "--reaction-root"): return True
     if kind == "create" and (option == "--run-id" or option == "--metadata" or option == "--now" or option == "--title" or option == "--idempotency-key" or option == "--package-id" or option == "--package-version" or option == "--package-digest" or option == "--correlation-path-id" or option == "--correlation-path-digest" or option == "--runtime-version" or option == "--backend-version"): return True
     if kind == "transition" and (option == "--run-id" or option == "--now" or option == "--idempotency-key" or option == "--reason"): return True
@@ -284,7 +285,7 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
     elif kind == "doctor" or kind == "trace" or kind == "diagnose-waits": index = 1
     elif kind == "init": index = 1
     elif kind == "create" or kind == "schema" or kind == "maintenance" or kind == "gc": index = 1
-    elif kind == "db": index = 2
+    elif kind == "db" or kind == "graph": index = 2
     var has_positional = False
     var has_db_option = False
     while index < count:
@@ -321,6 +322,10 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
                 raise Error(String(SQLiteError(code=2, message="argument_error: unknown argument " + item)))
             has_positional = True
             index += 1
+    if kind == "graph":
+        if _word(command, 1) == "diff":
+            if _flag(command, "--before", "") == "" or _flag(command, "--after", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --before and --after are required")))
+        elif _flag(command, "--package", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --package is required")))
     if kind == "schema" and not has_positional:
         raise Error(String(SQLiteError(code=2, message="argument_error: schema model is required")))
     if kind == "schema":

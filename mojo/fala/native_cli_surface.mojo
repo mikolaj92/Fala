@@ -334,6 +334,9 @@ def _transition(command: String, operation: String) raises -> String:
     lifecycle.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"run\",\"id\":" + _quote(row.id) + ",\"status\":" + _quote(row.status) + "}"
 
+from fala.graph_tools import graph_expand, graph_validate, graph_fingerprint, graph_diff
+
+
 def dispatch_native_command(command: String) raises -> String:
     try:
         var first = _word(command, 0)
@@ -346,6 +349,15 @@ def dispatch_native_command(command: String) raises -> String:
                 rest += " " + _word(command, idx)
                 idx += 1
             return dispatch_native_command(rest)
+        if first == "graph":
+            if second != "expand" and second != "validate" and second != "fingerprint" and second != "diff": return _error("unsupported_command")
+            _validate(command, "graph")
+            if second == "expand": return "{\"graph\":" + graph_expand(_flag(command, "--package")) + ",\"ok\":true,\"runtime\":\"mojo\"}"
+            if second == "validate":
+                var report = graph_validate(_flag(command, "--package"))
+                return "{\"ok\":" + ("true" if report.find("\"valid\":true") >= 0 else "false") + ",\"report\":" + report + ",\"runtime\":\"mojo\"}"
+            if second == "fingerprint": return "{\"fingerprint\":" + _quote(graph_fingerprint(_flag(command, "--package"))) + ",\"ok\":true,\"runtime\":\"mojo\"}"
+            return "{\"diff\":" + graph_diff(_flag(command, "--before"), _flag(command, "--after")) + ",\"ok\":true,\"runtime\":\"mojo\"}"
         if first == "init": _validate(command, "init"); return _init(command)
         if first == "gc":
             _validate(command, "gc")
