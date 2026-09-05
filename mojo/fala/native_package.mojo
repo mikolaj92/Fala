@@ -55,11 +55,12 @@ struct PackageEffector(Copyable, Movable):
     var context_policy: String
     var context_source: String
     var context_invalidation_digest: String
+    var compensation_json: String
     var title: String
     var description: String
     var tags: List[String]
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = ""):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = ""):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
@@ -76,6 +77,7 @@ struct PackageEffector(Copyable, Movable):
         self.context_policy = context_policy
         self.context_source = context_source
         self.context_invalidation_digest = context_invalidation_digest
+        self.compensation_json = compensation_json
         self.config_json = config_json
         self.title = title
         self.description = description
@@ -589,7 +591,7 @@ def _capability_secret_handles(capabilities: Value, capability: String) raises -
 
 def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), capability_contracts: Value = Value()) raises -> PackageEffector:
     if not value.is_object(): _error("manifest.type", path, "expected effector object")
-    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest"], path)
+    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "effector id")
     var conduction = List[String]()
     var item = _optional(value, "conduction")
@@ -664,12 +666,22 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
         if context_source == "": _error("manifest.missing", path + "/context_source", "inherit requires source effector")
         if not _contains(conduction, context_source): _error("manifest.dangling_reference", path + "/context_source", "inherit source must be a direct conduction dependency")
     elif context_source != "": _error("manifest.value", path + "/context_source", "context_source is valid only for inherit")
+    var compensation_json = String("")
+    item = _optional(value, "compensation")
+    if not item.is_null():
+        if not item.is_object(): _error("manifest.type", path + "/compensation", "expected object")
+        _known(item, ["path_id", "capability"], path + "/compensation")
+        _ = _runtime_id(_required_nonnull(item, "path_id", path + "/compensation"), path + "/compensation/path_id", "compensation path")
+        var compensation_capability = _runtime_id(_required_nonnull(item, "capability", path + "/compensation"), path + "/compensation/capability", "compensation capability")
+        if compensation_capability == capability: _error("manifest.value", path + "/compensation/capability", "compensation capability must differ from original capability")
+        if len(capabilities) != 0 and not _contains(capabilities, compensation_capability): _error("manifest.dangling_reference", path + "/compensation/capability", "unknown compensation capability")
+        compensation_json = canonical_json_text(to_string(item^))
     var config_json = String("{}")
     item = _optional(value, "config")
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json)
 def _replace_all(source: String, needle: String, replacement: String) -> String:
     var result = String("")
     var rest = source
@@ -913,6 +925,7 @@ def _effector_json(effector: PackageEffector) raises -> Value:
     if effector.context_policy != "": result["context_policy"] = Value(effector.context_policy)
     if effector.context_source != "": result["context_source"] = Value(effector.context_source)
     if effector.context_invalidation_digest != "": result["context_invalidation_digest"] = Value(effector.context_invalidation_digest)
+    if effector.compensation_json != "": result["compensation"] = _json_value(effector.compensation_json)
     result["config"] = _json_value(effector.config_json)
     return Value(result^)
 

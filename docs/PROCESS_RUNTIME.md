@@ -20,6 +20,19 @@ Fala owns:
 Adapters own execution only. They receive validated JSON input at the adapter
 boundary and return validated output for the Correlator to commit.
 
+## Explicit compensation
+
+An effector may declare `compensation = { path_id, capability }`, where the
+capability is deliberately distinct from the original effect capability. This
+is a named child-path contract, not implicit rollback: only an authored graph
+edge invokes it after a confirmed effect receipt exists. The child input carries
+the exact authoritative identity/evidence receipt and a stable idempotency key.
+It observes before acting and records one of `compensated`, `already_absent`,
+`compensation_failed`, or `not_compensable`. Retry after a crash observes and
+confirms instead of duplicating reversal. Ordinary failure never schedules
+compensation, and original history is immutable. These are saga-like external
+effects, not ACID transactions across systems.
+
 ## Execution model
 
 Default `run_until_idle` is a **claim → execute → complete** loop under one
