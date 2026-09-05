@@ -139,13 +139,13 @@ def main() raises:
     _expect_error(valid, "manifest.dangling_reference at /correlation_paths/0/terminals/0/source_effector")
 
     # Named templates materialize a bounded, explicit serial graph before runtime.
-    _write(valid, "{\"id\":\"pkg\",\"path_templates\":[{\"id\":\"slot\",\"parameters\":{\"index\":\"integer\",\"name\":\"string\"},\"effectors\":[{\"id\":\"prepare_${index}\",\"config\":{\"name\":\"${name}\"},\"adapter\":{\"kind\":\"manual_homeostat\"}},{\"id\":\"finish_${index}\",\"conduction\":[\"prepare_${index}\"],\"adapter\":{\"kind\":\"manual_homeostat\"}}]}],\"correlation_paths\":[{\"id\":\"slots\",\"expansion\":{\"template\":\"slot\",\"max_items\":3,\"serial\":true,\"items\":[{\"index\":0,\"name\":\"alpha\"},{\"index\":1,\"name\":\"beta\"}]}}]}")
+    _write(valid, "{\"id\":\"pkg\",\"path_templates\":[{\"id\":\"slot\",\"parameters\":{\"index\":\"integer\",\"name\":\"string\"},\"effectors\":[{\"id\":\"prepare_${index}\",\"config\":{\"name\":\"${name}\"},\"adapter\":{\"kind\":\"manual_homeostat\"}},{\"id\":\"finish_${index}\",\"conduction\":[\"prepare_${index}\"],\"adapter\":{\"kind\":\"manual_homeostat\"}}]}],\"correlation_paths\":[{\"id\":\"slots\",\"prefix_effectors\":[{\"id\":\"begin\",\"adapter\":{\"kind\":\"manual_homeostat\"}}],\"expansion\":{\"template\":\"slot\",\"max_items\":3,\"serial\":true,\"items\":[{\"index\":0,\"name\":\"alpha\"},{\"index\":1,\"name\":\"beta\"}]},\"suffix_effectors\":[{\"id\":\"end\",\"conduction\":[\"finish_1\"],\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
     var expanded = load_package_json(valid)
-    _check(len(expanded.correlation_paths[0].effectors) == 4, "bounded expansion effector count")
-    _check(expanded.correlation_paths[0].effectors[0].id == "prepare_0" and expanded.correlation_paths[0].effectors[3].id == "finish_1", "deterministic expanded ids")
-    _check(expanded.correlation_paths[0].effectors[2].conduction == ["finish_0"], "serial expansion makes ordering explicit")
+    _check(len(expanded.correlation_paths[0].effectors) == 6, "bounded expansion effector count")
+    _check(expanded.correlation_paths[0].effectors[0].id == "begin" and expanded.correlation_paths[0].effectors[1].id == "prepare_0" and expanded.correlation_paths[0].effectors[4].id == "finish_1" and expanded.correlation_paths[0].effectors[5].id == "end", "deterministic expanded ids")
+    _check(expanded.correlation_paths[0].effectors[3].conduction == ["finish_0"], "serial expansion makes ordering explicit")
     var expanded_json = serialize_package_json(expanded)
-    _check(expanded_json.find("path_templates") < 0 and expanded_json.find("expansion") < 0 and expanded_json.find("prepare_1") >= 0, "only materialized topology is serialized")
+    _check(expanded_json.find("path_templates") < 0 and expanded_json.find("expansion") < 0 and expanded_json.find("prepare_1") >= 0 and expanded_json.find("\"begin\"") >= 0 and expanded_json.find("\"end\"") >= 0, "prefix, bounded topology, and suffix materialize")
     _check(expanded_json == serialize_package_json(load_package_json(valid)), "expansion is stable across reload")
 
     _write(valid, "{\"id\":\"pkg\",\"path_templates\":[{\"id\":\"slot\",\"parameters\":{\"index\":\"integer\"},\"effectors\":[{\"id\":\"slot_${index}\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}],\"correlation_paths\":[{\"id\":\"slots\",\"expansion\":{\"template\":\"slot\",\"max_items\":1,\"items\":[{\"index\":0},{\"index\":1}]}}]}")

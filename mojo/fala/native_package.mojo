@@ -722,6 +722,18 @@ def _parameter_text(value: Value, kind: String, path: String) raises -> String:
     return ""
 
 
+def _joined_effectors(prefix: Value, expanded: Value, suffix: Value) raises -> Value:
+    var text = "["; var first = True
+    var groups = List[Value](); groups.append(prefix.copy()); groups.append(expanded.copy()); groups.append(suffix.copy())
+    for group in groups:
+        if group.is_null(): continue
+        if not group.is_array(): _error("manifest.type", "/correlation_paths/effectors", "expected array")
+        for item in group.array():
+            if not first: text += ","
+            text += to_string(item); first = False
+    return _json_value(text + "]")
+
+
 def _template_effectors(template: Value, expansion: Value, path: String) raises -> Value:
     var parameters = _required_nonnull(template, "parameters", path + "/template")
     if not parameters.is_object(): _error("manifest.type", path + "/template/parameters", "expected object")
@@ -777,7 +789,7 @@ def _template_effectors(template: Value, expansion: Value, path: String) raises 
 
 def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), templates: Value = Value(), capability_contracts: Value = Value()) raises -> PackageCorrelationPath:
     if not value.is_object(): _error("manifest.type", path, "expected correlation path object")
-    _known(value, ["id", "title", "description", "tags", "effectors", "expansion", "accumulate_upstream_reactions", "input_schema", "terminals"], path)
+    _known(value, ["id", "title", "description", "tags", "effectors", "prefix_effectors", "expansion", "suffix_effectors", "accumulate_upstream_reactions", "input_schema", "terminals"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "correlation path id")
     var effects_value = _optional(value, "effectors")
     var expansion = _optional(value, "expansion")
@@ -794,6 +806,11 @@ def _path(value: Value, path: String, manifest_parent: String, capabilities: Lis
                     found_template = True
                     break
         if not found_template: _error("manifest.dangling_reference", path + "/expansion/template", "unknown path template '" + template_id + "'")
+        var prefix = _optional(value, "prefix_effectors")
+        var suffix = _optional(value, "suffix_effectors")
+        effects_value = _joined_effectors(prefix^, effects_value^, suffix^)
+    elif not _optional(value, "prefix_effectors").is_null() or not _optional(value, "suffix_effectors").is_null():
+        _error("manifest.value", path, "prefix/suffix_effectors require expansion")
     if not effects_value.is_array() or len(effects_value.array()) == 0: _error("manifest.value", path + "/effectors", "must be nonempty array")
     var effectors = List[PackageEffector](); var i = 0
     for item in effects_value.array():
