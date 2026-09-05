@@ -33,6 +33,7 @@ from .execution_metadata import validate_usage_json, provenance_json, aggregate_
 from .context_policy import ResolvedContext, resolve_context
 from .graph_compatibility import classify_graph_change, assert_resume_compatible, migrate_active_run
 from .compensation import CompensationDecision, compensation_input, reconcile_compensation
+from .effector_protocol import request_message, result_message, validate_message
 from .journal import (
     RunRow, RunRecord, CommandRow, CommandResult, EventRow, ProcessRow,
     NativeJournal,
