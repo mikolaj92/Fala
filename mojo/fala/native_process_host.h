@@ -77,6 +77,9 @@ fala_process_result fala_process_start_blob(const char *argv_blob, int argc,
                                             int64_t terminate_grace_ms,
                                             fala_process_host **out_process);
 
+/* Nonblocking completion probe; returns OK and leaves status RUNNING. */
+fala_process_result fala_process_poll(fala_process_host *process);
+
 /* Waits for completion, polling with a monotonic clock. */
 fala_process_result fala_process_wait(fala_process_host *process);
 

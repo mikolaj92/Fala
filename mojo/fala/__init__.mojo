@@ -28,6 +28,7 @@ from .graph_tools import graph_expand, graph_validate, graph_fingerprint, graph_
 from .explain import explain_run
 from .graph_rehearsal import rehearse_graph
 from .effect_protocol import EffectIntent, EffectObservation, EffectDecision, record_effect_intent, reconcile_effect
+from .durable_subprocess import wait_durable_subprocess
 from .journal import (
     RunRow, RunRecord, CommandRow, CommandResult, EventRow, ProcessRow,
     NativeJournal,

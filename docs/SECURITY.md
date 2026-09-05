@@ -32,6 +32,17 @@ a conflicting observation or evidence-free confirmation fails closed. This is
 not an exactly-once execution guarantee and contains no provider-specific
 GitHub, document, or messaging semantics.
 
+Durable subprocess cancellation polls the journal while retaining the live
+process-host handle. `cancel_requested` records the operator request, then the
+host sends SIGTERM to the private process group, waits a bounded grace period,
+and escalates the whole group to SIGKILL when needed. Signal/escalation and the
+single `cancelled` terminal are journal events; replaying the cancel key is
+idempotent. A race with natural completion observes one durable terminal.
+`native_function` calls cannot be preempted and finish cooperatively;
+`manual_homeostat` has no live child and is cancelled directly in the journal.
+After driver death, recovery can only reclaim/terminalize the lease: OS process
+ownership is intentionally not reconstructed from an untrusted stale PID.
+
 Do not put secrets in event payloads, reaction metadata, exported traces, or
 HTML reports. See [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md) for the wire
 boundary and [`REACTIONS_AND_REFERENCES.md`](REACTIONS_AND_REFERENCES.md) for

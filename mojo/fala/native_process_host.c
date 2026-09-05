@@ -370,6 +370,21 @@ fail:
     return FALA_PROCESS_SYSTEM_ERROR;
 }
 
+fala_process_result fala_process_poll(fala_process_host *process) {
+    int wait_status;
+    pid_t result;
+    if (process == NULL) return FALA_PROCESS_INVALID_ARGUMENT;
+    if (process->reaped) {
+        if (process->timed_out) return FALA_PROCESS_TIMED_OUT;
+        if (process->cancelled) return FALA_PROCESS_CANCELLED;
+        return process->status == FALA_PROCESS_STATUS_ERROR ? FALA_PROCESS_SYSTEM_ERROR : FALA_PROCESS_OK;
+    }
+    do { result = waitpid(process->pid, &wait_status, WNOHANG); } while (result < 0 && errno == EINTR);
+    if (result == process->pid) { (void)record_wait(process, wait_status); return FALA_PROCESS_OK; }
+    if (result < 0) { set_errno_error(process, FALA_PROCESS_SYSTEM_ERROR, "waitpid", errno); process->status = FALA_PROCESS_STATUS_ERROR; return FALA_PROCESS_SYSTEM_ERROR; }
+    return FALA_PROCESS_OK;
+}
+
 fala_process_result fala_process_wait(fala_process_host *process) {
     int wait_status;
     int64_t start;

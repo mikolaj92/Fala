@@ -188,6 +188,7 @@ def native_process_host_available() -> Bool:
         _ = library.get_function[c_int]("fala_process_start_blob")
         _ = library.get_function[NoneType]("fala_process_destroy")
         _ = library.get_function[c_int]("fala_process_wait")
+        _ = library.get_function[c_int]("fala_process_poll")
         _ = library.get_function[c_int]("fala_process_cancel")
         _ = library.get_function[c_int]("fala_process_get_status")
         _ = library.get_function[c_int]("fala_process_get_pid")
@@ -296,6 +297,9 @@ struct ProcessHost(Movable):
         if self._process == 0:
             raise Error("native process handle is closed")
         return HostPtr(unsafe_from_address=self._process)
+
+    def poll_result(mut self) raises -> Int:
+        return Int(self._library.get_function[c_int]("fala_process_poll")(self._require()))
 
     def wait_result(mut self) raises -> Int:
         return Int(self._library.get_function[c_int]("fala_process_wait")(self._require()))
