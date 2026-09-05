@@ -336,6 +336,7 @@ def _transition(command: String, operation: String) raises -> String:
 
 from fala.graph_tools import graph_expand, graph_validate, graph_fingerprint, graph_diff
 from fala.explain import explain_run
+from fala.graph_rehearsal import rehearse_graph
 
 
 def dispatch_native_command(command: String) raises -> String:
@@ -359,6 +360,9 @@ def dispatch_native_command(command: String) raises -> String:
                 return "{\"ok\":" + ("true" if report.find("\"valid\":true") >= 0 else "false") + ",\"report\":" + report + ",\"runtime\":\"mojo\"}"
             if second == "fingerprint": return "{\"fingerprint\":" + _quote(graph_fingerprint(_flag(command, "--package"))) + ",\"ok\":true,\"runtime\":\"mojo\"}"
             return "{\"diff\":" + graph_diff(_flag(command, "--before"), _flag(command, "--after")) + ",\"ok\":true,\"runtime\":\"mojo\"}"
+        if first == "rehearse":
+            _validate(command, "rehearse")
+            return rehearse_graph(_flag(command, "--package"), _flag(command, "--fixture"), _flag(command, "--path-id"), _flag(command, "--journal"), _flag(command, "--report"), _flag(command, "--run-id", "rehearsal"))
         if first == "explain":
             _validate(command, "explain")
             return explain_run(_path(command), _flag(command, "--package"), _flag(command, "--run-id"), _flag(command, "--process-id"), _flag(command, "--terminal"))

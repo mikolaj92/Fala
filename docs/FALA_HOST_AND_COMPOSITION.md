@@ -122,6 +122,23 @@ event IDs. Reasons distinguish `not_declared`, `not_materialized`, `not_ready`,
 and adapter environments are deliberately omitted, so explanations do not
 become a secret-exfiltration surface.
 
+Whole-graph acceptance rehearsal uses the normal materialized plan, durable
+journal, retry transitions, and correlation advancement while replacing every
+adapter boundary with fixture outcomes:
+
+```bash
+fala rehearse --package package.toml --fixture acceptance.json --path-id ship \
+  --journal rehearsal.sqlite --report rehearsal.json
+```
+
+`effectors` in the fixture maps an effector ID (or its capability as fallback)
+to an ordered sequence of `{kind = result|failure|timeout|wait, ...}` outcomes.
+Its `assert` object may require `terminal`, graph `fingerprint`, per-effector
+`attempts`, and `forbidden_effectors`. Missing or malformed fixture data fails
+closed; production argv and native functions are never called. The resulting
+journal remains available to `explain`, while the canonical report records the
+fingerprint, terminal, fixture-only policy, attempts/event order, and status.
+
 ### Declarative child paths without multi-runtime
 
 A package may author `adapter.kind = "child_path"`. The loader requires a
