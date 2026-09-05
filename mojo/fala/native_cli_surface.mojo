@@ -335,6 +335,7 @@ def _transition(command: String, operation: String) raises -> String:
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"run\",\"id\":" + _quote(row.id) + ",\"status\":" + _quote(row.status) + "}"
 
 from fala.graph_tools import graph_expand, graph_validate, graph_fingerprint, graph_diff
+from fala.explain import explain_run
 
 
 def dispatch_native_command(command: String) raises -> String:
@@ -358,6 +359,9 @@ def dispatch_native_command(command: String) raises -> String:
                 return "{\"ok\":" + ("true" if report.find("\"valid\":true") >= 0 else "false") + ",\"report\":" + report + ",\"runtime\":\"mojo\"}"
             if second == "fingerprint": return "{\"fingerprint\":" + _quote(graph_fingerprint(_flag(command, "--package"))) + ",\"ok\":true,\"runtime\":\"mojo\"}"
             return "{\"diff\":" + graph_diff(_flag(command, "--before"), _flag(command, "--after")) + ",\"ok\":true,\"runtime\":\"mojo\"}"
+        if first == "explain":
+            _validate(command, "explain")
+            return explain_run(_path(command), _flag(command, "--package"), _flag(command, "--run-id"), _flag(command, "--process-id"), _flag(command, "--terminal"))
         if first == "init": _validate(command, "init"); return _init(command)
         if first == "gc":
             _validate(command, "gc")

@@ -26,6 +26,7 @@ jsonl-journal = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/jsonl_journal.m
 tee-journal = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/tee_journal.mojo"
 package-manifest = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/native_manifest.mojo"
 graph-tools = "./tools/mojo_sql_run.sh mojo/smoke/graph_tools.mojo 1"
+explain-smoke = "./tools/mojo_sql_run.sh mojo/smoke/explain.mojo 1"
 json-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/json.mojo"
 toml-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/toml.mojo"
 sdk-smoke = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/sdk.mojo"
@@ -71,7 +72,7 @@ native-subprocess = "./tools/mojo_sql_run.sh mojo/smoke/native_subprocess.mojo 1
 # Pure unit regressions for UTF-8 StringSlice boundaries (Fala#121) — no process host.
 utf8-adapter-boundaries = "mojo run -I mojo -I vendor/EmberJson mojo/smoke/utf8_adapter_boundaries.mojo"
 host-smoke = "pixi run native-process-host && pixi run native-subprocess && pixi run utf8-adapter-boundaries"
-adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run host-journal && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run graph-tools && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke && pixi run thin-core-layers && pixi run host-smoke"
+adapter-smoke = "pixi run sqlite-schema && pixi run sqlite-claim && pixi run sqlite-journal-port && pixi run schema-migration && pixi run host-journal && pixi run domain-bridge && pixi run domain-maintenance && pixi run domain-accept-impulse && pixi run migration-smoke && pixi run jsonl-journal && pixi run tee-journal && pixi run open-journal && pixi run native-function && pixi run package-manifest && pixi run graph-tools && pixi run explain-smoke && pixi run json-smoke && pixi run toml-smoke && pixi run sdk-smoke && pixi run reaction-smoke && pixi run cli-smoke && pixi run thin-core-layers && pixi run host-smoke"
 
 # Broader historical suite (fleet/runtime-policy intentionally absent)
 extended-adapter-smoke = "pixi run adapter-smoke && pixi run native-cli-semantics && pixi run correlation-execution && pixi run correlation-persistence && pixi run correlation-runtime && pixi run correlation-advance && pixi run native-driver && pixi run adapter-persistence && pixi run finalization && pixi run runtime-contracts && pixi run package-sdk-contracts && pixi run example-basic-native && pixi run bridge-transport && pixi run splot-domain && pixi run concurrency-composition && pixi run homeostat-rearm && pixi run homeostat-regulation && pixi run signals-domain && pixi run multi-organ-example && pixi run takt-domain"

@@ -112,6 +112,16 @@ timeout, and runtime-policy changes. Validation reports source JSON
 pointer/TOML paths. These authoring operations only read package files: they do
 not open journals or execute adapters.
 
+For a durable run, `fala explain --db state.sqlite --package package.toml
+--run-id RUN [--process-id ID | --terminal ID]` returns canonical JSON derived
+only from the package graph and committed journal facts. Each process includes
+its exact conduction dependencies, statuses, condition source/path and
+expected/observed scalar, missing facts, lease, attempts, reason, and related
+event IDs. Reasons distinguish `not_declared`, `not_materialized`, `not_ready`,
+`condition_not_met`, `upstream_failed`, `waiting`, and `terminal`. Full payloads
+and adapter environments are deliberately omitted, so explanations do not
+become a secret-exfiltration surface.
+
 ### Declarative child paths without multi-runtime
 
 A package may author `adapter.kind = "child_path"`. The loader requires a

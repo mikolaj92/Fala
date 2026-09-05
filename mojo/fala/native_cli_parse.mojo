@@ -171,6 +171,7 @@ def _known_option(kind: String, item: String) -> Bool:
     if kind == "bridge-list" and (option == "--run-id" or option == "--status" or option == "--box" or option == "--limit" or option == "--jsonl"): return True
     if kind == "rows" and (option == "--run-id" or option == "--impulse-id" or option == "--impulse-type" or option == "--status" or option == "--event-type" or option == "--process-id" or option == "--command-id" or option == "--command-type" or option == "--actor" or option == "--relation-type" or option == "--kind" or option == "--after-sequence" or option == "--limit" or option == "--box" or option == "--jsonl"): return True
     if kind == "trace" and option == "--run-id": return True
+    if kind == "explain" and (option == "--run-id" or option == "--package" or option == "--process-id" or option == "--terminal"): return True
     if kind == "diagnose-waits" and (option == "--run-id" or option == "--impulse-id"): return True
     if kind == "run-list" and (option == "--db" or option == "--run-id" or option == "--status" or option == "--limit" or option == "--jsonl"): return True
     if kind == "event-schema" and (option == "--db" or option == "--run-id" or option == "--max-schema-version"): return True
@@ -282,7 +283,7 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
     var index = 0
     var count = _count(command)
     if kind == "run-list" or kind == "run-observe" or kind == "event-schema" or kind == "homeostat-list" or kind == "inspect" or kind == "rows" or kind == "commands-list" or kind == "events-list" or kind == "processes-list" or kind == "impulses-list" or kind == "impulse-types-list" or kind == "impulse-relations-list" or kind == "associations-list" or kind == "reactions-list" or kind == "homeostats-list" or kind == "projections-list" or kind == "bridge-list" or kind == "projection" or kind == "reaction-record" or kind == "bridge-deliver" or kind == "bridge-export" or kind == "bridge-import" or kind == "transition" or kind == "impulse-create" or kind == "process-schedule" or kind == "process-transition" or kind == "association-append" or kind == "homeostat-open" or kind == "homeostat-transition" or kind == "homeostat-domain-open" or kind == "homeostat-domain-transition": index = 2
-    elif kind == "doctor" or kind == "trace" or kind == "diagnose-waits": index = 1
+    elif kind == "doctor" or kind == "trace" or kind == "diagnose-waits" or kind == "explain": index = 1
     elif kind == "init": index = 1
     elif kind == "create" or kind == "schema" or kind == "maintenance" or kind == "gc": index = 1
     elif kind == "db" or kind == "graph": index = 2
@@ -371,6 +372,11 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
             raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "trace" and _flag(command, "--run-id") == "":
         raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
+    if kind == "explain":
+        if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
+        if _flag(command, "--package", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --package is required")))
+        if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
+        if _flag(command, "--process-id", "") != "" and _flag(command, "--terminal", "") != "": raise Error(String(SQLiteError(code=2, message="argument_error: choose --process-id or --terminal")))
     if kind == "diagnose-waits":
         if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
         if _flag(command, "--run-id", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
