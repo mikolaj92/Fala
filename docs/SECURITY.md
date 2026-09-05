@@ -16,11 +16,21 @@ Rules:
 - web/API infrastructure is not part of core;
 - runtime mutations go through JournalPort/backend command APIs.
 
-External effects under automatic retry are at-least-once: a timeout or crash
+External effects under automatic retry are **at-least-once**: a timeout or crash
 may leave an effect completed before its runtime result is committed. Effectors
 must durably deduplicate by stable `execution_id` before performing the effect;
 `attempt` identifies only a physical try and is not an idempotency key. Use
 `retry_policy = "none"` when durable deduplication cannot be guaranteed.
+
+For effects that can be authoritatively observed, `effect_protocol.mojo`
+provides an **effectively-once confirmed effect** contract. It is an ordinary
+Fala composition: persist a typed intent (`idempotency_key`, desired identity,
+capability), observe the world, act only when absent, observe again, then
+confirm the authoritative identity with an evidence reference. Resume always
+returns to observe. A matching existing effect confirms without another act;
+a conflicting observation or evidence-free confirmation fails closed. This is
+not an exactly-once execution guarantee and contains no provider-specific
+GitHub, document, or messaging semantics.
 
 Do not put secrets in event payloads, reaction metadata, exported traces, or
 HTML reports. See [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md) for the wire

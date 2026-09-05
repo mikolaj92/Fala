@@ -27,6 +27,7 @@ from .package import NativePackage, load_fala_package_json, load_package_toml, l
 from .graph_tools import graph_expand, graph_validate, graph_fingerprint, graph_diff
 from .explain import explain_run
 from .graph_rehearsal import rehearse_graph
+from .effect_protocol import EffectIntent, EffectObservation, EffectDecision, record_effect_intent, reconcile_effect
 from .journal import (
     RunRow, RunRecord, CommandRow, CommandResult, EventRow, ProcessRow,
     NativeJournal,
