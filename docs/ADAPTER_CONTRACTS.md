@@ -56,6 +56,16 @@ with a required unit. Aggregation preserves per-effector provenance and sums
 compatible units; malformed usage fails the attempt closed. Packages without
 secret or usage declarations retain the existing behavior.
 
+An effector may declare vendor-neutral context continuity as `context_policy =
+"fresh" | "resume" | "inherit"`. Resume keys derive from explicit
+run/process/impulse identity and remain stable across physical retries;
+`context_invalidation_digest` changes the key when material inputs change.
+Inherit additionally requires a direct `context_source` whose durable process
+is succeeded and has provenance. The subprocess manifest contains only the
+resolved policy/key/source/digest. Fala stores no transcript or vendor session
+ID; an adapter that cannot implement the declared policy must fail unsupported,
+not silently start fresh. Omitting the policy preserves previous behavior.
+
 Adapters never mutate a JournalPort,
 NativeJournal, SQLite database, or other Fala journal directly.
 

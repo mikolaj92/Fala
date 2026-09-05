@@ -52,11 +52,14 @@ struct PackageEffector(Copyable, Movable):
     var config_json: String
     var retry_policy: String
     var when_json: String
+    var context_policy: String
+    var context_source: String
+    var context_invalidation_digest: String
     var title: String
     var description: String
     var tags: List[String]
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = ""):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = ""):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
@@ -70,6 +73,9 @@ struct PackageEffector(Copyable, Movable):
         self.child_path_json = child_path_json
         self.retry_policy = retry_policy
         self.when_json = when_json
+        self.context_policy = context_policy
+        self.context_source = context_source
+        self.context_invalidation_digest = context_invalidation_digest
         self.config_json = config_json
         self.title = title
         self.description = description
@@ -583,7 +589,7 @@ def _capability_secret_handles(capabilities: Value, capability: String) raises -
 
 def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), capability_contracts: Value = Value()) raises -> PackageEffector:
     if not value.is_object(): _error("manifest.type", path, "expected effector object")
-    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config"], path)
+    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "effector id")
     var conduction = List[String]()
     var item = _optional(value, "conduction")
@@ -645,12 +651,25 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
         if not expected.is_string() and not expected.is_bool() and not expected.is_int() and not expected.is_uint() and not expected.is_float() and not expected.is_null():
             _error("manifest.type", path + "/when/equals", "expected JSON scalar")
         when_json = canonical_json_text(to_string(item^))
+    var context_policy = String(""); var context_source = String(""); var context_invalidation_digest = String("")
+    item = _optional(value, "context_policy")
+    if not item.is_null():
+        context_policy = _string(item^, path + "/context_policy")
+        if context_policy != "fresh" and context_policy != "resume" and context_policy != "inherit": _error("manifest.value", path + "/context_policy", "expected fresh, resume, or inherit")
+    item = _optional(value, "context_source")
+    if not item.is_null(): context_source = _runtime_id(item^, path + "/context_source", "context source effector")
+    item = _optional(value, "context_invalidation_digest")
+    if not item.is_null(): context_invalidation_digest = _nonempty(item^, path + "/context_invalidation_digest")
+    if context_policy == "inherit":
+        if context_source == "": _error("manifest.missing", path + "/context_source", "inherit requires source effector")
+        if not _contains(conduction, context_source): _error("manifest.dangling_reference", path + "/context_source", "inherit source must be a direct conduction dependency")
+    elif context_source != "": _error("manifest.value", path + "/context_source", "context_source is valid only for inherit")
     var config_json = String("{}")
     item = _optional(value, "config")
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest)
 def _replace_all(source: String, needle: String, replacement: String) -> String:
     var result = String("")
     var rest = source
@@ -891,6 +910,9 @@ def _effector_json(effector: PackageEffector) raises -> Value:
     if effector.timeout_seconds > 0.0: result["timeout_seconds"] = Value(effector.timeout_seconds)
     if effector.retry_policy != "automatic": result["retry_policy"] = Value(effector.retry_policy)
     if effector.when_json != "": result["when"] = _json_value(effector.when_json)
+    if effector.context_policy != "": result["context_policy"] = Value(effector.context_policy)
+    if effector.context_source != "": result["context_source"] = Value(effector.context_source)
+    if effector.context_invalidation_digest != "": result["context_invalidation_digest"] = Value(effector.context_invalidation_digest)
     result["config"] = _json_value(effector.config_json)
     return Value(result^)
 

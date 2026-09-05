@@ -393,8 +393,9 @@ struct EffectorRequest(Copyable, Movable):
     var work_dir: String
     var attempt: Int
     var max_attempts: Int
+    var context_json: String
 
-    def __init__(out self, process_id: String, adapter: AdapterSpec, impulse_id: String = "", input_json: String = "{}", config_json: String = "{}", work_dir: String = "", attempt: Int = 1, max_attempts: Int = 1, run_id: String = ""):
+    def __init__(out self, process_id: String, adapter: AdapterSpec, impulse_id: String = "", input_json: String = "{}", config_json: String = "{}", work_dir: String = "", attempt: Int = 1, max_attempts: Int = 1, run_id: String = "", context_json: String = "null"):
         self.process_id = process_id
         self.run_id = run_id
         self.adapter = adapter.copy()
@@ -404,6 +405,7 @@ struct EffectorRequest(Copyable, Movable):
         self.work_dir = work_dir
         self.attempt = attempt
         self.max_attempts = max_attempts
+        self.context_json = context_json
 
 @fieldwise_init
 struct EffectorResult(Copyable, Movable):
@@ -534,7 +536,7 @@ def adapter_manifest_json(request: EffectorRequest) raises -> String:
     if request.attempt < 1: raise Error("request.attempt must be at least one")
     if request.max_attempts < request.attempt: raise Error("request.max_attempts must be at least attempt")
     var execution_id = request.process_id if request.run_id == "" else request.run_id + ":" + request.process_id
-    return "{\"protocol_version\":1,\"execution_id\":" + _json_quoted(execution_id) + ",\"process_id\":" + _json_quoted(request.process_id) + ",\"attempt\":" + String(request.attempt) + ",\"max_attempts\":" + String(request.max_attempts) + ",\"impulse_id\":" + _json_quoted(request.impulse_id) + ",\"input\":" + request.input_json + ",\"config\":" + request.config_json + ",\"adapter\":" + _adapter_metadata_json(request.adapter) + "}"
+    return "{\"protocol_version\":1,\"execution_id\":" + _json_quoted(execution_id) + ",\"process_id\":" + _json_quoted(request.process_id) + ",\"attempt\":" + String(request.attempt) + ",\"max_attempts\":" + String(request.max_attempts) + ",\"impulse_id\":" + _json_quoted(request.impulse_id) + ",\"context\":" + request.context_json + ",\"input\":" + request.input_json + ",\"config\":" + request.config_json + ",\"adapter\":" + _adapter_metadata_json(request.adapter) + "}"
 def adapter_result_json(result: EffectorResult) raises -> String:
     var output_error = _validate_json_text(result.output_json, "result.output_json")
     if not output_error.is_ok(): raise Error(output_error.message)
