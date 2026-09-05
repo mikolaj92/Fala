@@ -28,7 +28,7 @@ from fala.correlation import (
 )
 from fala.correlation_runtime import run_correlation_path
 from fala.domain import Impulse
-from fala.journal import NativeJournal
+from fala.journal import NativeJournal, validate_json_schema_value
 from fala.host_journal import (
     complete_waiting_process as native_complete_waiting_process,
     record_process_finish as native_record_process_finish,
@@ -83,6 +83,18 @@ def _obj_int(obj: Value, key: String, default: Int = 0) raises -> Int:
     if item.is_uint():
         return Int(item.uint())
     return default
+
+
+def _path_value(value: Value, path: String) raises -> Value:
+    var current = value.copy()
+    if path == "": return current^
+    for segment in path.split("."):
+        var key = String(segment)
+        if not current.is_object() or key not in current.object():
+            raise Error("fala.host_run_package_json: terminal when path is missing: " + path)
+        var next = current.object()[key].copy()
+        current = next^
+    return current^
 
 
 def _path_from_json(path_val: Value) raises -> CorrelationPathSpec:
@@ -297,9 +309,13 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         package_path_spec.accumulate_upstream_reactions,
     )
 
+    var input_value = Value(parse_string="{}")
+    if "inputs" in root.object(): input_value = root.object()["inputs"].copy()
+    if package_path_spec.input_schema_json != "":
+        validate_json_schema_value(input_value.copy(), Value(parse_string=package_path_spec.input_schema_json), "/inputs")
     var inputs = List[CorrelationInputField]()
-    if "inputs" in root.object() and root.object()["inputs"].is_object():
-        for entry in root.object()["inputs"].object().items():
+    if input_value.is_object():
+        for entry in input_value.object().items():
             # to_string emits canonical JSON text for any Value (incl. strings).
             inputs.append(
                 CorrelationInputField(key=entry.key, value_json=to_string(entry.value.copy()))
@@ -475,6 +491,37 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         i += 1
     statuses += "]"
     effector_results += "}"
+    var path_result = String("null")
+    if len(package_path_spec.terminals) != 0:
+        var matched = 0
+        var selected_terminal = String("")
+        var selected_values = String("{}")
+        var selected_evidence = String("[]")
+        for terminal in package_path_spec.terminals:
+            for proc in procs:
+                var expected_process = path_id + ":" + terminal.source_effector
+                if proc.id != expected_process or proc.status != terminal.status: continue
+                var envelope = Value(parse_string=proc.output_json if terminal.status == "succeeded" or terminal.status == "skipped" else proc.error_json)
+                var values = envelope.copy()
+                if envelope.is_object() and "values" in envelope.object(): values = envelope.object()["values"].copy()
+                var condition_matches = True
+                if terminal.when_json != "":
+                    var condition = Value(parse_string=terminal.when_json)
+                    var condition_value = _path_value(values.copy(), _obj_string(condition, "path"))
+                    condition_matches = to_string(condition_value) == to_string(condition.object()["equals"])
+                if condition_matches:
+                    validate_json_schema_value(values.copy(), Value(parse_string=terminal.output_schema_json), "/path_result/values")
+                    matched += 1
+                    selected_terminal = terminal.id
+                    selected_values = to_string(values)
+                    if envelope.is_object() and "reactions" in envelope.object() and envelope.object()["reactions"].is_array(): selected_evidence = to_string(envelope.object()["reactions"])
+        if matched == 0:
+            journal.close()
+            raise Error("fala.host_run_package_json: no declared path terminal matched")
+        if matched > 1:
+            journal.close()
+            raise Error("fala.host_run_package_json: ambiguous declared path terminals")
+        path_result = "{\"terminal\":" + _quote_json(selected_terminal) + ",\"values\":" + selected_values + ",\"evidence\":" + selected_evidence + ",\"path_digest\":" + _quote_json(correlation_path_digest) + "}"
     journal.close()
 
     var out = (
@@ -504,6 +551,8 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         + statuses
         + ",\"effector_results\":"
         + effector_results
+        + ",\"path_result\":"
+        + path_result
         + "}"
     )
     return PythonObject(out)

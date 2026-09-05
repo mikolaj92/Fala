@@ -409,7 +409,10 @@ def host_run_package(
     """Drive one correlation path from a TOML package on a SQLite journal (Mojo).
 
     Ensures both native libraries required by the durable subprocess path before
-    loading the Mojo host.  The returned ``effector_results`` mapping is keyed by
+    loading the Mojo host. For paths declaring typed terminals, ``path_result``
+    is the single validated canonical composition result: terminal id, projected
+    values, evidence references, and path digest. Legacy paths return
+    ``path_result=None``. The returned ``effector_results`` mapping is keyed by
     package effector id; each value contains process ``id`` and ``status`` plus
     decoded ``output`` and ``error`` JSON values for the stored process.
 

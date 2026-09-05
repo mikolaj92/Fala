@@ -73,6 +73,15 @@ struct PackageEffector(Copyable, Movable):
         self.tags = tags.copy()
 
 
+@fieldwise_init
+struct PackagePathTerminal(Copyable, Movable):
+    var id: String
+    var source_effector: String
+    var status: String
+    var when_json: String
+    var output_schema_json: String
+
+
 struct PackageCorrelationPath(Copyable, Movable):
     var id: String
     var effectors: List[PackageEffector]
@@ -80,14 +89,18 @@ struct PackageCorrelationPath(Copyable, Movable):
     var description: String
     var tags: List[String]
     var accumulate_upstream_reactions: Bool
+    var input_schema_json: String
+    var terminals: List[PackagePathTerminal]
 
-    def __init__(out self, id: String, effectors: List[PackageEffector], title: String = "", description: String = "", tags: List[String] = List[String](), accumulate_upstream_reactions: Bool = False):
+    def __init__(out self, id: String, effectors: List[PackageEffector], title: String = "", description: String = "", tags: List[String] = List[String](), accumulate_upstream_reactions: Bool = False, input_schema_json: String = "", terminals: List[PackagePathTerminal] = List[PackagePathTerminal]()):
         self.id = id
         self.effectors = effectors.copy()
         self.title = title
         self.description = description
         self.tags = tags.copy()
         self.accumulate_upstream_reactions = accumulate_upstream_reactions
+        self.input_schema_json = input_schema_json
+        self.terminals = terminals.copy()
 struct PackageManifest(Copyable, Movable):
     """Validated strict JSON package manifest."""
     var id: String
@@ -690,7 +703,7 @@ def _template_effectors(template: Value, expansion: Value, path: String) raises 
 
 def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), templates: Value = Value()) raises -> PackageCorrelationPath:
     if not value.is_object(): _error("manifest.type", path, "expected correlation path object")
-    _known(value, ["id", "title", "description", "tags", "effectors", "expansion", "accumulate_upstream_reactions"], path)
+    _known(value, ["id", "title", "description", "tags", "effectors", "expansion", "accumulate_upstream_reactions", "input_schema", "terminals"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "correlation path id")
     var effects_value = _optional(value, "effectors")
     var expansion = _optional(value, "expansion")
@@ -720,6 +733,43 @@ def _path(value: Value, path: String, manifest_parent: String, capabilities: Lis
             for candidate in effectors:
                 if candidate.id == reference: found = True
             if not found: _error("manifest.dangling_reference", path + "/effectors/" + _pointer_token(effector.id) + "/conduction", "unknown effector '" + reference + "'")
+    var input_schema_json = String("")
+    var schema_value = _optional(value, "input_schema")
+    if not schema_value.is_null():
+        _json_schema(schema_value.copy(), path + "/input_schema")
+        input_schema_json = canonical_json_text(to_string(schema_value^))
+    var terminals = List[PackagePathTerminal]()
+    var terminals_value = _optional(value, "terminals")
+    if not terminals_value.is_null():
+        if not terminals_value.is_array() or len(terminals_value.array()) == 0: _error("manifest.value", path + "/terminals", "must be nonempty array")
+        var terminal_index = 0
+        for terminal in terminals_value.array():
+            var terminal_path = path + "/terminals/" + String(terminal_index)
+            if not terminal.is_object(): _error("manifest.type", terminal_path, "expected object")
+            _known(terminal, ["id", "source_effector", "status", "when", "output_schema"], terminal_path)
+            var terminal_id = _runtime_id(_required_nonnull(terminal, "id", terminal_path), terminal_path + "/id", "terminal id")
+            for prior in terminals:
+                if prior.id == terminal_id: _error("manifest.duplicate", terminal_path + "/id", "duplicate terminal id")
+            var source = _runtime_id(_required_nonnull(terminal, "source_effector", terminal_path), terminal_path + "/source_effector", "source effector id")
+            var source_found = False
+            for effector in effectors:
+                if effector.id == source: source_found = True
+            if not source_found: _error("manifest.dangling_reference", terminal_path + "/source_effector", "unknown effector '" + source + "'")
+            var status = _string(_required_nonnull(terminal, "status", terminal_path), terminal_path + "/status")
+            if status != "succeeded" and status != "failed" and status != "cancelled" and status != "timed_out" and status != "skipped": _error("manifest.value", terminal_path + "/status", "expected terminal process status")
+            var output_schema = _required_nonnull(terminal, "output_schema", terminal_path)
+            _json_schema(output_schema.copy(), terminal_path + "/output_schema")
+            var when_json = String("")
+            var when_value = _optional(terminal, "when")
+            if not when_value.is_null():
+                if not when_value.is_object(): _error("manifest.type", terminal_path + "/when", "expected object")
+                _known(when_value, ["path", "equals"], terminal_path + "/when")
+                var when_path = _nonempty(_required_nonnull(when_value, "path", terminal_path + "/when"), terminal_path + "/when/path")
+                _ = when_path
+                _ = _required_nonnull(when_value, "equals", terminal_path + "/when")
+                when_json = canonical_json_text(to_string(when_value^))
+            terminals.append(PackagePathTerminal(id=terminal_id, source_effector=source, status=status, when_json=when_json, output_schema_json=canonical_json_text(to_string(output_schema^))))
+            terminal_index += 1
     var title = String(""); var description = String(""); var tags = List[String](); var reactions = False
     var item = _optional(value, "title")
     if not item.is_null(): title = _string(item^, path + "/title")
@@ -731,7 +781,7 @@ def _path(value: Value, path: String, manifest_parent: String, capabilities: Lis
     if not item.is_null():
         if not item.is_bool(): _error("manifest.type", path + "/accumulate_upstream_reactions", "expected boolean")
         reactions = item.bool()
-    return PackageCorrelationPath(id=id, effectors=effectors, title=title, description=description, tags=tags, accumulate_upstream_reactions=reactions)
+    return PackageCorrelationPath(id=id, effectors=effectors, title=title, description=description, tags=tags, accumulate_upstream_reactions=reactions, input_schema_json=input_schema_json, terminals=terminals)
 
 
 def _json_value(text: String) raises -> Value:
@@ -820,6 +870,18 @@ def _path_json(path: PackageCorrelationPath) raises -> Value:
     effectors_json += "]"
     result["effectors"] = _json_value(effectors_json^)
     if path.accumulate_upstream_reactions: result["accumulate_upstream_reactions"] = Value(True)
+    if path.input_schema_json != "": result["input_schema"] = _json_value(path.input_schema_json)
+    if len(path.terminals) != 0:
+        var terminals_json = String("[")
+        var terminal_index = 0
+        for terminal in path.terminals:
+            if terminal_index != 0: terminals_json += ","
+            terminals_json += "{\"id\":" + to_string(Value(terminal.id)) + ",\"source_effector\":" + to_string(Value(terminal.source_effector)) + ",\"status\":" + to_string(Value(terminal.status))
+            if terminal.when_json != "": terminals_json += ",\"when\":" + terminal.when_json
+            terminals_json += ",\"output_schema\":" + terminal.output_schema_json + "}"
+            terminal_index += 1
+        terminals_json += "]"
+        result["terminals"] = _json_value(terminals_json^)
     return Value(result^)
 
 def serialize_correlation_path_json(path: PackageCorrelationPath) raises -> String:

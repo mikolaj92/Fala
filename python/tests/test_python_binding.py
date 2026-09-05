@@ -174,6 +174,123 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert terminal["ping"]["error"] == {}
 
 
+def test_host_run_package_returns_typed_path_terminal(tmp_path) -> None:
+    import json
+    import sys
+
+    import fala
+
+    step = tmp_path / "step.py"
+    step.write_text(
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
+        "json.dumps({'values': {'artifact': 'ready'}, 'reactions': [{'kind': 'proof', 'uri': 'proof://1'}]}))\n",
+        encoding="utf-8",
+    )
+    package = {
+        "id": "typed_path",
+        "correlation_paths": [{
+            "id": "delivery",
+            "input_schema": {
+                "type": "object",
+                "properties": {"ticket": {"type": "integer"}},
+                "required": ["ticket"],
+            },
+            "terminals": [{
+                "id": "done",
+                "source_effector": "build",
+                "status": "succeeded",
+                "output_schema": {
+                    "type": "object",
+                    "properties": {"artifact": {"const": "ready"}},
+                    "required": ["artifact"],
+                },
+            }],
+            "effectors": [{
+                "id": "build",
+                "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
+            }],
+        }],
+    }
+    package_path = tmp_path / "typed.fala-package.json"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+
+    result = fala.host_run_package(
+        db_path=tmp_path / "typed.sqlite",
+        package_path=package_path,
+        path_id="delivery",
+        run_id="typed",
+        inputs={"ticket": 209},
+    )
+
+    assert result["path_result"] == {
+        "terminal": "done",
+        "values": {"artifact": "ready"},
+        "evidence": [{"kind": "proof", "uri": "proof://1"}],
+        "path_digest": result["correlation_path_digest"],
+    }
+
+
+def test_host_run_package_typed_path_rejects_invalid_input_and_terminal(tmp_path) -> None:
+    import json
+    import sys
+
+    import fala
+    import pytest
+
+    step = tmp_path / "step.py"
+    step.write_text(
+        "import json, os\nfrom pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text(json.dumps({'values': {'actual': 1}}))\n",
+        encoding="utf-8",
+    )
+    package = {
+        "id": "typed_failures",
+        "correlation_paths": [{
+            "id": "path",
+            "input_schema": {"type": "object", "required": ["ticket"], "properties": {"ticket": {"type": "integer"}}},
+            "terminals": [{"id": "done", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object", "required": ["expected"]}}],
+            "effectors": [{"id": "step", "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]}}],
+        }],
+    }
+    package_path = tmp_path / "failures.json"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+    with pytest.raises(Exception, match="missing required output field ticket"):
+        fala.host_run_package(db_path=tmp_path / "input.sqlite", package_path=package_path, path_id="path", inputs={})
+    with pytest.raises(Exception, match="missing required output field expected"):
+        fala.host_run_package(db_path=tmp_path / "terminal.sqlite", package_path=package_path, path_id="path", inputs={"ticket": 1})
+
+
+def test_host_run_package_typed_path_rejects_ambiguous_or_missing_terminal(tmp_path) -> None:
+    import json
+    import sys
+
+    import fala
+    import pytest
+
+    step = tmp_path / "step.py"
+    step.write_text(
+        "import json, os\nfrom pathlib import Path\n"
+        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text(json.dumps({'values': {'route': 'one'}}))\n",
+        encoding="utf-8",
+    )
+    base = {"id": "terminal_selection", "correlation_paths": [{"id": "path", "effectors": [{"id": "step", "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]}}]}]}
+    path = base["correlation_paths"][0]
+    path["terminals"] = [
+        {"id": "one", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object"}},
+        {"id": "also_one", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object"}},
+    ]
+    package_path = tmp_path / "ambiguous.json"
+    package_path.write_text(json.dumps(base), encoding="utf-8")
+    with pytest.raises(Exception, match="ambiguous declared path terminals"):
+        fala.host_run_package(db_path=tmp_path / "ambiguous.sqlite", package_path=package_path, path_id="path")
+    path["terminals"] = [{"id": "failed", "source_effector": "step", "status": "failed", "output_schema": {"type": "object"}}]
+    package_path.write_text(json.dumps(base), encoding="utf-8")
+    with pytest.raises(Exception, match="no declared path terminal matched"):
+        fala.host_run_package(db_path=tmp_path / "missing.sqlite", package_path=package_path, path_id="path")
+
+
 def test_host_run_package_conditional_conduction_skips_nonmatching_adapter(tmp_path) -> None:
     import json
     import sys

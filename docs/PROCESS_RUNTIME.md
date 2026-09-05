@@ -178,6 +178,36 @@ from the previous instance's final effector; this is graph materialization, not
 a scheduler or adapter loop. Existing schema-v2 packages using `effectors`
 continue unchanged.
 
+### Typed path contracts
+
+A correlation path may declare an `input_schema` and a closed set of
+`terminals`. Input is validated before run creation. After finalization, exactly
+one terminal must match its source effector's terminal process status and
+optional value condition; zero or multiple matches fail closed. The selected
+values are validated against that terminal's independent `output_schema`.
+
+```toml
+[correlation_paths.input_schema]
+type = "object"
+required = ["ticket"]
+properties = { ticket = { type = "integer" } }
+
+[[correlation_paths.terminals]]
+id = "delivered"
+source_effector = "merge"
+status = "succeeded"
+when = { path = "state", equals = "delivered" }
+output_schema = { type = "object", required = ["state"] }
+```
+
+The host returns `path_result = { terminal, values, evidence, path_digest }`.
+Per-effector results remain available for inspection. Terminal selection and
+schema validation are replay-stable because both the expanded path contract and
+result are canonical and the durable run pins `correlation_path_digest`.
+Paths without `terminals` retain their existing behavior and return a null path
+result. Names such as `delivered`, `waiting`, `repairable`, and `failed` are
+consumer-domain examples only; Fala assigns them no built-in meaning.
+
 Current package schema version 2 declares the durable runtime boundary
 explicitly:
 

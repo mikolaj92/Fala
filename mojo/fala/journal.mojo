@@ -50,7 +50,7 @@ def _schema_type_matches(value: Value, schema: Value) raises -> Bool:
         return matched
     return False
 
-def _validate_output_schema_value(value: Value, schema: Value, path: String) raises:
+def validate_json_schema_value(value: Value, schema: Value, path: String) raises:
     if not schema.is_object(): raise Error("expected schema object")
     var schema_object = schema.object().copy()
     if "const" in schema_object:
@@ -85,7 +85,7 @@ def _validate_output_schema_value(value: Value, schema: Value, path: String) rai
             if (maximum.is_int() or maximum.is_uint()) and string_length > Int(_schema_number(maximum)): raise Error("output exceeds schema maxLength at " + path)
     if value.is_array() and "items" in schema_object:
         var item_schema = schema_object["items"].copy()
-        for index in range(len(value.array())): _validate_output_schema_value(value.array()[index], item_schema, path + "/" + String(index))
+        for index in range(len(value.array())): validate_json_schema_value(value.array()[index], item_schema, path + "/" + String(index))
     if value.is_object() and "required" in schema_object:
         var required = schema_object["required"].copy()
         if required.is_array():
@@ -98,7 +98,7 @@ def _validate_output_schema_value(value: Value, schema: Value, path: String) rai
             if pair.key not in properties: raise Error("output contains additional property " + pair.key + " at " + path)
     if value.is_object() and "properties" in schema_object and schema_object["properties"].is_object():
         for pair in schema_object["properties"].object().items():
-            if pair.key in value.object(): _validate_output_schema_value(value.object()[pair.key], pair.value, path + "/" + pair.key)
+            if pair.key in value.object(): validate_json_schema_value(value.object()[pair.key], pair.value, path + "/" + pair.key)
 
 
 @fieldwise_init
@@ -1065,7 +1065,7 @@ struct NativeJournal(Movable):
             try:
                 var output = Value(parse_string=output_json)
                 var schema = Value(parse_string=current.output_schema_json)
-                _validate_output_schema_value(output, schema, "/output_json")
+                validate_json_schema_value(output, schema, "/output_json")
             except err:
                 raise Error(String(SQLiteError(code=1, message="journal: output does not match output_schema_json: " + String(err))))
         return self._transition_process(run_id, process_id, "succeeded", worker_id, completed_at, output_json, error_json)

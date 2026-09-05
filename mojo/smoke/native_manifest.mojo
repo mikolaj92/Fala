@@ -130,6 +130,14 @@ def main() raises:
     _check(relative_cwd.correlation_paths[0].effectors[0].adapter_cwd == "/tmp/work", "relative adapter cwd resolves against manifest parent")
 
 
+    # A path contract retains typed input and independently typed terminals.
+    _write(valid, "{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"path\",\"input_schema\":{\"type\":\"object\",\"required\":[\"ticket\"]},\"terminals\":[{\"id\":\"done\",\"source_effector\":\"eff\",\"status\":\"succeeded\",\"output_schema\":{\"type\":\"object\"}}],\"effectors\":[{\"id\":\"eff\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    var contracted = load_package_json(valid)
+    _check(contracted.correlation_paths[0].input_schema_json.find("ticket") >= 0 and contracted.correlation_paths[0].terminals[0].id == "done", "typed path contract")
+    _check(serialize_package_json(contracted).find("\"terminals\"") >= 0, "typed path canonical serialization")
+    _write(valid, "{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"path\",\"terminals\":[{\"id\":\"done\",\"source_effector\":\"missing\",\"status\":\"succeeded\",\"output_schema\":{\"type\":\"object\"}}],\"effectors\":[{\"id\":\"eff\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    _expect_error(valid, "manifest.dangling_reference at /correlation_paths/0/terminals/0/source_effector")
+
     # Named templates materialize a bounded, explicit serial graph before runtime.
     _write(valid, "{\"id\":\"pkg\",\"path_templates\":[{\"id\":\"slot\",\"parameters\":{\"index\":\"integer\",\"name\":\"string\"},\"effectors\":[{\"id\":\"prepare_${index}\",\"config\":{\"name\":\"${name}\"},\"adapter\":{\"kind\":\"manual_homeostat\"}},{\"id\":\"finish_${index}\",\"conduction\":[\"prepare_${index}\"],\"adapter\":{\"kind\":\"manual_homeostat\"}}]}],\"correlation_paths\":[{\"id\":\"slots\",\"expansion\":{\"template\":\"slot\",\"max_items\":3,\"serial\":true,\"items\":[{\"index\":0,\"name\":\"alpha\"},{\"index\":1,\"name\":\"beta\"}]}}]}")
     var expanded = load_package_json(valid)
