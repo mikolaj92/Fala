@@ -133,6 +133,51 @@ JSON input manifests, captures stdout/stderr, validates result manifests, and
 commits resulting events, reactions, and associations through the applicable
 native SQLite transaction helpers when using the SQLite core.
 
+### Bounded authoring expansion
+
+A package may define `[[path_templates]]` once and materialize a finite list of
+instances in a correlation path. Expansion happens while loading and validating
+the package, before a run is created. The runtime therefore receives only an
+ordinary `CorrelationPath`: expanded IDs, dependencies, and order are visible in
+`serialize_package_json`, and that canonical topology produces the path digest.
+
+```toml
+[[path_templates]]
+id = "slot"
+parameters = { index = "integer", repo = "string" }
+
+[[path_templates.effectors]]
+id = "prepare_${index}"
+config = { repo = "${repo}" }
+adapter = { kind = "manual_homeostat" }
+
+[[path_templates.effectors]]
+id = "finish_${index}"
+conduction = ["prepare_${index}"]
+adapter = { kind = "manual_homeostat" }
+
+[[correlation_paths]]
+id = "slots"
+
+[correlation_paths.expansion]
+template = "slot"
+max_items = 25
+serial = true
+items = [
+  { index = 0, repo = "alpha" },
+  { index = 1, repo = "beta" },
+]
+```
+
+`max_items` is mandatory. `items` may be empty or contain at most that many
+objects. Parameter types are `string`, `integer`, `number`, or `boolean`.
+Missing, unknown, or mistyped parameters fail closed. Expanded effector IDs
+must still be globally unique inside the path. With `serial = true`, the first
+effector of each instance with no authored dependencies explicitly conducts
+from the previous instance's final effector; this is graph materialization, not
+a scheduler or adapter loop. Existing schema-v2 packages using `effectors`
+continue unchanged.
+
 Current package schema version 2 declares the durable runtime boundary
 explicitly:
 

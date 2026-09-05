@@ -595,11 +595,118 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
     return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json)
-def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String]()) raises -> PackageCorrelationPath:
+def _replace_all(source: String, needle: String, replacement: String) -> String:
+    var result = String("")
+    var rest = source
+    while True:
+        var index = rest.find(needle)
+        if index < 0:
+            result += rest
+            return result^
+        result += rest[byte=0:index]
+        result += replacement
+        var next = String(rest[byte=index + needle.byte_length():])
+        rest = next^
+
+
+def _integer(value: Value, path: String) raises -> Int:
+    if value.is_int(): return Int(value.int())
+    if value.is_uint(): return Int(value.uint())
+    _error("manifest.type", path, "expected integer")
+    return 0
+
+
+def _parameter_text(value: Value, kind: String, path: String) raises -> String:
+    if kind == "string":
+        if not value.is_string(): _error("manifest.type", path, "expected string")
+        var quoted = to_string(value)
+        return String(quoted[byte=1:quoted.byte_length() - 1])
+    if kind == "integer":
+        if value.is_int(): return String(value.int())
+        if value.is_uint(): return String(value.uint())
+        _error("manifest.type", path, "expected integer")
+    if kind == "number":
+        if not value.is_int() and not value.is_uint() and not value.is_float(): _error("manifest.type", path, "expected number")
+        return to_string(value)
+    if kind == "boolean":
+        if not value.is_bool(): _error("manifest.type", path, "expected boolean")
+        return "true" if value.bool() else "false"
+    _error("manifest.value", path, "parameter type must be string, integer, number, or boolean")
+    return ""
+
+
+def _template_effectors(template: Value, expansion: Value, path: String) raises -> Value:
+    var parameters = _required_nonnull(template, "parameters", path + "/template")
+    if not parameters.is_object(): _error("manifest.type", path + "/template/parameters", "expected object")
+    var source = _required_nonnull(template, "effectors", path + "/template")
+    if not source.is_array() or len(source.array()) == 0: _error("manifest.value", path + "/template/effectors", "must be nonempty array")
+    var items = _required_nonnull(expansion, "items", path + "/expansion")
+    if not items.is_array(): _error("manifest.type", path + "/expansion/items", "expected array")
+    var maximum = _integer(_required_nonnull(expansion, "max_items", path + "/expansion"), path + "/expansion/max_items")
+    if maximum < 0: _error("manifest.value", path + "/expansion/max_items", "must not be negative")
+    if len(items.array()) > maximum: _error("manifest.limit", path + "/expansion/items", "item count exceeds max_items")
+    var serial = False
+    var serial_value = _optional(expansion, "serial")
+    if not serial_value.is_null():
+        if not serial_value.is_bool(): _error("manifest.type", path + "/expansion/serial", "expected boolean")
+        serial = serial_value.bool()
+    var result_text = String("[")
+    var first_result = True
+    var previous_tail = String("")
+    var item_index = 0
+    for item in items.array():
+        var item_path = path + "/expansion/items/" + String(item_index)
+        if not item.is_object(): _error("manifest.type", item_path, "expected object")
+        for supplied in item.object().keys():
+            if supplied not in parameters.object(): _error("manifest.unknown", item_path + "/" + _pointer_token(supplied), "unknown parameter")
+        var rendered = canonical_json_text(to_string(source))
+        for parameter in parameters.object().items():
+            var parameter_path = item_path + "/" + _pointer_token(parameter.key)
+            if parameter.key not in item.object(): _error("manifest.missing", parameter_path, "required parameter is missing")
+            var kind = _string(parameter.value.copy(), path + "/template/parameters/" + _pointer_token(parameter.key))
+            var replacement = _parameter_text(item.object()[parameter.key].copy(), kind, parameter_path)
+            rendered = _replace_all(rendered, "${" + parameter.key + "}", replacement)
+        if rendered.find("${") >= 0: _error("manifest.value", item_path, "template contains an undeclared parameter")
+        var rendered_value = _json_value(rendered)
+        if not rendered_value.is_array(): _error("manifest.type", item_path, "expanded effectors must be an array")
+        var local_index = 0
+        for raw_effector in rendered_value.array():
+            var effector = raw_effector.copy()
+            if serial and item_index > 0:
+                var conduction = _optional(effector, "conduction")
+                if conduction.is_null():
+                    var object = effector.object().copy()
+                    object["conduction"] = _json_value("[" + to_string(Value(previous_tail)) + "]")
+                    effector = Value(object^)
+            if not first_result: result_text += ","
+            result_text += to_string(effector)
+            first_result = False
+            if local_index == len(rendered_value.array()) - 1: previous_tail = _string(_required_nonnull(effector, "id", item_path), item_path + "/id")
+            local_index += 1
+        item_index += 1
+    result_text += "]"
+    return _json_value(result_text^)
+
+
+def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), templates: Value = Value()) raises -> PackageCorrelationPath:
     if not value.is_object(): _error("manifest.type", path, "expected correlation path object")
-    _known(value, ["id", "title", "description", "tags", "effectors", "accumulate_upstream_reactions"], path)
+    _known(value, ["id", "title", "description", "tags", "effectors", "expansion", "accumulate_upstream_reactions"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "correlation path id")
-    var effects_value = _required_nonnull(value, "effectors", path)
+    var effects_value = _optional(value, "effectors")
+    var expansion = _optional(value, "expansion")
+    if effects_value.is_null() == expansion.is_null(): _error("manifest.value", path, "define exactly one of effectors or expansion")
+    if not expansion.is_null():
+        if not expansion.is_object(): _error("manifest.type", path + "/expansion", "expected object")
+        _known(expansion, ["template", "max_items", "items", "serial"], path + "/expansion")
+        var template_id = _runtime_id(_required_nonnull(expansion, "template", path + "/expansion"), path + "/expansion/template", "path template id")
+        var found_template = False
+        if templates.is_array():
+            for candidate in templates.array():
+                if _string(_required_nonnull(candidate, "id", "/path_templates"), "/path_templates/id") == template_id:
+                    effects_value = _template_effectors(candidate.copy(), expansion.copy(), path)
+                    found_template = True
+                    break
+        if not found_template: _error("manifest.dangling_reference", path + "/expansion/template", "unknown path template '" + template_id + "'")
     if not effects_value.is_array() or len(effects_value.array()) == 0: _error("manifest.value", path + "/effectors", "must be nonempty array")
     var effectors = List[PackageEffector](); var i = 0
     for item in effects_value.array():
@@ -779,18 +886,39 @@ def load_package_json(path: String) raises -> PackageManifest:
 def _load_package_value(root: Value, path: String) raises -> PackageManifest:
     """Internal manifest schema validation implementation."""
     if not root.is_object(): _error("manifest.type", "/", "manifest must be a JSON object")
-    _known(root, ["id", "version", "title", "description", "tags", "impulse_types", "impulse_relations", "association_kinds", "reaction_kinds", "capabilities", "runtime", "correlation_paths"], "")
+    _known(root, ["id", "version", "title", "description", "tags", "impulse_types", "impulse_relations", "association_kinds", "reaction_kinds", "capabilities", "runtime", "path_templates", "correlation_paths"], "")
     var id = _runtime_id(_required_nonnull(root, "id", ""), "/id", "package id")
     var version = _package_version(root)
     var manifest_parent = _manifest_parent(path)
     var capabilities_value = _optional(root, "capabilities")
     var capability_ids = _ontology_list(capabilities_value.copy(), "/capabilities", ["id", "title", "description", "tags", "accepts_impulse_types", "accepts_reaction_kinds", "emits_impulse_types", "emits_reaction_kinds", "emits_association_kinds", "config_schema", "output_schema"])
+    var templates = _optional(root, "path_templates")
+    if not templates.is_null():
+        if not templates.is_array(): _error("manifest.type", "/path_templates", "expected array")
+        var template_index = 0
+        var template_ids = List[String]()
+        for template in templates.array():
+            var template_path = "/path_templates/" + String(template_index)
+            if not template.is_object(): _error("manifest.type", template_path, "expected object")
+            _known(template, ["id", "parameters", "effectors"], template_path)
+            var template_id = _runtime_id(_required_nonnull(template, "id", template_path), template_path + "/id", "path template id")
+            if _contains(template_ids, template_id): _error("manifest.duplicate", template_path + "/id", "duplicate path template id")
+            template_ids.append(template_id)
+            var parameters = _required_nonnull(template, "parameters", template_path)
+            if not parameters.is_object(): _error("manifest.type", template_path + "/parameters", "expected object")
+            for parameter in parameters.object().items():
+                _ = _runtime_id(Value(parameter.key), template_path + "/parameters/" + _pointer_token(parameter.key), "parameter id")
+                var kind = _string(parameter.value.copy(), template_path + "/parameters/" + _pointer_token(parameter.key))
+                if kind != "string" and kind != "integer" and kind != "number" and kind != "boolean": _error("manifest.value", template_path + "/parameters/" + _pointer_token(parameter.key), "parameter type must be string, integer, number, or boolean")
+            var template_effectors = _required_nonnull(template, "effectors", template_path)
+            if not template_effectors.is_array() or len(template_effectors.array()) == 0: _error("manifest.value", template_path + "/effectors", "must be nonempty array")
+            template_index += 1
     var paths_value = _required_nonnull(root, "correlation_paths", "")
     if not paths_value.is_array(): _error("manifest.type", "/correlation_paths", "expected array")
     if len(paths_value.array()) == 0: _error("manifest.value", "/correlation_paths", "must be nonempty array")
     var paths = List[PackageCorrelationPath](); var i = 0
     for item in paths_value.array():
-        var path_item = _path(item.copy(), "/correlation_paths/" + String(i), manifest_parent, capability_ids)
+        var path_item = _path(item.copy(), "/correlation_paths/" + String(i), manifest_parent, capability_ids, templates.copy())
         for prior in paths:
             if prior.id == path_item.id: _error("manifest.duplicate", "/correlation_paths/" + String(i) + "/id", "duplicate correlation path id")
         paths.append(path_item.copy()); i += 1

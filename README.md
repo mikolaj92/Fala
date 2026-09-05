@@ -106,6 +106,13 @@ Package authors may add `when = { upstream, path, equals }` to select a branch
 from a successful direct-upstream JSON scalar. Fala records a nonmatching branch
 as `skipped`; it does not assign meaning to the compared domain value.
 
+Repeated finite topology can be authored once with `path_templates` and a
+bounded path `expansion`. Loading materializes it into ordinary effectors before
+run creation; canonical inspection and path digests see the full graph. The
+mandatory `max_items` prevents unbounded generation, while `serial = true`
+authors explicit dependencies between instances rather than hiding order in a
+host loop. See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md#bounded-authoring-expansion).
+
 ## Quick proof
 
 Requires Pixi/Mojo (see `pixi.toml`). The mill gate is the same command, declared as `[tool.lokay] test` in `pyproject.toml`:
