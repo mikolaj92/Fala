@@ -43,6 +43,19 @@ file, malformed JSON, digest mismatch, causation mismatch, or output-shape
 failure is an adapter/transport failure and cannot impersonate that terminal.
 World confirmation remains a separate observe/confirm operation.
 
+## Conformance and another-language port
+
+`conformance/fep-v1` is the shared golden corpus. Both native Mojo and the thin
+`fala.fep` Python executor codec consume its canonical vectors and stable
+negative error classes/pointers. Minimal interchangeable filesystem effectors
+live in `examples/fep-effectors/`; neither can access journals or schedulers.
+
+A port needs only UTF-8 JSON parsing, RFC-style deterministic sorted-key compact
+serialization matching the corpus, SHA-256, closed-field/type checks, and the
+golden vectors. It needs no Fala runtime, GitHub, network client, relay, or
+adapter internals. The transport can change while canonical message bytes do
+not.
+
 ## Filesystem compatibility
 
 The default carrier remains `input/manifest.json` to `output/result.json`.

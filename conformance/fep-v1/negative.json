@@ -1,0 +1,191 @@
+[
+  {
+    "code": "fep.unknown_protocol",
+    "message": {
+      "attempt": 1,
+      "capability": "echo",
+      "config": {},
+      "execution_id": "run-golden:echo",
+      "impulse_id": "impulse-1",
+      "input": {
+        "text": "hello"
+      },
+      "message_id": "msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4",
+      "message_kind": "effector.request",
+      "output_contract_ref": "schema:sha256:echo",
+      "path_digest": "sha256:path",
+      "process_fingerprint": "sha256:process",
+      "process_id": "echo",
+      "protocol": "fala-effector/9",
+      "run_id": "run-golden"
+    },
+    "name": "wrong-version",
+    "pointer": "/protocol"
+  },
+  {
+    "code": "fep.unknown_message_kind",
+    "message": {
+      "attempt": 1,
+      "capability": "echo",
+      "config": {},
+      "execution_id": "run-golden:echo",
+      "impulse_id": "impulse-1",
+      "input": {
+        "text": "hello"
+      },
+      "message_id": "msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4",
+      "message_kind": "other",
+      "output_contract_ref": "schema:sha256:echo",
+      "path_digest": "sha256:path",
+      "process_fingerprint": "sha256:process",
+      "process_id": "echo",
+      "protocol": "fala-effector/1",
+      "run_id": "run-golden"
+    },
+    "name": "wrong-kind",
+    "pointer": "/message_kind"
+  },
+  {
+    "code": "fep.digest_mismatch",
+    "message": {
+      "attempt": 1,
+      "capability": "echo",
+      "config": {},
+      "execution_id": "run-golden:echo",
+      "impulse_id": "impulse-1",
+      "input": {
+        "text": "hello"
+      },
+      "message_id": "msg:sha256:bad",
+      "message_kind": "effector.request",
+      "output_contract_ref": "schema:sha256:echo",
+      "path_digest": "sha256:path",
+      "process_fingerprint": "sha256:process",
+      "process_id": "echo",
+      "protocol": "fala-effector/1",
+      "run_id": "run-golden"
+    },
+    "name": "wrong-digest",
+    "pointer": "/message_id"
+  },
+  {
+    "code": "fep.required",
+    "message": {
+      "associations": [],
+      "attempt": 1,
+      "causation": {
+        "request_id": "msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4"
+      },
+      "evidence_refs": [],
+      "execution_id": "run-golden:echo",
+      "message_id": "msg:sha256:2e6560961d3e33ae2595cb237d016fdab51734c68235e7d7a70aa0ba85997bc6",
+      "message_kind": "effector.result",
+      "metadata": {},
+      "protocol": "fala-effector/1",
+      "provenance": {},
+      "reactions": [],
+      "usage": {},
+      "values": {
+        "text": "hello"
+      }
+    },
+    "name": "missing-request-ref",
+    "pointer": "/request_id"
+  },
+  {
+    "code": "fep.attempt_invalid",
+    "message": {
+      "attempt": 0,
+      "capability": "echo",
+      "config": {},
+      "execution_id": "run-golden:echo",
+      "impulse_id": "impulse-1",
+      "input": {
+        "text": "hello"
+      },
+      "message_id": "msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4",
+      "message_kind": "effector.request",
+      "output_contract_ref": "schema:sha256:echo",
+      "path_digest": "sha256:path",
+      "process_fingerprint": "sha256:process",
+      "process_id": "echo",
+      "protocol": "fala-effector/1",
+      "run_id": "run-golden"
+    },
+    "name": "bad-attempt",
+    "pointer": "/attempt"
+  },
+  {
+    "code": "fep.output_contract_invalid",
+    "message": {
+      "attempt": 1,
+      "capability": "echo",
+      "config": {},
+      "execution_id": "run-golden:echo",
+      "impulse_id": "impulse-1",
+      "input": [],
+      "message_id": "msg:sha256:91d5b6a9e55cc2dbf56d9f8cca3aae845ba2c13c833f1880268251b4b8ac7872",
+      "message_kind": "effector.request",
+      "output_contract_ref": "schema:sha256:echo",
+      "path_digest": "sha256:path",
+      "process_fingerprint": "sha256:process",
+      "process_id": "echo",
+      "protocol": "fala-effector/1",
+      "run_id": "run-golden"
+    },
+    "name": "wrong-payload-type",
+    "pointer": "/input"
+  },
+  {
+    "code": "fep.output_contract_invalid",
+    "message": {
+      "associations": [],
+      "attempt": 1,
+      "causation": {
+        "request_id": "msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4"
+      },
+      "evidence_refs": [],
+      "execution_id": "run-golden:echo",
+      "message_id": "msg:sha256:aef66db853baf55f166245e0a937911b0b1b64182596838a724cddfe8ba18cea",
+      "message_kind": "effector.result",
+      "metadata": {},
+      "protocol": "fala-effector/1",
+      "provenance": {},
+      "reactions": [],
+      "request_id": "msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4",
+      "usage": {},
+      "values": []
+    },
+    "name": "wrong-result-contract",
+    "pointer": "/values"
+  },
+  {
+    "code": "fep.embedded_artifact",
+    "message": {
+      "associations": [],
+      "attempt": 1,
+      "causation": {
+        "request_id": "msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4"
+      },
+      "evidence_refs": [],
+      "execution_id": "run-golden:echo",
+      "message_id": "msg:sha256:7da88909b430fb7aa75a91bae52d11f4f7cab43b68480083abf90cc694dbb893",
+      "message_kind": "effector.result",
+      "metadata": {},
+      "protocol": "fala-effector/1",
+      "provenance": {},
+      "reactions": [
+        {
+          "content": "large"
+        }
+      ],
+      "request_id": "msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4",
+      "usage": {},
+      "values": {
+        "text": "hello"
+      }
+    },
+    "name": "embedded-artifact",
+    "pointer": "/reactions/0"
+  }
+]
