@@ -19,6 +19,7 @@ struct _AdapterData(Copyable, Movable):
     var env: Dict[String, String]
     var inherit_env: List[String]
     var timeout_seconds: Float64
+    var child_path_json: String
 
 
 struct PackageManifestError(Copyable, Movable):
@@ -47,6 +48,7 @@ struct PackageEffector(Copyable, Movable):
     var adapter_env: Dict[String, String]
     var adapter_inherit_env: List[String]
     var timeout_seconds: Float64
+    var child_path_json: String
     var config_json: String
     var retry_policy: String
     var when_json: String
@@ -54,7 +56,7 @@ struct PackageEffector(Copyable, Movable):
     var description: String
     var tags: List[String]
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = ""):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = ""):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
@@ -65,6 +67,7 @@ struct PackageEffector(Copyable, Movable):
         self.adapter_env = adapter_env.copy()
         self.adapter_inherit_env = adapter_inherit_env.copy()
         self.timeout_seconds = timeout_seconds
+        self.child_path_json = child_path_json
         self.retry_policy = retry_policy
         self.when_json = when_json
         self.config_json = config_json
@@ -492,11 +495,11 @@ def _validate_runtime(value: Value, path: String) raises:
 def _adapter(value: Value, path: String, manifest_parent: String) raises -> _AdapterData:
     if not value.is_object():
         _error("manifest.type", path, "expected adapter object")
-    _known(value, ["kind", "ref", "command", "cwd", "env", "inherit_env", "timeout_seconds"], path)
+    _known(value, ["kind", "ref", "command", "cwd", "env", "inherit_env", "timeout_seconds", "package_ref", "path_id", "journal_root", "input_mapping", "terminal_mapping", "lifetime_seconds", "retention"], path)
     var kind = _nonempty(_required(value, "kind", path), path + "/kind")
     if kind == "fala_runtime":
         _error("manifest.unsupported", path + "/kind", "fala_runtime is not part of Fala; use subprocess with a separate journal")
-    if kind != "subprocess" and kind != "native_function" and kind != "manual_homeostat":
+    if kind != "subprocess" and kind != "native_function" and kind != "manual_homeostat" and kind != "child_path":
         _error("manifest.unsupported", path + "/kind", "unsupported adapter kind")
     var reference = String("")
     var command = List[String]()
@@ -505,6 +508,7 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
     var inherit_env = List[String]()
     var timeout = 0.0
     var timeout_present = False
+    var child_path_json = String("")
     var item = _optional(value, "ref")
     if not item.is_null(): reference = _nonempty(item^, path + "/ref")
     item = _optional(value, "command")
@@ -536,6 +540,26 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
             var env_value = _string(pair.value.copy(), env_path)
             _validate_env_interpolation(env_value, env_path, inherit_env)
             env[pair.key] = env_value^
+    if kind == "child_path":
+        for key in ["package_ref", "path_id", "journal_root", "input_mapping", "terminal_mapping", "lifetime_seconds", "retention"]:
+            _ = _required_nonnull(value, key, path)
+        var package_ref = _nonempty(_required_nonnull(value, "package_ref", path), path + "/package_ref")
+        var child_path_id = _runtime_id(_required_nonnull(value, "path_id", path), path + "/path_id", "child path id")
+        var journal_root = _nonempty(_required_nonnull(value, "journal_root", path), path + "/journal_root")
+        var input_mapping = _required_nonnull(value, "input_mapping", path)
+        var terminal_mapping = _required_nonnull(value, "terminal_mapping", path)
+        if not input_mapping.is_object(): _error("manifest.type", path + "/input_mapping", "expected object")
+        if not terminal_mapping.is_object() or len(terminal_mapping.object()) == 0: _error("manifest.type", path + "/terminal_mapping", "expected nonempty object")
+        for pair in input_mapping.object().items(): _ = _nonempty(pair.value.copy(), path + "/input_mapping/" + _pointer_token(pair.key))
+        for pair in terminal_mapping.object().items(): _ = _runtime_id(pair.value.copy(), path + "/terminal_mapping/" + _pointer_token(pair.key), "parent terminal id")
+        var lifetime = _number(_required_nonnull(value, "lifetime_seconds", path), path + "/lifetime_seconds")
+        if lifetime <= 0.0: _error("manifest.value", path + "/lifetime_seconds", "must be greater than zero")
+        var retention = _string(_required_nonnull(value, "retention", path), path + "/retention")
+        if retention != "keep" and retention != "delete_on_success": _error("manifest.value", path + "/retention", "expected keep or delete_on_success")
+        var child = Object(capacity=7)
+        child["package_ref"] = Value(package_ref); child["path_id"] = Value(child_path_id); child["journal_root"] = Value(journal_root); child["input_mapping"] = input_mapping^; child["terminal_mapping"] = terminal_mapping^; child["lifetime_seconds"] = Value(lifetime); child["retention"] = Value(retention)
+        child_path_json = canonical_json_text(to_string(Value(child^)))
+        timeout = lifetime
     if timeout_present and timeout == 0.0: _error("manifest.value", path + "/timeout_seconds", "must be greater than 0 when provided")
     if timeout < 0.0: _error("manifest.value", path + "/timeout_seconds", "must not be negative")
     if kind == "subprocess" and len(command) == 0: _error("manifest.value", path + "/command", "subprocess requires command")
@@ -544,7 +568,8 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
     if kind == "native_function" and (len(command) != 0 or cwd != "" or len(env) != 0 or len(inherit_env) != 0): _error("manifest.boundary", path, "native_function adapter has invalid boundary fields")
     if kind == "manual_homeostat" and (reference != "" or len(command) != 0 or cwd != "" or len(env) != 0 or len(inherit_env) != 0 or timeout != 0.0): _error("manifest.boundary", path, "manual_homeostat adapter has invalid boundary fields")
     if kind != "subprocess" and len(inherit_env) != 0: _error("manifest.boundary", path + "/inherit_env", "only subprocess adapters may inherit environment")
-    return _AdapterData(kind=kind, reference=reference, command=command^, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=timeout)
+    if kind == "child_path" and (reference != "" or len(command) != 0 or cwd != "" or len(env) != 0 or len(inherit_env) != 0): _error("manifest.boundary", path, "child_path has invalid subprocess implementation fields")
+    return _AdapterData(kind=kind, reference=reference, command=command^, cwd=cwd, env=env^, inherit_env=inherit_env^, timeout_seconds=timeout, child_path_json=child_path_json)
 
 
 def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String]()) raises -> PackageEffector:
@@ -607,7 +632,7 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json)
 def _replace_all(source: String, needle: String, replacement: String) -> String:
     var result = String("")
     var rest = source
@@ -830,6 +855,9 @@ def _effector_json(effector: PackageEffector) raises -> Value:
             adapter["env"] = Value(env^)
     elif effector.adapter_kind == "native_function":
         adapter["ref"] = Value(effector.adapter_ref)
+    elif effector.adapter_kind == "child_path":
+        var child = _json_value(effector.child_path_json)
+        for pair in child.object().items(): adapter[pair.key] = pair.value.copy()
     result["adapter"] = Value(adapter^)
     if len(effector.conduction) != 0:
         var conduction_json = String("[")

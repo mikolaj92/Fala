@@ -94,6 +94,24 @@ tests and embedded callables. It is **not** a substitute for the host in
 product identity: packages, examples, and isolation assume subprocess
 boundaries (manifests, redaction, no open parent DB handles).
 
+### Declarative child paths without multi-runtime
+
+A package may author `adapter.kind = "child_path"`. The loader requires a
+`package_ref`, child `path_id`, separate `journal_root`, explicit
+`input_mapping` and `terminal_mapping`, positive `lifetime_seconds`, and a
+`retention` policy (`keep` or `delete_on_success`). The host compiles this node
+to the existing argv subprocess boundary; `child_path` is not a runtime adapter
+kind and does not restore `fala_runtime`.
+
+The child run ID and journal filename are a stable digest of the parent
+run/process identity. Replaying the same parent process therefore addresses the
+same durable child. Its typed `path_result` returns through `result.json`, with
+`child_ref = {journal, run_id, path_digest, terminal}` included in parent
+values/metadata. A timeout or crash fails the parent process while leaving the
+child journal inspectable. Retention cleanup uses the existing journal
+retention operation; neither parent runtime nor child runner writes the other
+journal.
+
 ### Child Fala without multi-runtime
 
 A nested correlator is a **separate Fala process** with its **own journal**:

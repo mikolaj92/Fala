@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -22,6 +23,7 @@ from fala._build import (
     ensure_native,
     ensure_process_host_library,
     ensure_sqlite_fire_library,
+    repo_root,
 )
 
 # Process-global cwd/env mutations in ``_with_sqlite_cwd`` are not thread-safe
@@ -445,6 +447,13 @@ def host_run_package(
         # Ambient host env for subprocess inherit_env / base keys (#108 / v0.7.6).
         # Mojo materializes these into adapter.env before dispatch.
         "host_environment": dict(os.environ),
+        "child_runner_command": [
+            sys.executable,
+            str(Path(__file__).with_name("child_path.py").resolve()),
+        ],
+        "child_runner_pythonpath": str(Path(__file__).resolve().parent.parent),
+        "python_library": str(Path(sys.executable).resolve().parent.parent / "lib" / "libpython3.14.dylib"),
+        "fala_home": str(repo_root()),
     }
     if inputs:
         # Native JSON types; Mojo host converts Values to value_json via to_string.
@@ -475,6 +484,7 @@ def host_run_package(
             )
     else:
         process_host_library = ensure_process_host_library()
+    request["host_environment"]["FALA_PROCESS_HOST_LIBRARY"] = str(process_host_library.resolve())
     ensure_sqlite_fire_library()
     native = ensure_native()
 

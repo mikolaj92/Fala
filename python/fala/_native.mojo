@@ -402,6 +402,28 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
             adapter = AdapterSpec.native_function(ref_by_id[eid])
         elif kind == "manual_homeostat":
             adapter = AdapterSpec.manual_homeostat()
+        elif kind == "child_path":
+            if "child_runner_command" not in root.object() or not root.object()["child_runner_command"].is_array():
+                raise Error("fala.host_run_package_json: child_runner_command required for child_path")
+            var command = List[String]()
+            for argument in root.object()["child_runner_command"].array():
+                if not argument.is_string(): raise Error("fala.host_run_package_json: child_runner_command must contain strings")
+                command.append(argument.string())
+            adapter = AdapterSpec.subprocess(command^)
+            for package_effector in package_path_spec.effectors:
+                if package_effector.id == eid:
+                    adapter.timeout_seconds = package_effector.timeout_seconds if package_effector.timeout_seconds > 0.0 else 1.0
+                    adapter.env["FALA_CHILD_PATH_SPEC"] = package_effector.child_path_json
+                    break
+            adapter.env["FALA_PARENT_DB"] = db_path
+            adapter.env["FALA_HOME"] = _obj_string(root, "fala_home")
+            adapter.env["PYTHONPATH"] = _obj_string(root, "child_runner_pythonpath")
+            adapter.env["MOJO_PYTHON_LIBRARY"] = _obj_string(root, "python_library")
+            if "host_environment" in root.object() and root.object()["host_environment"].is_object():
+                for key in ["FALA_PROCESS_HOST_LIBRARY", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "PYTHONHOME"]:
+                    if key in root.object()["host_environment"].object() and root.object()["host_environment"].object()[key].is_string(): adapter.env[key] = root.object()["host_environment"].object()[key].string()
+            adapter.env["FALA_PARENT_RUN_ID"] = run_id
+            adapter.env["FALA_PARENT_PROCESS_ID"] = proc.id
         else:
             raise Error("fala.host_run_package_json: unsupported adapter kind: " + kind)
         bindings.append(AdapterBinding(process_id=proc.id, adapter=adapter^, run_id=run_id))
