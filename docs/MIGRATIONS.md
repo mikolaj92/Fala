@@ -17,6 +17,26 @@ Migration kinds:
   definitions and should use new kind ids when semantics change.
 - Domain pack migration: domain packs own their domain-specific mapping changes.
 
+## Active graph compatibility
+
+Runs persist the canonical expanded graph/package and path fingerprints. Resume
+must compare durable identity with the current graph: identical fingerprints
+resume directly; semantically additive metadata/new unreachable nodes are
+`compatible_additive`; terminal, timeout, retry, or runtime-policy changes
+`require_explicit_migration`; removing/changing nodes, gates, edges, conditions,
+capabilities, or adapters is `forbidden_for_active_run` without restart and a
+reviewed migration.
+
+An explicit migration manifest carries old/new fingerprints, complete
+`process_map` and `terminal_map`, and `historical_graph_ref`. Migration validates
+all IDs before beginning, renames state atomically, updates run identity, and
+writes one idempotent `graph.migrate` command plus `graph.migrated` audit event.
+Unknown IDs or partial maps fail without mutation. The historical expanded graph
+reference remains in run metadata so `trace`/`explain` can use the topology that
+actually governed earlier events. Waiting, retrying, succeeded upstream, and
+child-reference payloads are state values and remain attached to their mapped
+process rows.
+
 Policy:
 
 1. Additive SQLite changes get a new runtime backend schema version.

@@ -31,6 +31,7 @@ from .effect_protocol import EffectIntent, EffectObservation, EffectDecision, re
 from .durable_subprocess import wait_durable_subprocess
 from .execution_metadata import validate_usage_json, provenance_json, aggregate_usage
 from .context_policy import ResolvedContext, resolve_context
+from .graph_compatibility import classify_graph_change, assert_resume_compatible, migrate_active_run
 from .journal import (
     RunRow, RunRecord, CommandRow, CommandResult, EventRow, ProcessRow,
     NativeJournal,
