@@ -5,6 +5,7 @@ from std.os import remove
 from std.pathlib import Path, cwd
 from fala import AdapterSpec, EffectorRequest, NativeFunctionRegistry, execute_subprocess
 from fala.reactions import sha256_bytes
+from fala.effector_protocol import result_message
 from fala.journal import NativeJournal
 from fala.native_driver import drive_once
 
@@ -47,6 +48,8 @@ def main() raises:
         command.append("success")
         var adapter = AdapterSpec.subprocess(command)
         adapter.env["SECRET"] = "top-secret"
+        var fep_result = result_message("msg:fixture", "run-smoke:subprocess-smoke", 1, values_json="{\"ok\":true,\"secret\":\"top-secret\"}")
+        adapter.env["FEP_RESULT"] = fep_result
         var request = EffectorRequest("subprocess-smoke", adapter, "impulse", "{\"value\":1}", "{}", root, run_id="run-smoke")
         var result = execute_subprocess(request)
         _check(result.success and result.error.is_ok(), "successful result")
@@ -60,10 +63,11 @@ def main() raises:
         short_command.append("-c")
         short_command.append(
             "printf \"short=$SHORT_SECRET\\n\" >&1; printf \"short=$SHORT_SECRET\\n\" >&2; "
-            + "printf '{\"ok\":true}\\n' > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
+            + "printf '%s' \"$FEP_RESULT\" > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
         )
         var short_adapter = AdapterSpec.subprocess(short_command)
         short_adapter.env["SHORT_SECRET"] = "shrt"
+        short_adapter.env["FEP_RESULT"] = fep_result
         var short_result = execute_subprocess(
             EffectorRequest("subprocess-short-secret", short_adapter, "impulse", "{}", "{}")
         )
@@ -138,10 +142,11 @@ def main() raises:
         unicode_command.append(
             "printf 'sekret=top-secret żółć héllo 世界\\n' >&1; "
             + "printf 'err top-secret ąę\\n' >&2; "
-            + "printf '{\"ok\":true}\\n' > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
+            + "printf '%s' \"$FEP_RESULT\" > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
         )
         var unicode_adapter = AdapterSpec.subprocess(unicode_command)
         unicode_adapter.env["SECRET"] = "top-secret"
+        unicode_adapter.env["FEP_RESULT"] = fep_result
         var unicode_result = execute_subprocess(
             EffectorRequest("subprocess-unicode", unicode_adapter, "impulse", "{}", "{}", root)
         )

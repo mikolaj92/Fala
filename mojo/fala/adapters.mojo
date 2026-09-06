@@ -9,6 +9,7 @@ from std.os import getenv, makedirs, remove
 from .json import canonical_json_text, quote_json_string as _json_quoted
 from .native_process_host import ProcessHost, start as start_native_process
 from .reactions import sha256_bytes
+from .effector_protocol import validate_message
 
 struct AdapterKind(Copyable, Movable):
     var value: String
@@ -690,12 +691,10 @@ def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, Str
     var output_text = _read_text_or_empty(boundary.output_path)
     if output_text == "": return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_invalid_result("result.json is empty or unreadable"))
     try:
-        var parsed = Value(parse_string=output_text)
-        if not parsed.is_object(): return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_invalid_result("result.json must contain an object"))
         # Keep structured effector output intact: env substring redaction is for
         # operator-facing streams only. Redacting result.json corrupts digests/URIs
         # (e.g. sha256 fragments that collide with short env values) — #120.
-        var output = canonical_json_text(output_text)
+        var output = validate_message(output_text, "effector.result")
         var metadata = "{\"pid\":" + String(pid) + ",\"signal\":" + String(signal) + "}"
         var success_result = EffectorResult(success=True, output_json=output, stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json=metadata, error=AdapterError.none())
         return success_result^

@@ -13,6 +13,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from .fep import validate
+
 EffectorHandler = Callable[[dict[str, Any]], dict[str, Any]]
 
 
@@ -138,6 +140,7 @@ def write_result(
     output_dir = source_env.get("FALA_EFFECTOR_OUTPUT_DIR")
     if not output_dir:
         raise RuntimeError("FALA_EFFECTOR_OUTPUT_DIR is required")
+    result = validate(result, "effector.result")
     path = Path(output_dir) / "result.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

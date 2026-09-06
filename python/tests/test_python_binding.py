@@ -100,16 +100,20 @@ def test_sdk_run_manifest_effector(tmp_path, monkeypatch) -> None:
     manifest = tmp_path / "manifest.json"
     out_dir = tmp_path / "out"
     out_dir.mkdir()
-    manifest.write_text(json.dumps({"input": {"x": 1}, "config": {}}), encoding="utf-8")
+    from fala.fep import build_result, parse
+
+    request_path = Path(__file__).parents[2] / "conformance/fep-v1/request.valid.json"
+    manifest.write_text(request_path.read_text(), encoding="utf-8")
     monkeypatch.setenv("FALA_EFFECTOR_MANIFEST", str(manifest))
     monkeypatch.setenv("FALA_EFFECTOR_OUTPUT_DIR", str(out_dir))
 
     def handler(m: dict) -> dict:
-        return sdk.output(values={"echo": sdk.input_values(m)})
+        return build_result(m, values={"echo": sdk.input_values(m)})
 
     assert sdk.run_manifest_effector(handler) == 0
     result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
-    assert result["values"]["echo"]["x"] == 1
+    assert result["values"]["echo"]["text"] == "hello"
+    assert parse(json.dumps(result), "effector.result") == result
 
 
 def test_sdk_declared_inputs_excludes_runtime_injected_keys() -> None:

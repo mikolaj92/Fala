@@ -35,7 +35,10 @@ int main(int argc, char **argv) {
     if (strcmp(mode, "success") != 0) return 9;
     result = fopen(result_path, "w");
     if (result == NULL) return 10;
-    (void)fprintf(result, "{\"ok\":true,\"secret\":\"%s\"}\n", secret);
+    /* The smoke supplies a FEP/1 result with a digest; the fixture only transports it. */
+    const char *message = getenv("FEP_RESULT");
+    if (message == NULL) { (void)fclose(result); return 11; }
+    (void)fprintf(result, "%s\n", message);
     (void)fclose(result);
     return 0;
 }

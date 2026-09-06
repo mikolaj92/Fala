@@ -59,8 +59,15 @@ not.
 ## Filesystem compatibility
 
 The default carrier remains `input/manifest.json` to `output/result.json`.
-New executors read/write FEP/1 directly. Existing subprocess packages using the
-legacy unversioned result object remain accepted during migration; they should
-adopt FEP/1 and preserve `request_id` before a future package schema makes it
-mandatory. Journals may persist message and causation IDs as metadata; these
-IDs never include filesystem paths or transport identity.
+Every `output/result.json` must validate as a FEP/1 `effector.result`, including
+its message digest and causation. Bare/unversioned JSON objects are rejected
+with `adapter_invalid_result` (a missing `protocol` is reported at `/protocol`),
+even when the subprocess exits successfully. There is no legacy result fallback.
+The Python SDK's `write_result` likewise validates before writing; handlers used
+with `run_manifest_effector` must return a complete FEP/1 result, not just the
+payload produced by `sdk.output`. For a FEP/1 request, use `fala.fep.build_result`
+to construct that result while preserving `request_id`.
+
+This result requirement does not change the input manifest transport or schema.
+Journals may persist message and causation IDs as metadata; these IDs never
+include filesystem paths or transport identity.
