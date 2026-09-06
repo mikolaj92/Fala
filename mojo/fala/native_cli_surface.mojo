@@ -481,6 +481,3 @@ def dispatch_native_command(command: String) raises -> String:
 
 from .native_cli_help import cli_surface_help
 
-def dispatch_command(command: String) raises -> String:
-    return dispatch_native_command(command)
-
