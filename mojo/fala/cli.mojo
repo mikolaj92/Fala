@@ -20,10 +20,6 @@ def _shell_quote(value: String) -> String:
     result += "'"
     return result
 
-def dispatch_command(command: String) raises -> String:
-    """Compatibility entrypoint retained for embedded callers."""
-    return dispatch_native_command(command)
-
 
 def main() raises:
     var args = argv()

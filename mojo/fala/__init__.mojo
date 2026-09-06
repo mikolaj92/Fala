@@ -136,7 +136,7 @@ from .reaction_effects import (
     materialize_local_reaction_effect,
 )
 from .bridge_transport import BridgeTransportResult, deliver_local_bridge, deliver_local_bridge_delivery
-from .native_cli_surface import cli_surface_help, dispatch_native_command, dispatch_command
+from .native_cli_surface import cli_surface_help, dispatch_native_command
 from .migration import MigrationReport, legacy_to_native_json, migrate_package_json
 
 # Event-stream core — memory journal path without SQLite.
