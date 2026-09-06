@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Align product version stamps in README.md, pixi.toml,
+  docs/FALA_ARCHITECTURE_STATUS.md, and src/README.md with pyproject.toml
+  (0.7.36), restoring `src/check_stamps.py` validation (#222).
+
 ## 0.7.33
 
 - Include the EmberJson Mojo 1.0 compatibility patch in built wheels so clean
