@@ -3,7 +3,9 @@ from std.ffi import CStringSlice, c_int, external_call
 from std.memory import UnsafePointer
 from std.pathlib import Path
 from fala.json import parse_json
-from fala.native_cli_surface import _count, _word, _homeostat_domain_values, dispatch_native_command
+from fala.native_cli_parse import _count, _word
+from fala.native_cli_lifecycle import _homeostat_domain_values
+from fala.native_cli_surface import dispatch_native_command
 from fala.schema import initialize_native_schema
 from fala.domain import BridgeDelivery, EventRef, Impulse, RuntimeBudget, RuntimeRef, RunRef
 from fala.domain_store import NativeDomainStore
