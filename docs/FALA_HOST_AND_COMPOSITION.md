@@ -2,9 +2,9 @@
 
 **Status:** product decision (2026-07).
 
-**Single engine: Mojo.** There is no dual-runtime product and no CPython
-engine tree. The optional `python/fala` package is a thin JSON host binding to
-the Mojo engine, not another journal, driver, or runtime implementation.
+**Single engine: Mojo.** The optional `python/fala` package is a thin JSON host
+binding to the Mojo engine, not another journal, driver, or runtime
+implementation.
 The official Mojo 1.0 bridge is `PyInit_*` + `PythonModuleBuilder`;
 `ensure_native` stays because `import mojo.importer` cannot pass package
 import paths.
@@ -202,8 +202,8 @@ The wheel ships `python/fala` as a convenience boundary over the authoritative
 Mojo engine. `host_drive` / `host_drive_json` and `open_memory` drive the memory
 path; `open_sqlite`, `host_run_package`, and `delete_terminal_run` cross a JSON
 boundary into the native Mojo extension for durable hosting. `MemoryHost` is a
-small builder around the memory path. None of these APIs creates a CPython
-engine or restores the removed `python_function` adapter.
+small builder around the memory path. None of these APIs duplicates the engine
+or restores the removed `python_function` adapter.
 
 The `host_run_package` binding uses an empty native-function registry; a package
 whose selected path requires `native_function` therefore cannot execute through

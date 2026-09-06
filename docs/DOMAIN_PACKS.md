@@ -27,7 +27,7 @@ engine. Host/integration examples are:
 - Takt: `examples/takt-integration/` (Takt 0.2+).
 
 The host chooses the sibling checkout and owns process execution. There is no
-Python engine path, fleet identity, or shared journal.
+fleet identity or shared journal.
 
 ## Shared rules
 

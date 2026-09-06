@@ -69,8 +69,8 @@ in [`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md).
 
 The engine became Mojo-native in 0.3 to keep one authoritative implementation
 of command/event transactions, claims, and process supervision. The former
-CPython engine, runtime service, Python adapter, and fleet surface were removed
-rather than maintained as a second semantics. Python returned incrementally as
+runtime service, Python adapter, and fleet surface were removed rather than
+maintained as a second semantics. Python returned incrementally as
 a deliberately thin host boundary: memory hosting in 0.5, subprocess-effector
 SDK and SQLite opening in 0.6, and durable package hosting in 0.7. The binding
 serializes requests into Mojo; it does not duplicate the engine.
@@ -96,7 +96,7 @@ release chronology remains in [`CHANGELOG.md`](../CHANGELOG.md).
 | `vendor/` | Gitignored de-vendored Mojo dependencies (`EmberJson`, `sqlite.fire`) |
 
 The distribution ships an **optional thin Python host binding**. There is no
-CPython engine/product runtime and no Python engine demo tree.
+second product runtime and no Python demo tree.
 
 Fala has no web application or frontend asset surface. Authentication, session,
 account, admin, and platform chrome are outside this product boundary; the
