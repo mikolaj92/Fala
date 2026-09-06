@@ -79,7 +79,7 @@ Python subprocesses may use `fala.sdk` to read
 reactions, regulation, and config, then write
 `FALA_EFFECTOR_OUTPUT_DIR/result.json`. These helpers do not expose manifest
 adapter metadata. This is a helper for the wire contract, not a `python_function`
-adapter or a CPython engine.
+adapter.
 
 See [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) for claims and leases,
 [`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md) for transaction invariants, and
