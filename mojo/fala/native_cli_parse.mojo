@@ -564,3 +564,15 @@ def _string_array(values: List[String]) -> String:
         result += _quote(value)
     result += "]"
     return result
+
+
+def _integer_option(command: String, name: String, default: Int) raises -> Int:
+    var raw = _flag(command, name, "")
+    if raw == "": return default
+    try:
+        var parsed = parse_json(raw)
+        if parsed.value.is_int(): return Int(parsed.value.int())
+        if parsed.value.is_uint(): return Int(parsed.value.uint())
+    except err:
+        pass
+    raise Error(String(SQLiteError(code=2, message="argument_error: invalid integer value for " + name)))

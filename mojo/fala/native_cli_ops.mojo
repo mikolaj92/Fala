@@ -1,9 +1,13 @@
-"""Native CLI operational maintenance, projection, and bridge commands."""
+"""Native CLI database, maintenance, projection, bridge, and rehearsal commands."""
 from std.collections import List
 from std.pathlib import Path, cwd
-from std.os import remove
+from std.os import makedirs, remove
 from std.ffi import CStringSlice, c_int, external_call
-from fala.sqlite import SQLiteError
+from fala.sqlite import Connection, SQLiteError
+from fala.schema import initialize_native_schema, SCHEMA_VERSION
+from fala.domain_store import NativeDomainStore
+from fala.graph_rehearsal import rehearse_graph
+from fala.native_cli_inspect import _status
 from fala.json import parse_json, canonical_json_text, quote_json_string as _quote
 from fala.domain import Impulse, RuntimeBudget, BridgeDelivery, EventRef, RuntimeRef, RunRef
 from fala.ops_maintenance import (
@@ -16,7 +20,7 @@ from fala.bridge_transport import deliver_local_bridge
 from emberjson import Value, Object, to_string
 from fala.native_cli_parse import (
     _safe, _flag, _has_option, _validate, _bool_option, _maintenance_number,
-    _maintenance_integer, _path,
+    _maintenance_integer, _path, _parent_directory,
 )
 
 def _count_json(counts: RunDeleteCounts) -> String:
@@ -308,3 +312,41 @@ def _bridge_deliver(command: String) raises -> String:
         delivery_key, import_key,
     )
     return "{\"ok\":true,\"runtime\":\"mojo\",\"delivered\":" + result.source_delivery.to_json() + ",\"imported\":" + result.imported_delivery.to_json() + ",\"delivery_replayed\":" + ("true" if result.source_replayed else "false") + ",\"import_replayed\":" + ("true" if result.imported_replayed else "false") + "}"
+
+
+def _db_status(command: String) raises -> String:
+    var path = _path(command)
+    if _has_option(command, "--ensure-schema"): _ = initialize_database(path)
+    return _status(path)
+
+
+def _rehearse(command: String) raises -> String:
+    return rehearse_graph(_flag(command, "--package"), _flag(command, "--fixture"), _flag(command, "--path-id"), _flag(command, "--journal"), _flag(command, "--report"), _flag(command, "--run-id", "rehearsal"))
+
+
+def _init(command: String) raises -> String:
+    var db_path = _path(command)
+    var reaction_root = _flag(command, "--reaction-root", ".fala/reactions")
+    if not _safe(reaction_root):
+        raise Error(String(SQLiteError(code=2, message="unsafe_path: invalid reaction root path")))
+    try:
+        makedirs(Path(_parent_directory(db_path)), exist_ok=True)
+        makedirs(Path(reaction_root) / "blobs" / "sha256", exist_ok=True)
+        _ = initialize_database(db_path)
+    except err:
+        raise Error(String(SQLiteError(code=1, message="init failed: " + String(err))))
+    return "{\"ok\":true,\"runtime\":\"mojo\",\"db\":" + _quote(db_path) + ",\"reaction_root\":" + _quote(reaction_root) + ",\"schema_version\":" + String(SCHEMA_VERSION) + "}"
+
+
+def initialize_database(path: String) raises -> String:
+    var connection = Connection(path)
+    initialize_native_schema(connection)
+    connection.close()
+    return "{\"ok\":true,\"runtime\":\"mojo\",\"database\":" + _quote(path) + "}"
+
+
+def _vacuum(path: String) raises -> String:
+    var connection = Connection(path)
+    connection.execute("VACUUM")
+    connection.close()
+    return "{\"ok\":true,\"runtime\":\"mojo\",\"database\":" + _quote(path) + ",\"vacuumed\":true}"

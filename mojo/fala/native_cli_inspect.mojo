@@ -1,12 +1,15 @@
 """Read-only native CLI inspection, listing, event validation, and trace helpers."""
 from std.collections import List
 from fala.journal import NativeJournal
+from fala.schema import initialize_native_schema, SCHEMA_VERSION, table_names, SchemaStatus, schema_status
+from fala.graph_tools import graph_expand, graph_validate, graph_fingerprint, graph_diff
+from fala.explain import explain_run
 from fala.sqlite import Connection, Statement, SQLiteError
 from fala.json import parse_json, quote_json_string as _quote
 from fala.native_driver import diagnose_waits, observe_run_boundary
 from emberjson import Value, to_string
 from fala.native_cli_parse import (
-    _flag, _validate, _bool_option, _limit, _after_sequence,
+    _flag, _validate, _bool_option, _limit, _after_sequence, _path,
 )
 
 def _text(mut stmt: Statement, index: Int) raises -> String:
@@ -563,3 +566,84 @@ def _trace(path: String, command: String) raises -> String:
     trace += ",\"processes\":" + processes + ",\"homeostats\":" + homeostats
     trace += ",\"projections\":" + projections + "}"
     return "{\"ok\":true,\"runtime\":\"mojo\",\"trace\":" + trace + "}"
+
+
+def _graph(command: String, operation: String) raises -> String:
+    if operation == "expand": return "{\"graph\":" + graph_expand(_flag(command, "--package")) + ",\"ok\":true,\"runtime\":\"mojo\"}"
+    if operation == "validate":
+        var report = graph_validate(_flag(command, "--package"))
+        return "{\"ok\":" + ("true" if report.find("\"valid\":true") >= 0 else "false") + ",\"report\":" + report + ",\"runtime\":\"mojo\"}"
+    if operation == "fingerprint": return "{\"fingerprint\":" + _quote(graph_fingerprint(_flag(command, "--package"))) + ",\"ok\":true,\"runtime\":\"mojo\"}"
+    return "{\"diff\":" + graph_diff(_flag(command, "--before"), _flag(command, "--after")) + ",\"ok\":true,\"runtime\":\"mojo\"}"
+
+
+def _explain(command: String) raises -> String:
+    return explain_run(_path(command), _flag(command, "--package"), _flag(command, "--run-id"), _flag(command, "--process-id"), _flag(command, "--terminal"))
+
+
+def _bridge_rows(command: String, resource: String) raises -> String:
+    var table = "bridge_outbox"
+    if _flag(command, "--box", "outbox") == "inbox": table = "bridge_inbox"
+    return _rows(_path(command), resource, table, command)
+
+
+def _schema_impulse() -> String:
+    return "{\"ok\":true,\"runtime\":\"mojo\",\"schema\":\"impulse\"}"
+
+
+def _schema_model() -> String:
+    var tables = "["
+    var first = True
+    for name in table_names():
+        if not first: tables += ","
+        first = False
+        tables += _quote(name)
+    tables += "]"
+    return "{\"ok\":true,\"runtime\":\"mojo\",\"schema\":{\"version\":" + String(SCHEMA_VERSION) + ",\"tables\":" + tables + "}}"
+
+
+def _schema_status_json(status: SchemaStatus) -> String:
+    var missing = "["
+    var first = True
+    for name in status.missing_tables:
+        if not first: missing += ","
+        first = False
+        missing += _quote(name)
+    missing += "]"
+    var process_id = "false"
+    if status.runtime_events_has_process_id: process_id = "true"
+    var event_schema = "false"
+    if status.runtime_events_has_schema_version: event_schema = "true"
+    var current = "false"
+    if status.is_current(): current = "true"
+    return "{\"current_version\":" + String(status.current_version) + ",\"latest_version\":" + String(status.latest_version) + ",\"user_version\":" + String(status.user_version) + ",\"migration_version\":" + String(status.migration_version) + ",\"missing_tables\":" + missing + ",\"runtime_events_has_process_id\":" + process_id + ",\"runtime_events_has_schema_version\":" + event_schema + ",\"current\":" + current + "}"
+
+
+def _migration_metadata(mut connection: Connection) raises -> String:
+    var table = connection.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
+    if not table.step():
+        table.close()
+        return "null"
+    table.close()
+    var stmt = connection.query("SELECT id,version,name,applied_at FROM schema_migrations WHERE id='runtime_backend'")
+    if not stmt.step():
+        stmt.close()
+        return "null"
+    var result = "{\"id\":" + _quote(stmt.column_text(0)) + ",\"version\":" + String(stmt.column_int(1)) + ",\"name\":" + _quote(stmt.column_text(2)) + ",\"applied_at\":" + _quote(stmt.column_text(3)) + "}"
+    stmt.close()
+    return result
+
+
+def _status(path: String) raises -> String:
+    var connection = Connection(path)
+    var status = schema_status(connection)
+    var current = "false"
+    if status.is_current(): current = "true"
+    var user_version = status.user_version
+    var status_json = _schema_status_json(status^)
+    var tables = 0
+    var count = connection.query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    if count.step(): tables = count.column_int(0)
+    var migration = _migration_metadata(connection)
+    connection.close()
+    return "{\"ok\":true,\"runtime\":\"mojo\",\"database\":" + _quote(path) + ",\"schema_version\":" + String(user_version) + ",\"expected_version\":" + String(SCHEMA_VERSION) + ",\"table_count\":" + String(tables) + ",\"schema\":" + status_json + ",\"migration\":" + migration + ",\"current\":" + current + "}"

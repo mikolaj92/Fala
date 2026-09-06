@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[2]
 FALA = ROOT / "mojo" / "fala"
@@ -46,4 +47,50 @@ def test_native_cli_surface_is_the_single_public_dispatcher() -> None:
     assert "from fala.native_cli_surface import dispatch_native_command" in cli
     assert "output = dispatch_native_command(command)" in cli
     assert "from .native_cli_surface import cli_surface_help, dispatch_native_command" in package
-    assert len(surface.splitlines()) < 700
+    assert len(surface.splitlines()) <= 250
+
+
+def test_native_cli_surface_only_routes_commands() -> None:
+    surface = (FALA / "native_cli_surface.mojo").read_text(encoding="utf-8")
+
+    assert re.findall(r"^\s*def (\w+)\(", surface, re.MULTILINE) == [
+        "dispatch_native_command"
+    ]
+    imports = re.findall(r"^from ([\w.]+) import", surface, re.MULTILINE)
+    assert imports
+    assert all(module.startswith("fala.native_cli_") for module in imports)
+    # Response encoding and storage orchestration belong to command owners,
+    # including implementations formerly inlined inside dispatch branches.
+    assert r'{\"' not in surface
+    assert "initialize_database(status_path)" not in surface
+    assert "initialize_database(doctor_path)" not in surface
+
+
+def test_remaining_native_cli_commands_have_explicit_owners() -> None:
+    owners = {
+        "parse": ("_integer_option",),
+        "inspect": (
+            "_schema_model", "_schema_impulse", "_schema_status_json",
+            "_migration_metadata", "_status", "_graph", "_explain", "_bridge_rows",
+        ),
+        "ops": ("_init", "initialize_database", "_vacuum", "_db_status", "_rehearse"),
+        "lifecycle": (
+            "_create", "_transition", "_impulse_create", "_process_schedule",
+            "_process_transition", "_association_append", "_reaction_blob",
+            "_reaction_record", "_homeostat_transition", "_homeostat_domain_values",
+            "_homeostat_domain",
+        ),
+    }
+    sources = {
+        path.stem: path.read_text(encoding="utf-8")
+        for path in FALA.glob("native_cli_*.mojo")
+    }
+    for owner, functions in owners.items():
+        for function in functions:
+            actual = [
+                name for name, source in sources.items()
+                if f"def {function}(" in source
+            ]
+            assert actual == [f"native_cli_{owner}"], function
+    for owner in ("parse", "inspect", "ops", "lifecycle"):
+        assert "native_cli_surface import" not in sources[f"native_cli_{owner}"]
