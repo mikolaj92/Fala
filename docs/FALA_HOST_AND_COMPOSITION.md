@@ -139,6 +139,12 @@ closed; production argv and native functions are never called. The resulting
 journal remains available to `explain`, while the canonical report records the
 fingerprint, terminal, fixture-only policy, attempts/event order, and status.
 
+Effector-level `output_schema` is retained during rehearsal. Payload validation
+and typed terminal selection are shared with production; see
+[output contracts](OUTPUT_CONTRACTS.md) for the supported schema subset and
+remaining contract-first/coverage work. A passing fixture is not yet a proof
+that every declared variant has a fixture or handler.
+
 ### Declarative child paths without multi-runtime
 
 A package may author `adapter.kind = "child_path"`. The loader requires a

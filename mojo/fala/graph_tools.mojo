@@ -9,6 +9,7 @@ from std.pathlib import Path
 from fala.json import canonical_json_text, quote_json_string
 from fala.package import load_package_json, load_package_toml
 from fala.native_package import PackageManifest, PackageCorrelationPath, PackageEffector, serialize_package_json
+from fala.output_variants import finite_output_variants
 from fala.reactions import sha256_bytes
 
 
@@ -104,6 +105,65 @@ def graph_diff(before_path: String, after_path: String) raises -> String:
     return canonical_json_text("{\"changes\":" + changes + ",\"equal\":" + ("true" if first else "false") + "}")
 
 
+
+
+def _variant_covered(path: PackageCorrelationPath, effector: PackageEffector, value: String) -> Bool:
+    for candidate in path.effectors:
+        if effector.id in candidate.conduction:
+            if candidate.when_json == "": return True
+            if candidate.when_json.find(value) >= 0: return True
+    for terminal in path.terminals:
+        if terminal.source_effector == effector.id:
+            if terminal.when_json == "": return True
+            if terminal.when_json.find(value) >= 0: return True
+    return False
+
+
+def _coverage_diagnostic(path_index: Int, graph: PackageCorrelationPath, effector_index: Int, effector: PackageEffector) raises -> String:
+    if effector.contract_mode == "legacy": return ""
+    if not effector.output_schema_declared:
+        return "{\"code\":\"contract_coverage_missing\",\"message\":\"output contract is required; declare output_schema or set contract_mode=legacy\",\"path\":\"/correlation_paths/" + String(path_index) + "/effectors/" + String(effector_index) + "\",\"effector\":" + quote_json_string(effector.id) + "}"
+    var schema = Value(parse_string=effector.output_schema_json)
+    if not schema.is_object() or len(schema.object()) == 0:
+        return "{\"code\":\"contract_coverage_missing\",\"message\":\"a non-empty output_schema is required; {} is not a contract\",\"path\":\"/correlation_paths/" + String(path_index) + "/effectors/" + String(effector_index) + "/output_schema\",\"effector\":" + quote_json_string(effector.id) + "}"
+    var variants = finite_output_variants(schema)
+    if not variants.proven: return ""
+    for value in variants.values_json:
+        if not _variant_covered(graph, effector, value):
+            return "{\"code\":\"contract_coverage_missing\",\"message\":\"output variant is not covered\",\"path\":\"/correlation_paths/" + String(path_index) + "/effectors/" + String(effector_index) + "/output_schema\",\"effector\":" + quote_json_string(effector.id) + ",\"field\":" + quote_json_string(variants.field_path) + ",\"variant\":" + quote_json_string(value) + "}"
+    return ""
+
+
+def _coverage_report(manifest: PackageManifest) raises -> String:
+    var diagnostics = String("[")
+    var first = True
+    var guaranteed = True
+    var unverified = String("[")
+    var unverified_first = True
+    for path_index in range(len(manifest.correlation_paths)):
+        var graph = manifest.correlation_paths[path_index].copy()
+        for effector_index in range(len(graph.effectors)):
+            var effector = graph.effectors[effector_index].copy()
+            var needs_verification = effector.contract_mode == "legacy"
+            if effector.contract_mode != "legacy" and effector.output_schema_declared:
+                var declared_schema = Value(parse_string=effector.output_schema_json)
+                var declared_variants = finite_output_variants(declared_schema)
+                needs_verification = not declared_variants.proven
+            if needs_verification:
+                guaranteed = False
+                if not unverified_first: unverified += ","
+                unverified += quote_json_string(effector.id)
+                unverified_first = False
+            var diagnostic = _coverage_diagnostic(path_index, graph, effector_index, effector)
+            if diagnostic != "":
+                if not first: diagnostics += ","
+                diagnostics += diagnostic
+                first = False
+    diagnostics += "]"
+    unverified += "]"
+    return "{\"diagnostics\":" + diagnostics + ",\"guaranteed\":" + ("true" if guaranteed else "false") + ",\"unverified\":" + unverified + "}"
+
+
 def graph_validate(path: String) -> String:
     """Return a stable validation report with source JSON pointers."""
     try:
@@ -134,7 +194,14 @@ def graph_validate(path: String) -> String:
                     if terminal.source_effector == effector.id: closed = True
                 if not closed:
                     return "{\"diagnostics\":[{\"code\":\"graph.open_wait\",\"message\":\"manual wait has no downstream or terminal closure\",\"path\":\"/correlation_paths/" + String(path_index) + "/effectors/" + String(effector_index) + "/adapter\"}],\"valid\":false}"
-        return "{\"diagnostics\":[],\"valid\":true}"
+        var coverage = _coverage_report(manifest)
+        var valid = coverage.find("\"diagnostics\":[]") >= 0
+        var guaranteed = coverage.find("\"guaranteed\":true") >= 0
+        var unverified_start = coverage.find("\"unverified\":")
+        var unverified = "[]"
+        if unverified_start >= 0: unverified = String(coverage[byte=unverified_start + 13:coverage.byte_length() - 1])
+        if valid: return "{\"diagnostics\":[],\"valid\":true,\"coverage_guaranteed\":" + ("true" if guaranteed else "false") + ",\"unverified\":" + unverified + "}"
+        return "{\"diagnostics\":" + coverage + ",\"valid\":false}"
     except err:
         var message = String(err)
         var at = message.find(" at ")

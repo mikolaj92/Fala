@@ -150,6 +150,8 @@ def _authored_json(text: String, path: String, reject_injected: Bool = False) ra
     return canonical_json_text(to_string(authored^))
 def _validate_output_schema(text: String, path: String) raises:
     """Validate the structural JSON Schema subset accepted by native scheduling."""
+    from fala.json_schema import validate_schema
+    validate_schema(Value(parse_string=text), path)
     var parsed: Value
     try:
         parsed = Value(parse_string=text)
@@ -300,12 +302,16 @@ def _project_output(output: Value, output_schema_json: String) raises -> Value:
     var source = Object(capacity=len(output.object()))
     for pair in output.object().items():
         if pair.key != "adapter": source[pair.key] = pair.value.copy()
+    if "protocol" in source and "message_kind" in source and "values" in source and source["values"].is_object():
+        var domain = source["values"].object().copy()
+        source = domain^
     var schema = Value(parse_string=output_schema_json)
-    if schema.is_object() and "properties" in schema.object():
-        var properties = schema.object()["properties"].copy()
-        if properties.is_object() and len(properties.object()) > 0:
-            var projected = Object(capacity=len(properties.object()))
-            for pair in properties.object().items():
+    from fala.journal import schema_projection_properties
+    if schema.is_object():
+        var properties = schema_projection_properties(schema, Value(source.copy()))
+        if len(properties) > 0:
+            var projected = Object(capacity=len(properties))
+            for pair in properties.items():
                 if pair.key in source: projected[pair.key] = source[pair.key].copy()
             return Value(projected^)
     if "values" in source and source["values"].is_object():

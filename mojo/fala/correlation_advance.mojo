@@ -291,12 +291,16 @@ def _project_output(output: Value, output_schema_json: String) raises -> Value:
     var source = Object(capacity=len(output.object()))
     for pair in output.object().items():
         if pair.key != "adapter": source[pair.key] = pair.value.copy()
+    if "protocol" in source and "message_kind" in source and "values" in source and source["values"].is_object():
+        var domain = source["values"].object().copy()
+        source = domain^
     var schema = Value(parse_string=output_schema_json)
-    if schema.is_object() and "properties" in schema.object():
-        var properties = schema.object()["properties"].copy()
-        if properties.is_object() and len(properties.object()) > 0:
-            var projected = Object(capacity=len(properties.object()))
-            for pair in properties.object().items():
+    from fala.journal import schema_projection_properties
+    if schema.is_object():
+        var properties = schema_projection_properties(schema, Value(source.copy()))
+        if len(properties) > 0:
+            var projected = Object(capacity=len(properties))
+            for pair in properties.items():
                 if pair.key in source: projected[pair.key] = source[pair.key].copy()
             return Value(projected^)
     if "values" in source and source["values"].is_object():
@@ -345,83 +349,12 @@ def _schema_codepoint_length(value: String) -> Int:
         count += 1
     return count
 def _validate_projected_schema(value: Value, schema: Value, path: String) raises:
-    """Validate the small JSON-Schema subset used by native conduction."""
-    if not schema.is_object(): return
-    var schema_object = schema.object().copy()
-    if "const" in schema_object:
-        var expected_const = schema_object["const"].copy()
-        if not json_values_equal(value, expected_const^):
-            raise Error("correlation.advance.invalid_output at " + path + ": output does not match schema const")
-    if "enum" in schema_object:
-        var values = schema_object["enum"].copy()
-        if values.is_array():
-            var enum_match = False
-            for candidate in values.array():
-                if json_values_equal(value, candidate):
-                    enum_match = True
-                    break
-            if not enum_match:
-                raise Error("correlation.advance.invalid_output at " + path + ": output does not match schema enum")
-    if not _schema_type_matches(value, schema):
-        raise Error("correlation.advance.invalid_output at " + path + ": output does not match schema type")
-    var value_is_number = value.is_int() or value.is_uint() or value.is_float()
-    if value_is_number:
-        var actual_number = _schema_number(value)
-        if "minimum" in schema_object:
-            var minimum = schema_object["minimum"].copy()
-            if minimum.is_int() or minimum.is_uint() or minimum.is_float():
-                if actual_number < _schema_number(minimum):
-                    raise Error("correlation.advance.invalid_output at " + path + ": output is below schema minimum")
-        if "maximum" in schema_object:
-            var maximum = schema_object["maximum"].copy()
-            if maximum.is_int() or maximum.is_uint() or maximum.is_float():
-                if actual_number > _schema_number(maximum):
-                    raise Error("correlation.advance.invalid_output at " + path + ": output exceeds schema maximum")
-    if value.is_string():
-        var string_length = Float64(_schema_codepoint_length(String(value.string())))
-        if "minLength" in schema_object:
-            var min_length = schema_object["minLength"].copy()
-            if (min_length.is_int() or min_length.is_uint()) and string_length < _schema_number(min_length):
-                raise Error("correlation.advance.invalid_output at " + path + ": output is shorter than schema minLength")
-        if "maxLength" in schema_object:
-            var max_length = schema_object["maxLength"].copy()
-            if (max_length.is_int() or max_length.is_uint()) and string_length > _schema_number(max_length):
-                raise Error("correlation.advance.invalid_output at " + path + ": output exceeds schema maxLength")
-    if value.is_array():
-        var item_count = Float64(len(value.array()))
-        if "minItems" in schema_object:
-            var min_items = schema_object["minItems"].copy()
-            if (min_items.is_int() or min_items.is_uint()) and item_count < _schema_number(min_items):
-                raise Error("correlation.advance.invalid_output at " + path + ": output has fewer items than schema minItems")
-        if "maxItems" in schema_object:
-            var max_items = schema_object["maxItems"].copy()
-            if (max_items.is_int() or max_items.is_uint()) and item_count > _schema_number(max_items):
-                raise Error("correlation.advance.invalid_output at " + path + ": output has more items than schema maxItems")
-    if value.is_object() and "required" in schema_object:
-        var required = schema_object["required"].copy()
-        if required.is_array():
-            for key in required.array():
-                if key.is_string() and key.string() not in value.object():
-                    raise Error("correlation.advance.invalid_output at " + path + ": missing required output field " + key.string())
-    if value.is_object() and "additionalProperties" in schema_object:
-        var additional = schema_object["additionalProperties"].copy()
-        if additional.is_bool() and not additional.bool():
-            var properties = Object(capacity=0)
-            if "properties" in schema_object and schema_object["properties"].is_object():
-                properties = schema_object["properties"].object().copy()
-            for pair in value.object().items():
-                if pair.key not in properties:
-                    raise Error("correlation.advance.invalid_output at " + path + ": output contains additional property " + pair.key)
-    if value.is_object() and "properties" in schema_object:
-        var properties = schema_object["properties"].copy()
-        if properties.is_object():
-            for pair in properties.object().items():
-                if pair.key in value.object():
-                    _validate_projected_schema(value.object()[pair.key], pair.value, path + "/" + pair.key)
-    if value.is_array() and "items" in schema_object:
-        var item_schema = schema_object["items"].copy()
-        for index in range(len(value.array())):
-            _validate_projected_schema(value.array()[index], item_schema, path + "/" + String(index))
+    """Use the journal validator for domain variants before projection checks."""
+    from fala.journal import validate_json_schema_value
+    try:
+        validate_json_schema_value(value, schema, path)
+    except err:
+        raise Error("correlation.advance.invalid_output at " + path + ": " + String(err))
 def _reaction_list(output: Value, allowed: List[String]) raises -> String:
     """Validate and filter reaction objects through the native JSON boundary."""
     if not output.is_object():

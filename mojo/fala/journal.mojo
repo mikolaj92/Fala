@@ -10,6 +10,7 @@ from emberjson import Value, Object, to_string
 from fala.json import canonical_json_text, json_values_equal, quote_json_string
 from fala.reactions import content_address_json
 from fala.schema import initialize_native_schema
+from fala.effector_protocol import validate_message
 
 from fala.status import ProcessStatus, RunStatus, can_transition_process, can_transition_run, can_replay_terminal_process
 
@@ -51,8 +52,28 @@ def _schema_type_matches(value: Value, schema: Value) raises -> Bool:
     return False
 
 def validate_json_schema_value(value: Value, schema: Value, path: String) raises:
+    from fala.json_schema import validate_schema
+    validate_schema(schema, path + "/schema")
+    _validate_schema_payload(value, schema, path)
+
+
+def _validate_schema_payload(value: Value, schema: Value, path: String) raises:
     if not schema.is_object(): raise Error("expected schema object")
     var schema_object = schema.object().copy()
+    for keyword in ["oneOf", "anyOf", "allOf"]:
+        if keyword not in schema_object: continue
+        var branches = schema_object[keyword].copy()
+        if not branches.is_array() or len(branches.array()) == 0:
+            raise Error("expected nonempty schema array at " + path + "/" + keyword)
+        var matches = 0
+        for branch in branches.array():
+            try:
+                _validate_schema_payload(value, branch, path)
+                matches += 1
+            except:
+                pass
+        if (keyword == "oneOf" and matches != 1) or (keyword == "anyOf" and matches == 0) or (keyword == "allOf" and matches != len(branches.array())):
+            raise Error("output does not match schema " + keyword + " at " + path)
     if "const" in schema_object:
         var expected_const = schema_object["const"].copy()
         if not json_values_equal(value, expected_const^):
@@ -83,9 +104,13 @@ def validate_json_schema_value(value: Value, schema: Value, path: String) raises
         if "maxLength" in schema_object:
             var maximum = schema_object["maxLength"].copy()
             if (maximum.is_int() or maximum.is_uint()) and string_length > Int(_schema_number(maximum)): raise Error("output exceeds schema maxLength at " + path)
-    if value.is_array() and "items" in schema_object:
-        var item_schema = schema_object["items"].copy()
-        for index in range(len(value.array())): validate_json_schema_value(value.array()[index], item_schema, path + "/" + String(index))
+    if value.is_array():
+        var count = Float64(len(value.array()))
+        if "minItems" in schema_object and count < _schema_number(schema_object["minItems"]): raise Error("output has fewer items than schema minItems at " + path)
+        if "maxItems" in schema_object and count > _schema_number(schema_object["maxItems"]): raise Error("output has more items than schema maxItems at " + path)
+        if "items" in schema_object:
+            var item_schema = schema_object["items"].copy()
+            for index in range(len(value.array())): _validate_schema_payload(value.array()[index], item_schema, path + "/" + String(index))
     if value.is_object() and "required" in schema_object:
         var required = schema_object["required"].copy()
         if required.is_array():
@@ -98,7 +123,24 @@ def validate_json_schema_value(value: Value, schema: Value, path: String) raises
             if pair.key not in properties: raise Error("output contains additional property " + pair.key + " at " + path)
     if value.is_object() and "properties" in schema_object and schema_object["properties"].is_object():
         for pair in schema_object["properties"].object().items():
-            if pair.key in value.object(): validate_json_schema_value(value.object()[pair.key], pair.value, path + "/" + pair.key)
+            if pair.key in value.object(): _validate_schema_payload(value.object()[pair.key], pair.value, path + "/" + pair.key)
+
+
+def schema_projection_properties(schema: Value, value: Value) raises -> Object:
+    """Declared top-level fields, including applicable combinator branches."""
+    var result = Object(capacity=0)
+    if "properties" in schema.object() and schema.object()["properties"].is_object():
+        result = schema.object()["properties"].object().copy()
+    for keyword in ["oneOf", "anyOf", "allOf"]:
+        if keyword not in schema.object(): continue
+        for branch in schema.object()[keyword].array():
+            var matched = True
+            try: validate_json_schema_value(value, branch, "/projection")
+            except: matched = False
+            if not matched: continue
+            var properties = schema_projection_properties(branch, value)
+            for pair in properties.items(): result[pair.key] = pair.value.copy()
+    return result^
 
 
 @fieldwise_init
@@ -731,6 +773,7 @@ struct NativeJournal(Movable):
         while stmt.step():
             result.append(EventRow(run_id=self._text(stmt,0), sequence=stmt.column_int(1), id=self._text(stmt,2), event_type=self._text(stmt,3), schema_version=stmt.column_int(4), impulse_id=self._text(stmt,5), process_id=self._text(stmt,6), command_id=self._text(stmt,7), actor=self._text(stmt,8), correlation_id=self._text(stmt,9), causation_id=self._text(stmt,10), payload=self._text(stmt,11), created_at=self._text(stmt,12))^)
         return result^
+
     def schedule_process(
         mut self, run_id: String, process_id: String, process_type: String,
         created_at: String, input_json: String = "{}", metadata: String = "{}",
@@ -1065,7 +1108,14 @@ struct NativeJournal(Movable):
             try:
                 var output = Value(parse_string=output_json)
                 var schema = Value(parse_string=current.output_schema_json)
-                validate_json_schema_value(output, schema, "/output_json")
+                var domain_output = output.copy()
+                if output.is_object() and "protocol" in output.object() and "message_kind" in output.object() and output.object()["message_kind"].is_string() and output.object()["message_kind"].string() == "effector.result":
+                    var wire = Object(capacity=len(output.object()))
+                    for pair in output.object().items():
+                        if pair.key != "adapter": wire[pair.key] = pair.value.copy()
+                    _ = validate_message(to_string(Value(wire^)), "effector.result")
+                    domain_output = output.object()["values"].copy()
+                validate_json_schema_value(domain_output, schema, "/output_json")
             except err:
                 raise Error(String(SQLiteError(code=1, message="journal: output does not match output_schema_json: " + String(err))))
         return self._transition_process(run_id, process_id, "succeeded", worker_id, completed_at, output_json, error_json)

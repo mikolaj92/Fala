@@ -49,6 +49,7 @@ from fala.native_driver import (
     AdapterBinding, IncompleteRecoveryResult, recover_incomplete_processes,
 )
 from fala.native_package import serialize_correlation_path_json
+from fala.path_terminal import select_path_terminal
 from fala.reactions import content_address_json, sha256_raw_bytes
 
 # Durable host identity constants for package-driven runs.
@@ -297,7 +298,7 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
             item.conduction.copy(),
             item.timeout_seconds,
             item.config_json,
-            "{}",
+            item.output_schema_json,
             "{\"retry_policy\":\"" + item.retry_policy + "\"}",
             List[String](),
             item.when_json,
@@ -515,35 +516,12 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     effector_results += "}"
     var path_result = String("null")
     if len(package_path_spec.terminals) != 0:
-        var matched = 0
-        var selected_terminal = String("")
-        var selected_values = String("{}")
-        var selected_evidence = String("[]")
-        for terminal in package_path_spec.terminals:
-            for proc in procs:
-                var expected_process = path_id + ":" + terminal.source_effector
-                if proc.id != expected_process or proc.status != terminal.status: continue
-                var envelope = Value(parse_string=proc.output_json if terminal.status == "succeeded" or terminal.status == "skipped" else proc.error_json)
-                var values = envelope.copy()
-                if envelope.is_object() and "values" in envelope.object(): values = envelope.object()["values"].copy()
-                var condition_matches = True
-                if terminal.when_json != "":
-                    var condition = Value(parse_string=terminal.when_json)
-                    var condition_value = _path_value(values.copy(), _obj_string(condition, "path"))
-                    condition_matches = to_string(condition_value) == to_string(condition.object()["equals"])
-                if condition_matches:
-                    validate_json_schema_value(values.copy(), Value(parse_string=terminal.output_schema_json), "/path_result/values")
-                    matched += 1
-                    selected_terminal = terminal.id
-                    selected_values = to_string(values)
-                    if envelope.is_object() and "reactions" in envelope.object() and envelope.object()["reactions"].is_array(): selected_evidence = to_string(envelope.object()["reactions"])
-        if matched == 0:
+        try:
+            var selected = select_path_terminal(package_path_spec, procs, path_id)
+            path_result = "{\"terminal\":" + _quote_json(selected.id) + ",\"values\":" + selected.values_json + ",\"evidence\":" + selected.evidence_json + ",\"path_digest\":" + _quote_json(correlation_path_digest) + "}"
+        except err:
             journal.close()
-            raise Error("fala.host_run_package_json: no declared path terminal matched")
-        if matched > 1:
-            journal.close()
-            raise Error("fala.host_run_package_json: ambiguous declared path terminals")
-        path_result = "{\"terminal\":" + _quote_json(selected_terminal) + ",\"values\":" + selected_values + ",\"evidence\":" + selected_evidence + ",\"path_digest\":" + _quote_json(correlation_path_digest) + "}"
+            raise Error("fala.host_run_package_json: " + String(err))
     journal.close()
 
     var out = (
