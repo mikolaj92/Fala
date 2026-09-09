@@ -1,8 +1,20 @@
 ## Unreleased
 
-- Align product version stamps in README.md, pixi.toml,
-  docs/FALA_ARCHITECTURE_STATUS.md, and src/README.md with pyproject.toml
-  (0.7.36), restoring `src/check_stamps.py` validation (#222).
+## 0.8.0
+
+**Contract-first graph execution and coverage.**
+
+- Add effector output contracts through `output_schema`,
+  `output_contract_ref`, and explicit `contract_mode` legacy opt-out.
+- Validate declared JSON Schema contracts and enforce them at durable
+  completion, correlation advancement, typed terminal selection, and rehearsal.
+- Add graph preflight validation before execution, including dependency cycles,
+  open manual waits, missing finite output-variant coverage, and
+  `coverage_guaranteed` / `unverified` reporting.
+- Extend fixture rehearsal with independent scenarios and fail before execution
+  when a finite output variant has no fixture coverage.
+- Share terminal selection and schema semantics between production and rehearsal.
+- Add Mojo and Python regression coverage plus `docs/OUTPUT_CONTRACTS.md`.
 
 ## 0.7.33
 
