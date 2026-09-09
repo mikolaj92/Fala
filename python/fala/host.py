@@ -16,8 +16,10 @@ import os
 import sys
 import tempfile
 import threading
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TypeVar, TypedDict
+from typing import Any, TypeVar, TypedDict
 
 from fala._build import (
     ensure_native,
@@ -30,9 +32,31 @@ from fala._build import (
 # without serialization: concurrent durable host entrypoints race chdir restore
 # against relative dylib ``dlopen`` (#128).
 _SQLITE_CWD_LOCK = threading.RLock()
+_EXECUTION_LOCK_UNAVAILABLE = (
+    "fala.host_run_package: execution_lock_path is only supported on POSIX hosts"
+)
 _IN_PROCESS_LOCKS_GUARD = threading.Lock()
 _IN_PROCESS_LOCKS: dict[Path, threading.Lock] = {}
 _T = TypeVar("_T")
+
+
+@contextmanager
+def _execution_turn(lock_path: str | Path | None) -> Iterator[None]:
+    if lock_path is None:
+        yield
+        return
+    if os.name != "posix":
+        raise RuntimeError(_EXECUTION_LOCK_UNAVAILABLE)
+    import fcntl
+
+    path = Path(lock_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def host_drive(
@@ -405,6 +429,7 @@ def host_run_package(
     effector_inputs: Mapping[str, Mapping[str, Any]] | None = None,
     effector_configs: Mapping[str, Mapping[str, Any] | str] | None = None,
     command_overrides: Mapping[str, Sequence[str]] | None = None,
+    execution_lock_path: str | Path | None = None,
     max_ticks: int = 32,
     worker_id: str = "python-host",
 ) -> dict[str, Any]:
@@ -422,6 +447,10 @@ def host_run_package(
     placeholder and is returned as empty objects. Malformed stored JSON fails
     closed naming ``run_id``, ``process_id``, and the field, without embedding
     payload text.
+
+    When ``execution_lock_path`` is set, wait for that POSIX lock before creating
+    the native request timestamp or driving the package. This keeps queue wait
+    outside Fala's execution budgets for callers sharing a constrained resource.
     """
     from datetime import datetime, timezone
 
@@ -433,7 +462,6 @@ def host_run_package(
 
     import os
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     request: dict[str, Any] = {
         "db_path": str(db),
         "package_path": str(pkg),
@@ -441,8 +469,8 @@ def host_run_package(
         "run_id": run_id,
         "max_ticks": max_ticks,
         "worker_id": worker_id,
-        "created_at": now,
-        "now": now,
+        "created_at": "",
+        "now": "",
         "lease_expires_at": "2099-01-01T00:00:00Z",
         # Ambient host env for subprocess inherit_env / base keys (#108 / v0.7.6).
         # Mojo materializes these into adapter.env before dispatch.
@@ -494,7 +522,11 @@ def host_run_package(
             raise RuntimeError(f"fala.host_run_package failed: {out!r}")
         return out
 
-    return _with_sqlite_cwd(_call, process_host_library)
+    with _execution_turn(execution_lock_path):
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        request["created_at"] = now
+        request["now"] = now
+        return _with_sqlite_cwd(_call, process_host_library)
 
 
 class MaintenanceRun(TypedDict):

@@ -178,6 +178,78 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert terminal["ping"]["error"] == {}
 
 
+def test_host_run_package_execution_turn_serializes_calls_before_native_drive(
+    tmp_path, monkeypatch
+) -> None:
+    import json
+    import os
+    from multiprocessing import get_context
+    from pathlib import Path
+
+    import pytest
+
+    from fala import host
+
+    if os.name != "posix":
+        pytest.skip("execution_lock_path is POSIX-only")
+
+    library = tmp_path / "process-host.dylib"
+    library.write_bytes(b"placeholder")
+    package = tmp_path / "package.toml"
+    package.write_text("package", encoding="utf-8")
+    context = get_context("fork")
+    active = context.Value("i", 0)
+    maximum = context.Value("i", 0)
+    guard = context.Lock()
+    first_started = context.Event()
+    second_submitted = context.Event()
+    release_first = context.Event()
+
+    class FakeNative:
+        def host_run_package(self, request: str) -> dict[str, object]:
+            run_id = str(json.loads(request)["run_id"])
+            with guard:
+                active.value += 1
+                maximum.value = max(maximum.value, active.value)
+            if run_id == "a":
+                first_started.set()
+                assert release_first.wait(timeout=2)
+            with guard:
+                active.value -= 1
+            return {"ok": True, "run_status": "completed"}
+
+    monkeypatch.setattr(host, "ensure_process_host_library", lambda: library)
+    monkeypatch.setattr(host, "ensure_sqlite_fire_library", lambda: None)
+    monkeypatch.setattr(host, "ensure_native", lambda: FakeNative())
+    monkeypatch.setattr(host, "_with_sqlite_cwd", lambda fn, _library=None: fn())
+    lock_path = tmp_path / "model-turn.lock"
+
+    def drive(run_id: str) -> None:
+        if run_id == "b":
+            second_submitted.set()
+        host.host_run_package(
+            db_path=tmp_path / f"{run_id}.sqlite",
+            package_path=Path(package),
+            path_id="path",
+            run_id=run_id,
+            execution_lock_path=lock_path,
+        )
+
+    first = context.Process(target=drive, args=("a",))
+    first.start()
+    assert first_started.wait(timeout=2)
+    second = context.Process(target=drive, args=("b",))
+    second.start()
+    assert second_submitted.wait(timeout=2)
+    release_first.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert first.exitcode == 0
+    assert second.exitcode == 0
+    assert maximum.value == 1
+
+
 def test_host_run_package_returns_typed_path_terminal(tmp_path) -> None:
     import json
     import sys
