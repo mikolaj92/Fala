@@ -57,6 +57,9 @@ struct AdapterError(Copyable, Movable):
     def subprocess_timeout() -> AdapterError:
         return AdapterError("adapter_timeout", "subprocess adapter timed out")
     @staticmethod
+    def operator_cancelled() -> AdapterError:
+        return AdapterError("operator_cancelled", "durable subprocess cancelled by journal request")
+    @staticmethod
     def subprocess_failed(message: String) -> AdapterError:
         return AdapterError("adapter_failed", "subprocess adapter failed" + ((": " + message) if message != "" else ""))
     @staticmethod
@@ -591,16 +594,38 @@ def materialize_host_environment_into_adapter(
     adapter.env = resolved_env^
     adapter.inherit_env = List[String]()
 
-def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, String] = Dict[String, String]()) -> EffectorResult:
-    """Execute one direct-argv effector through the Darwin process host."""
+struct SubprocessSession(Movable):
+    var process: ProcessHost
+    var output_path: String
+    var stdout_path: String
+    var stderr_path: String
+    var environment: Dict[String, String]
+
+    def __init__(out self, var process: ProcessHost, output_path: String, stdout_path: String, stderr_path: String, var environment: Dict[String, String]):
+        self.process = process^
+        self.output_path = output_path
+        self.stdout_path = stdout_path
+        self.stderr_path = stderr_path
+        self.environment = environment^
+
+
+def launch_subprocess(request: EffectorRequest, inherited_env: Dict[String, String], mut failure: EffectorResult) -> Optional[SubprocessSession]:
+    """Start one subprocess handle after writing the effector boundary."""
     var validation = request.adapter.validate()
-    if not validation.is_ok(): return EffectorResult.failure(validation)
+    if not validation.is_ok():
+        failure = EffectorResult.failure(validation)
+        return None
     var input_error = _validate_json_text(request.input_json, "request.input_json")
-    if not input_error.is_ok(): return EffectorResult.failure(input_error)
+    if not input_error.is_ok():
+        failure = EffectorResult.failure(input_error)
+        return None
     var config_error = _validate_json_text(request.config_json, "request.config_json")
-    if not config_error.is_ok(): return EffectorResult.failure(config_error)
+    if not config_error.is_ok():
+        failure = EffectorResult.failure(config_error)
+        return None
     if request.adapter.kind != AdapterKind.subprocess():
-        return EffectorResult.failure(AdapterError.invalid("execute_subprocess requires subprocess adapter"))
+        failure = EffectorResult.failure(AdapterError.invalid("execute_subprocess requires subprocess adapter"))
+        return None
 
     var root = request.work_dir
     if root != "":
@@ -610,32 +635,37 @@ def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, Str
                 boundary_root = cwd() / boundary_root
             root = boundary_root.__fspath__()
         except err:
-            return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+            failure = EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+            return None
     else:
         try:
             var effector_root = getenv("FALA_EFFECTOR_ROOT")
             var base = Path(effector_root) if effector_root != "" else cwd()
             root = (base / Path(".fala-effector-" + sha256_bytes(request.run_id + ":" + request.process_id + ":" + request.impulse_id + ":" + String(request.attempt)))).__fspath__()
         except err:
-            return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+            failure = EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+            return None
     var boundary = SubprocessBoundary(request.adapter.command, root)
     try:
         makedirs(Path(boundary.input_dir), exist_ok=True)
         makedirs(Path(boundary.output_dir), exist_ok=True)
         Path(boundary.manifest_path).write_text(adapter_manifest_json(request))
     except err:
-        return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+        failure = EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+        return None
     try:
         for stale in [boundary.output_path, boundary.output_dir + "/stdout.txt", boundary.output_dir + "/stderr.txt"]:
             if Path(stale).exists(): remove(Path(stale))
     except err:
-        return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+        failure = EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+        return None
 
     var environment: Dict[String, String]
     try:
         environment = resolve_environment(request.adapter, inherited_env)
     except err:
-        return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+        failure = EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+        return None
     for pair in boundary.environment.items():
         environment[pair.key] = pair.value.copy()
     var env_entries = _environment_entries(environment)
@@ -645,9 +675,8 @@ def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, Str
     if request.adapter.timeout_seconds > 0.0:
         timeout_ms = Int(request.adapter.timeout_seconds * 1000.0)
         if timeout_ms <= 0: timeout_ms = 1
-    var process: ProcessHost
     try:
-        process = start_native_process(
+        var process = start_native_process(
             request.adapter.command,
             env_entries,
             request.adapter.cwd,
@@ -657,38 +686,42 @@ def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, Str
             timeout_ms,
             100,
         )
+        return SubprocessSession(process^, boundary.output_path, stdout_path, stderr_path, environment^)
     except err:
-        return EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
-    var wait_status = 0
-    try:
-        wait_status = process.wait_result()
-    except err:
-        var stdout = redact_environment(_read_text_or_empty(stdout_path), environment)
-        var stderr = redact_environment(_read_text_or_empty(stderr_path), environment)
-        return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=-1, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_failed(String(err)))
+        failure = EffectorResult.failure(AdapterError.subprocess_startup(String(err)))
+        return None
+
+
+def collect_subprocess(mut session: SubprocessSession, wait_status: Int) -> EffectorResult:
+    """Read streams and result.json after the process-host wait/poll path."""
     var timed_out = False
-    try: timed_out = process.was_timed_out()
+    try: timed_out = session.process.was_timed_out()
     except: timed_out = wait_status == 3
+    var cancelled = False
+    try: cancelled = session.process.was_cancelled() or session.process.status() == 4
+    except: cancelled = wait_status == 4
     var exit_code = -1
-    try: exit_code = process.exit_code()
+    try: exit_code = session.process.exit_code()
     except: pass
     var signal = 0
-    try: signal = process.signal()
+    try: signal = session.process.signal()
     except: pass
     var pid = -1
-    try: pid = process.pid()
+    try: pid = session.process.pid()
     except: pass
-    var stdout = redact_environment(_read_text_or_empty(stdout_path), environment)
-    var stderr = redact_environment(_read_text_or_empty(stderr_path), environment)
+    var stdout = redact_environment(_read_text_or_empty(session.stdout_path), session.environment)
+    var stderr = redact_environment(_read_text_or_empty(session.stderr_path), session.environment)
     if timed_out or wait_status == 3:
         return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=-1, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_timeout())
+    if cancelled or wait_status == 4:
+        return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.operator_cancelled())
     if wait_status != 0 or signal != 0 or exit_code != 0:
         var detail = stderr
         if detail == "": detail = "exit " + String(exit_code)
-        return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_failed(redact_environment(detail, environment)))
-    if not Path(boundary.output_path).exists():
+        return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_failed(redact_environment(detail, session.environment)))
+    if not Path(session.output_path).exists():
         return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_missing_output())
-    var output_text = _read_text_or_empty(boundary.output_path)
+    var output_text = _read_text_or_empty(session.output_path)
     if output_text == "": return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_invalid_result("result.json is empty or unreadable"))
     try:
         # Keep structured effector output intact: env substring redaction is for
@@ -700,6 +733,23 @@ def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, Str
         return success_result^
     except err:
         return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_invalid_result(String(err)))
+
+
+def execute_subprocess(request: EffectorRequest, inherited_env: Dict[String, String] = Dict[String, String]()) -> EffectorResult:
+    """Execute one direct-argv effector through the Darwin process host."""
+    var failure = EffectorResult.failure(AdapterError.none())
+    var launched = launch_subprocess(request, inherited_env, failure)
+    if not launched:
+        return failure^
+    var session = launched.take()
+    var wait_status = 0
+    try:
+        wait_status = session.process.wait_result()
+    except err:
+        var stdout = redact_environment(_read_text_or_empty(session.stdout_path), session.environment)
+        var stderr = redact_environment(_read_text_or_empty(session.stderr_path), session.environment)
+        return EffectorResult(success=False, output_json="{}", stdout=stdout, stderr=stderr, returncode=-1, waiting=False, homeostat_id="", metadata_json="{}", error=AdapterError.subprocess_failed(String(err)))
+    return collect_subprocess(session, wait_status)
 
 def execute_manual_homeostat(request: EffectorRequest) -> EffectorResult:
     var validation = request.adapter.validate()
