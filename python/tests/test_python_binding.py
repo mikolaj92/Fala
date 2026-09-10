@@ -204,6 +204,94 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert terminal["ping"]["error"] == {}
 
 
+def test_native_process_host_child_cwd_preserves_parent_cwd(tmp_path) -> None:
+    """The native C host changes only the spawned child's working directory."""
+    import ctypes
+    import os
+    import subprocess
+    import sys
+
+    if sys.platform != "darwin":
+        pytest.skip("Darwin-specific process-host cwd regression")
+
+    class ProcessOptions(ctypes.Structure):
+        _fields_ = [
+            ("argv", ctypes.POINTER(ctypes.c_char_p)),
+            ("envp", ctypes.POINTER(ctypes.c_char_p)),
+            ("cwd", ctypes.c_char_p),
+            ("stdin_path", ctypes.c_char_p),
+            ("stdout_path", ctypes.c_char_p),
+            ("stderr_path", ctypes.c_char_p),
+            ("stdin_fd", ctypes.c_int),
+            ("stdout_fd", ctypes.c_int),
+            ("stderr_fd", ctypes.c_int),
+            ("timeout_ms", ctypes.c_int64),
+            ("terminate_grace_ms", ctypes.c_int64),
+        ]
+
+    root = Path(__file__).resolve().parents[2]
+    source = root / "mojo" / "fala" / "native_process_host.c"
+    library = tmp_path / "libfala_process_host.dylib"
+    subprocess.run(
+        [
+            "cc",
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-dynamiclib",
+            "-o",
+            str(library),
+            str(source),
+        ],
+        check=True,
+    )
+
+    native = ctypes.CDLL(str(library))
+    native.fala_process_options_init.argtypes = [ctypes.POINTER(ProcessOptions)]
+    native.fala_process_options_init.restype = None
+    native.fala_process_start.argtypes = [
+        ctypes.POINTER(ProcessOptions),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    native.fala_process_start.restype = ctypes.c_int
+    native.fala_process_wait.argtypes = [ctypes.c_void_p]
+    native.fala_process_wait.restype = ctypes.c_int
+    native.fala_process_get_status.argtypes = [ctypes.c_void_p]
+    native.fala_process_get_status.restype = ctypes.c_int
+    native.fala_process_get_exit_code.argtypes = [ctypes.c_void_p]
+    native.fala_process_get_exit_code.restype = ctypes.c_int
+    native.fala_process_destroy.argtypes = [ctypes.c_void_p]
+    native.fala_process_destroy.restype = None
+
+    child_dir = tmp_path / "child"
+    child_dir.mkdir()
+    stdout_path = tmp_path / "child-cwd.txt"
+    argv = (ctypes.c_char_p * 2)(b"/bin/pwd", None)
+    cwd_bytes = os.fsencode(child_dir)
+    stdout_bytes = os.fsencode(stdout_path)
+    options = ProcessOptions()
+    native.fala_process_options_init(ctypes.byref(options))
+    options.argv = argv
+    options.cwd = cwd_bytes
+    options.stdout_path = stdout_bytes
+    parent_cwd = os.getcwd()
+    process = ctypes.c_void_p()
+
+    try:
+        assert native.fala_process_start(ctypes.byref(options), ctypes.byref(process)) == 0
+        assert os.getcwd() == parent_cwd
+        assert native.fala_process_wait(process) == 0
+        assert native.fala_process_get_status(process) == 1
+        assert native.fala_process_get_exit_code(process) == 0
+        assert stdout_path.read_text(encoding="utf-8").strip() == str(child_dir)
+        assert os.getcwd() == parent_cwd
+    finally:
+        if process.value is not None:
+            native.fala_process_destroy(process)
+
+    assert os.getcwd() == parent_cwd
+
+
 def test_host_run_package_python_library_matches_current_interpreter(tmp_path, monkeypatch) -> None:
     import json
     import sysconfig

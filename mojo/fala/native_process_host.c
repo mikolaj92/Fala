@@ -336,7 +336,11 @@ fala_process_result fala_process_start(const fala_process_options *options,
     if (result == 0) result = add_redirect(&actions, STDERR_FILENO, options->stderr_fd, options->stderr_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (result != 0) { set_errno_error(process, FALA_PROCESS_SYSTEM_ERROR, "redirect", result); posix_spawn_file_actions_destroy(&actions); goto fail; }
     if (options->cwd != NULL && options->cwd[0] != '\0') {
+#if defined(__APPLE__)
+        result = posix_spawn_file_actions_addchdir_np(&actions, options->cwd);
+#else
         result = posix_spawn_file_actions_addchdir(&actions, options->cwd);
+#endif
         if (result != 0) { set_errno_error(process, FALA_PROCESS_SYSTEM_ERROR, "chdir", result); posix_spawn_file_actions_destroy(&actions); goto fail; }
     }
     result = posix_spawnattr_init(&attributes);
