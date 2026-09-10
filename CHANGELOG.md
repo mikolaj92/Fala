@@ -4,6 +4,8 @@
   parent result instead of leaving a no-op policy (#262).
 - OUTPUT_CONTRACTS describes shipped 0.8.x contract-first/coverage behavior
   instead of citing closed #237–#239 as unfinished (#263).
+- `sdk.output()` returns a FEP/1 `effector.result`, so `write_result` and
+  `run_manifest_effector` accept it (#264).
 
 ## 0.8.1
 

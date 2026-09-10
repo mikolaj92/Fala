@@ -157,6 +157,23 @@ def test_sdk_explicit_empty_env_does_not_fall_back_to_process_env(
     with pytest.raises(RuntimeError, match="FALA_EFFECTOR_OUTPUT_DIR"):
         sdk.write_result({}, env={})
 
+
+def test_sdk_write_result_accepts_output_helper(tmp_path, monkeypatch) -> None:
+    from fala import sdk
+    from fala.fep import parse
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"input": {}}', encoding="utf-8")
+    monkeypatch.setenv("FALA_EFFECTOR_OUTPUT_DIR", str(out_dir))
+    monkeypatch.setenv("FALA_EFFECTOR_MANIFEST", str(manifest))
+    path = sdk.write_result(sdk.output(values={"ok": True}))
+    result = parse(path.read_text(encoding="utf-8"), "effector.result")
+    assert result["values"] == {"ok": True}
+    assert sdk.run_manifest_effector(lambda _m: sdk.output(values={"echo": True})) == 0
+
+
 def test_host_run_package_subprocess(tmp_path) -> None:
     import fala
     from pathlib import Path

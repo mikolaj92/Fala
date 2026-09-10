@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .fep import validate
+from .fep import result_message, validate
 
 EffectorHandler = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -123,12 +123,13 @@ def output(
     reactions: list[dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
-        "values": values or {},
-        "associations": associations or [],
-        "reactions": reactions or [],
-        "metadata": metadata or {},
-    }
+    """Build a FEP/1 ``effector.result`` for ``write_result`` / ``run_manifest_effector``."""
+    return result_message(
+        values=values,
+        associations=associations,
+        reactions=reactions,
+        metadata=metadata,
+    )
 
 
 def write_result(
