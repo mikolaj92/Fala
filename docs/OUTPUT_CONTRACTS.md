@@ -63,23 +63,25 @@ This fixture requires a corresponding `done` terminal in the package. A result
 `{"route":"ready","reason":"wrong variant"}` is rejected. Outcome arrays
 represent attempts, not independent variant-coverage scenarios.
 
-## Local proofs and remaining scope
+## Local proofs
 
 `mise exec -- pixi run full-smoke` includes `output-contracts` and
 `graph-rehearsal`. The former exercises valid variants, malformed payloads,
 combinator semantics, nested mismatches, schema rejection, projection, durable
 FEP completion and a real local FEP subprocess/consumer boundary. The latter
-proves fixture-only execution, frozen output validation and terminal conditions.
-These are contract/routing tests, not evidence that an agent's claims are true.
+proves fixture-only execution, frozen output validation, terminal conditions,
+and fail-closed missing fixture variants. These are contract/routing tests, not
+evidence that an agent's claims are true.
 
-This implementation is **not completion of #237–#239**:
+Shipped 0.8.x behavior:
 
-- Missing schemas still retain the historical `{}` default. Contract-first,
-  explicit per-node opt-out and explicit legacy migration remain to implement.
-- Finite variant enumeration, pre-execution edge/terminal coverage and static
-  input/handoff compatibility analysis (#238) remain to implement.
-- Automatic reporting of missing fixture variants and independent scenario
-  coverage (#239) remain to implement. Adding an untested enum member does not
-  yet make rehearsal fail merely because its fixture is absent.
+- New nodes are contract-first. `output_schema` / `output_contract_ref` are
+  enforced at durable completion, conduction, typed terminals, and rehearsal.
+- Per-node `contract_mode = "legacy"` is the explicit opt-out; undeclared
+  schema storage remains JSON `{}` for that mode.
+- Graph preflight reports missing finite output-variant coverage before any
+  adapter runs (`coverage_guaranteed` / `unverified`).
+- Rehearsal fails closed when a finite declared variant has no fixture.
 
-Do not interpret a passing rehearsal as proof of complete graph coverage.
+A passing rehearsal of supplied scenarios is not proof that an agent told the
+truth, only that the declared contract and routing held for those fixtures.
