@@ -63,10 +63,11 @@ Every `output/result.json` must validate as a FEP/1 `effector.result`, including
 its message digest and causation. Bare/unversioned JSON objects are rejected
 with `adapter_invalid_result` (a missing `protocol` is reported at `/protocol`),
 even when the subprocess exits successfully. There is no legacy result fallback.
-The Python SDK's `write_result` likewise validates before writing; handlers used
-with `run_manifest_effector` must return a complete FEP/1 result, not just the
-payload produced by `sdk.output`. For a FEP/1 request, use `fala.fep.build_result`
-to construct that result while preserving `request_id`.
+The Python SDK's `write_result` likewise validates before writing. `sdk.output`
+returns a complete FEP/1 `effector.result`, so `write_result(sdk.output(values=…))`
+and `run_manifest_effector(lambda m: sdk.output(values=…))` are the happy path.
+When the input is itself a FEP/1 request, `fala.fep.build_result` preserves
+`request_id` causation.
 
 This result requirement does not change the input manifest transport or schema.
 Journals may persist message and causation IDs as metadata; these IDs never
