@@ -17,10 +17,10 @@ from fala._build import ensure_native, ensure_sqlite_fire_library
 from fala.host import _with_sqlite_cwd
 
 RUN_STATUSES = frozenset({"created", "active", "waiting", "completed", "failed", "cancel_requested", "cancelled", "timed_out"})
-PROCESS_STATUSES = frozenset({"pending", "ready", "running", "waiting", "retry_wait", "cancel_requested", "succeeded", "failed", "cancelled", "timed_out"})
+PROCESS_STATUSES = frozenset({"pending", "ready", "running", "waiting", "retry_wait", "cancel_requested", "succeeded", "failed", "skipped", "cancelled", "timed_out"})
 BLOCKER_STATUSES = frozenset({"open", "completed", "cancelled", "expired"})
 TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled", "timed_out"})
-TERMINAL_PROCESS_STATUSES = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
+TERMINAL_PROCESS_STATUSES = frozenset({"succeeded", "failed", "skipped", "cancelled", "timed_out"})
 TERMINAL_BLOCKER_STATUSES = frozenset({"completed", "cancelled", "expired"})
 _ENSURE_LOCK = threading.Lock()
 

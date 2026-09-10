@@ -120,7 +120,9 @@ parallel document jobs.
 Current process statuses are:
 
 `pending`, `ready`, `running`, `waiting`, `retry_wait`, `succeeded`, `failed`,
-`cancel_requested`, `cancelled`, and `timed_out`.
+`skipped`, `cancel_requested`, `cancelled`, and `timed_out`.
+A nonmatching `when` records the effector as terminal `skipped` without
+invoking its adapter.
 
 Adapters cannot mutate these statuses directly. State changes go through
 Correlator operations and append runtime events. See

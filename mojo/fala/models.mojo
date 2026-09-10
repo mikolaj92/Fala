@@ -393,6 +393,7 @@ struct WaitGraphDiagnostic(Copyable, Movable):
     var retry_wait: List[String]
     var succeeded: List[String]
     var failed: List[String]
+    var skipped: List[String]
     var cancel_requested: List[String]
     var cancelled: List[String]
     var timed_out: List[String]
@@ -425,6 +426,7 @@ struct WaitGraphDiagnostic(Copyable, Movable):
         result += ",\"retry_wait\":" + _json_strings(self.retry_wait)
         result += ",\"succeeded\":" + _json_strings(self.succeeded)
         result += ",\"failed\":" + _json_strings(self.failed)
+        result += ",\"skipped\":" + _json_strings(self.skipped)
         result += ",\"cancel_requested\":" + _json_strings(self.cancel_requested)
         result += ",\"cancelled\":" + _json_strings(self.cancelled)
         result += ",\"timed_out\":" + _json_strings(self.timed_out) + "}"

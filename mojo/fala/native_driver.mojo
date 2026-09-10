@@ -31,7 +31,7 @@ from fala.json import quote_json_string as _json_quote
 from fala.execution_metadata import validate_usage_json
 
 def _empty_wait_graph() -> WaitGraphDiagnostic:
-    return WaitGraphDiagnostic(run_id="", impulse_id="", deadlocked=False, deadlocks=List[List[String]](), wait_edges=Dict[String, List[String]](), blocked=List[WaitDiagnosticIssue](), open_homeostats=List[String](), pending=List[String](), ready=List[String](), running=List[String](), waiting=List[String](), retry_wait=List[String](), succeeded=List[String](), failed=List[String](), cancel_requested=List[String](), cancelled=List[String](), timed_out=List[String](), blocked_process_ids=List[String](), reason="", code="")
+    return WaitGraphDiagnostic(run_id="", impulse_id="", deadlocked=False, deadlocks=List[List[String]](), wait_edges=Dict[String, List[String]](), blocked=List[WaitDiagnosticIssue](), open_homeostats=List[String](), pending=List[String](), ready=List[String](), running=List[String](), waiting=List[String](), retry_wait=List[String](), succeeded=List[String](), failed=List[String](), skipped=List[String](), cancel_requested=List[String](), cancelled=List[String](), timed_out=List[String](), blocked_process_ids=List[String](), reason="", code="")
 
 
 struct RunUntilIdleResult(Copyable, Movable):
@@ -699,7 +699,7 @@ def diagnose_wait_graph(mut journal: NativeJournal, run_id: String, impulse_id: 
     var process_statuses = Dict[String, String]()
     var pending = List[String](); var ready = List[String](); var running = List[String]()
     var waiting = List[String](); var retry_wait = List[String](); var succeeded = List[String]()
-    var failed = List[String](); var cancel_requested = List[String](); var cancelled = List[String](); var timed_out = List[String]()
+    var failed = List[String](); var skipped = List[String](); var cancel_requested = List[String](); var cancelled = List[String](); var timed_out = List[String]()
     for row in rows:
         process_statuses[row.id] = row.status
         if row.status == "pending": pending.append(row.id)
@@ -709,11 +709,12 @@ def diagnose_wait_graph(mut journal: NativeJournal, run_id: String, impulse_id: 
         elif row.status == "retry_wait": retry_wait.append(row.id)
         elif row.status == "succeeded": succeeded.append(row.id)
         elif row.status == "failed": failed.append(row.id)
+        elif row.status == "skipped": skipped.append(row.id)
         elif row.status == "cancel_requested": cancel_requested.append(row.id)
         elif row.status == "cancelled": cancelled.append(row.id)
         elif row.status == "timed_out": timed_out.append(row.id)
     _sort_wait_ids(pending); _sort_wait_ids(ready); _sort_wait_ids(running); _sort_wait_ids(waiting); _sort_wait_ids(retry_wait)
-    _sort_wait_ids(succeeded); _sort_wait_ids(failed); _sort_wait_ids(cancel_requested); _sort_wait_ids(cancelled); _sort_wait_ids(timed_out)
+    _sort_wait_ids(succeeded); _sort_wait_ids(failed); _sort_wait_ids(skipped); _sort_wait_ids(cancel_requested); _sort_wait_ids(cancelled); _sort_wait_ids(timed_out)
     var homeostat_statuses = Dict[String, String]()
     var homeostat_stmt = journal.db.query("SELECT id,status FROM homeostats WHERE run_id=?" + (" AND impulse_id=?" if impulse_id != "" else "") + " ORDER BY id ASC")
     homeostat_stmt.bind_text(1, run_id)
@@ -764,7 +765,7 @@ def diagnose_wait_graph(mut journal: NativeJournal, run_id: String, impulse_id: 
     if len(deadlocks) > 0: reason = "feedback_cycle_wait"; code = "feedback_cycle_wait"
     elif len(blocked) > 0 and has_actual_blocker: reason = "waiting"; code = "waiting"
     elif len(blocked) > 0: reason = "waiting_without_known_blocker"; code = "waiting_without_known_blocker"
-    return WaitGraphDiagnostic(run_id=run_id, impulse_id=impulse_id, deadlocked=len(deadlocks) > 0, deadlocks=deadlocks^, wait_edges=wait_edges^, blocked=blocked^, open_homeostats=open_homeostats^, pending=pending^, ready=ready^, running=running^, waiting=waiting^, retry_wait=retry_wait^, succeeded=succeeded^, failed=failed^, cancel_requested=cancel_requested^, cancelled=cancelled^, timed_out=timed_out^, blocked_process_ids=blocked_process_ids^, reason=reason, code=code)
+    return WaitGraphDiagnostic(run_id=run_id, impulse_id=impulse_id, deadlocked=len(deadlocks) > 0, deadlocks=deadlocks^, wait_edges=wait_edges^, blocked=blocked^, open_homeostats=open_homeostats^, pending=pending^, ready=ready^, running=running^, waiting=waiting^, retry_wait=retry_wait^, succeeded=succeeded^, failed=failed^, skipped=skipped^, cancel_requested=cancel_requested^, cancelled=cancelled^, timed_out=timed_out^, blocked_process_ids=blocked_process_ids^, reason=reason, code=code)
 
 def _json_quote_driver(value: String) -> String:
     return _json_quote(value)

@@ -193,6 +193,17 @@ def test_malformed_run_context_fails_closed_json_safe(tmp_path: Path) -> None:
     json.dumps(result, sort_keys=True, allow_nan=False)
 
 
+def test_skipped_process_is_a_known_terminal_not_malformed(tmp_path: Path) -> None:
+    path = tmp_path / 'skipped.sqlite'
+    db = _db(path)
+    _insert(db, ('active', 'skip', 'skipped', None, None, 1, 1))
+    db.commit(); db.close()
+    result = inspect_leases(path, now='2026-01-01T00:00:00Z')
+    assert result['complete']
+    assert result['uncertainty'] == []
+    assert result['current'] == result['expired'] == []
+
+
 def test_known_terminal_rows_are_validated_and_may_be_omitted(tmp_path: Path) -> None:
     path = tmp_path / 'terminal.sqlite'
     db = _db(path)

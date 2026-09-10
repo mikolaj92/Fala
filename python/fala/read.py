@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 _SCHEMA_VERSION = 6
 _RUN_STATUSES = frozenset({"created", "active", "waiting", "completed", "failed", "cancel_requested", "cancelled", "timed_out"})
-_PROCESS_STATUSES = frozenset({"pending", "ready", "running", "waiting", "retry_wait", "cancel_requested", "succeeded", "failed", "cancelled", "timed_out"})
+_PROCESS_STATUSES = frozenset({"pending", "ready", "running", "waiting", "retry_wait", "cancel_requested", "succeeded", "failed", "skipped", "cancelled", "timed_out"})
 _RUN_COLUMNS = ("id", "status", "title", "package_id", "package_version", "package_digest", "correlation_path_id", "correlation_path_digest", "runtime_version", "backend_version", "schema_version", "metadata", "created_at", "updated_at", "started_at", "finished_at")
 _PROCESS_COLUMNS = ("run_id", "id", "process_type", "impulse_id", "status", "priority", "attempt", "max_attempts", "available_at", "lease_owner", "lease_expires_at", "input_json", "output_json", "error_json", "metadata", "created_at", "updated_at", "started_at", "finished_at", "output_schema_json")
 _JSON_FIELDS = frozenset({"metadata", "input_json", "output_json", "error_json", "output_schema_json"})
