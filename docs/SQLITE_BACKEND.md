@@ -17,11 +17,15 @@ The backend stores:
 Reaction bytes are not stored in SQLite by default: the journal stores refs and
 metadata while `FileReactionStore` stores content-addressed bytes.
 
-Core JournalPort operations commit command/event/state changes atomically. Run
-creation, status changes, impulse acceptance, process scheduling and
-transitions, homeostat transitions, and projection saves use these transaction
-boundaries. Runtime commands and events are protected against direct updates
-and deletes; core facts are appended through JournalPort/backend command paths.
+`NativeJournal` and `NativeDomainStore` helpers commit command/event/state
+changes atomically. Run creation, status changes, impulse acceptance, process
+scheduling and transitions, homeostat transitions, and projection saves use
+those helper transactions. `SqliteJournalPort.append_batch` is not that
+guarantee: it dispatches only the leading unit to `NativeJournal` and ignores
+non-leading units as write inputs, so it does not provide atomic multi-unit
+batch replay. See [`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md).
+Runtime commands and events are protected against direct updates and deletes;
+core facts are appended through those helper/command paths.
 
 Existing databases may physically retain historical `runtime_pools` and
 `delegation_policies` tables. Fresh schema initialization does not create or
