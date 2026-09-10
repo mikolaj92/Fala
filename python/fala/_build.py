@@ -42,7 +42,7 @@ def repo_root() -> Path:
     env = os.environ.get("FALA_HOME")
     if env:
         return Path(env).expanduser().resolve()
-    for candidate in (_PACKAGE_DIR.parents[2], _PACKAGE_DIR.parent, Path.cwd()):
+    for candidate in (_PACKAGE_DIR, _PACKAGE_DIR.parents[2], _PACKAGE_DIR.parent, Path.cwd()):
         if (candidate / "mojo" / "fala").is_dir():
             return candidate.resolve()
     raise RuntimeError(

@@ -68,7 +68,7 @@ the journal records metadata and references.
 | Surface | Current contract |
 | --- | --- |
 | Engine | Mojo only (`mojo/fala/`) |
-| Host binding | Optional thin Python package (`python/fala/`), a JSON bridge to Mojo—not a second engine |
+| Host binding | Optional thin Python package (`python/fala/`), a JSON bridge to Mojo—not a second engine. An installed wheel keeps the engine at `fala/mojo/` and patches at `fala/patches/`; it does not drop `mojo/` or `patches/` into `site-packages`. Checkout builds still use `FALA_HOME`. |
 | Packages | TOML or canonical JSON |
 | Adapters | `subprocess`, `native_function`, `manual_homeostat`, `child_path` |
 | Journal | `JournalPort`, memory/SQLite/JSONL/tee sinks |

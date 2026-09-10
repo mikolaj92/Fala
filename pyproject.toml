@@ -28,7 +28,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/fala"]
-force-include = { "mojo" = "mojo", "patches" = "patches" }
+force-include = { "mojo" = "fala/mojo", "patches" = "fala/patches" }
 
 [tool.hatch.build.targets.sdist]
 include = [
