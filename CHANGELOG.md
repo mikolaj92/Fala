@@ -6,6 +6,8 @@
   instead of citing closed #237–#239 as unfinished (#263).
 - `sdk.output()` returns a FEP/1 `effector.result`, so `write_result` and
   `run_manifest_effector` accept it (#264).
+- The wheel includes `fala/py.typed`, matching the `Typing :: Typed`
+  classifier (#265).
 
 ## 0.8.1
 
