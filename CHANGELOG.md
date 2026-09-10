@@ -1,5 +1,8 @@
 ## Unreleased
 
+- `child_path` `delete_on_success` unlinks the child journal after a typed
+  parent result instead of leaving a no-op policy (#262).
+
 ## 0.8.1
 
 **Cross-process host execution lock and living-doc/host-API gate.**
