@@ -192,7 +192,7 @@ def _validate_status_value(kind: String, value: String) raises:
     if kind == "run-list":
         valid = value == "created" or value == "active" or value == "waiting" or value == "completed" or value == "failed" or value == "cancel_requested" or value == "cancelled" or value == "timed_out"
     elif kind == "processes-list":
-        valid = value == "pending" or value == "ready" or value == "running" or value == "waiting" or value == "retry_wait" or value == "succeeded" or value == "failed" or value == "cancel_requested" or value == "cancelled" or value == "timed_out"
+        valid = value == "pending" or value == "ready" or value == "running" or value == "waiting" or value == "retry_wait" or value == "succeeded" or value == "failed" or value == "skipped" or value == "cancel_requested" or value == "cancelled" or value == "timed_out"
     elif kind == "homeostats-list":
         valid = value == "open" or value == "completed" or value == "cancelled" or value == "expired"
     elif kind == "bridge-list":

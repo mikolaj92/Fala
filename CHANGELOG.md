@@ -3,6 +3,9 @@
 - Durable `drive_once` polls the journal against a live subprocess handle and
   terminals `cancel_requested` as `cancelled` instead of waiting out the child
   (#242).
+- Public process status lists include terminal `skipped`; wait-graph JSON and
+  Python journal/read/inspection no longer treat a legal skip as malformed
+  (#243).
 
 ## 0.8.0
 

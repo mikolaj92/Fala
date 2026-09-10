@@ -15,7 +15,7 @@ _ENVELOPE_VERSION = 1
 _SCHEMA_VERSION = 6
 _PROCESS_STATUSES = frozenset({
     "pending", "ready", "running", "waiting", "retry_wait", "succeeded",
-    "failed", "cancel_requested", "cancelled", "timed_out",
+    "failed", "skipped", "cancel_requested", "cancelled", "timed_out",
 })
 _RUN_STATUSES = frozenset({
     "created", "active", "waiting", "completed", "failed",

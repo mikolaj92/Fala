@@ -26,6 +26,17 @@ def test_reads_are_sorted_json_safe_and_activation_metadata_is_generic(tmp_path)
     json.dumps([runs, process], allow_nan=False)
 
 
+def test_list_processes_accepts_terminal_skipped(tmp_path):
+    import fala
+    db = tmp_path / 'skipped.sqlite'
+    fala.ensure_journal(db)
+    fala.upsert_run_metadata(db, run_id='z', status='active', metadata={})
+    fala.upsert_process(db, run_id='z', process_id='skip', status='skipped', metadata={'when': 'no'})
+    rows = fala.list_processes(db, 'z')
+    assert rows[0]['id'] == 'skip'
+    assert rows[0]['status'] == 'skipped'
+
+
 def test_reads_fail_closed_on_caps_and_corrupt_json(tmp_path):
     import fala
     db=tmp_path/'j.sqlite'; _journal(db)

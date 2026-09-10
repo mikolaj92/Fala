@@ -129,6 +129,18 @@ def test_missing_rows_and_non_json_payloads_fail_closed(tmp_path) -> None:
         fala.complete_waiting_process(db, run_id="run", process_id="missing")
 
 
+def test_upsert_process_accepts_terminal_skipped(tmp_path) -> None:
+    import fala
+    db = tmp_path / "journal.sqlite"
+    fala.upsert_run_metadata(db, run_id="run", status="active", metadata={})
+    fala.upsert_process(db, run_id="run", process_id="skip", status="skipped")
+    with sqlite3.connect(db) as conn:
+        row = conn.execute(
+            "SELECT status FROM processes WHERE run_id='run' AND id='skip'"
+        ).fetchone()
+    assert row[0] == "skipped"
+
+
 def test_statuses_terminal_monotonicity_and_finished_at(tmp_path) -> None:
     import fala
     db = tmp_path / "journal.sqlite"
