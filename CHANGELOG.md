@@ -1,5 +1,11 @@
 ## Unreleased
 
+## 0.8.2
+
+**Darwin native process-host build fix and post-0.8.1 maintenance.**
+
+- On Darwin, use Apple's `posix_spawn_file_actions_addchdir_np` entry point so
+  the native process host compiles with the macOS SDK (#280).
 - `child_path` `delete_on_success` unlinks the child journal after a typed
   parent result instead of leaving a no-op policy (#262).
 - OUTPUT_CONTRACTS describes shipped 0.8.x contract-first/coverage behavior
