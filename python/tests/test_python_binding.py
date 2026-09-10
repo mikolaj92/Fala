@@ -12,6 +12,15 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FALA_HOME", str(root))
 
 
+def _fep_organ(values: str, extra: str = "") -> str:
+    return (
+        extra
+        + "from fala.fep import result_message\n"
+        + "from fala.sdk import write_result\n"
+        + f"write_result(result_message(values={values}))\n"
+    )
+
+
 def test_native_extension_exports_python_objects_and_keeps_json_compatibility() -> None:
     import json
 
@@ -174,7 +183,7 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert list(terminal) == ["ping"]
     assert terminal["ping"]["id"] == "one_step:ping"
     assert terminal["ping"]["status"] == "succeeded"
-    assert terminal["ping"]["output"]["ok"] is True
+    assert terminal["ping"]["output"]["values"]["ok"] is True
     assert terminal["ping"]["error"] == {}
 
 
@@ -363,10 +372,9 @@ def test_host_run_package_returns_typed_path_terminal(tmp_path) -> None:
 
     step = tmp_path / "step.py"
     step.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
-        "json.dumps({'values': {'artifact': 'ready'}, 'reactions': [{'kind': 'proof', 'uri': 'proof://1'}]}))\n",
+        "from fala.fep import result_message\n"
+        "from fala.sdk import write_result\n"
+        "write_result(result_message(values={'artifact': 'ready'}, reactions=[{'kind': 'proof', 'uri': 'proof://1'}]))\n",
         encoding="utf-8",
     )
     package = {
@@ -421,11 +429,7 @@ def test_host_run_package_typed_path_rejects_invalid_input_and_terminal(tmp_path
     import pytest
 
     step = tmp_path / "step.py"
-    step.write_text(
-        "import json, os\nfrom pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text(json.dumps({'values': {'actual': 1}}))\n",
-        encoding="utf-8",
-    )
+    step.write_text(_fep_organ("{'actual': 1}"), encoding="utf-8")
     package = {
         "id": "typed_failures",
         "correlation_paths": [{
@@ -451,11 +455,7 @@ def test_host_run_package_typed_path_rejects_ambiguous_or_missing_terminal(tmp_p
     import pytest
 
     step = tmp_path / "step.py"
-    step.write_text(
-        "import json, os\nfrom pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text(json.dumps({'values': {'route': 'one'}}))\n",
-        encoding="utf-8",
-    )
+    step.write_text(_fep_organ("{'route': 'one'}"), encoding="utf-8")
     base = {"id": "terminal_selection", "correlation_paths": [{"id": "path", "effectors": [{"id": "step", "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]}}]}]}
     path = base["correlation_paths"][0]
     path["terminals"] = [
@@ -480,9 +480,13 @@ def test_child_path_adapter_runs_separate_durable_child(tmp_path) -> None:
 
     child_step = tmp_path / "child_step.py"
     child_step.write_text(
-        "import json, os\nfrom pathlib import Path\n"
-        "m=json.loads(Path(os.environ['FALA_EFFECTOR_MANIFEST']).read_text())\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text(json.dumps({'values': {'received': m['input']['ticket']}}))\n",
+        _fep_organ(
+            "{'received': m['input']['ticket']}",
+            extra=(
+                "import json\nfrom pathlib import Path\nimport os\n"
+                "m=json.loads(Path(os.environ['FALA_EFFECTOR_MANIFEST']).read_text())\n"
+            ),
+        ),
         encoding="utf-8",
     )
     child = {
@@ -536,27 +540,18 @@ def test_host_run_package_conditional_conduction_skips_nonmatching_adapter(tmp_p
     import fala
 
     source = tmp_path / "source.py"
-    source.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
-        "json.dumps({'values': {'decision': {'verdict': 'request_changes'}}}))\n",
-        encoding="utf-8",
-    )
+    source.write_text(_fep_organ("{'decision': {'verdict': 'request_changes'}}"), encoding="utf-8")
     sentinel = tmp_path / "merge-ran"
     merge = tmp_path / "merge.py"
     merge.write_text(
-        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('ran')\n",
+        _fep_organ(
+            "{'ran': True}",
+            extra=f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('ran')\n",
+        ),
         encoding="utf-8",
     )
     repair = tmp_path / "repair.py"
-    repair.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
-        "json.dumps({'values': {'repaired': True}}))\n",
-        encoding="utf-8",
-    )
+    repair.write_text(_fep_organ("{'repaired': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "conditional_host",
@@ -679,13 +674,7 @@ def test_host_run_package_strict_json_package_uses_json_loader(tmp_path) -> None
     import fala
 
     step = tmp_path / "step.py"
-    step.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
-        "json.dumps({'values': {'ok': True}}))\n",
-        encoding="utf-8",
-    )
+    step.write_text(_fep_organ("{'ok': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "json_smoke",
@@ -729,13 +718,7 @@ def test_host_run_package_fails_closed_on_malformed_stored_result(tmp_path) -> N
     import fala
 
     step = tmp_path / "step.py"
-    step.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
-        "json.dumps({'values': {'ok': True}}))\n",
-        encoding="utf-8",
-    )
+    step.write_text(_fep_organ("{'ok': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "malformed_result",
@@ -796,14 +779,10 @@ def test_host_run_package_inherit_env_from_host_process(tmp_path, monkeypatch) -
     db = work / "f.sqlite"
     step = work / "step.py"
     step.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "out = Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'])\n"
-        "payload = {\n"
-        "  'marker': os.environ.get('FALA_INHERIT_SMOKE_MARKER', 'MISSING'),\n"
-        "  'path_prefix': (os.environ.get('PATH') or '')[:20],\n"
-        "}\n"
-        "(out / 'result.json').write_text(json.dumps({'values': payload}))\n",
+        _fep_organ(
+            "{'marker': os.environ.get('FALA_INHERIT_SMOKE_MARKER', 'MISSING'), 'path_prefix': (os.environ.get('PATH') or '')[:20]}",
+            extra="import os\n",
+        ),
         encoding="utf-8",
     )
     pkg = work / "pkg.toml"
@@ -812,6 +791,7 @@ def test_host_run_package_inherit_env_from_host_process(tmp_path, monkeypatch) -
 id = "inherit_smoke"
 [[capabilities]]
 id = "step"
+secret_handles = ["FALA_INHERIT_SMOKE_MARKER"]
 [[correlation_paths]]
 id = "path"
 [[correlation_paths.effectors]]
@@ -869,15 +849,10 @@ def test_host_run_package_preserves_digest_with_env_substring(tmp_path, monkeypa
     db = work / "f.sqlite"
     step = work / "step.py"
     step.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "out = Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'])\n"
         f"digest = {digest!r}\n"
-        "payload = {\n"
-        "  'uri': f'fala-reaction://sha256/{digest}',\n"
-        "  'sha256': digest,\n"
-        "}\n"
-        "(out / 'result.json').write_text(json.dumps({'values': payload, 'reactions': [{'kind': 'source_docx', 'uri': payload['uri'], 'metadata': {'sha256': digest}}]}))\n",
+        "from fala.fep import result_message\n"
+        "from fala.sdk import write_result\n"
+        "write_result(result_message(values={'uri': f'fala-reaction://sha256/{digest}', 'sha256': digest}, reactions=[{'kind': 'source_docx', 'uri': f'fala-reaction://sha256/{digest}', 'metadata': {'sha256': digest}}]))\n",
         encoding="utf-8",
     )
     pkg = work / "pkg.toml"
@@ -886,6 +861,7 @@ def test_host_run_package_preserves_digest_with_env_substring(tmp_path, monkeypa
 id = "digest_smoke"
 [[capabilities]]
 id = "step"
+secret_handles = ["LMPROVIDER_TIMEOUT"]
 [[correlation_paths]]
 id = "path"
 [[correlation_paths.effectors]]
@@ -938,12 +914,14 @@ def test_host_run_package_unicode_stdout_redaction(tmp_path, monkeypatch) -> Non
     db = work / "f.sqlite"
     step = work / "step.py"
     step.write_text(
-        "import json, os, sys\n"
-        "from pathlib import Path\n"
-        "out = Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'])\n"
-        "sys.stdout.write('ok top-secret-value żółć ąę 世界\\n')\n"
-        "sys.stdout.flush()\n"
-        "(out / 'result.json').write_text(json.dumps({'values': {'ok': True}}))\n",
+        _fep_organ(
+            "{'ok': True}",
+            extra=(
+                "import sys\n"
+                "sys.stdout.write('ok top-secret-value żółć ąę 世界\\n')\n"
+                "sys.stdout.flush()\n"
+            ),
+        ),
         encoding="utf-8",
     )
     pkg = work / "pkg.toml"
@@ -952,6 +930,7 @@ def test_host_run_package_unicode_stdout_redaction(tmp_path, monkeypatch) -> Non
 id = "unicode_ok"
 [[capabilities]]
 id = "step"
+secret_handles = ["FALA_STREAM_SECRET"]
 [[correlation_paths]]
 id = "path"
 [[correlation_paths.effectors]]
@@ -1161,13 +1140,7 @@ def test_host_run_package_active_placeholder_is_decodable_and_re_driveable(
     rx.mkdir()
     db = work / "f.sqlite"
     step = work / "step.py"
-    step.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
-        "json.dumps({'values': {'ok': True}}))\n",
-        encoding="utf-8",
-    )
+    step.write_text(_fep_organ("{'ok': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "active_placeholder",
@@ -1283,13 +1256,7 @@ def test_host_run_package_malformed_error_json_names_process_not_payload(
     rx.mkdir()
     db = work / "f.sqlite"
     step = work / "step.py"
-    step.write_text(
-        "import json, os\n"
-        "from pathlib import Path\n"
-        "Path(os.environ['FALA_EFFECTOR_OUTPUT_DIR'], 'result.json').write_text("
-        "json.dumps({'values': {'ok': True}}))\n",
-        encoding="utf-8",
-    )
+    step.write_text(_fep_organ("{'ok': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "malformed_error",

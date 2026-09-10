@@ -46,4 +46,4 @@ graphs on this same bet.
 
 ## Local proof
 
-The mill runs `[tool.lokay] test` → `mise exec -- pixi run full-smoke`. That is the documented Mojo gate in README/`pixi.toml`. Do not invent `uv run --extra dev pytest` as the Fala verifier.
+The mill runs `[tool.lokay] test` → `mise exec -- pixi run full-smoke`. That remains the only product verifier. `full-smoke` includes `python-host-api`, the explicit pytest list of the public host binding in `pixi.toml`. Do not invent `uv run --extra dev pytest` as a second verifier.
