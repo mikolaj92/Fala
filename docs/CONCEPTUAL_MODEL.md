@@ -60,13 +60,14 @@ AutonomousCorrelator → driver (claim → host → complete)
   events; sinks provide durability and replay.
 - **Unix layer:** local process host, separate child journals, CLI streams, and
   optional tee sinks.
-- **Not identity:** multi-runtime pools and peer discovery are optional
-  composition machinery; see
+- **Out of product:** multi-runtime pools, peer discovery, and `RuntimePool`
+  were removed. Nested work is a subprocess plus a separate child journal, not
+  optional fleet machinery; see
   [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
 Packages are authored as TOML or canonical JSON and loaded by the Mojo package
 surfaces (`load_package_toml`, `load_package_json`). Adapters are
-`native_function`, `subprocess`, and `manual_homeostat`.
+`native_function`, `subprocess`, `manual_homeostat`, and `child_path`.
 
 ## Relationship to Takt
 

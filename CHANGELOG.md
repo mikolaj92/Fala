@@ -17,6 +17,8 @@
   empty identity (#247).
 - SQLITE_BACKEND distinguishes NativeJournal atomic helpers from
   `SqliteJournalPort.append_batch`, which is leading-unit only (#248).
+- CONCEPTUAL_MODEL treats RuntimePool/peer discovery as out of product, not
+  optional composition machinery (#249).
 
 ## 0.8.0
 
