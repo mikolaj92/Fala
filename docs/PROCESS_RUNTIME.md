@@ -69,10 +69,16 @@ execution, and exact persistence behavior depends on the selected sink.
 
 This remains one Fala, not a fleet.
 
-Durable cancellation requests and terminal transitions do not interrupt an
-already-blocked adapter call. The process host enforces its own timeout and has
-a cancellation ABI, but the current driver has no live child-handle polling
-path that connects a later journal cancellation request to that ABI.
+Durable subprocess cancellation polls the journal while retaining the live
+process-host handle. `cancel_requested` records the operator request, then
+`drive_once` sends SIGTERM to the private process group, waits a bounded grace
+period, and escalates the whole group to SIGKILL when needed. Signal/escalation
+and the single `cancelled` terminal are journal events; replaying the cancel
+key is idempotent. A race with natural completion observes one durable
+terminal. `native_function` calls cannot be preempted and finish cooperatively;
+`manual_homeostat` has no live child and is cancelled directly in the journal.
+After driver death, recovery can only reclaim/terminalize the lease: OS process
+ownership is intentionally not reconstructed from an untrusted stale PID.
 
 Low-level journal/process retry primitives are policy-neutral. The native
 driver enforces `retry_policy` for adapter failure, timeout, and expired-lease

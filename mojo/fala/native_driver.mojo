@@ -13,10 +13,13 @@ from fala.adapters import (
     NativeFunctionRegistry,
     adapter_spec_json,
     adapter_spec_from_json,
+    collect_subprocess,
     execute_manual_homeostat,
     execute_native_function,
     execute_subprocess,
+    launch_subprocess,
 )
+from fala.durable_subprocess import wait_durable_subprocess
 from fala.native_process_host import native_process_host_available
 from fala.journal import NativeJournal, ProcessRow
 from fala.sqlite import SQLiteError
@@ -74,6 +77,7 @@ struct DriverResult(Copyable, Movable):
     var waiting: Bool
     var failed: Bool
     var timed_out: Bool
+    var cancelled: Bool
     var ticks: Int
     var process_id: String
     var error: AdapterError
@@ -88,6 +92,7 @@ struct DriverResult(Copyable, Movable):
         waiting: Bool = False,
         failed: Bool = False,
         timed_out: Bool = False,
+        cancelled: Bool = False,
         ticks: Int = 0,
         process_id: String = "",
         error: AdapterError = AdapterError(),
@@ -98,6 +103,7 @@ struct DriverResult(Copyable, Movable):
         self.waiting = waiting
         self.failed = failed
         self.timed_out = timed_out
+        self.cancelled = cancelled
         self.ticks = ticks
         self.process_id = process_id
         self.error = error.copy()
@@ -976,7 +982,28 @@ def drive_once(
         max_attempts=claimed.max_attempts,
         run_id=claimed.run_id,
     )
-    var result = _dispatch(request, registry)
+    var result = EffectorResult.failure(AdapterError.none())
+    if adapter.kind == AdapterKind.subprocess():
+        var launch_failure = EffectorResult.failure(AdapterError.none())
+        var launched = launch_subprocess(request, Dict[String, String](), launch_failure)
+        if not launched:
+            result = launch_failure^
+        else:
+            var session = launched.take()
+            var wait_status = wait_durable_subprocess(
+                journal, claimed.run_id, claimed.id, session.process, worker_id, now
+            )
+            if wait_status == "cancelled":
+                return DriverResult(cancelled=True, ticks=1, process_id=claimed.id)
+            var wait_code = 0
+            try:
+                wait_code = session.process.wait_result()
+            except err:
+                result = EffectorResult.failure(AdapterError.subprocess_failed(String(err)))
+            if result.error.is_ok():
+                result = collect_subprocess(session, wait_code)
+    else:
+        result = _dispatch(request, registry)
     if result.waiting:
         var parked = journal.park_homeostat_process(
             claimed.run_id,
@@ -1156,6 +1183,7 @@ def drive_until_idle(
             aggregate.waiting = aggregate.waiting or one.waiting
             aggregate.failed = aggregate.failed or one.failed
             aggregate.timed_out = aggregate.timed_out or one.timed_out
+            aggregate.cancelled = aggregate.cancelled or one.cancelled
             aggregate.process_id = one.process_id
             if not one.error.is_ok(): aggregate.error = one.error.copy()
         if claimed_this_round == 0: break
@@ -1518,6 +1546,7 @@ def drive_all_runs(
         report.waiting = report.waiting or one.waiting
         report.failed = report.failed or one.failed
         report.timed_out = report.timed_out or one.timed_out
+        report.cancelled = report.cancelled or one.cancelled
         report.process_id = one.process_id
         if not one.error.is_ok(): report.error = one.error.copy()
     if report.ticks == 0 and not report.stopped:
@@ -1605,7 +1634,7 @@ def drive_correlation_once(
 ) raises -> DriverResult:
     """Drive one effector and immediately reconcile downstream readiness."""
     var result = drive_once(journal, process, adapter, worker_id, now, lease_expires_at, registry)
-    if result.completed or result.failed or result.timed_out:
+    if result.completed or result.failed or result.timed_out or result.cancelled:
         try:
             _ = advance_after_terminal(journal, plan, result.process_id)
         except err:

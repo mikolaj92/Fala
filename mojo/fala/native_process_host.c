@@ -34,6 +34,7 @@ struct fala_process_host {
     char error_message[256];
     int64_t timeout_ms;
     int64_t terminate_grace_ms;
+    int64_t started_ms;
     int reaped;
 };
 
@@ -357,6 +358,7 @@ fala_process_result fala_process_start(const fala_process_options *options,
     if (err_open >= 0) (void)close(err_open);
     if (result != 0) { set_errno_error(process, FALA_PROCESS_SYSTEM_ERROR, "posix_spawn", result); goto fail; }
     process->pid = pid;
+    process->started_ms = monotonic_ms();
     process->status = FALA_PROCESS_RUNNING;
     *out_process = process;
     return FALA_PROCESS_OK;
@@ -382,6 +384,16 @@ fala_process_result fala_process_poll(fala_process_host *process) {
     do { result = waitpid(process->pid, &wait_status, WNOHANG); } while (result < 0 && errno == EINTR);
     if (result == process->pid) { (void)record_wait(process, wait_status); return FALA_PROCESS_OK; }
     if (result < 0) { set_errno_error(process, FALA_PROCESS_SYSTEM_ERROR, "waitpid", errno); process->status = FALA_PROCESS_STATUS_ERROR; return FALA_PROCESS_SYSTEM_ERROR; }
+    if (process->timeout_ms >= 0 && process->started_ms >= 0) {
+        int64_t now = monotonic_ms();
+        int64_t deadline = INT64_MAX;
+        if (process->timeout_ms <= INT64_MAX - process->started_ms) deadline = process->started_ms + process->timeout_ms;
+        if (now >= 0 && now >= deadline) {
+            process->timed_out = 1;
+            terminate_group(process);
+            return FALA_PROCESS_TIMED_OUT;
+        }
+    }
     return FALA_PROCESS_OK;
 }
 

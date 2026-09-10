@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Durable `drive_once` polls the journal against a live subprocess handle and
+  terminals `cancel_requested` as `cancelled` instead of waiting out the child
+  (#242).
+
 ## 0.8.0
 
 **Contract-first graph execution and coverage.**
