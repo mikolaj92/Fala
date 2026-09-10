@@ -50,6 +50,8 @@ def validate_message(text: String, expected_kind: String = "") raises -> String:
     if kind == "effector.request":
         for key in ["protocol","message_kind","message_id","run_id","process_id","execution_id","attempt","impulse_id","process_fingerprint","path_digest","capability","input","config","output_contract_ref"]: allowed.append(key)
         _ = _required_string(value,"run_id",""); _ = _required_string(value,"process_id",""); _ = _required_string(value,"execution_id",""); _ = _required_string(value,"impulse_id",""); _ = _required_string(value,"process_fingerprint",""); _ = _required_string(value,"path_digest",""); _ = _required_string(value,"capability",""); _ = _required_string(value,"output_contract_ref","")
+        if "input" not in value.object() or not value.object()["input"].is_object(): raise Error("fep.type_invalid at /input")
+        if "config" not in value.object() or not value.object()["config"].is_object(): raise Error("fep.type_invalid at /config")
     else:
         for key in ["protocol","message_kind","message_id","request_id","causation","execution_id","attempt","values","associations","reactions","metadata","evidence_refs","provenance","usage"]: allowed.append(key)
         var request_id = _required_string(value,"request_id",""); _ = _required_string(value,"execution_id","")
