@@ -21,4 +21,6 @@ def test_wheel_contains_emberjson_compatibility_patch(tmp_path: Path) -> None:
     wheels = list(tmp_path.glob("fala-*.whl"))
     assert len(wheels) == 1
     with zipfile.ZipFile(wheels[0]) as wheel:
-        assert "patches/emberjson-mojo-1.0.patch" in wheel.namelist()
+        names = wheel.namelist()
+        assert "patches/emberjson-mojo-1.0.patch" in names
+        assert "fala/py.typed" in names
