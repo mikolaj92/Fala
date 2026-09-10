@@ -8,6 +8,8 @@
   `run_manifest_effector` accept it (#264).
 - The wheel includes `fala/py.typed`, matching the `Typing :: Typed`
   classifier (#265).
+- Closed-issue `.lokay/` leftovers are no longer tracked in the product tree
+  (#266).
 
 ## 0.8.1
 

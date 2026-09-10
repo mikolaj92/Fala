@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import tomllib
 
 
@@ -36,3 +37,12 @@ def test_full_smoke_lists_public_python_host_api():
     assert "python/tests " not in command + " "
     assert _task_cmd(tasks, "adapter-smoke").find("python-host-api") >= 0
     assert _task_cmd(tasks, "full-smoke").find("adapter-smoke") >= 0
+
+
+def test_product_tree_does_not_track_lokay_leftovers():
+    tracked = subprocess.check_output(
+        ["git", "ls-files", ".lokay"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+    assert tracked == ""
