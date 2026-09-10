@@ -178,6 +178,54 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert terminal["ping"]["error"] == {}
 
 
+def test_host_run_package_python_library_matches_current_interpreter(tmp_path, monkeypatch) -> None:
+    import json
+    import sysconfig
+    from pathlib import Path
+
+    from fala import host
+
+    captured: dict[str, object] = {}
+
+    class FakeNative:
+        def host_run_package(self, request: str) -> dict[str, object]:
+            captured.update(json.loads(request))
+            return {"ok": True, "run_status": "completed"}
+
+    package = tmp_path / "package.toml"
+    package.write_text("[package]\nid='x'\n", encoding="utf-8")
+    prefix = tmp_path / "python"
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "lib").mkdir()
+    executable = prefix / "bin" / "python3.12"
+    executable.write_text("", encoding="utf-8")
+    library = prefix / "lib" / "libpython3.12.so"
+    library.write_bytes(b"placeholder")
+    monkeypatch.setattr(host.sys, "executable", str(executable))
+    monkeypatch.setattr(
+        sysconfig,
+        "get_config_var",
+        lambda name: {
+            "LDLIBRARY": "libpython3.12.so",
+            "LIBDIR": str(prefix / "lib"),
+        }.get(name),
+    )
+    monkeypatch.setattr(host, "ensure_process_host_library", lambda: tmp_path / "process-host")
+    monkeypatch.setattr(host, "ensure_sqlite_fire_library", lambda: None)
+    monkeypatch.setattr(host, "ensure_native", lambda: FakeNative())
+    monkeypatch.setattr(host, "_with_sqlite_cwd", lambda fn, _library=None: fn())
+    (tmp_path / "process-host").write_bytes(b"placeholder")
+    host.host_run_package(
+        db_path=tmp_path / "journal.sqlite",
+        package_path=package,
+        path_id="path",
+        run_id="lib",
+    )
+    got = Path(str(captured["python_library"]))
+    assert got == library
+    assert got.name != "libpython3.14.dylib"
+
+
 def _run_host_package_worker(
     run_id: str,
     db_path: str,

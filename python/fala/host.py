@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import sysconfig
 import tempfile
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -38,6 +39,23 @@ _EXECUTION_LOCK_UNAVAILABLE = (
 _IN_PROCESS_LOCKS_GUARD = threading.Lock()
 _IN_PROCESS_LOCKS: dict[Path, threading.Lock] = {}
 _T = TypeVar("_T")
+
+
+def _python_library_path() -> str:
+    """Shared library of the current interpreter, not a hardcoded 3.14 Darwin path."""
+    libdir = sysconfig.get_config_var("LIBDIR") or str(
+        Path(sys.executable).resolve().parent.parent / "lib"
+    )
+    name = sysconfig.get_config_var("LDLIBRARY") or ""
+    if not name or name.endswith((".a", ".lib")):
+        version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        if sys.platform == "darwin":
+            name = f"libpython{version}.dylib"
+        elif sys.platform == "win32":
+            name = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+        else:
+            name = f"libpython{version}.so"
+    return str((Path(libdir) / Path(name).name).resolve())
 
 
 @contextmanager
@@ -480,7 +498,7 @@ def host_run_package(
             str(Path(__file__).with_name("child_path.py").resolve()),
         ],
         "child_runner_pythonpath": str(Path(__file__).resolve().parent.parent),
-        "python_library": str(Path(sys.executable).resolve().parent.parent / "lib" / "libpython3.14.dylib"),
+        "python_library": _python_library_path(),
         "fala_home": str(repo_root()),
     }
     if inputs:
