@@ -533,6 +533,69 @@ def test_child_path_adapter_runs_separate_durable_child(tmp_path) -> None:
     assert __import__("pathlib").Path(child_ref["journal"]).is_file()
 
 
+def test_child_path_delete_on_success_removes_child_journal(tmp_path) -> None:
+    import json
+    import sys
+    from pathlib import Path
+
+    import fala
+
+    child_step = tmp_path / "child_step.py"
+    child_step.write_text(
+        _fep_organ(
+            "{'received': m['input']['ticket']}",
+            extra=(
+                "import json\nfrom pathlib import Path\nimport os\n"
+                "m=json.loads(Path(os.environ['FALA_EFFECTOR_MANIFEST']).read_text())\n"
+            ),
+        ),
+        encoding="utf-8",
+    )
+    child = {
+        "id": "child",
+        "correlation_paths": [{
+            "id": "work",
+            "input_schema": {"type": "object", "required": ["ticket"]},
+            "terminals": [{"id": "done", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object", "required": ["received"]}}],
+            "effectors": [{"id": "step", "adapter": {"kind": "subprocess", "command": [sys.executable, str(child_step)]}}],
+        }],
+    }
+    child_path = tmp_path / "child.json"
+    child_path.write_text(json.dumps(child), encoding="utf-8")
+    parent = {
+        "id": "parent",
+        "correlation_paths": [{
+            "id": "parent_work",
+            "terminals": [{"id": "complete", "source_effector": "child", "status": "succeeded", "output_schema": {"type": "object", "required": ["received", "child_ref"]}}],
+            "effectors": [{
+                "id": "child",
+                "adapter": {
+                    "kind": "child_path",
+                    "package_ref": str(child_path),
+                    "path_id": "work",
+                    "journal_root": str(tmp_path / "children"),
+                    "input_mapping": {"ticket": "ticket"},
+                    "terminal_mapping": {"done": "complete"},
+                    "lifetime_seconds": 300,
+                    "retention": "delete_on_success",
+                },
+            }],
+        }],
+    }
+    parent_path = tmp_path / "parent.json"
+    parent_path.write_text(json.dumps(parent), encoding="utf-8")
+    result = fala.host_run_package(
+        db_path=tmp_path / "parent.sqlite",
+        package_path=parent_path,
+        path_id="parent_work",
+        run_id="parent-run",
+        inputs={"ticket": 210},
+    )
+    assert result["path_result"]["terminal"] == "complete"
+    child_ref = result["path_result"]["values"]["child_ref"]
+    assert not Path(child_ref["journal"]).exists()
+
+
 def test_host_run_package_conditional_conduction_skips_nonmatching_adapter(tmp_path) -> None:
     import json
     import sys

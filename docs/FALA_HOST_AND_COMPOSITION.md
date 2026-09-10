@@ -159,9 +159,10 @@ run/process identity. Replaying the same parent process therefore addresses the
 same durable child. Its typed `path_result` returns through `result.json`, with
 `child_ref = {journal, run_id, path_digest, terminal}` included in parent
 values/metadata. A timeout or crash fails the parent process while leaving the
-child journal inspectable. Retention cleanup uses the existing journal
-retention operation; neither parent runtime nor child runner writes the other
-journal.
+child journal inspectable. `retention = "keep"` leaves that journal on disk.
+`delete_on_success` unlinks the child SQLite file (and WAL/SHM sidecars) after
+the typed `path_result` is written to the parent; it is not `maintain_journal`.
+Neither parent runtime nor child runner writes the other journal.
 
 ### Child Fala without multi-runtime
 

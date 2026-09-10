@@ -72,9 +72,9 @@ def main() -> int:
             )
         )
         if spec["retention"] == "delete_on_success":
-            # Deliberately leave deletion to the existing retention operation;
-            # this process never writes the parent journal.
-            pass
+            child_db.unlink(missing_ok=True)
+            Path(str(child_db) + "-wal").unlink(missing_ok=True)
+            Path(str(child_db) + "-shm").unlink(missing_ok=True)
         return 0
     except Exception as exc:
         print(str(exc), file=__import__("sys").stderr)

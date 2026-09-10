@@ -79,8 +79,8 @@ and the environment boundary.
 
 A `child_path` effector is authored without `command`/`ref`/`env`. Required
 fields are `package_ref`, `path_id`, `journal_root`, `input_mapping`,
-`terminal_mapping`, `lifetime_seconds`, and `retention` (`keep` or
-`delete_on_success`):
+`terminal_mapping`, `lifetime_seconds`, and `retention` (`keep` keeps the child
+journal; `delete_on_success` unlinks it after a typed parent `path_result`):
 
 ```toml
 adapter = {
