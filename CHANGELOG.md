@@ -2,6 +2,8 @@
 
 - `child_path` `delete_on_success` unlinks the child journal after a typed
   parent result instead of leaving a no-op policy (#262).
+- OUTPUT_CONTRACTS describes shipped 0.8.x contract-first/coverage behavior
+  instead of citing closed #237–#239 as unfinished (#263).
 
 ## 0.8.1
 

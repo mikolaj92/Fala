@@ -141,9 +141,9 @@ fingerprint, terminal, fixture-only policy, attempts/event order, and status.
 
 Effector-level `output_schema` is retained during rehearsal. Payload validation
 and typed terminal selection are shared with production; see
-[output contracts](OUTPUT_CONTRACTS.md) for the supported schema subset and
-remaining contract-first/coverage work. A passing fixture is not yet a proof
-that every declared variant has a fixture or handler.
+[output contracts](OUTPUT_CONTRACTS.md) for the supported schema subset.
+Rehearsal fails closed when a finite declared variant has no fixture. A passing
+fixture is not proof that an agent told the truth.
 
 ### Declarative child paths without multi-runtime
 
