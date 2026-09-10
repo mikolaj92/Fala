@@ -33,6 +33,12 @@ def main() raises:
     _check(core_idx >= 0 and ops_idx > core_idx, "core section precedes ops")
     _check(help_text.find("create-run") >= 0, "core lists create-run")
     _check(help_text.find("runs list") >= 0, "core lists runs list")
+    _check(help_text.find("graph expand") >= 0, "core lists graph expand")
+    _check(help_text.find("graph validate") >= 0, "core lists graph validate")
+    _check(help_text.find("graph fingerprint") >= 0, "core lists graph fingerprint")
+    _check(help_text.find("graph diff") >= 0, "core lists graph diff")
+    _check(help_text.find("explain") >= 0, "core lists explain")
+    _check(help_text.find("rehearse") >= 0, "core lists rehearse")
     # Ops tools are progressive disclosure, not absent.
     _check(help_text.find("ops maintain-journal") >= 0 or help_text.find("maintain-journal") >= 0, "ops maintain available")
     _check(help_text.find("ops projections rebuild") >= 0 or help_text.find("projections rebuild") >= 0, "ops rebuild available")

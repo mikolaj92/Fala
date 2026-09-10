@@ -6,6 +6,8 @@
 - Public process status lists include terminal `skipped`; wait-graph JSON and
   Python journal/read/inspection no longer treat a legal skip as malformed
   (#243).
+- CLI help lists `graph expand|validate|fingerprint|diff`, `explain`, and
+  `rehearse` with their required flags (#244).
 
 ## 0.8.0
 
