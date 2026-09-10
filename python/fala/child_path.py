@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from fala.fep import result_message
 from fala.host import host_run_package
 from fala.sdk import load_manifest, write_result
 
@@ -64,11 +65,11 @@ def main() -> int:
         }
         values["terminal"] = spec["terminal_mapping"][terminal]
         write_result(
-            {
-                "values": values,
-                "reactions": list(path_result.get("evidence") or []),
-                "metadata": {"child_ref": values["child_ref"]},
-            }
+            result_message(
+                values=values,
+                reactions=list(path_result.get("evidence") or []),
+                metadata={"child_ref": values["child_ref"]},
+            )
         )
         if spec["retention"] == "delete_on_success":
             # Deliberately leave deletion to the existing retention operation;

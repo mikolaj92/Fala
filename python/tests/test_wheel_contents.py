@@ -9,12 +9,14 @@ from pathlib import Path
 
 def test_wheel_contains_emberjson_compatibility_patch(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[2]
-    subprocess.run(
+    completed = subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(tmp_path), str(root)],
-        check=True,
+        cwd=root,
         capture_output=True,
         text=True,
+        env={key: value for key, value in __import__("os").environ.items() if key != "PYTHONPATH"},
     )
+    assert completed.returncode == 0, completed.stderr
 
     wheels = list(tmp_path.glob("fala-*.whl"))
     assert len(wheels) == 1

@@ -123,6 +123,7 @@ Requires Pixi/Mojo (see `pixi.toml`). The mill gate is the same command, declare
 mise exec -- pixi run full-smoke
 mise exec -- pixi run core-smoke    # no SQLite
 mise exec -- pixi run host-smoke    # process host and subprocess boundary
+mise exec -- pixi run python-host-api  # public Python host binding
 ```
 
 ## Examples

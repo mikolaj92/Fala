@@ -52,8 +52,11 @@ def parse(text: str, expected_kind: str | None = None) -> dict[str, Any]:
     if not isinstance(value, dict): raise FEPError("fep.invalid_json", "/")
     return validate(value, expected_kind)
 
-def build_result(request: Mapping[str, Any], *, values: Mapping[str,Any]|None=None, associations:list[dict[str,Any]]|None=None, reactions:list[dict[str,Any]]|None=None, metadata:Mapping[str,Any]|None=None, evidence_refs:list[str]|None=None, provenance:Mapping[str,Any]|None=None, usage:Mapping[str,Any]|None=None) -> dict[str, Any]:
-    request = validate(request, "effector.request")
-    body = {"protocol":PROTOCOL,"message_kind":"effector.result","request_id":request["message_id"],"causation":{"request_id":request["message_id"]},"execution_id":request["execution_id"],"attempt":request["attempt"],"values":dict(values or {}),"associations":associations or [],"reactions":reactions or [],"metadata":dict(metadata or {}),"evidence_refs":evidence_refs or [],"provenance":dict(provenance or {}),"usage":dict(usage or {})}
+def result_message(*, request_id: str = "msg:fixture", execution_id: str = "run:step", attempt: int = 1, values: Mapping[str, Any] | None = None, associations: list[dict[str, Any]] | None = None, reactions: list[dict[str, Any]] | None = None, metadata: Mapping[str, Any] | None = None, evidence_refs: list[str] | None = None, provenance: Mapping[str, Any] | None = None, usage: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    body = {"protocol":PROTOCOL,"message_kind":"effector.result","request_id":request_id,"causation":{"request_id":request_id},"execution_id":execution_id,"attempt":attempt,"values":dict(values or {}),"associations":associations or [],"reactions":reactions or [],"metadata":dict(metadata or {}),"evidence_refs":evidence_refs or [],"provenance":dict(provenance or {}),"usage":dict(usage or {})}
     body["message_id"] = _message_id(body)
     return validate(body, "effector.result")
+
+def build_result(request: Mapping[str, Any], *, values: Mapping[str,Any]|None=None, associations:list[dict[str,Any]]|None=None, reactions:list[dict[str,Any]]|None=None, metadata:Mapping[str,Any]|None=None, evidence_refs:list[str]|None=None, provenance:Mapping[str,Any]|None=None, usage:Mapping[str,Any]|None=None) -> dict[str, Any]:
+    request = validate(request, "effector.request")
+    return result_message(request_id=request["message_id"], execution_id=request["execution_id"], attempt=request["attempt"], values=values, associations=associations, reactions=reactions, metadata=metadata, evidence_refs=evidence_refs, provenance=provenance, usage=usage)

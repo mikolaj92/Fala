@@ -13,7 +13,7 @@ title = "One subprocess step"
 [[correlation_paths.effectors]]
 id = "ping"
 capability = "ping"
-adapter = { kind = "subprocess", command = ["/tmp/fala-native-subprocess-fixture", "success"], env = { SECRET = "smoke" } }
+adapter = { kind = "subprocess", command = ["/tmp/fala-native-subprocess-fixture", "success"], env = { SECRET = "smoke", FEP_RESULT = "{\"associations\":[],\"attempt\":1,\"causation\":{\"request_id\":\"msg:fixture\"},\"evidence_refs\":[],\"execution_id\":\"run-smoke:subprocess-smoke\",\"message_id\":\"msg:sha256:eb677c196667c7b8bbf4027f6cc47797fcf57ad81b63f0d00ab652cf45e05669\",\"message_kind\":\"effector.result\",\"metadata\":{},\"protocol\":\"fala-effector/1\",\"provenance\":{},\"reactions\":[],\"request_id\":\"msg:fixture\",\"usage\":{},\"values\":{\"ok\":true}}" } }
 
 [runtime.backend]
 kind = "sqlite"

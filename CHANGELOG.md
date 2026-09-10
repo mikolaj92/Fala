@@ -19,6 +19,9 @@
   `SqliteJournalPort.append_batch`, which is leading-unit only (#248).
 - CONCEPTUAL_MODEL treats RuntimePool/peer discovery as out of product, not
   optional composition machinery (#249).
+- `full-smoke` runs `python-host-api`, an explicit pytest list of the public
+  host binding (`host_run_package`, journal, inspection, reads, in-process)
+  (#250).
 
 ## 0.8.0
 
