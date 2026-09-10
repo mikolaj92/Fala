@@ -29,7 +29,7 @@ def validate(message: Mapping[str, Any], expected_kind: str | None = None) -> di
     if unknown: raise FEPError("fep.unknown_field", "/" + sorted(unknown)[0])
     if not isinstance(value.get("attempt"), int) or isinstance(value.get("attempt"), bool) or value["attempt"] < 1: raise FEPError("fep.attempt_invalid", "/attempt")
     if kind == "effector.request":
-        for key in ("run_id","process_id","execution_id","process_fingerprint","path_digest","capability","output_contract_ref"):
+        for key in ("run_id","process_id","execution_id","impulse_id","process_fingerprint","path_digest","capability","output_contract_ref"):
             if not isinstance(value.get(key), str) or not value[key]: raise FEPError("fep.required", "/"+key)
         if not isinstance(value.get("input"), dict) or not isinstance(value.get("config"), dict): raise FEPError("fep.output_contract_invalid", "/input")
     else:

@@ -26,7 +26,7 @@ def _required_string(ref value: Value, key: String, path: String) raises -> Stri
 
 
 def request_message(run_id: String, process_id: String, execution_id: String, attempt: Int, impulse_id: String, process_fingerprint: String, path_digest: String, capability: String, input_json: String, config_json: String, output_contract_ref: String) raises -> String:
-    if run_id == "" or process_id == "" or execution_id == "" or attempt < 1 or process_fingerprint == "" or path_digest == "" or capability == "" or output_contract_ref == "": raise Error("fep.request_invalid: required identity is missing")
+    if run_id == "" or process_id == "" or execution_id == "" or attempt < 1 or impulse_id == "" or process_fingerprint == "" or path_digest == "" or capability == "" or output_contract_ref == "": raise Error("fep.request_invalid: required identity is missing")
     var input = canonical_json_text(input_json); var config = canonical_json_text(config_json)
     var body = canonical_json_text("{\"attempt\":" + String(attempt) + ",\"capability\":" + quote(capability) + ",\"config\":" + config + ",\"execution_id\":" + quote(execution_id) + ",\"impulse_id\":" + quote(impulse_id) + ",\"input\":" + input + ",\"message_kind\":\"effector.request\",\"output_contract_ref\":" + quote(output_contract_ref) + ",\"path_digest\":" + quote(path_digest) + ",\"process_fingerprint\":" + quote(process_fingerprint) + ",\"process_id\":" + quote(process_id) + ",\"protocol\":\"" + PROTOCOL + "\",\"run_id\":" + quote(run_id) + "}")
     return canonical_json_text(body[byte=:body.byte_length()-1] + ",\"message_id\":" + quote(_digest(body)) + "}")
@@ -49,7 +49,7 @@ def validate_message(text: String, expected_kind: String = "") raises -> String:
     var allowed = List[String]()
     if kind == "effector.request":
         for key in ["protocol","message_kind","message_id","run_id","process_id","execution_id","attempt","impulse_id","process_fingerprint","path_digest","capability","input","config","output_contract_ref"]: allowed.append(key)
-        _ = _required_string(value,"run_id",""); _ = _required_string(value,"process_id",""); _ = _required_string(value,"execution_id",""); _ = _required_string(value,"process_fingerprint",""); _ = _required_string(value,"path_digest",""); _ = _required_string(value,"capability",""); _ = _required_string(value,"output_contract_ref","")
+        _ = _required_string(value,"run_id",""); _ = _required_string(value,"process_id",""); _ = _required_string(value,"execution_id",""); _ = _required_string(value,"impulse_id",""); _ = _required_string(value,"process_fingerprint",""); _ = _required_string(value,"path_digest",""); _ = _required_string(value,"capability",""); _ = _required_string(value,"output_contract_ref","")
     else:
         for key in ["protocol","message_kind","message_id","request_id","causation","execution_id","attempt","values","associations","reactions","metadata","evidence_refs","provenance","usage"]: allowed.append(key)
         var request_id = _required_string(value,"request_id",""); _ = _required_string(value,"execution_id","")

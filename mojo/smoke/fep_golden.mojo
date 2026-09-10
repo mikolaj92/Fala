@@ -13,4 +13,12 @@ def main() raises:
     var marker = "\"message_id\":\""; var start = request.find(marker) + marker.byte_length(); var finish = request.find("\"", start); var request_id = String(request[byte=start:finish])
     var result = result_message(request_id, "run-golden:echo", 1, values_json="{\"text\":\"hello\"}")
     expect(result == Path("../../conformance/fep-v1/result.valid.json").read_text().strip(), "Mojo result matches shared golden")
+    var empty_impulse = Path("../../conformance/fep-v1/negative.json").read_text()
+    expect(empty_impulse.find("empty-impulse-id") >= 0, "shared kit includes empty impulse_id")
+    var empty_failed = False
+    try:
+        _ = validate_message("{\"attempt\":1,\"capability\":\"echo\",\"config\":{},\"execution_id\":\"run-golden:echo\",\"impulse_id\":\"\",\"input\":{\"text\":\"hello\"},\"message_id\":\"msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4\",\"message_kind\":\"effector.request\",\"output_contract_ref\":\"schema:sha256:echo\",\"path_digest\":\"sha256:path\",\"process_fingerprint\":\"sha256:process\",\"process_id\":\"echo\",\"protocol\":\"fala-effector/1\",\"run_id\":\"run-golden\"}")
+    except err:
+        empty_failed = String(err).find("fep.required") >= 0 and String(err).find("impulse_id") >= 0
+    expect(empty_failed, "empty impulse_id fails closed as fep.required")
     print("FEP golden smoke ok")
