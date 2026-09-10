@@ -31,7 +31,8 @@ def validate(message: Mapping[str, Any], expected_kind: str | None = None) -> di
     if kind == "effector.request":
         for key in ("run_id","process_id","execution_id","impulse_id","process_fingerprint","path_digest","capability","output_contract_ref"):
             if not isinstance(value.get(key), str) or not value[key]: raise FEPError("fep.required", "/"+key)
-        if not isinstance(value.get("input"), dict) or not isinstance(value.get("config"), dict): raise FEPError("fep.output_contract_invalid", "/input")
+        if not isinstance(value.get("input"), dict): raise FEPError("fep.type_invalid", "/input")
+        if not isinstance(value.get("config"), dict): raise FEPError("fep.type_invalid", "/config")
     else:
         if not isinstance(value.get("request_id"), str) or not value["request_id"]: raise FEPError("fep.required", "/request_id")
         if value.get("causation") != {"request_id": value["request_id"]}: raise FEPError("fep.causation_invalid", "/causation/request_id")

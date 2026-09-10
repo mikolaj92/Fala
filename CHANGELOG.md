@@ -10,6 +10,8 @@
   classifier (#265).
 - Closed-issue `.lokay/` leftovers are no longer tracked in the product tree
   (#266).
+- FEP/1 codecs report `fep.type_invalid` at `/input` or `/config` instead of
+  blaming `/input` as an output contract (#267).
 
 ## 0.8.1
 

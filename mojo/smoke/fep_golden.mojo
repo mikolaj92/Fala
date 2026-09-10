@@ -21,4 +21,10 @@ def main() raises:
     except err:
         empty_failed = String(err).find("fep.required") >= 0 and String(err).find("impulse_id") >= 0
     expect(empty_failed, "empty impulse_id fails closed as fep.required")
+    var config_failed = False
+    try:
+        _ = validate_message("{\"attempt\":1,\"capability\":\"echo\",\"config\":[],\"execution_id\":\"run-golden:echo\",\"impulse_id\":\"impulse-1\",\"input\":{\"text\":\"hello\"},\"message_id\":\"msg:sha256:2dad83a40af1760bdac63857614546cba4022436c2176c4ce5681c2a8a3fdea4\",\"message_kind\":\"effector.request\",\"output_contract_ref\":\"schema:sha256:echo\",\"path_digest\":\"sha256:path\",\"process_fingerprint\":\"sha256:process\",\"process_id\":\"echo\",\"protocol\":\"fala-effector/1\",\"run_id\":\"run-golden\"}")
+    except err:
+        config_failed = String(err).find("fep.type_invalid") >= 0 and String(err).find("/config") >= 0
+    expect(config_failed, "non-object config fails closed as fep.type_invalid at /config")
     print("FEP golden smoke ok")
