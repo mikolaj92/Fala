@@ -15,6 +15,8 @@
   (#246).
 - FEP/1 codecs require nonempty `impulse_id`; the shared negative kit covers
   empty identity (#247).
+- SQLITE_BACKEND distinguishes NativeJournal atomic helpers from
+  `SqliteJournalPort.append_batch`, which is leading-unit only (#248).
 
 ## 0.8.0
 
