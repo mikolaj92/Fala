@@ -50,6 +50,20 @@ def fake_process_host_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_repo_root_uses_installed_package_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fala import _build
+
+    package = tmp_path / "site-packages" / "fala"
+    (package / "mojo" / "fala").mkdir(parents=True)
+    (package / "patches").mkdir()
+    monkeypatch.delenv("FALA_HOME", raising=False)
+    monkeypatch.setattr(_build, "_PACKAGE_DIR", package)
+    monkeypatch.chdir(tmp_path)
+    assert _build.repo_root() == package.resolve()
+    assert (_build.repo_root() / "mojo" / "fala").is_dir()
+    assert (_build.repo_root() / "patches").is_dir()
+
+
 def test_ensure_sqlite_fire_builds_when_missing(
     fake_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

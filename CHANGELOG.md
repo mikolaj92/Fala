@@ -12,6 +12,8 @@
   (#266).
 - FEP/1 codecs report `fep.type_invalid` at `/input` or `/config` instead of
   blaming `/input` as an output contract (#267).
+- Installed wheels keep Mojo sources and patches under `fala/`, not as
+  top-level `site-packages` trees (#268).
 
 ## 0.8.1
 
