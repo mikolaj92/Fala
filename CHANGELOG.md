@@ -1,5 +1,12 @@
 ## Unreleased
 
+## 0.8.1
+
+**Cross-process host execution lock and living-doc/host-API gate.**
+
+- `host_run_package` accepts optional POSIX `execution_lock_path` and serializes
+  durable package drives with flock so execution budgets start after lock
+  acquisition (#240).
 - Durable `drive_once` polls the journal against a live subprocess handle and
   terminals `cancel_requested` as `cancelled` instead of waiting out the child
   (#242).
