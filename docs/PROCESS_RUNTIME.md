@@ -148,6 +148,8 @@ Supported adapter kinds:
 - `native_function`: registered in-process Mojo callable.
 - `subprocess`: local command as an argument list—the process-host boundary.
 - `manual_homeostat`: explicit operator homeostat.
+- `child_path`: nested package path compiled by the Python host to argv; see
+  [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md) and `python/fala/child_path.py`.
 
 Subprocess commands are argument lists, not shell strings. The host prepares
 JSON input manifests, captures stdout/stderr, validates result manifests, and

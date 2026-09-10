@@ -20,7 +20,7 @@ not a standalone CLI command.
 ```text
 you compose:   TOML/JSON package → Impulse → embedded run_until_idle → JournalPort
 Fala mediates: cybernetic contracts + conduction + process host
-organs live:   native_function | subprocess | manual_homeostat
+organs live:   native_function | subprocess | manual_homeostat | child_path
 ```
 
 ## Core picture
@@ -33,7 +33,8 @@ Impulse / package (TOML or JSON)
         │
         ├── native_function   (in-process Mojo registry)
         ├── subprocess        (OS child + JSON manifest boundary)
-        └── manual_homeostat  (operator wait and regulation)
+        ├── manual_homeostat  (operator wait and regulation)
+        └── child_path        (host compiles nested package to argv)
         │
         ▼
   JournalPort → InMemory | SQLite | JSONL | Tee
@@ -69,7 +70,7 @@ the journal records metadata and references.
 | Engine | Mojo only (`mojo/fala/`) |
 | Host binding | Optional thin Python package (`python/fala/`), a JSON bridge to Mojo—not a second engine |
 | Packages | TOML or canonical JSON |
-| Adapters | `subprocess`, `native_function`, `manual_homeostat` |
+| Adapters | `subprocess`, `native_function`, `manual_homeostat`, `child_path` |
 | Journal | `JournalPort`, memory/SQLite/JSONL/tee sinks |
 | Proof | Mojo smokes under `mojo/smoke/` and `pixi.toml` |
 
@@ -90,6 +91,7 @@ tools/          native smoke helpers
 | `subprocess` | argv child; manifest in `input/`, result in `output/result.json` |
 | `native_function` | in-process Mojo callable from the native registry |
 | `manual_homeostat` | durable operator wait and explicit completion |
+| `child_path` | package-authored nested path; host compiles it to the subprocess runner in `python/fala/child_path.py` |
 
 `run_until_idle` is the embedded/library API that drives processes sequentially
 (claim → execute → complete), not a standalone CLI command. Each process has a
