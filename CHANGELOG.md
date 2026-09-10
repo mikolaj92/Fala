@@ -10,6 +10,9 @@
   `rehearse` with their required flags (#244).
 - Document package adapter kind `child_path` in README, ADAPTER_CONTRACTS, and
   host composition docs so the public list matches the loader (#245).
+- `host_run_package` derives `python_library` from the current interpreter
+  (`sysconfig` LDLIBRARY/LIBDIR) instead of hardcoding `libpython3.14.dylib`
+  (#246).
 
 ## 0.8.0
 
