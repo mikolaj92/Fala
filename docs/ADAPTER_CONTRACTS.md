@@ -9,10 +9,13 @@ and journal writes.
 - `subprocess`: local command as an argument list; the primary child boundary.
 - `native_function`: registered in-process Mojo callable (embedded/tests).
 - `manual_homeostat`: durable operator wait.
+- `child_path`: package-authored nested correlation path. The loader stores the
+  child spec; `host_run_package` compiles it to argv + `python/fala/child_path.py`.
+  It is not a fourth process-host transport and does not restore `fala_runtime`.
 
 `python_function` and `fala_runtime` are removed product kinds. A nested Fala
-uses `subprocess` and a separate journal; pool/fleet selection is not an
-adapter. See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
+uses `subprocess`/`child_path` and a separate journal; pool/fleet selection is
+not an adapter. See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
 ## Subprocess wire boundary
 
@@ -73,6 +76,27 @@ The native `doctor --package` / `--output` filesystem checks are currently a
 reserved native boundary, not an executable package-conformance command.
 Package loading itself validates known adapter kinds, subprocess command shape,
 and the environment boundary.
+
+A `child_path` effector is authored without `command`/`ref`/`env`. Required
+fields are `package_ref`, `path_id`, `journal_root`, `input_mapping`,
+`terminal_mapping`, `lifetime_seconds`, and `retention` (`keep` or
+`delete_on_success`):
+
+```toml
+adapter = {
+  kind = "child_path",
+  package_ref = "child.fala-package.toml",
+  path_id = "ship",
+  journal_root = ".fala/children",
+  input_mapping = { ticket = "ticket" },
+  terminal_mapping = { delivered = "ok" },
+  lifetime_seconds = 30,
+  retention = "keep",
+}
+```
+
+The runner is `python/fala/child_path.py`. Native CLI dispatch does not compile
+this kind; only the Python host does.
 
 Python subprocesses may use `fala.sdk` to read
 `FALA_EFFECTOR_MANIFEST`, inspect declared inputs, conduction, upstream/output

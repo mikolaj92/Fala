@@ -8,6 +8,8 @@
   (#243).
 - CLI help lists `graph expand|validate|fingerprint|diff`, `explain`, and
   `rehearse` with their required flags (#244).
+- Document package adapter kind `child_path` in README, ADAPTER_CONTRACTS, and
+  host composition docs so the public list matches the loader (#245).
 
 ## 0.8.0
 

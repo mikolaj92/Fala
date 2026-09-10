@@ -58,7 +58,7 @@ can use these local boundaries.
 | **Journal** | `append_batch` / `claim_next` / load; InMemory + reference SQLite (+ Jsonl/Tee as sinks) |
 | **Driver** | claim → execute adapter → complete / fail / wait / retry |
 | **Host** | spawn and supervise **local** effectors: argv, cwd, env, timeout, stdin/out files |
-| **Adapter kinds (local)** | `native_function`, `subprocess`, `manual_homeostat` |
+| **Adapter kinds (local)** | `native_function`, `subprocess`, `manual_homeostat`, `child_path` |
 | **Reaction store** | bytes outside the journal; metadata/refs inside |
 | **CLI (core)** | implemented `init`, run create/lifecycle/list/inspect/observe, and event/domain inspection on one journal (`--db`); ops retention/bridge/rebuild remain separate |
 
@@ -323,6 +323,7 @@ layer, or exactly-once claim.
 | `subprocess` | **core** |
 | `native_function` | **core** (Mojo registry) |
 | `manual_homeostat` | **core** |
+| `child_path` | **host compile** to subprocess (`python/fala/child_path.py`) |
 | `python_function` | **removed** |
 | `fala_runtime` | **removed** |
 
