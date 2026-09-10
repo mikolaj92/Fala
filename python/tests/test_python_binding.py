@@ -178,6 +178,135 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert terminal["ping"]["error"] == {}
 
 
+def _run_host_package_worker(
+    run_id: str,
+    db_path: str,
+    package_path: str,
+    library_path: str,
+    lock_path: str,
+    active,
+    maximum,
+    guard,
+    first_started,
+    second_lock_attempted,
+    second_native_started,
+    release_first,
+) -> None:
+    import json
+    from contextlib import contextmanager
+    from pathlib import Path
+
+    from fala import host
+
+    class FakeNative:
+        def host_run_package(self, request: str) -> dict[str, object]:
+            run_id = str(json.loads(request)["run_id"])
+            with guard:
+                active.value += 1
+                maximum.value = max(maximum.value, active.value)
+            if run_id == "a":
+                first_started.set()
+                if not release_first.wait(timeout=5):
+                    raise RuntimeError("timed out waiting to release first drive")
+            else:
+                second_native_started.set()
+            with guard:
+                active.value -= 1
+            return {"ok": True, "run_status": "completed"}
+
+    host.ensure_process_host_library = lambda: Path(library_path)
+    host.ensure_sqlite_fire_library = lambda: None
+    host.ensure_native = lambda: FakeNative()
+    host._with_sqlite_cwd = lambda fn, _library=None: fn()
+
+    if run_id == "b":
+        original_execution_turn = host._execution_turn
+
+        @contextmanager
+        def observed_execution_turn(path):
+            second_lock_attempted.set()
+            with original_execution_turn(path):
+                yield
+
+        host._execution_turn = observed_execution_turn
+
+    host.host_run_package(
+        db_path=Path(db_path),
+        package_path=Path(package_path),
+        path_id="path",
+        run_id=run_id,
+        execution_lock_path=Path(lock_path),
+    )
+
+
+def test_host_run_package_execution_turn_serializes_calls_before_native_drive(
+    tmp_path,
+) -> None:
+    import os
+    from multiprocessing import get_context
+
+    if os.name != "posix":
+        pytest.skip("execution_lock_path is POSIX-only")
+
+    library = tmp_path / "process-host.dylib"
+    library.write_bytes(b"placeholder")
+    package = tmp_path / "package.toml"
+    package.write_text("package", encoding="utf-8")
+    context = get_context("spawn")
+    active = context.Value("i", 0)
+    maximum = context.Value("i", 0)
+    guard = context.Lock()
+    first_started = context.Event()
+    second_lock_attempted = context.Event()
+    second_native_started = context.Event()
+    release_first = context.Event()
+    processes = []
+    worker_args = (
+        str(package),
+        str(library),
+        str(tmp_path / "model-turn.lock"),
+        active,
+        maximum,
+        guard,
+        first_started,
+        second_lock_attempted,
+        second_native_started,
+        release_first,
+    )
+
+    try:
+        first = context.Process(
+            target=_run_host_package_worker,
+            args=("a", str(tmp_path / "a.sqlite"), *worker_args),
+        )
+        first.start()
+        processes.append(first)
+        assert first_started.wait(timeout=5)
+
+        second = context.Process(
+            target=_run_host_package_worker,
+            args=("b", str(tmp_path / "b.sqlite"), *worker_args),
+        )
+        second.start()
+        processes.append(second)
+        assert second_lock_attempted.wait(timeout=5)
+        assert not second_native_started.wait(timeout=1)
+        release_first.set()
+        for process in processes:
+            process.join(timeout=5)
+    finally:
+        release_first.set()
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+        for process in processes:
+            process.join(timeout=5)
+
+    assert first.exitcode == 0
+    assert second.exitcode == 0
+    assert maximum.value == 1
+
+
 def test_host_run_package_returns_typed_path_terminal(tmp_path) -> None:
     import json
     import sys
