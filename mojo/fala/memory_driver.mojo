@@ -15,6 +15,7 @@ from fala.adapters import (
     execute_native_function,
 )
 from fala.correlation import CorrelationPathSpec
+from fala.effector_protocol import result_message
 from fala.memory_runtime import MemoryRuntime
 
 
@@ -48,12 +49,12 @@ struct MemoryDriver(Movable):
         self.use_registry = True
 
     def _execute(
-        mut self, effector_id: String, input_json: String, config_json: String
+        mut self, process_id: String, effector_id: String, input_json: String, config_json: String
     ) raises -> String:
         if self.use_registry and effector_id in self.refs:
             var native_ref = self.refs[effector_id]
             var request = EffectorRequest(
-                "proc",
+                process_id,
                 AdapterSpec.native_function(native_ref),
                 "",
                 input_json,
@@ -69,9 +70,11 @@ struct MemoryDriver(Movable):
                     + result.error.message
                 )
             return result.output_json
+        var payload = "{\"ok\":true}"
         if effector_id in self.handlers:
-            return self.handlers[effector_id]
-        return "{\"ok\":true}"
+            payload = self.handlers[effector_id]
+        var sender = effector_id if effector_id != "" else process_id
+        return result_message(sender, "parent", sender, process_id, payload)
 
     def drive_until_idle(
         mut self,
@@ -100,7 +103,7 @@ struct MemoryDriver(Movable):
                 effector_id = extra.effector_id
                 input_json = extra.input_json
                 config_json = extra.config_json
-            var output_json = self._execute(effector_id, input_json, config_json)
+            var output_json = self._execute(process_id, effector_id, input_json, config_json)
             self.runtime.complete_process(process_id, worker_id, output_json)
             _ = self.runtime.advance(path, run_id)
         raise Error("drive_until_idle exceeded max_ticks")

@@ -57,18 +57,21 @@ title = "Basic enrichment"
 [[correlation_paths.effectors]]
 id = "ingest"
 capability = "ingest_source"
+output_schema = { type = "object", required = ["source", "chars"], properties = { source = { type = "string" }, chars = { type = "integer" } } }
 adapter = { kind = "native_function", ref = "example.basic.ingest" }
 
 [[correlation_paths.effectors]]
 id = "enrich"
 capability = "enrich_source"
 conduction = ["ingest"]
+output_schema = { type = "object", required = ["source", "label"], properties = { source = { type = "string" }, label = { type = "string" } } }
 adapter = { kind = "native_function", ref = "example.basic.enrich" }
 
 [[correlation_paths.effectors]]
 id = "export"
 capability = "export_source"
 conduction = ["enrich"]
+output_schema = { type = "object", required = ["label", "status"], properties = { label = { type = "string" }, status = { const = "ok" } } }
 adapter = { kind = "native_function", ref = "example.basic.export" }
 
 [runtime.backend]

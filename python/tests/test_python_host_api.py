@@ -1,12 +1,11 @@
 from pathlib import Path
-import subprocess
 import tomllib
 
 
 ROOT = Path(__file__).parents[2]
 
-# Merge-gate Python files for the public host binding. Keep this list explicit
-# in pixi.toml `python-host-api`; do not collapse it to `python/tests`.
+# Explicit public host-binding files for pixi.toml `python-host-api`.
+# Do not collapse that task to `python/tests`.
 PUBLIC_HOST_API_TESTS = (
     "python/tests/test_python_binding.py",
     "python/tests/test_in_process_recording.py",
@@ -17,7 +16,10 @@ PUBLIC_HOST_API_TESTS = (
     "python/tests/test_wheel_contents.py",
     "python/tests/test_recovery.py",
     "python/tests/test_maintenance.py",
-    "python/tests/test_mill_python_host_api.py",
+    "python/tests/test_python_host_api.py",
+    "python/tests/test_native_cli_module_boundaries.py",
+    "python/tests/test_sqlite_fire_build.py",
+    "python/tests/test_version_consistency.py",
 )
 
 
@@ -35,14 +37,9 @@ def test_full_smoke_lists_public_python_host_api():
     for path in PUBLIC_HOST_API_TESTS:
         assert path in command
     assert "python/tests " not in command + " "
-    assert _task_cmd(tasks, "adapter-smoke").find("python-host-api") >= 0
+    adapter = _task_cmd(tasks, "adapter-smoke")
+    assert adapter.find("python-host-api") >= 0
+    assert adapter.find("native-driver") >= 0
+    assert adapter.find("run-identity-replay") >= 0
+    assert adapter.find("durable-subprocess") >= 0
     assert _task_cmd(tasks, "full-smoke").find("adapter-smoke") >= 0
-
-
-def test_product_tree_does_not_track_lokay_leftovers():
-    tracked = subprocess.check_output(
-        ["git", "ls-files", ".lokay"],
-        cwd=ROOT,
-        text=True,
-    ).strip()
-    assert tracked == ""

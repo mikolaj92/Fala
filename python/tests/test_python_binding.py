@@ -12,12 +12,13 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FALA_HOME", str(root))
 
 
-def _fep_organ(values: str, extra: str = "") -> str:
+def _protocol_organ(values: str, extra: str = "") -> str:
     return (
         extra
-        + "from fala.fep import result_message\n"
-        + "from fala.sdk import write_result\n"
-        + f"write_result(result_message(values={values}))\n"
+        + "from fala.protocol import Result\n"
+        + "from fala.sdk import load_manifest, write_result\n"
+        + "m = load_manifest()\n"
+        + f"write_result(Result.from_request(m, payload={values}))\n"
     )
 
 
@@ -109,27 +110,27 @@ def test_sdk_run_manifest_effector(tmp_path, monkeypatch) -> None:
     manifest = tmp_path / "manifest.json"
     out_dir = tmp_path / "out"
     out_dir.mkdir()
-    from fala.fep import build_result, parse
+    from fala.protocol import Result, parse
 
-    request_path = Path(__file__).parents[2] / "conformance/fep-v1/request.valid.json"
+    request_path = Path(__file__).parents[2] / "conformance/fala/request.valid.json"
     manifest.write_text(request_path.read_text(), encoding="utf-8")
     monkeypatch.setenv("FALA_EFFECTOR_MANIFEST", str(manifest))
     monkeypatch.setenv("FALA_EFFECTOR_OUTPUT_DIR", str(out_dir))
 
     def handler(m: dict) -> dict:
-        return build_result(m, values={"echo": sdk.input_values(m)})
+        return Result.from_request(m, payload={"echo": sdk.input_values(m)})
 
     assert sdk.run_manifest_effector(handler) == 0
     result = json.loads((out_dir / "result.json").read_text(encoding="utf-8"))
-    assert result["values"]["echo"]["text"] == "hello"
-    assert parse(json.dumps(result), "effector.result") == result
+    assert result["payload"]["echo"]["text"] == "hello"
+    assert parse(json.dumps(result), "result").to_message() == result
 
 
 def test_sdk_declared_inputs_excludes_runtime_injected_keys() -> None:
     from fala import sdk
 
     manifest = {
-        "input": {
+        "payload": {
             "authored": 1,
             "conduction": {"source": "value"},
             "upstream_reactions": [{"kind": "source"}],
@@ -150,7 +151,7 @@ def test_sdk_explicit_empty_env_does_not_fall_back_to_process_env(
     from fala import sdk
 
     manifest = tmp_path / "manifest.json"
-    manifest.write_text('{"input": {}}', encoding="utf-8")
+    manifest.write_text('{"payload": {}}', encoding="utf-8")
     monkeypatch.setenv("FALA_EFFECTOR_MANIFEST", str(manifest))
     with pytest.raises(RuntimeError, match="FALA_EFFECTOR_MANIFEST"):
         sdk.load_manifest(env={})
@@ -159,19 +160,22 @@ def test_sdk_explicit_empty_env_does_not_fall_back_to_process_env(
 
 
 def test_sdk_write_result_accepts_output_helper(tmp_path, monkeypatch) -> None:
+    import json
     from fala import sdk
-    from fala.fep import parse
+    from fala.protocol import parse
 
     out_dir = tmp_path / "out"
     out_dir.mkdir()
+    request_text = (Path(__file__).parents[2] / "conformance/fala/request.valid.json").read_text()
     manifest = tmp_path / "manifest.json"
-    manifest.write_text('{"input": {}}', encoding="utf-8")
+    manifest.write_text(request_text, encoding="utf-8")
     monkeypatch.setenv("FALA_EFFECTOR_OUTPUT_DIR", str(out_dir))
     monkeypatch.setenv("FALA_EFFECTOR_MANIFEST", str(manifest))
-    path = sdk.write_result(sdk.output(values={"ok": True}))
-    result = parse(path.read_text(encoding="utf-8"), "effector.result")
-    assert result["values"] == {"ok": True}
-    assert sdk.run_manifest_effector(lambda _m: sdk.output(values={"echo": True})) == 0
+    request = json.loads(request_text)
+    path = sdk.write_result(sdk.output(request, {"ok": True}))
+    result = parse(path.read_text(encoding="utf-8"), "result")
+    assert result["payload"] == {"ok": True}
+    assert sdk.run_manifest_effector(lambda m: sdk.output(m, {"echo": True})) == 0
 
 
 def test_host_run_package_subprocess(tmp_path) -> None:
@@ -200,7 +204,8 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert list(terminal) == ["ping"]
     assert terminal["ping"]["id"] == "one_step:ping"
     assert terminal["ping"]["status"] == "succeeded"
-    assert terminal["ping"]["output"]["values"]["ok"] is True
+    ping_output = terminal["ping"]["output"]
+    assert ping_output["payload"]["ok"] is True
     assert terminal["ping"]["error"] == {}
 
 
@@ -477,9 +482,9 @@ def test_host_run_package_returns_typed_path_terminal(tmp_path) -> None:
 
     step = tmp_path / "step.py"
     step.write_text(
-        "from fala.fep import result_message\n"
-        "from fala.sdk import write_result\n"
-        "write_result(result_message(values={'artifact': 'ready'}, reactions=[{'kind': 'proof', 'uri': 'proof://1'}]))\n",
+        "from fala.protocol import Result\n"
+        "from fala.sdk import load_manifest, write_result\n"
+        "write_result(Result.from_request(load_manifest(), payload={'artifact': 'ready', 'evidence': [{'kind': 'proof', 'uri': 'proof://1'}]}))\n",
         encoding="utf-8",
     )
     package = {
@@ -503,7 +508,7 @@ def test_host_run_package_returns_typed_path_terminal(tmp_path) -> None:
             }],
             "effectors": [{
                 "id": "build",
-                "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
+                "output_schema":{"type":"object","required":["artifact"],"properties":{"artifact":{"const":"ready"}}},"adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
             }],
         }],
     }
@@ -520,7 +525,10 @@ def test_host_run_package_returns_typed_path_terminal(tmp_path) -> None:
 
     assert result["path_result"] == {
         "terminal": "done",
-        "values": {"artifact": "ready"},
+        "values": {
+            "artifact": "ready",
+            "evidence": [{"kind": "proof", "uri": "proof://1"}],
+        },
         "evidence": [{"kind": "proof", "uri": "proof://1"}],
         "path_digest": result["correlation_path_digest"],
     }
@@ -534,14 +542,14 @@ def test_host_run_package_typed_path_rejects_invalid_input_and_terminal(tmp_path
     import pytest
 
     step = tmp_path / "step.py"
-    step.write_text(_fep_organ("{'actual': 1}"), encoding="utf-8")
+    step.write_text(_protocol_organ("{'actual': 1}"), encoding="utf-8")
     package = {
         "id": "typed_failures",
         "correlation_paths": [{
             "id": "path",
             "input_schema": {"type": "object", "required": ["ticket"], "properties": {"ticket": {"type": "integer"}}},
             "terminals": [{"id": "done", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object", "required": ["expected"]}}],
-            "effectors": [{"id": "step", "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]}}],
+            "effectors": [{"id": "step", "output_schema": {"type": "object", "required": ["actual"], "properties": {"actual": {"type": "integer"}}}, "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]}}],
         }],
     }
     package_path = tmp_path / "failures.json"
@@ -560,18 +568,18 @@ def test_host_run_package_typed_path_rejects_ambiguous_or_missing_terminal(tmp_p
     import pytest
 
     step = tmp_path / "step.py"
-    step.write_text(_fep_organ("{'route': 'one'}"), encoding="utf-8")
-    base = {"id": "terminal_selection", "correlation_paths": [{"id": "path", "effectors": [{"id": "step", "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]}}]}]}
+    step.write_text(_protocol_organ("{'route': 'one'}"), encoding="utf-8")
+    base = {"id": "terminal_selection", "correlation_paths": [{"id": "path", "effectors": [{"id": "step", "output_schema":{"type":"object","required":["route"],"properties":{"route":{"type":"string"}}},"adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]}}]}]}
     path = base["correlation_paths"][0]
     path["terminals"] = [
-        {"id": "one", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object"}},
-        {"id": "also_one", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object"}},
+        {"id": "one", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object", "required": ["route"], "properties": {"route": {"type": "string"}}}},
+        {"id": "also_one", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object", "required": ["route"], "properties": {"route": {"type": "string"}}}},
     ]
     package_path = tmp_path / "ambiguous.json"
     package_path.write_text(json.dumps(base), encoding="utf-8")
     with pytest.raises(Exception, match="ambiguous declared path terminals"):
         fala.host_run_package(db_path=tmp_path / "ambiguous.sqlite", package_path=package_path, path_id="path")
-    path["terminals"] = [{"id": "failed", "source_effector": "step", "status": "failed", "output_schema": {"type": "object"}}]
+    path["terminals"] = [{"id": "failed", "source_effector": "step", "status": "failed", "output_schema": {"type": "object", "required": ["route"], "properties": {"route": {"type": "string"}}}}]
     package_path.write_text(json.dumps(base), encoding="utf-8")
     with pytest.raises(Exception, match="no declared path terminal matched"):
         fala.host_run_package(db_path=tmp_path / "missing.sqlite", package_path=package_path, path_id="path")
@@ -585,8 +593,8 @@ def test_child_path_adapter_runs_separate_durable_child(tmp_path) -> None:
 
     child_step = tmp_path / "child_step.py"
     child_step.write_text(
-        _fep_organ(
-            "{'received': m['input']['ticket']}",
+        _protocol_organ(
+            "{'received': m['payload']['ticket']}",
             extra=(
                 "import json\nfrom pathlib import Path\nimport os\n"
                 "m=json.loads(Path(os.environ['FALA_EFFECTOR_MANIFEST']).read_text())\n"
@@ -600,7 +608,7 @@ def test_child_path_adapter_runs_separate_durable_child(tmp_path) -> None:
             "id": "work",
             "input_schema": {"type": "object", "required": ["ticket"]},
             "terminals": [{"id": "done", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object", "required": ["received"]}}],
-            "effectors": [{"id": "step", "adapter": {"kind": "subprocess", "command": [sys.executable, str(child_step)]}}],
+            "effectors": [{"id": "step", "output_schema": {"type": "object", "required": ["received"], "properties": {"received": {"type": "integer"}}}, "adapter": {"kind": "subprocess", "command": [sys.executable, str(child_step)]}}],
         }],
     }
     child_path = tmp_path / "child.json"
@@ -612,7 +620,7 @@ def test_child_path_adapter_runs_separate_durable_child(tmp_path) -> None:
             "terminals": [{"id": "complete", "source_effector": "child", "status": "succeeded", "output_schema": {"type": "object", "required": ["received", "child_ref"]}}],
             "effectors": [{
                 "id": "child",
-                "adapter": {
+                "output_schema":{"type":"object","required":["received","child_ref"],"properties":{"received":{"type":"integer"},"child_ref":{"type":"object","required":["journal","run_id"],"properties":{"journal":{"type":"string"},"run_id":{"type":"string"}}}}},"adapter": {
                     "kind": "child_path",
                     "package_ref": str(child_path),
                     "path_id": "work",
@@ -647,8 +655,8 @@ def test_child_path_delete_on_success_removes_child_journal(tmp_path) -> None:
 
     child_step = tmp_path / "child_step.py"
     child_step.write_text(
-        _fep_organ(
-            "{'received': m['input']['ticket']}",
+        _protocol_organ(
+            "{'received': m['payload']['ticket']}",
             extra=(
                 "import json\nfrom pathlib import Path\nimport os\n"
                 "m=json.loads(Path(os.environ['FALA_EFFECTOR_MANIFEST']).read_text())\n"
@@ -662,7 +670,7 @@ def test_child_path_delete_on_success_removes_child_journal(tmp_path) -> None:
             "id": "work",
             "input_schema": {"type": "object", "required": ["ticket"]},
             "terminals": [{"id": "done", "source_effector": "step", "status": "succeeded", "output_schema": {"type": "object", "required": ["received"]}}],
-            "effectors": [{"id": "step", "adapter": {"kind": "subprocess", "command": [sys.executable, str(child_step)]}}],
+            "effectors": [{"id": "step", "output_schema": {"type": "object", "required": ["received"], "properties": {"received": {"type": "integer"}}}, "adapter": {"kind": "subprocess", "command": [sys.executable, str(child_step)]}}],
         }],
     }
     child_path = tmp_path / "child.json"
@@ -674,7 +682,7 @@ def test_child_path_delete_on_success_removes_child_journal(tmp_path) -> None:
             "terminals": [{"id": "complete", "source_effector": "child", "status": "succeeded", "output_schema": {"type": "object", "required": ["received", "child_ref"]}}],
             "effectors": [{
                 "id": "child",
-                "adapter": {
+                "output_schema":{"type":"object","required":["received","child_ref"],"properties":{"received":{"type":"integer"},"child_ref":{"type":"object","required":["journal","run_id"],"properties":{"journal":{"type":"string"},"run_id":{"type":"string"}}}}},"adapter": {
                     "kind": "child_path",
                     "package_ref": str(child_path),
                     "path_id": "work",
@@ -708,18 +716,18 @@ def test_host_run_package_conditional_conduction_skips_nonmatching_adapter(tmp_p
     import fala
 
     source = tmp_path / "source.py"
-    source.write_text(_fep_organ("{'decision': {'verdict': 'request_changes'}}"), encoding="utf-8")
+    source.write_text(_protocol_organ("{'decision': {'verdict': 'request_changes'}}"), encoding="utf-8")
     sentinel = tmp_path / "merge-ran"
     merge = tmp_path / "merge.py"
     merge.write_text(
-        _fep_organ(
+        _protocol_organ(
             "{'ran': True}",
             extra=f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('ran')\n",
         ),
         encoding="utf-8",
     )
     repair = tmp_path / "repair.py"
-    repair.write_text(_fep_organ("{'repaired': True}"), encoding="utf-8")
+    repair.write_text(_protocol_organ("{'repaired': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "conditional_host",
@@ -727,9 +735,9 @@ def test_host_run_package_conditional_conduction_skips_nonmatching_adapter(tmp_p
         "correlation_paths": [{
             "id": "route",
             "effectors": [
-                {"id": "review", "capability": "review", "adapter": {"kind": "subprocess", "command": [sys.executable, str(source)]}},
-                {"id": "merge", "capability": "merge", "conduction": ["review"], "when": {"upstream": "review", "path": "decision.verdict", "equals": "approve"}, "adapter": {"kind": "subprocess", "command": [sys.executable, str(merge)]}},
-                {"id": "repair", "capability": "repair", "conduction": ["review"], "when": {"upstream": "review", "path": "decision.verdict", "equals": "request_changes"}, "adapter": {"kind": "subprocess", "command": [sys.executable, str(repair)]}},
+                {"id": "review", "capability": "review", "output_schema":{"type":"object","required":["decision"],"properties":{"decision":{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string"}}}}},"adapter": {"kind": "subprocess", "command": [sys.executable, str(source)]}},
+                {"id": "merge", "capability": "merge", "conduction": ["review"], "when": {"upstream": "review", "path": "decision.verdict", "equals": "approve"}, "output_schema":{"type":"object","required":["ran"],"properties":{"ran":{"type":"boolean"}}},"adapter": {"kind": "subprocess", "command": [sys.executable, str(merge)]}},
+                {"id": "repair", "capability": "repair", "conduction": ["review"], "when": {"upstream": "review", "path": "decision.verdict", "equals": "request_changes"}, "output_schema":{"type":"object","required":["repaired"],"properties":{"repaired":{"type":"boolean"}}},"adapter": {"kind": "subprocess", "command": [sys.executable, str(repair)]}},
             ],
         }],
     }
@@ -842,7 +850,7 @@ def test_host_run_package_strict_json_package_uses_json_loader(tmp_path) -> None
     import fala
 
     step = tmp_path / "step.py"
-    step.write_text(_fep_organ("{'ok': True}"), encoding="utf-8")
+    step.write_text(_protocol_organ("{'ok': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "json_smoke",
@@ -852,7 +860,7 @@ def test_host_run_package_strict_json_package_uses_json_loader(tmp_path) -> None
             "effectors": [{
                 "id": "step",
                 "capability": "step",
-                "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
+                "output_schema":{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}},"adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
             }],
         }],
         "runtime": {
@@ -873,7 +881,8 @@ def test_host_run_package_strict_json_package_uses_json_loader(tmp_path) -> None
     assert result["run_status"] == "completed"
     step_result = result["effector_results"]["step"]
     assert step_result["status"] == "succeeded"
-    assert step_result["output"]["values"] == {"ok": True}
+    step_output = step_result["output"]
+    assert step_output["payload"] == {"ok": True}
     assert step_result["error"] == {}
 
 
@@ -886,7 +895,7 @@ def test_host_run_package_fails_closed_on_malformed_stored_result(tmp_path) -> N
     import fala
 
     step = tmp_path / "step.py"
-    step.write_text(_fep_organ("{'ok': True}"), encoding="utf-8")
+    step.write_text(_protocol_organ("{'ok': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "malformed_result",
@@ -896,7 +905,7 @@ def test_host_run_package_fails_closed_on_malformed_stored_result(tmp_path) -> N
             "effectors": [{
                 "id": "step",
                 "capability": "step",
-                "adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
+                "output_schema":{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}},"adapter": {"kind": "subprocess", "command": [sys.executable, str(step)]},
             }],
         }],
         "runtime": {
@@ -947,7 +956,7 @@ def test_host_run_package_inherit_env_from_host_process(tmp_path, monkeypatch) -
     db = work / "f.sqlite"
     step = work / "step.py"
     step.write_text(
-        _fep_organ(
+        _protocol_organ(
             "{'marker': os.environ.get('FALA_INHERIT_SMOKE_MARKER', 'MISSING'), 'path_prefix': (os.environ.get('PATH') or '')[:20]}",
             extra="import os\n",
         ),
@@ -965,6 +974,7 @@ id = "path"
 [[correlation_paths.effectors]]
 id = "step"
 capability = "step"
+output_schema = {{ type = "object", required = ["marker", "path_prefix"], properties = {{ marker = {{ type = "string" }}, path_prefix = {{ type = "string" }} }} }}
 adapter = {{ kind = "subprocess", command = ["{sys.executable}", "{step}"], inherit_env = ["FALA_INHERIT_SMOKE_MARKER", "PATH"] }}
 [runtime.backend]
 kind = "sqlite"
@@ -1018,9 +1028,9 @@ def test_host_run_package_preserves_digest_with_env_substring(tmp_path, monkeypa
     step = work / "step.py"
     step.write_text(
         f"digest = {digest!r}\n"
-        "from fala.fep import result_message\n"
-        "from fala.sdk import write_result\n"
-        "write_result(result_message(values={'uri': f'fala-reaction://sha256/{digest}', 'sha256': digest}, reactions=[{'kind': 'source_docx', 'uri': f'fala-reaction://sha256/{digest}', 'metadata': {'sha256': digest}}]))\n",
+        "from fala.protocol import Result\n"
+        "from fala.sdk import load_manifest, write_result\n"
+        "write_result(Result.from_request(load_manifest(), payload={'uri': f'fala-reaction://sha256/{digest}', 'sha256': digest, 'evidence': [{'kind': 'source_docx', 'uri': f'fala-reaction://sha256/{digest}', 'metadata': {'sha256': digest}}]}))\n",
         encoding="utf-8",
     )
     pkg = work / "pkg.toml"
@@ -1035,6 +1045,7 @@ id = "path"
 [[correlation_paths.effectors]]
 id = "step"
 capability = "step"
+output_schema = {{ type = "object", required = ["uri", "sha256"], properties = {{ uri = {{ type = "string" }}, sha256 = {{ type = "string" }} }} }}
 adapter = {{ kind = "subprocess", command = ["{sys.executable}", "{step}"], inherit_env = ["LMPROVIDER_TIMEOUT"] }}
 [runtime.backend]
 kind = "sqlite"
@@ -1082,7 +1093,7 @@ def test_host_run_package_unicode_stdout_redaction(tmp_path, monkeypatch) -> Non
     db = work / "f.sqlite"
     step = work / "step.py"
     step.write_text(
-        _fep_organ(
+        _protocol_organ(
             "{'ok': True}",
             extra=(
                 "import sys\n"
@@ -1104,6 +1115,7 @@ id = "path"
 [[correlation_paths.effectors]]
 id = "step"
 capability = "step"
+output_schema = {{ type = "object", required = ["ok"], properties = {{ ok = {{ type = "boolean" }} }} }}
 adapter = {{ kind = "subprocess", command = ["{sys.executable}", "{step}"], inherit_env = ["FALA_STREAM_SECRET"] }}
 [runtime.backend]
 kind = "sqlite"
@@ -1169,6 +1181,7 @@ id = "path"
 [[correlation_paths.effectors]]
 id = "step"
 capability = "step"
+output_schema = {{ type = "object", required = ["ok"], properties = {{ ok = {{ type = "boolean" }} }} }}
 adapter = {{ kind = "subprocess", command = ["{sys.executable}", "{step}"] }}
 [runtime.backend]
 kind = "sqlite"
@@ -1238,7 +1251,7 @@ def test_host_run_package_control_stderr_failure_does_not_strand_running(
             "effectors": [{
                 "id": "step",
                 "capability": "step",
-                "adapter": {
+                "output_schema":{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}},"adapter": {
                     "kind": "subprocess",
                     "command": [sys.executable, str(step)],
                 },
@@ -1308,7 +1321,7 @@ def test_host_run_package_active_placeholder_is_decodable_and_re_driveable(
     rx.mkdir()
     db = work / "f.sqlite"
     step = work / "step.py"
-    step.write_text(_fep_organ("{'ok': True}"), encoding="utf-8")
+    step.write_text(_protocol_organ("{'ok': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "active_placeholder",
@@ -1318,7 +1331,7 @@ def test_host_run_package_active_placeholder_is_decodable_and_re_driveable(
             "effectors": [{
                 "id": "step",
                 "capability": "step",
-                "adapter": {
+                "output_schema":{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}},"adapter": {
                     "kind": "subprocess",
                     "command": [sys.executable, str(step)],
                 },
@@ -1424,7 +1437,7 @@ def test_host_run_package_malformed_error_json_names_process_not_payload(
     rx.mkdir()
     db = work / "f.sqlite"
     step = work / "step.py"
-    step.write_text(_fep_organ("{'ok': True}"), encoding="utf-8")
+    step.write_text(_protocol_organ("{'ok': True}"), encoding="utf-8")
     package = {
         "version": "2",
         "id": "malformed_error",
@@ -1434,7 +1447,7 @@ def test_host_run_package_malformed_error_json_names_process_not_payload(
             "effectors": [{
                 "id": "step",
                 "capability": "step",
-                "adapter": {
+                "output_schema":{"type":"object","required":["ok"],"properties":{"ok":{"type":"boolean"}}},"adapter": {
                     "kind": "subprocess",
                     "command": [sys.executable, str(step)],
                 },

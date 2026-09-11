@@ -1,11 +1,16 @@
 # Effector output schema: implemented validation boundaries
 
-An effector may declare `output_schema` directly in a JSON or TOML package.
-The loader retains it in expanded serialization and freezes it in the durable
-process plan. The package host and `fala rehearse` use that same declaration.
-For FEP/1 results the schema describes `values`, not the transport envelope or
-host-added `adapter` telemetry. Direct native/fixture results are validated as
-the domain object itself.
+An effector declares `output_schema` in a JSON or TOML package. The loader
+rejects a missing or empty schema, and it rejects `{ type = "object" }`:
+that names no field, so the parent cannot observe the answer. A contract
+names the fields (or a non-object type, `const`, `enum`, `required`,
+`properties`, `items`, or a combinator). The Fala envelope carries identity;
+`output_schema` is the contract for `payload`. The loader retains the contract in expanded
+serialization and freezes it in the durable process plan. The package host
+and `fala rehearse` use that same declaration.
+For Fala results the schema describes `payload`, not the transport envelope or
+host-added `adapter` telemetry. Native kernels still return the domain object;
+the parent wraps it before the journal.
 
 ## Supported JSON Schema subset
 
@@ -68,17 +73,18 @@ represent attempts, not independent variant-coverage scenarios.
 `mise exec -- pixi run full-smoke` includes `output-contracts` and
 `graph-rehearsal`. The former exercises valid variants, malformed payloads,
 combinator semantics, nested mismatches, schema rejection, projection, durable
-FEP completion and a real local FEP subprocess/consumer boundary. The latter
+completion and a real local subprocess/consumer boundary. The latter
 proves fixture-only execution, frozen output validation, terminal conditions,
 and fail-closed missing fixture variants. These are contract/routing tests, not
 evidence that an agent's claims are true.
 
-Shipped 0.8.x behavior:
+Current behavior:
 
-- New nodes are contract-first. `output_schema` / `output_contract_ref` are
-  enforced at durable completion, conduction, typed terminals, and rehearsal.
-- Per-node `contract_mode = "legacy"` is the explicit opt-out; undeclared
-  schema storage remains JSON `{}` for that mode.
+- Every effector declares a non-empty `output_schema` that names the answer.
+  `{ type = "object" }` is not a contract. `output_contract_ref` may label it;
+  it does not replace it.
+- The parent does not inspect the child. A result that does not match the
+  declared schema is rejected. There is no side exit and no `contract_mode`.
 - Graph preflight reports missing finite output-variant coverage before any
   adapter runs (`coverage_guaranteed` / `unverified`).
 - Rehearsal fails closed when a finite declared variant has no fixture.

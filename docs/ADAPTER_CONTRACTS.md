@@ -26,11 +26,11 @@ input/manifest.json
 output/result.json
 ```
 
-Manifest protocol version 1 contains:
+The manifest **is** a Fala `request`:
 
-- `execution_id`: stable identity `<run_id>:<process_id>`;
-- `process_id`, `attempt`, and `max_attempts`;
-- `impulse_id`, `input`, `config`, and adapter metadata.
+- `from` / `to` / `job` / `id`: who asks, which child, which work, this message;
+- `payload`: named input;
+- `config`: `attempt`, `max_attempts`, optional `impulse_id` / `context`, and adapter metadata.
 
 Retries preserve `execution_id` and increment `attempt`. Automatic retry is
 at-least-once delivery for external effects: a timeout or crash may leave an
@@ -72,9 +72,7 @@ not silently start fresh. Omitting the policy preserves previous behavior.
 Adapters never mutate a JournalPort,
 NativeJournal, SQLite database, or other Fala journal directly.
 
-The native `doctor --package` / `--output` filesystem checks are currently a
-reserved native boundary, not an executable package-conformance command.
-Package loading itself validates known adapter kinds, subprocess command shape,
+Package loading validates known adapter kinds, subprocess command shape,
 and the environment boundary.
 
 A `child_path` effector is authored without `command`/`ref`/`env`. Required

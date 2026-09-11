@@ -3,7 +3,6 @@
 This module is deliberately independent of Python and std.python.  JSON-shaped
 payloads are represented as String until the native JsonValue API is stable;
 `to_json` hooks provide an explicit serialization boundary for later cutover.
-Factories validate the same structural invariants as the Python source models.
 """
 
 from std.collections import Dict

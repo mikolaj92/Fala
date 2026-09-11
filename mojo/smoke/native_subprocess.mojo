@@ -48,8 +48,8 @@ def main() raises:
         command.append("success")
         var adapter = AdapterSpec.subprocess(command)
         adapter.env["SECRET"] = "top-secret"
-        var fep_result = result_message("msg:fixture", "run-smoke:subprocess-smoke", 1, values_json="{\"ok\":true,\"secret\":\"top-secret\"}")
-        adapter.env["FEP_RESULT"] = fep_result
+        var fala_result = result_message("subprocess-smoke", "parent", "subprocess-smoke", "msg:fixture", "{\"ok\":true,\"secret\":\"top-secret\"}")
+        adapter.env["FALA_RESULT"] = fala_result
         var request = EffectorRequest("subprocess-smoke", adapter, "impulse", "{\"value\":1}", "{}", root, run_id="run-smoke")
         var result = execute_subprocess(request)
         _check(result.success and result.error.is_ok(), "successful result")
@@ -63,11 +63,11 @@ def main() raises:
         short_command.append("-c")
         short_command.append(
             "printf \"short=$SHORT_SECRET\\n\" >&1; printf \"short=$SHORT_SECRET\\n\" >&2; "
-            + "printf '%s' \"$FEP_RESULT\" > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
+            + "printf '%s' \"$FALA_RESULT\" > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
         )
         var short_adapter = AdapterSpec.subprocess(short_command)
         short_adapter.env["SHORT_SECRET"] = "shrt"
-        short_adapter.env["FEP_RESULT"] = fep_result
+        short_adapter.env["FALA_RESULT"] = fala_result
         var short_result = execute_subprocess(
             EffectorRequest("subprocess-short-secret", short_adapter, "impulse", "{}", "{}")
         )
@@ -84,8 +84,8 @@ def main() raises:
         )
         _check(Path(root + "/input/manifest.json").exists(), "manifest file")
         var manifest = Path(root + "/input/manifest.json").read_text()
-        _check(manifest.find("\"protocol_version\":1") >= 0, "manifest protocol version")
-        _check(manifest.find("\"execution_id\":\"run-smoke:subprocess-smoke\"") >= 0, "manifest execution id")
+        _check(manifest.find("\"protocol\":\"fala\"") >= 0 and manifest.find("\"kind\":\"request\"") >= 0, "manifest protocol")
+        _check(manifest.find("\"from\":\"parent\"") >= 0 and manifest.find("\"to\":\"subprocess-smoke\"") >= 0, "manifest identity")
         _check(manifest.find("\"attempt\":1") >= 0 and manifest.find("\"max_attempts\":1") >= 0, "manifest attempt context")
         _check(Path(root + "/output/result.json").exists(), "result file")
 
@@ -123,9 +123,11 @@ def main() raises:
         var attempt_one_manifest = Path(attempt_one_root + "/input/manifest.json").read_text()
         var attempt_two_manifest = Path(attempt_two_root + "/input/manifest.json").read_text()
         _check(
-            attempt_one_manifest.find("\"execution_id\":\"run-smoke:subprocess-boundary\"") >= 0
-                and attempt_two_manifest.find("\"execution_id\":\"run-smoke:subprocess-boundary\"") >= 0,
-            "stable execution identity across attempt roots",
+            attempt_one_manifest.find("\"to\":\"subprocess-boundary\"") >= 0
+                and attempt_two_manifest.find("\"to\":\"subprocess-boundary\"") >= 0
+                and attempt_one_manifest.find("\"job\":\"subprocess-boundary\"") >= 0
+                and attempt_two_manifest.find("\"job\":\"subprocess-boundary\"") >= 0,
+            "stable job identity across attempt roots",
         )
         _check(
             attempt_one_manifest.find("\"attempt\":1") >= 0
@@ -142,11 +144,11 @@ def main() raises:
         unicode_command.append(
             "printf 'sekret=top-secret żółć héllo 世界\\n' >&1; "
             + "printf 'err top-secret ąę\\n' >&2; "
-            + "printf '%s' \"$FEP_RESULT\" > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
+            + "printf '%s' \"$FALA_RESULT\" > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\""
         )
         var unicode_adapter = AdapterSpec.subprocess(unicode_command)
         unicode_adapter.env["SECRET"] = "top-secret"
-        unicode_adapter.env["FEP_RESULT"] = fep_result
+        unicode_adapter.env["FALA_RESULT"] = fala_result
         var unicode_result = execute_subprocess(
             EffectorRequest("subprocess-unicode", unicode_adapter, "impulse", "{}", "{}", root)
         )

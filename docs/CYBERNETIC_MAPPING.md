@@ -40,7 +40,7 @@ are TOML or canonical JSON; JSON is also the subprocess wire format.
 - **Package surfaces:** `load_package_toml`, `load_fala_package_toml`,
   `load_package_json`, and `load_fala_package_json`. Canonical package files
   use `.toml` or `.json`, never YAML.
-- **Adapters:** `native_function`, `subprocess`, and `manual_homeostat`.
+- **Adapters:** `native_function`, `subprocess`, `manual_homeostat`, and `child_path`.
   Subprocesses receive validated JSON manifests and return JSON result
   manifests; `FALA_EFFECTOR_MANIFEST` and `FALA_EFFECTOR_OUTPUT_DIR` define
   the boundary.

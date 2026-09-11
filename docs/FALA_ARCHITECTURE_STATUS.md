@@ -14,7 +14,9 @@ lexicon: [`CYBERNETIC_MAPPING.md`](CYBERNETIC_MAPPING.md) · JournalPort audit:
 
 ## Essential Fala
 
-Happy path: **package → impulse → run_until_idle → configured persistence**.
+Happy path: **package → impulse → parent `run_until_idle` → configured persistence**.
+The parent asks, contracts the answer, observes, may ask again, and may stop
+the child. The child remains a separate autonom.
 The generic `JournalPort` types describe batch/claim/load operations, but they
 do not make every persistence sink equivalent. In the current SQLite core,
 `NativeJournal` and `NativeDomainStore` own the direct transactional helpers;
@@ -26,12 +28,11 @@ do not make every persistence sink equivalent. In the current SQLite core,
 | **JournalPort contract** | Generic `append_batch` / `claim_next` / load surface | `journal_port`, `memory_journal`, `sqlite_journal_port`, `jsonl_journal`, `tee_journal` |
 | **SQLite core persistence** | Native command/event/state and lease transactions | `journal` (`NativeJournal`), `domain_store` (`NativeDomainStore`) |
 | **Driver + host** | claim → adapter → complete/fail/wait | `native_driver`, `native_process_host`, `adapters` |
-| **Local adapters** | `subprocess`, `native_function`, `manual_homeostat` | `adapters`, `validation` |
+| **Local adapters** | `subprocess`, `native_function`, `manual_homeostat`, `child_path` | `adapters`, `validation` |
 | **Domain records (core path)** | accept impulse, record association/reaction/homeostat, put/get/list | `domain_store` (direct SQLite helpers), `domain` |
 | **Package / CLI core** | TOML package, run lifecycle, inspect one journal | `native_package`, `package`, `native_cli_surface` (core commands) |
-The native CLI includes implemented `init`. `schema fala-package` is listed
-only as a reserved native-boundary schema encoder, not an implemented command.
-`run_until_idle` is an embedded/library API, not a standalone CLI command.
+The native CLI includes implemented `init`. `run_until_idle` is an
+embedded/library API, not a standalone CLI command.
 
 ## Optional / ops layers
 
@@ -98,17 +99,14 @@ release chronology remains in [`CHANGELOG.md`](../CHANGELOG.md).
 The distribution ships an **optional thin Python host binding**. There is no
 second product runtime and no Python demo tree.
 
-Fala has no web application or frontend asset surface. Authentication, session,
-account, admin, and platform chrome are outside this product boundary; the
-platform COMPAT UI contract therefore does not apply to the Mojo engine or its
-thin Python JSON host binding. See [Fala host and composition](FALA_HOST_AND_COMPOSITION.md#web-and-platform-ui-boundary).
+Fala has no web application or frontend asset surface. See [Fala host and composition](FALA_HOST_AND_COMPOSITION.md#headless-product).
 
 
 ## Core ontology
 
 Impulse, ImpulseType, ImpulseRelation, Association, Reaction, Event, Command,
 Process, Run, Homeostat, Projection, JournalPort, Effector adapters
-(`subprocess`, `native_function`, `manual_homeostat`).
+(`subprocess`, `native_function`, `manual_homeostat`, `child_path`).
 
 ## Module inventory (layer tags)
 
@@ -136,9 +134,6 @@ Essential Fala must not require `ops_maintenance`, `ops_bridge`, or
 | CLI core + ops progressive disclosure | DONE |
 | Ops extracted (maintenance / bridge / rebuild) | DONE |
 | Local bridge deliver + file handoff | DONE (ops) |
-| Fleet / RuntimePool / `fala_runtime` | REMOVED |
-| CPython engine | REMOVED |
-| `python_function` adapter | REMOVED (unknown kind) |
 | Domain pack Splot | DONE (`domain_packs/splot` + `splot-integration`) |
 | Domain pack Signals | DONE (`domain_packs/signals` + `signals-domain` smoke) |
 | Domain pack Takt | DONE (`domain_packs/takt` + `takt-domain` smoke; engine in sibling takt 0.2+) |

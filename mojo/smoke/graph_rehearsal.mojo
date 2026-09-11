@@ -12,7 +12,7 @@ def main() raises:
     for path in [db, db + "-wal", db + "-shm", report, db + "-bad", db + "-contract", db + "-condition"]:
         try: remove(path)
         except: pass
-    Path(package).write_text("{\"id\":\"delivery\",\"correlation_paths\":[{\"id\":\"ship\",\"effectors\":[{\"id\":\"gate\",\"adapter\":{\"kind\":\"subprocess\",\"command\":[\"/must/not/run\"]},\"retry_policy\":\"automatic\"},{\"id\":\"publish\",\"adapter\":{\"kind\":\"native_function\",\"ref\":\"must.not.run\"},\"conduction\":[\"gate\"],\"when\":{\"upstream\":\"gate\",\"path\":\"approved\",\"equals\":true}}],\"terminals\":[{\"id\":\"done\",\"source_effector\":\"publish\",\"status\":\"succeeded\",\"output_schema\":{\"type\":\"object\"}}]}]}")
+    Path(package).write_text("{\"id\":\"delivery\",\"correlation_paths\":[{\"id\":\"ship\",\"effectors\":[{\"id\":\"gate\",\"output_schema\":{\"type\":\"object\",\"required\":[\"approved\"],\"properties\":{\"approved\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"subprocess\",\"command\":[\"/must/not/run\"]},\"retry_policy\":\"automatic\"},{\"id\":\"publish\",\"output_schema\":{\"type\":\"object\",\"required\":[\"url\"],\"properties\":{\"url\":{\"type\":\"string\"}}},\"adapter\":{\"kind\":\"native_function\",\"ref\":\"must.not.run\"},\"conduction\":[\"gate\"],\"when\":{\"upstream\":\"gate\",\"path\":\"approved\",\"equals\":true}}],\"terminals\":[{\"id\":\"done\",\"source_effector\":\"publish\",\"status\":\"succeeded\",\"output_schema\":{\"type\":\"object\",\"required\":[\"url\"],\"properties\":{\"url\":{\"type\":\"string\"}}}}]}]}")
     Path(fixture).write_text("{\"effectors\":{\"gate\":[{\"kind\":\"failure\"},{\"kind\":\"result\",\"output\":{\"approved\":true}}],\"publish\":[{\"kind\":\"result\",\"output\":{\"url\":\"local\"}}]},\"assert\":{\"terminal\":\"done\",\"attempts\":{\"gate\":2,\"publish\":1},\"forbidden_effectors\":[\"merge_without_gate\"]}}")
     var command = "rehearse --package " + package + " --fixture " + fixture + " --path-id ship --journal " + db + " --report " + report + " --run-id acceptance"
     var first = dispatch_native_command(command)
@@ -28,13 +28,13 @@ def main() raises:
     Path(fixture).write_text("{\"effectors\":{\"gate\":[{\"kind\":\"result\",\"output\":{\"approved\":true}}],\"publish\":[{\"kind\":\"result\",\"output\":{}}]},\"assert\":{\"terminal\":\"wrong\"}}")
     var mismatch = dispatch_native_command(command.replace(db, db + "-bad").replace(report, report + "-bad"))
     expect(mismatch.find("\"ok\":false") >= 0, "terminal mismatch is non-success")
-    var contracted = Path(package).read_text().replace('"id":"gate","adapter"', '"id":"gate","output_schema":{"type":"object","required":["approved"],"properties":{"approved":{"const":true}}},"adapter"')
+    var contracted = Path(package).read_text().replace('"id":"gate","output_schema":{"type":"object","required":["approved"],"properties":{"approved":{"type":"boolean"}}},"adapter"', '"id":"gate","output_schema":{"type":"object","required":["approved"],"properties":{"approved":{"const":true}}},"adapter"')
     Path(package).write_text(contracted)
     Path(fixture).write_text('{"effectors":{"gate":[{"kind":"result","output":{"approved":false}}],"publish":[{"kind":"result","output":{}}]}}')
     var invalid = dispatch_native_command(command.replace(db, db + "-contract").replace(report, report + "-contract"))
     expect(invalid.find('"ok":false') >= 0, "rehearsal must enforce frozen effector output schema")
     Path(package).write_text(contracted.replace('"id":"done","source_effector"', '"id":"done","when":{"path":"accepted","equals":true},"source_effector"'))
-    Path(fixture).write_text('{"effectors":{"gate":[{"kind":"result","output":{"approved":true}}],"publish":[{"kind":"result","output":{"accepted":false}}]},"assert":{"terminal":"done"}}')
+    Path(fixture).write_text('{"effectors":{"gate":[{"kind":"result","output":{"approved":true}}],"publish":[{"kind":"result","output":{"url":"local","accepted":false}}]},"assert":{"terminal":"done"}}')
     var wrong_condition = dispatch_native_command(command.replace(db, db + "-condition").replace(report, report + "-condition"))
     expect(wrong_condition.find('"ok":false') >= 0, "terminal when must be enforced")
     print("graph rehearsal smoke ok")

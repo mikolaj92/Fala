@@ -13,24 +13,26 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .fep import result_message, validate
+from .protocol import Request, Result, build_result, parse, speak, validate
 
-EffectorHandler = Callable[[dict[str, Any]], dict[str, Any]]
+EffectorHandler = Callable[[Request], Result]
 
 
-def load_manifest(env: Mapping[str, str] | None = None) -> dict[str, Any]:
+def load_manifest(env: Mapping[str, str] | None = None) -> Request:
     source_env = os.environ if env is None else env
     manifest_path = source_env.get("FALA_EFFECTOR_MANIFEST")
     if not manifest_path:
         raise RuntimeError("FALA_EFFECTOR_MANIFEST is required")
-    loaded = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise RuntimeError("FALA_EFFECTOR_MANIFEST must contain a JSON object")
+    loaded = parse(Path(manifest_path).read_text(encoding="utf-8"), "request")
+    if not isinstance(loaded, Request):
+        raise TypeError("FALA_EFFECTOR_MANIFEST must be a Request")
     return loaded
 
 
-def input_values(manifest: Mapping[str, Any]) -> dict[str, Any]:
-    return _dict(manifest.get("input"))
+def input_values(manifest: Mapping[str, Any] | Request) -> dict[str, Any]:
+    if isinstance(manifest, Request):
+        return dict(manifest.payload)
+    return _dict(manifest.get("payload"))
 
 
 INJECTED_INPUT_KEYS: frozenset[str] = frozenset(
@@ -81,14 +83,16 @@ def find_reaction(manifest: Mapping[str, Any], kind: str) -> dict[str, Any] | No
     return _find_latest(upstream_reactions(manifest), kind)
 
 
-def output_reactions(effector_output: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Reactions a completed effector wrote, in emission order.
+def output_reactions(effector_output: Mapping[str, Any] | Result) -> list[dict[str, Any]]:
+    """Evidence a completed effector wrote, in emission order.
 
-    The host-side twin of :func:`upstream_reactions`: it reads the ``reactions``
-    list of an effector's *output* envelope (as produced by :func:`output`), whereas
-    ``upstream_reactions`` reads them from a downstream effector's injected input.
+    Reads ``payload.evidence`` from a typed :class:`Result` or a decoded envelope.
     """
-    return _reaction_list(_dict(effector_output).get("reactions"))
+    if isinstance(effector_output, Result):
+        payload = dict(effector_output.payload)
+    else:
+        payload = _dict(_dict(effector_output).get("payload"))
+    return _reaction_list(payload.get("evidence"))
 
 
 def find_output_reaction(
@@ -102,38 +106,33 @@ def find_output_reaction(
     return _find_latest(output_reactions(effector_output), kind)
 
 
-def output_metadata(effector_output: Mapping[str, Any]) -> dict[str, Any]:
-    """The opaque ``metadata`` a completed effector attached to its output.
-
-    Fala never interprets this channel; it round-trips whatever an effector passed to
-    :func:`output`'s ``metadata=``. Reading it back host-side is the twin of a
-    effector reading its own inputs.
-    """
-    return _dict(_dict(effector_output).get("metadata"))
-
-
-def config(manifest: Mapping[str, Any]) -> dict[str, Any]:
+def config(manifest: Mapping[str, Any] | Request) -> dict[str, Any]:
+    if isinstance(manifest, Request):
+        return dict(manifest.config)
     return _dict(manifest.get("config"))
 
 
+def request_identity(manifest: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "id": str(manifest.get("id") or ""),
+        "from": str(manifest.get("from") or ""),
+        "to": str(manifest.get("to") or ""),
+        "job": str(manifest.get("job") or ""),
+    }
+
+
 def output(
+    request: Mapping[str, Any] | Request,
+    payload: Mapping[str, Any],
     *,
-    values: dict[str, Any] | None = None,
-    associations: list[dict[str, Any]] | None = None,
-    reactions: list[dict[str, Any]] | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build a FEP/1 ``effector.result`` for ``write_result`` / ``run_manifest_effector``."""
-    return result_message(
-        values=values,
-        associations=associations,
-        reactions=reactions,
-        metadata=metadata,
-    )
+    status: str = "ok",
+) -> Result:
+    """Build a typed Fala result from the child's request."""
+    return build_result(request, payload=payload, status=status)
 
 
 def write_result(
-    result: Mapping[str, Any],
+    result: Result,
     *,
     env: Mapping[str, str] | None = None,
 ) -> Path:
@@ -141,11 +140,15 @@ def write_result(
     output_dir = source_env.get("FALA_EFFECTOR_OUTPUT_DIR")
     if not output_dir:
         raise RuntimeError("FALA_EFFECTOR_OUTPUT_DIR is required")
-    result = validate(result, "effector.result")
+    if not isinstance(result, Result):
+        if isinstance(result, Request | Mapping):
+            validate(result, "result")
+        raise TypeError("write_result accepts only Result")
+    spoken = speak(result, "result")
     path = Path(output_dir) / "result.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(dict(result), ensure_ascii=False, indent=2, sort_keys=True),
+        json.dumps(spoken.to_message(), ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     return path
@@ -188,12 +191,14 @@ __all__ = [
     "find_reaction",
     "find_output_reaction",
     "input_values",
+    "Result",
+    "build_result",
     "load_manifest",
     "conduction",
     "output",
     "output_reactions",
-    "output_metadata",
     "run_manifest_effector",
+    "speak",
     "upstream_reactions",
     "write_result",
 ]

@@ -1,7 +1,4 @@
-"""Runtime budget helpers for bridge envelopes (not fleet/pool selection).
-
-Fleet RuntimePool selection was removed from Fala product surface.
-"""
+"""Runtime budget helpers for bridge envelopes."""
 
 from std.collections import List
 from emberjson import Value, to_string

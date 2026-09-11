@@ -120,9 +120,8 @@ def _variant_covered(path: PackageCorrelationPath, effector: PackageEffector, va
 
 
 def _coverage_diagnostic(path_index: Int, graph: PackageCorrelationPath, effector_index: Int, effector: PackageEffector) raises -> String:
-    if effector.contract_mode == "legacy": return ""
     if not effector.output_schema_declared:
-        return "{\"code\":\"contract_coverage_missing\",\"message\":\"output contract is required; declare output_schema or set contract_mode=legacy\",\"path\":\"/correlation_paths/" + String(path_index) + "/effectors/" + String(effector_index) + "\",\"effector\":" + quote_json_string(effector.id) + "}"
+        return "{\"code\":\"contract_coverage_missing\",\"message\":\"output contract is required\",\"path\":\"/correlation_paths/" + String(path_index) + "/effectors/" + String(effector_index) + "\",\"effector\":" + quote_json_string(effector.id) + "}"
     var schema = Value(parse_string=effector.output_schema_json)
     if not schema.is_object() or len(schema.object()) == 0:
         return "{\"code\":\"contract_coverage_missing\",\"message\":\"a non-empty output_schema is required; {} is not a contract\",\"path\":\"/correlation_paths/" + String(path_index) + "/effectors/" + String(effector_index) + "/output_schema\",\"effector\":" + quote_json_string(effector.id) + "}"
@@ -144,8 +143,8 @@ def _coverage_report(manifest: PackageManifest) raises -> String:
         var graph = manifest.correlation_paths[path_index].copy()
         for effector_index in range(len(graph.effectors)):
             var effector = graph.effectors[effector_index].copy()
-            var needs_verification = effector.contract_mode == "legacy"
-            if effector.contract_mode != "legacy" and effector.output_schema_declared:
+            var needs_verification = True
+            if effector.output_schema_declared:
                 var declared_schema = Value(parse_string=effector.output_schema_json)
                 var declared_variants = finite_output_variants(declared_schema)
                 needs_verification = not declared_variants.proven

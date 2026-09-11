@@ -8,10 +8,10 @@ def expect(value: Bool, message: String) raises:
 
 
 def main() raises:
-    var manifest = validate_package_json_text("{\"id\":\"p\",\"correlation_paths\":[{\"id\":\"x\",\"effectors\":[{\"id\":\"author\",\"adapter\":{\"kind\":\"manual_homeostat\"},\"context_policy\":\"resume\",\"context_invalidation_digest\":\"prompt-v1\"},{\"id\":\"review\",\"adapter\":{\"kind\":\"manual_homeostat\"},\"conduction\":[\"author\"],\"context_policy\":\"inherit\",\"context_source\":\"author\"},{\"id\":\"independent\",\"adapter\":{\"kind\":\"manual_homeostat\"},\"context_policy\":\"fresh\"}]}]}")
+    var manifest = validate_package_json_text("{\"id\":\"p\",\"correlation_paths\":[{\"id\":\"x\",\"effectors\":[{\"id\":\"author\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"context_policy\":\"resume\",\"context_invalidation_digest\":\"prompt-v1\"},{\"id\":\"review\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"conduction\":[\"author\"],\"context_policy\":\"inherit\",\"context_source\":\"author\"},{\"id\":\"independent\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"context_policy\":\"fresh\"}]}]}")
     expect(serialize_package_json(manifest).find("context_source") >= 0, "package context policies")
     var invalid = False
-    try: _ = validate_package_json_text("{\"id\":\"p\",\"correlation_paths\":[{\"id\":\"x\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"manual_homeostat\"},\"context_policy\":\"inherit\"}]}]}")
+    try: _ = validate_package_json_text("{\"id\":\"p\",\"correlation_paths\":[{\"id\":\"x\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"context_policy\":\"inherit\"}]}]}")
     except err: invalid = String(err).find("context_source") >= 0
     expect(invalid, "inherit requires explicit source")
     var one = resolve_context("resume", "run", "process", "impulse", "v1")

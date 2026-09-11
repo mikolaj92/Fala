@@ -22,11 +22,13 @@ own language onto this vocabulary; they do not redefine the core.
 
 The product is the graph (call graph, behavior graph). `CorrelationPath` is
 that graph — the authored value — not a recipe. Small Unix effectors exist so
-a human can operate on that graph. An effector is a replaceable executor: a
-function, a process, or a non-deterministic step that returns a deterministic
-result. Payload format (JSON, TOML, anything else) is a twenty-minute stub.
-Fala constructs graphs; the rest can be generated. Lokay and Temida are twin
-graphs on this same bet.
+a human can operate on that graph. An effector is an autonom: a function, a
+process, or a non-deterministic step that returns a structured answer. Fala is
+also an autonom. It observes the child, offers a contract for the answer, may
+ask again, and may stop the OS process. It does not enter the child. A child
+crash stays in the child; the parent journal remains. Payload format (JSON,
+TOML, anything else) is a twenty-minute stub. Fala constructs graphs; the rest
+can be generated.
 
 | Record | Cybernetic role |
 | --- | --- |

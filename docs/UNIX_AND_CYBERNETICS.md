@@ -64,10 +64,11 @@ the journal carries metadata and references.
 ### Small tools, sharp edges
 
 - The native Mojo CLI is the operator interface.
-- Effectors are `subprocess`, `native_function`, or `manual_homeostat`.
+- Effectors are `subprocess`, `native_function`, `manual_homeostat`, or `child_path`.
 - Subprocesses receive manifests and return JSON result manifests, never open
   database handles.
-- Nested Fala is another process with another journal, not a peer mesh.
+- Nested Fala is another autonom with another journal, not a peer mesh.
+- A child crash is observed and recorded; it does not take down the parent.
 
 Crash recovery, idempotent commands, durable claims, and rebuildable
 projections are first-class SQLite/runtime concerns. Weaker sinks document

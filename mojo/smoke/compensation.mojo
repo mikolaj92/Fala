@@ -9,7 +9,7 @@ def expect(value: Bool, message: String) raises:
 
 
 def main() raises:
-    var manifest = validate_package_json_text("{\"id\":\"p\",\"capabilities\":[{\"id\":\"create\"},{\"id\":\"remove\"}],\"correlation_paths\":[{\"id\":\"main\",\"effectors\":[{\"id\":\"draft\",\"capability\":\"create\",\"adapter\":{\"kind\":\"manual_homeostat\"},\"compensation\":{\"path_id\":\"undo\",\"capability\":\"remove\"}}]},{\"id\":\"undo\",\"effectors\":[{\"id\":\"remove\",\"capability\":\"remove\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    var manifest = validate_package_json_text("{\"id\":\"p\",\"capabilities\":[{\"id\":\"create\"},{\"id\":\"remove\"}],\"correlation_paths\":[{\"id\":\"main\",\"effectors\":[{\"id\":\"draft\",\"capability\":\"create\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"compensation\":{\"path_id\":\"undo\",\"capability\":\"remove\"}}]},{\"id\":\"undo\",\"effectors\":[{\"id\":\"remove\",\"capability\":\"remove\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
     expect(manifest.correlation_paths[0].effectors[0].compensation_json.find("undo") >= 0, "separate declared compensation")
     var journal = NativeJournal(":memory:\0"); journal.initialize(); _ = journal.create_run("r", "active", "{}", "t")
     var receipt = "{\"authoritative_identity\":{\"id\":\"draft-1\"},\"evidence_ref\":\"evidence:create\"}"

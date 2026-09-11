@@ -17,8 +17,7 @@ The product is the graph (call graph, behavior graph). Small Unix effectors
 exist so a human can operate on that graph. An effector is an executor: a
 function, a process, or a non-deterministic step that returns a deterministic
 result. Payload format (JSON, TOML, anything else) is a twenty-minute stub.
-Fala constructs graphs; the rest can be generated. Lokay and Temida are twin
-graphs on this same bet.
+Fala constructs graphs; the rest can be generated.
 
 ## Non-negotiable
 
@@ -46,4 +45,4 @@ graphs on this same bet.
 
 ## Local proof
 
-The mill runs `[tool.lokay] test` → `mise exec -- pixi run full-smoke`. That remains the only product verifier. `full-smoke` includes `python-host-api`, the explicit pytest list of the public host binding in `pixi.toml`. Do not invent `uv run --extra dev pytest` as a second verifier.
+The product verifier is `mise exec -- pixi run full-smoke`. It proves the parent autonom: ask, contract, observe, ask again, and stop a child without becoming the child. `full-smoke` includes `python-host-api`, the explicit pytest list of the public host binding in `pixi.toml`. Do not invent `uv run --extra dev pytest` as a second verifier.

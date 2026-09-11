@@ -332,7 +332,7 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
         raise Error(String(SQLiteError(code=2, message="argument_error: schema model is required")))
     if kind == "schema":
         var model = _word(command, 1)
-        if model != "impulse" and model != "model" and model != "fala-package":
+        if model != "impulse" and model != "model":
             raise Error(String(SQLiteError(code=2, message="argument_error: unknown schema model " + model)))
     if kind == "reaction-record":
         if _flag(command, "--db", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
@@ -368,7 +368,7 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
         if _flag(command, "--reaction-root", "") == "": raise Error(String(SQLiteError(code=2, message="argument_error: --reaction-root is required")))
     if kind == "rows":
         var first = _word(command, 0)
-        var requires_run = first == "runs" or first == "commands" or first == "events" or first == "processes" or first == "bridge" or first == "trace" or first == "diagnose-waits" or first == "impulses" or first == "impulse-types" or first == "impulse-relations" or first == "relations" or first == "associations" or first == "reactions" or first == "homeostats" or first == "projections"
+        var requires_run = first == "runs" or first == "commands" or first == "events" or first == "processes" or first == "bridge" or first == "trace" or first == "diagnose-waits" or first == "impulses" or first == "impulse-types" or first == "impulse-relations" or first == "associations" or first == "reactions" or first == "homeostats" or first == "projections"
         if requires_run and _flag(command, "--run-id") == "":
             raise Error(String(SQLiteError(code=2, message="argument_error: --run-id is required")))
     if kind == "trace" and _flag(command, "--run-id") == "":

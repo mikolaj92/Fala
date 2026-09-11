@@ -7,12 +7,10 @@ from fala.sdk import (
     upstream_reactions,
     find_reaction,
     output,
-    output_reactions,
-    find_output_reaction,
-    output_metadata,
     serialize_result,
     run_manifest_effector,
 )
+from fala.effector_protocol import request_message, validate_message
 
 
 def _check(condition: Bool, message: String) raises:
@@ -28,9 +26,7 @@ def _expect_error(call_kind: String, text: String, code: String, path: String) r
         elif call_kind == "input":
             _ = input_values(text)
         elif call_kind == "output":
-            _ = output(text)
-        elif call_kind == "associations":
-            _ = output("{}", text)
+            _ = output(text, "{}")
     except err:
         var diagnostic = String(err)
         matched = diagnostic.find(code + " at " + path + ":") >= 0
@@ -38,8 +34,8 @@ def _expect_error(call_kind: String, text: String, code: String, path: String) r
 
 
 def main() raises:
-    var manifest = "{\"input\":{\"source\":\"hello\",\"conduction\":{\"up\":{\"n\":1}},\"upstream_reactions\":[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2},{\"kind\":\"final\"}]},\"config\":{\"limit\":2}}"
-    _check(load_manifest(manifest) == "{\"config\":{\"limit\":2},\"input\":{\"conduction\":{\"up\":{\"n\":1}},\"source\":\"hello\",\"upstream_reactions\":[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2},{\"kind\":\"final\"}]}}", "manifest canonicalization")
+    var manifest = "{\"payload\":{\"source\":\"hello\",\"conduction\":{\"up\":{\"n\":1}},\"upstream_reactions\":[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2},{\"kind\":\"final\"}],\"regulation\":{\"retry_policy\":\"none\"}},\"config\":{\"limit\":2}}"
+    _check(load_manifest(manifest) == "{\"config\":{\"limit\":2},\"payload\":{\"conduction\":{\"up\":{\"n\":1}},\"regulation\":{\"retry_policy\":\"none\"},\"source\":\"hello\",\"upstream_reactions\":[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2},{\"kind\":\"final\"}]}}", "manifest canonicalization")
     _check(input_values(manifest).find("source") >= 0, "input object")
     _check(declared_inputs(manifest) == "{\"source\":\"hello\"}", "injected keys filtered")
     _check(conduction(manifest) == "{\"up\":{\"n\":1}}", "conduction object")
@@ -47,14 +43,11 @@ def main() raises:
     _check(find_reaction(manifest, "draft") == "{\"kind\":\"draft\",\"v\":2}", "latest reaction wins")
     _expect_error("input", "[]", "sdk.invalid_type", "/manifest")
     _expect_error("manifest", "{bad", "sdk.invalid_json", "/manifest")
-    _expect_error("input", "{\"input\":[]}", "sdk.invalid_type", "/manifest/input")
-    _expect_error("output", "[]", "sdk.invalid_type", "/values")
-    _expect_error("associations", "{\"bad\":true}", "sdk.invalid_type", "/associations")
-    var result = output("{\"ok\":true}", "[{\"kind\":\"a\"},3,{\"kind\":\"b\"}]", "[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2}]", "{\"telemetry\":{\"ms\":12}}")
-    _check(result == "{\"associations\":[{\"kind\":\"a\"},{\"kind\":\"b\"}],\"metadata\":{\"telemetry\":{\"ms\":12}},\"reactions\":[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2}],\"values\":{\"ok\":true}}", "exact output envelope")
-    _check(output_reactions(result).find("\"v\":2") >= 0, "output reactions")
-    _check(find_output_reaction(result, "draft") == "{\"kind\":\"draft\",\"v\":2}", "latest output reaction")
-    _check(output_metadata(result) == "{\"telemetry\":{\"ms\":12}}", "output metadata")
+    _expect_error("input", "{\"payload\":[]}", "sdk.invalid_type", "/manifest/payload")
+    var request = request_message("parent", "echo", "echo", "{\"ok\":true}")
+    var result = output(request, "{\"ok\":true}")
+    _check(validate_message(result, "result") == result, "Fala result from request")
+    _check(result.find("\"from\":\"echo\"") >= 0 and result.find("\"status\":\"ok\"") >= 0, "identity and status")
     _check(serialize_result("{\"z\":1,\"a\":{\"z\":2,\"a\":3}}") == "{\n    \"a\": {\n        \"a\": 3,\n        \"z\": 2\n    },\n    \"z\": 1\n}", "pretty sorted serialization")
 
     var unavailable = run_manifest_effector()

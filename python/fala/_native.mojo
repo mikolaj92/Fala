@@ -208,7 +208,7 @@ def _python_object_from_json(result: PythonObject) raises -> PythonObject:
     """Decode a native JSON result at the extension boundary.
 
     Durable journal fields and subprocess protocols remain JSON, but callers of
-    the CPython extension should receive ordinary dict/list/scalar objects.
+    the native extension should receive ordinary dict/list/scalar objects.
     """
     return Python.import_module("json").loads(result)
 
@@ -970,7 +970,7 @@ def PyInit__native() abi("C") -> PythonObject:
     initialize_runtime()
     try:
         var m = PythonModuleBuilder("_native")
-        # Object-first CPython API. JSON-named entries remain as a compatible,
+        # Object-first Python API. JSON-named entries remain as a compatible,
         # explicit serialization boundary for low-level consumers.
         m.def_function[host_drive]("host_drive")
         m.def_function[host_run_package]("host_run_package")

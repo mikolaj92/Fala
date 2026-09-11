@@ -8,9 +8,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fala.fep import result_message
+from fala.protocol import Result
 from fala.host import host_run_package
-from fala.sdk import load_manifest, write_result
+from fala.sdk import input_values, load_manifest, write_result
 
 
 def _value_at(value: Any, path: str) -> Any:
@@ -38,7 +38,7 @@ def main() -> int:
         child_db = root / f"{identity}.sqlite"
         if child_db == parent_db:
             raise ValueError("child_path journal must differ from parent journal")
-        parent_input = manifest.get("input", {})
+        parent_input = input_values(manifest)
         inputs = {
             target: _value_at(parent_input, source)
             for target, source in spec["input_mapping"].items()
@@ -56,21 +56,23 @@ def main() -> int:
         terminal = path_result.get("terminal")
         if terminal not in spec["terminal_mapping"]:
             raise RuntimeError(f"child_path returned unmapped terminal: {terminal}")
-        values = dict(path_result.get("values") or {})
-        values["child_ref"] = {
+        values = path_result.get("values")
+        if not isinstance(values, dict):
+            raise RuntimeError("child_path path_result.values must be an object")
+        payload = dict(values)
+        payload["child_ref"] = {
             "journal": str(child_db),
             "run_id": child_run,
             "path_digest": path_result.get("path_digest"),
             "terminal": terminal,
         }
-        values["terminal"] = spec["terminal_mapping"][terminal]
-        write_result(
-            result_message(
-                values=values,
-                reactions=list(path_result.get("evidence") or []),
-                metadata={"child_ref": values["child_ref"]},
-            )
-        )
+        payload["terminal"] = spec["terminal_mapping"][terminal]
+        evidence = path_result.get("evidence")
+        if evidence:
+            if not isinstance(evidence, list):
+                raise RuntimeError("child_path path_result.evidence must be a list")
+            payload["evidence"] = list(evidence)
+        write_result(Result.from_request(manifest, payload=payload))
         if spec["retention"] == "delete_on_success":
             child_db.unlink(missing_ok=True)
             Path(str(child_db) + "-wal").unlink(missing_ok=True)

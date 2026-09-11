@@ -10,9 +10,10 @@ represented by SdkUnavailableError.
 from emberjson import Array, Object, Value, to_string, write_pretty
 from std.pathlib import Path
 from .json import canonical_json_text
+from .effector_protocol import result_message, validate_message
 
 
-comptime INJECTED_INPUT_KEYS = "conduction,upstream_reactions"
+comptime INJECTED_INPUT_KEYS = "conduction,upstream_reactions,regulation"
 
 
 struct SdkUnavailableError(Copyable, Movable):
@@ -90,11 +91,11 @@ def _canonical_array(text: String, path: String = "/", objects_only: Bool = Fals
 
 def _manifest_input(manifest_json: String) raises -> String:
     var manifest = _object_value(manifest_json, "/manifest")
-    if "input" not in manifest.object():
-        return "{}"
-    var input = manifest.object()["input"].copy()
+    if "payload" not in manifest.object():
+        _raise_sdk("sdk.invalid_type", "/manifest/payload", "expected JSON object")
+    var input = manifest.object()["payload"].copy()
     if not input.is_object():
-        _raise_sdk("sdk.invalid_type", "/manifest/input", "expected JSON object")
+        _raise_sdk("sdk.invalid_type", "/manifest/payload", "expected JSON object")
     return canonical_json_text(to_string(input^))
 
 
@@ -142,17 +143,17 @@ def declared_inputs(manifest_json: String) raises -> String:
     var source = Value(parse_string=_manifest_input(manifest_json))
     var declared = Object(capacity=len(source.object()))
     for pair in source.object().items():
-        if pair.key != "conduction" and pair.key != "upstream_reactions":
+        if pair.key != "conduction" and pair.key != "upstream_reactions" and pair.key != "regulation":
             declared[pair.key] = pair.value.copy()
     return canonical_json_text(to_string(Value(declared^)))
 
 
 def conduction(manifest_json: String) raises -> String:
-    return _field_object(_manifest_input(manifest_json), "conduction", "/manifest/input")
+    return _field_object(_manifest_input(manifest_json), "conduction", "/manifest/payload")
 
 
 def upstream_reactions(manifest_json: String) raises -> String:
-    return _field_array(_manifest_input(manifest_json), "upstream_reactions", True, "/manifest/input")
+    return _field_array(_manifest_input(manifest_json), "upstream_reactions", True, "/manifest/payload")
 
 
 def find_reaction(manifest_json: String, kind: String) raises -> String:
@@ -167,7 +168,10 @@ def find_reaction(manifest_json: String, kind: String) raises -> String:
 
 
 def output_reactions(effector_output_json: String) raises -> String:
-    return _field_array(effector_output_json, "reactions", True)
+    var source = _object_value(effector_output_json, "/source")
+    if "payload" not in source.object() or not source.object()["payload"].is_object():
+        _raise_sdk("sdk.invalid_type", "/source/payload", "expected JSON object")
+    return _field_array(canonical_json_text(to_string(source.object()["payload"].copy())), "evidence", True, "/payload")
 
 
 def find_output_reaction(effector_output_json: String, kind: String) raises -> String:
@@ -181,26 +185,18 @@ def find_output_reaction(effector_output_json: String, kind: String) raises -> S
     return "{}"
 
 
-def output_metadata(effector_output_json: String) raises -> String:
-    return _field_object(effector_output_json, "metadata")
-
-
 def config(manifest_json: String) raises -> String:
     return _field_object(manifest_json, "config")
 
 
-def output(
-    values_json: String = "{}",
-    associations_json: String = "[]",
-    reactions_json: String = "[]",
-    metadata_json: String = "{}",
-) raises -> String:
-    var envelope = Object(capacity=4)
-    envelope["values"] = Value(parse_string=_canonical_object(values_json, "/values"))
-    envelope["associations"] = Value(parse_string=_canonical_array(associations_json, "/associations", True))
-    envelope["reactions"] = Value(parse_string=_canonical_array(reactions_json, "/reactions"))
-    envelope["metadata"] = Value(parse_string=_canonical_object(metadata_json, "/metadata"))
-    return canonical_json_text(to_string(Value(envelope^)))
+def output(request_json: String, payload_json: String, status: String = "ok") raises -> String:
+    var request = _object_value(request_json, "/request")
+    _ = validate_message(canonical_json_text(to_string(request.copy())), "request")
+    var sender = request.object()["to"].string()
+    var recipient = request.object()["from"].string()
+    var job = request.object()["job"].string()
+    var request_id = request.object()["id"].string()
+    return result_message(sender, recipient, job, request_id, payload_json, status)
 
 
 def serialize_result(result_json: String) raises -> String:
@@ -210,8 +206,8 @@ def serialize_result(result_json: String) raises -> String:
 
 
 def write_result(result_json: String, output_path: String) raises -> String:
-    """Write deterministic pretty JSON to a caller-supplied native path."""
-    var text = serialize_result(result_json)
+    """Write a validated Fala result to a caller-supplied native path."""
+    var text = serialize_result(validate_message(result_json, "result"))
     Path(output_path).write_text(text)
     return output_path
 

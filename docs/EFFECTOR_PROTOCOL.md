@@ -1,74 +1,68 @@
-# Fala Effector Protocol v1
+# Fala parent–child protocol
 
-FEP/1 is the transport-neutral boundary between one materialized graph role and
-one executor. Filesystem, stdio, HTTP, or another carrier transport the same
-canonical document; they do not alter its meaning.
+One closed object on the wire. Identity, status, and payload are always named.
+Unknown protocol, kind, or field fails closed. JSON is canonicalized (sorted
+keys, minimal separators, UTF-8) excluding `id`; identity is
+`msg:sha256:<sha256(canonical-body)>`. Receivers recalculate it.
 
-## Canonicalization and identity
+`protocol` is `fala`. There is one envelope, not a versioned family.
 
-`protocol` is `fala-effector/1`. Messages are closed objects: unknown protocol
-versions, kinds, and fields fail closed. JSON is canonicalized (sorted keys,
-minimal separators, UTF-8), excluding `message_id`; identity is
-`msg:sha256:<sha256(canonical-body)>`. Receivers recalculate it. Formatting and
-input key order therefore cannot change identity. A protocol version changes
-only through a new protocol identifier; there is no permissive downgrade.
-
-## `effector.request`
-
-Required fields are `protocol`, `message_kind`, `message_id`, `run_id`,
-`process_id`, `execution_id`, positive `attempt`, `impulse_id`,
-`process_fingerprint`, `path_digest`, `capability`, object `input`, object
-`config`, and `output_contract_ref` (schema reference or digest).
-`execution_id` is the stable semantic execution while `attempt` is a physical
-try.
+## `request` — parent → child
 
 ```json
-{"attempt":1,"capability":"draft.create","config":{},"execution_id":"run:p","impulse_id":"i","input":{"title":"A"},"message_id":"msg:sha256:…","message_kind":"effector.request","output_contract_ref":"schema:sha256:…","path_digest":"sha256:…","process_fingerprint":"sha256:…","process_id":"p","protocol":"fala-effector/1","run_id":"run"}
+{"config":{},"from":"parent","id":"msg:sha256:…","job":"echo","kind":"request","payload":{"text":"hello"},"protocol":"fala","to":"echo"}
 ```
 
-## `effector.result`
+| Field | Meaning |
+|---|---|
+| `from` | who asks (`parent`) |
+| `to` | which child (`process_id`) |
+| `job` | which work (same id as the child unless a capability is later added) |
+| `payload` | named input of this job |
+| `config` | attempt, adapter, optional context — not the answer |
 
-Required fields are `protocol`, `message_kind`, `message_id`, `request_id`, a
-single `causation.request_id` equal to it, `execution_id`, positive `attempt`,
-object `values`, arrays `associations` and `reactions`, object `metadata`, array
-`evidence_refs`, and optional-neutral objects `provenance` and `usage`. Large
-payloads belong in canonical reaction/evidence references, not inline.
+The filesystem carrier is still `input/manifest.json`. That file **is** the
+request.
+
+## `result` — child → parent
 
 ```json
-{"associations":[],"attempt":1,"causation":{"request_id":"msg:sha256:…"},"evidence_refs":["evidence:sha256:…"],"execution_id":"run:p","message_id":"msg:sha256:…","message_kind":"effector.result","metadata":{},"protocol":"fala-effector/1","provenance":{},"reactions":[],"request_id":"msg:sha256:…","usage":{},"values":{"id":"draft-1"}}
+{"from":"echo","id":"msg:sha256:…","job":"echo","kind":"result","payload":{"text":"hello"},"protocol":"fala","ref":"msg:sha256:…","status":"ok","to":"parent"}
 ```
 
-A valid result is a contract terminal candidate; process exit, timeout, missing
-file, malformed JSON, digest mismatch, causation mismatch, or output-shape
-failure is an adapter/transport failure and cannot impersonate that terminal.
-World confirmation remains a separate observe/confirm operation.
+| Field | Meaning |
+|---|---|
+| `from` | which child answered |
+| `to` | who asked (`parent`) |
+| `job` | same job as the request |
+| `ref` | `id` of that request |
+| `status` | `ok` or `error` |
+| `payload` | named answer; `output_schema` describes this object |
 
-## Conformance and another-language port
+`status` is the envelope, not the journal. Exit, timeout, bad JSON, and digest
+mismatch are adapter failures and cannot impersonate a result. `wait` /
+`route` belong in `payload`.
 
-`conformance/fep-v1` is the shared golden corpus. Both native Mojo and the thin
-`fala.fep` Python executor codec consume its canonical vectors and stable
-negative error classes/pointers. Minimal interchangeable filesystem effectors
-live in `examples/fep-effectors/`; neither can access journals or schedulers.
+Construct a result from a request. Do not assemble a dict:
 
-A port needs only UTF-8 JSON parsing, RFC-style deterministic sorted-key compact
-serialization matching the corpus, SHA-256, closed-field/type checks, and the
-golden vectors. It needs no Fala runtime, GitHub, network client, relay, or
-adapter internals. The transport can change while canonical message bytes do
-not.
+```python
+from fala.protocol import Result, speak
+from fala.sdk import load_manifest, write_result
 
-## Filesystem compatibility
+request = load_manifest()
+result = Result.ok(sender=request.recipient, job=request.job, ref=request.id, payload={"text": "hello"})
+write_result(result)
+speak(result)  # bytes → parse → same object
+```
 
-The default carrier remains `input/manifest.json` to `output/result.json`.
-Every `output/result.json` must validate as a FEP/1 `effector.result`, including
-its message digest and causation. Bare/unversioned JSON objects are rejected
-with `adapter_invalid_result` (a missing `protocol` is reported at `/protocol`),
-even when the subprocess exits successfully. There is no legacy result fallback.
-The Python SDK's `write_result` likewise validates before writing. `sdk.output`
-returns a complete FEP/1 `effector.result`, so `write_result(sdk.output(values=…))`
-and `run_manifest_effector(lambda m: sdk.output(values=…))` are the happy path.
-When the input is itself a FEP/1 request, `fala.fep.build_result` preserves
-`request_id` causation.
+## Conformance
 
-This result requirement does not change the input manifest transport or schema.
-Journals may persist message and causation IDs as metadata; these IDs never
-include filesystem paths or transport identity.
+`conformance/fala` is the shared golden corpus. Mojo `effector_protocol` and
+Python `fala.protocol` consume the same vectors. A port needs UTF-8 JSON, sorted-key
+compact serialization, SHA-256, and closed field checks. It needs no Fala
+runtime.
+
+Bare JSON, missing `protocol`, and unknown fields fail as
+`adapter_invalid_result`. Native kernel returns the domain object; the parent
+wraps it into this envelope before the journal. Subprocess must return the
+envelope itself. The journal validates `payload` against `output_schema`.

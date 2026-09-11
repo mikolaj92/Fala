@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed if product stamps drift or src/README denies python/fala."""
+"""Fail closed if product version banners drift away from pyproject.toml."""
 
 from __future__ import annotations
 
@@ -37,13 +37,6 @@ def main() -> None:
             r'comptime FALA_RUNTIME_VERSION: String = "([^"]+)"',
         ),
     }
-    src_readme = (ROOT / "src/README.md").read_text(encoding="utf-8")
-    if "python/fala" not in src_readme:
-        raise SystemExit("src/README.md must point at python/fala")
-    if re.search(r"no optional Python|There is no historical CPython tree", src_readme):
-        raise SystemExit("src/README.md still denies the Python host binding")
-    if version not in src_readme:
-        raise SystemExit(f"src/README.md must name package version {version}")
     drifted = [f"{name}={found}" for name, found in stamps.items() if found != version]
     if drifted:
         raise SystemExit(

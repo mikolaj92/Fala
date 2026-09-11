@@ -27,6 +27,7 @@ id = "basic"
 [[correlation_paths.effectors]]
 id = "review"
 capability = "splot.review"
+output_schema = { type = "object", required = ["claim_id", "admissible"], properties = { claim_id = { type = "string" }, admissible = { type = "boolean" }, reason = { type = "string" } } }
 adapter = { kind = "manual_homeostat" }
 
 [runtime.backend]

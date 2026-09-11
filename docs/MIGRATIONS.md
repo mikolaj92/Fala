@@ -142,8 +142,8 @@ Renamed surfaces:
 The pre-release cleanup removed the fleet ontology from active code rather
 than preserving it as compatibility surface. Current contracts are:
 
-- active adapter kinds are `subprocess`, `native_function`, and
-  `manual_homeostat`; `runtime_ref` is not an adapter field, and a
+- active adapter kinds are `subprocess`, `native_function`,
+  `manual_homeostat`, and `child_path`; `runtime_ref` is not an adapter field, and a
   `runtime_ref` key in a manifest or adapter JSON is an unknown field;
 - `RuntimePool` and `DelegationPolicy` types are gone;
 - fresh SQLite schema initialization does not create or require

@@ -2,14 +2,14 @@
 
 from std.collections import Dict
 from std.utils.numerics import isfinite
-from emberjson import Value
+from emberjson import Object, Value, to_string
 from std.collections import List
 from std.pathlib import Path, cwd
 from std.os import getenv, makedirs, remove
 from .json import canonical_json_text, quote_json_string as _json_quoted
 from .native_process_host import ProcessHost, start as start_native_process
 from .reactions import sha256_bytes
-from .effector_protocol import validate_message
+from .effector_protocol import request_message, result_message, validate_message
 
 struct AdapterKind(Copyable, Movable):
     var value: String
@@ -539,8 +539,17 @@ def adapter_manifest_json(request: EffectorRequest) raises -> String:
     if request.process_id == "": raise Error("request.process_id must not be empty")
     if request.attempt < 1: raise Error("request.attempt must be at least one")
     if request.max_attempts < request.attempt: raise Error("request.max_attempts must be at least attempt")
-    var execution_id = request.process_id if request.run_id == "" else request.run_id + ":" + request.process_id
-    return "{\"protocol_version\":1,\"execution_id\":" + _json_quoted(execution_id) + ",\"process_id\":" + _json_quoted(request.process_id) + ",\"attempt\":" + String(request.attempt) + ",\"max_attempts\":" + String(request.max_attempts) + ",\"impulse_id\":" + _json_quoted(request.impulse_id) + ",\"context\":" + request.context_json + ",\"input\":" + request.input_json + ",\"config\":" + request.config_json + ",\"adapter\":" + _adapter_metadata_json(request.adapter) + "}"
+    var config = Value(parse_string=request.config_json)
+    if not config.is_object(): raise Error("request.config_json must be a JSON object")
+    var merged = Object(capacity=len(config.object()) + 3)
+    for pair in config.object().items(): merged[pair.key] = pair.value.copy()
+    merged["attempt"] = Value(request.attempt)
+    merged["max_attempts"] = Value(request.max_attempts)
+    if request.impulse_id != "": merged["impulse_id"] = Value(request.impulse_id)
+    if request.context_json != "" and request.context_json != "null":
+        merged["context"] = Value(parse_string=request.context_json)
+    merged["adapter"] = Value(parse_string=_adapter_metadata_json(request.adapter))
+    return request_message("parent", request.process_id, request.process_id, request.input_json, to_string(Value(merged^)))
 def adapter_result_json(result: EffectorResult) raises -> String:
     var output_error = _validate_json_text(result.output_json, "result.output_json")
     if not output_error.is_ok(): raise Error(output_error.message)
@@ -727,7 +736,7 @@ def collect_subprocess(mut session: SubprocessSession, wait_status: Int) -> Effe
         # Keep structured effector output intact: env substring redaction is for
         # operator-facing streams only. Redacting result.json corrupts digests/URIs
         # (e.g. sha256 fragments that collide with short env values) — #120.
-        var output = validate_message(output_text, "effector.result")
+        var output = validate_message(output_text, "result")
         var metadata = "{\"pid\":" + String(pid) + ",\"signal\":" + String(signal) + "}"
         var success_result = EffectorResult(success=True, output_json=output, stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json=metadata, error=AdapterError.none())
         return success_result^
@@ -778,7 +787,10 @@ def execute_native_function(request: EffectorRequest, registry: NativeFunctionRe
     if not output_error.is_ok(): return EffectorResult.failure(output_error)
     var output = ""
     try:
-        output = canonical_json_text(invocation.output_json)
+        var payload = canonical_json_text(invocation.output_json)
+        var request_json = adapter_manifest_json(request)
+        var request_id = Value(parse_string=request_json).object()["id"].string()
+        output = result_message(request.process_id, "parent", request.process_id, request_id, payload)
     except err:
         return EffectorResult.failure(AdapterError.native_function_failed(request.adapter.`ref`, String(err)))
     return EffectorResult(success=True, output_json=output, stdout="", stderr="", returncode=0, waiting=False, homeostat_id="", metadata_json="{\"registry_ref\":" + _json_quoted(request.adapter.`ref`) + "}", error=AdapterError())

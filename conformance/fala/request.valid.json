@@ -1,0 +1,1 @@
+{"config":{},"from":"parent","id":"msg:sha256:ab48e1001217df9736d19a2781fc2b45e0b98a46217ea0181ee0e5377261f3c8","job":"echo","kind":"request","payload":{"text":"hello"},"protocol":"fala","to":"echo"}

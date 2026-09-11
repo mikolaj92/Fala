@@ -8,7 +8,7 @@ file sink).
 
 - Process host is core (`subprocess` adapters).
 - Packages: TOML / JSON only (no YAML).
-- Adapters: `subprocess`, `native_function`, `manual_homeostat`.
+- Adapters: `subprocess`, `native_function`, `manual_homeostat`, `child_path`.
 
 See `docs/FALA_ARCHITECTURE_STATUS.md` and root `CHANGELOG.md`.
 

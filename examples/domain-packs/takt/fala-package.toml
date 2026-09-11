@@ -38,12 +38,14 @@ id = "basic"
 id = "cascade"
 capability = "takt.cascade"
 # Host maps this to takt_step.sh when Takt is installed as a sibling product.
+output_schema = { type = "object", required = ["ok", "outcome", "node_id"], properties = { ok = { type = "boolean" }, outcome = { type = "string" }, node_id = { type = "string" }, tact = { type = "integer" } } }
 adapter = { kind = "subprocess", command = ["../takt/tools/takt_step.sh"] }
 
 [[correlation_paths.effectors]]
 id = "interlock_review"
 capability = "takt.interlock_review"
 conduction = ["cascade"]
+output_schema = { type = "object", required = ["node_id"], properties = { node_id = { type = "string" }, reason = { type = "string" } } }
 adapter = { kind = "manual_homeostat" }
 
 [runtime.backend]

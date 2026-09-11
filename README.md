@@ -6,15 +6,16 @@ and a POSIX process host.
 
 ## Local autonomous Correlator
 
-Fala is a cybernetic mediator for autonomous organs. It accepts typed
-**Impulses**, conducts them through named contracts between **Effectors**, and
-records associations and reactions as an observable memory trace. The runtime
-is event-first: JournalPort batches carry commands and events, while sinks
-provide durable storage.
+Fala is a parent autonom: a cybernetic mediator that observes other autonomous organs.
+It accepts typed **Impulses**, asks **Effectors** for structured answers under
+named contracts, and records associations and reactions. It does not tell a
+child how to work, how long to live, or what a failure means. It may ask
+again, ask the child to stop, and kill the OS process. A child crash does not
+take down the parent.
 
 Unix process composition is the implementation boundary, not the product
-identity. Fala hosts local children, keeps each organ's journal separate, and
-drives one run to idle through its embedded/library API; `run_until_idle` is
+identity. Each organ keeps its own journal. `run_until_idle` is the embedded
+parent loop that sits until children answer, go silent, or are stopped; it is
 not a standalone CLI command.
 
 ```text
@@ -93,12 +94,12 @@ tools/          native smoke helpers
 | `manual_homeostat` | durable operator wait and explicit completion |
 | `child_path` | package-authored nested path; host compiles it to the subprocess runner in `python/fala/child_path.py` |
 
-`run_until_idle` is the embedded/library API that drives processes sequentially
-(claim → execute → complete), not a standalone CLI command. Each process has a
-run-scoped identity, lease, and isolated work directory. The native CLI exposes
-the durable create/lifecycle/list/inspect operations separately and requires
-`--db`, `--run-id`, and `--now` where those commands need them. Independent work
-can use multi-claim batches or separate Fala instances with separate journals.
+`run_until_idle` is that parent loop (claim → ask → record), not a command to
+the child and not a standalone CLI verb. Each process has a run-scoped identity,
+lease, and isolated work directory. The native CLI exposes create/lifecycle/
+list/inspect on one journal and requires `--db`, `--run-id`, and `--now` where
+those commands need them. Independent work can use multi-claim batches or
+separate Fala instances with separate journals.
 See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md).
 
 Fala is a mediator, not a workflow tyrant: terminal upstreams conduct success
@@ -117,7 +118,7 @@ host loop. See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md#bounded-autho
 
 ## Quick proof
 
-Requires Pixi/Mojo (see `pixi.toml`). The mill gate is the same command, declared as `[tool.lokay] test` in `pyproject.toml`:
+Requires Pixi/Mojo (see `pixi.toml`):
 
 ```bash
 mise exec -- pixi run full-smoke

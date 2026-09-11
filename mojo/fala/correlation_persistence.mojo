@@ -302,8 +302,8 @@ def _project_output(output: Value, output_schema_json: String) raises -> Value:
     var source = Object(capacity=len(output.object()))
     for pair in output.object().items():
         if pair.key != "adapter": source[pair.key] = pair.value.copy()
-    if "protocol" in source and "message_kind" in source and "values" in source and source["values"].is_object():
-        var domain = source["values"].object().copy()
+    if "protocol" in source and "kind" in source and source["kind"].is_string() and source["kind"].string() == "result" and "payload" in source and source["payload"].is_object():
+        var domain = source["payload"].object().copy()
         source = domain^
     var schema = Value(parse_string=output_schema_json)
     from fala.journal import schema_projection_properties
@@ -314,8 +314,6 @@ def _project_output(output: Value, output_schema_json: String) raises -> Value:
             for pair in properties.items():
                 if pair.key in source: projected[pair.key] = source[pair.key].copy()
             return Value(projected^)
-    if "values" in source and source["values"].is_object():
-        return source["values"].copy()
     return Value(source^)
 
 def _initial_input(item: CorrelationProcessPlan) raises -> String:

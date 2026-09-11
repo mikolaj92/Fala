@@ -27,9 +27,11 @@ tags = ["one", "two"]
 id = "path"
 [[correlation_paths.effectors]]
 id = "eff-one"
+output_schema = { type = "object", required = ["ok"], properties = { ok = { type = "boolean" } } }
 adapter = { kind = "manual_homeostat" }
 [[correlation_paths.effectors]]
 id = "eff-two"
+output_schema = { type = "object", required = ["ok"], properties = { ok = { type = "boolean" } } }
 adapter = { kind = "manual_homeostat" }
 """
     var json = parse_toml_json(text, "<manifest>")

@@ -34,7 +34,7 @@ def main() raises:
     var collision_path = root + "-collision.json"
     var null_path = root + "-null.json"
     # Legacy v1 vocabulary converts nested keys, URI refs and adapter kinds.
-    var legacy = "{\"id\":\"legacy\",\"version\":\"1\",\"carrier_types\":[{\"id\":\"input\"}],\"flows\":[{\"id\":\"flow\",\"steps\":[{\"id\":\"step\",\"capability\":\"cap\",\"needs\":[],\"adapter\":{\"kind\":\"manual_gate\"}}]}],\"capabilities\":[{\"id\":\"cap\",\"accepts_carrier_types\":[\"input\"]}],\"runtime\":{\"backend\":{\"kind\":\"sqlite\",\"path\":\":memory:\"},\"artifact_store\":{\"kind\":\"filesystem\",\"root\":\"fala-artifact://root\"}}}"
+    var legacy = "{\"id\":\"legacy\",\"version\":\"1\",\"carrier_types\":[{\"id\":\"input\"}],\"flows\":[{\"id\":\"flow\",\"steps\":[{\"id\":\"step\",\"capability\":\"cap\",\"needs\":[],\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_gate\"}}]}],\"capabilities\":[{\"id\":\"cap\",\"accepts_carrier_types\":[\"input\"]}],\"runtime\":{\"backend\":{\"kind\":\"sqlite\",\"path\":\":memory:\"},\"artifact_store\":{\"kind\":\"filesystem\",\"root\":\"fala-artifact://root\"}}}"
     Path(legacy_path).write_text(legacy)
     var converted = legacy_to_native_json(legacy_path)
     _check(converted.find("impulse_types") >= 0 and converted.find("correlation_paths") >= 0, "legacy keys converted")
@@ -59,10 +59,10 @@ def main() raises:
     _expect_error(unknown_path, "migration.version")
     Path(null_path).write_text("{\"id\":\"null\",\"version\":null,\"correlation_paths\":[]}")
     _expect_error(null_path, "migration.version")
-    Path(collision_path).write_text("{\"id\":\"collision\",\"version\":\"1\",\"carrier_types\":[],\"impulse_types\":[],\"correlation_paths\":[{\"id\":\"flow\",\"effectors\":[{\"id\":\"step\",\"adapter\":{\"kind\":\"manual_gate\"}}]}]}")
+    Path(collision_path).write_text("{\"id\":\"collision\",\"version\":\"1\",\"carrier_types\":[],\"impulse_types\":[],\"correlation_paths\":[{\"id\":\"flow\",\"effectors\":[{\"id\":\"step\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_gate\"}}]}]}")
     _expect_error(collision_path, "migration.collision")
     # A current strict JSON package is a no-op conversion with stable bytes.
-    var native = "{\"correlation_paths\":[{\"effectors\":[{\"adapter\":{\"kind\":\"manual_homeostat\"},\"id\":\"step\"}],\"id\":\"flow\"}],\"id\":\"native\"}"
+    var native = "{\"correlation_paths\":[{\"effectors\":[{\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"id\":\"step\"}],\"id\":\"flow\"}],\"id\":\"native\"}"
     Path(native_path).write_text(native)
     var native_report = migrate_package_json(native_path, native_path + ".copy")
     _check(not native_report.migrated, "new package is not rewritten semantically")
@@ -70,7 +70,7 @@ def main() raises:
     # Corrupt JSON remains an explicit typed boundary; TOML is the authored package format.
     Path(corrupt_path).write_text("{not-json")
     _expect_error(corrupt_path, "migration.invalid")
-    Path(toml_path).write_text("id = \"legacy\"\nversion = \"2\"\n[[correlation_paths]]\nid = \"path\"\n[[correlation_paths.effectors]]\nid = \"eff\"\nadapter = { kind = \"manual_homeostat\" }\n")
+    Path(toml_path).write_text("id = \"legacy\"\nversion = \"2\"\n[[correlation_paths]]\nid = \"path\"\n[[correlation_paths.effectors]]\nid = \"eff\"\noutput_schema = { type = \"object\", required = [\"ok\"], properties = { ok = { type = \"boolean\" } } }\nadapter = { kind = \"manual_homeostat\" }\n")
     var toml_converted = legacy_to_native_json(toml_path)
     _check(toml_converted.find("\"id\":\"legacy\"") >= 0 and toml_converted.find("eff") >= 0, "TOML migration preflight")
     var toml_report = migrate_package_json(toml_path, toml_native_path)

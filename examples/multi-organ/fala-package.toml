@@ -52,12 +52,14 @@ title = "Signal then external organ"
 [[correlation_paths.effectors]]
 id = "ingest_signal"
 capability = "ingest_signal"
+output_schema = { type = "object", required = ["channel", "value"], properties = { channel = { type = "string" }, value = { type = "number" } } }
 adapter = { kind = "native_function", ref = "signals.ingest" }
 
 [[correlation_paths.effectors]]
 id = "threshold_gate"
 capability = "threshold_gate"
 conduction = ["ingest_signal"]
+output_schema = { type = "object", required = ["channel", "value", "threshold"], properties = { channel = { type = "string" }, value = { type = "number" }, threshold = { type = "number" } } }
 adapter = { kind = "manual_homeostat" }
 
 [[correlation_paths.effectors]]
@@ -65,6 +67,7 @@ id = "arbitrate"
 capability = "arbitrate"
 conduction = ["threshold_gate"]
 # Nested organ: separate child journal (child.sqlite), not the parent --db path.
+output_schema = { type = "object", required = ["decision"], properties = { decision = { type = "object", required = ["status"], properties = { status = { type = "string" }, selected_candidate_id = { type = ["string", "null"] } } } } }
 adapter = { kind = "subprocess", command = ["splot", "run", "--db", "child.sqlite"] }
 
 [runtime.backend]

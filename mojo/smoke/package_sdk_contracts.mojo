@@ -14,10 +14,10 @@ from fala.sdk import (
     output,
     output_reactions,
     find_output_reaction,
-    output_metadata,
     run_manifest_effector,
 )
 from fala.adapters import AdapterError, AdapterKind, AdapterSpec
+from fala.effector_protocol import request_message
 from fala.errors import ValidationError
 
 
@@ -50,7 +50,7 @@ def _write(path: String, text: String) raises:
 
 def main() raises:
     # Strict JSON package loading preserves impulse ontology and runtime data.
-    var package_json = "{\"runtime\":{\"reaction_store\":{\"root\":\"reactions\",\"kind\":\"filesystem\"},\"backend\":{\"path\":\"state.sqlite\",\"kind\":\"sqlite\"}},\"capabilities\":[{\"id\":\"normalize\",\"accepts_impulse_types\":[\"input_text\"],\"emits_impulse_types\":[\"normalized_text\"]}],\"impulse_types\":[{\"id\":\"input_text\",\"media_types\":[\"text/plain\"]},{\"id\":\"normalized_text\",\"media_types\":[\"text/plain\"]}],\"impulse_relations\":[{\"id\":\"normalized_from\",\"source_impulse_types\":[\"input_text\"],\"target_impulse_types\":[\"normalized_text\"]}],\"correlation_paths\":[{\"id\":\"basic\",\"effectors\":[{\"id\":\"normalize\",\"capability\":\"normalize\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}],\"id\":\"fala_package\",\"version\":2}"
+    var package_json = "{\"runtime\":{\"reaction_store\":{\"root\":\"reactions\",\"kind\":\"filesystem\"},\"backend\":{\"path\":\"state.sqlite\",\"kind\":\"sqlite\"}},\"capabilities\":[{\"id\":\"normalize\",\"accepts_impulse_types\":[\"input_text\"],\"emits_impulse_types\":[\"normalized_text\"]}],\"impulse_types\":[{\"id\":\"input_text\",\"media_types\":[\"text/plain\"]},{\"id\":\"normalized_text\",\"media_types\":[\"text/plain\"]}],\"impulse_relations\":[{\"id\":\"normalized_from\",\"source_impulse_types\":[\"input_text\"],\"target_impulse_types\":[\"normalized_text\"]}],\"correlation_paths\":[{\"id\":\"basic\",\"effectors\":[{\"id\":\"normalize\",\"capability\":\"normalize\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}],\"id\":\"fala_package\",\"version\":2}"
     var manifest = validate_package_json_text(package_json, "<package-smoke>")
     var package_json_path = "/tmp/fala-package-sdk-contracts.json"
     _write(package_json_path, package_json)
@@ -67,13 +67,17 @@ def main() raises:
     _expect_package_error("{bad", "manifest.invalid at <package-smoke>")
     _expect_package_error("[]", "manifest.type at /: manifest must be a JSON object")
     _expect_package_error("{\"id\":\"pkg\",\"extra\":true,\"correlation_paths\":[]}", "manifest.unknown at /extra")
-    _expect_package_error("{\"id\":\"pkg\",\"impulse_types\":[{\"id\":\"input\"}],\"capabilities\":[{\"id\":\"cap\",\"accepts_impulse_types\":[\"missing\"]}],\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"capability\":\"cap\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.dangling_reference")
-    # Retired CPython kind is an unknown/unsupported adapter, not a special transport.
-    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"python_function\",\"ref\":\"py.fn\"}}]}]}", "unsupported adapter kind")
+    _expect_package_error("{\"id\":\"pkg\",\"impulse_types\":[{\"id\":\"input\"}],\"capabilities\":[{\"id\":\"cap\",\"accepts_impulse_types\":[\"missing\"]}],\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"capability\":\"cap\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.dangling_reference")
+    # Unknown adapter kinds fail closed; they are not a special transport.
+    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"python_function\",\"ref\":\"py.fn\"}}]}]}", "unsupported adapter kind")
     _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":{}}", "manifest.type at /correlation_paths")
     _expect_package_error("{\"package\":\"pkg\",\"correlation_paths\":[]}", "manifest.unknown at /package")
-    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"pipeline\":\"path\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.unknown at /correlation_paths/0/pipeline")
-    _expect_package_error("{\"id\":\"pkg\",\"association_kinds\":[{\"id\":\"stats\",\"value_schema\":{\"type\":\"date\"}}],\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.value")
+    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"pipeline\":\"path\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.unknown at /correlation_paths/0/pipeline")
+    _expect_package_error("{\"id\":\"pkg\",\"association_kinds\":[{\"id\":\"stats\",\"value_schema\":{\"type\":\"date\"}}],\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "schema.invalid")
+    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.missing at /correlation_paths/0/effectors/0/output_schema")
+    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "{} is not a contract")
+    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{\"type\":\"object\"},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "{ type = \"object\" } is not a contract")
+    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"contract_mode\":\"legacy\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.unknown at /correlation_paths/0/effectors/0/contract_mode")
 
     # Authored TOML uses the same strict package validator; unsupported TOML and
     # YAML-like text fail closed rather than entering a compatibility path.
@@ -84,6 +88,7 @@ version = 2
 id = "path"
 [[correlation_paths.effectors]]
 id = "eff"
+output_schema = { type = "object", required = ["ok"], properties = { ok = { type = "boolean" } } }
 adapter = { kind = "manual_homeostat" }
 """
     var toml_manifest_path = "/tmp/fala-package-sdk-contracts.toml"
@@ -96,11 +101,13 @@ id = "conditional_toml"
 id = "route"
 [[correlation_paths.effectors]]
 id = "review"
+output_schema = { type = "object", required = ["ok"], properties = { ok = { type = "boolean" } } }
 adapter = { kind = "manual_homeostat" }
 [[correlation_paths.effectors]]
 id = "merge"
 conduction = ["review"]
 when = { upstream = "review", path = "decision.verdict", equals = "approve" }
+output_schema = { type = "object", required = ["ok"], properties = { ok = { type = "boolean" } } }
 adapter = { kind = "manual_homeostat" }
 """
     var conditional_toml_path = "/tmp/fala-package-sdk-conditional.toml"
@@ -112,15 +119,15 @@ adapter = { kind = "manual_homeostat" }
     _expect_package_error("id: pkg\nversion: '1'\n", "manifest.invalid")
 
     # SDK envelope helpers canonicalize JSON and strip only native injected keys.
-    var sdk_manifest = "{\"input\":{\"source\":\"hello\",\"conduction\":{\"ingest\":{\"chars\":5}},\"upstream_reactions\":[{\"kind\":\"draft\",\"path\":\"a\"},{\"kind\":\"draft\",\"path\":\"b\"},{\"kind\":\"final\",\"path\":\"c\"}]}}"
+    var sdk_manifest = "{\"payload\":{\"source\":\"hello\",\"conduction\":{\"ingest\":{\"chars\":5}},\"upstream_reactions\":[{\"kind\":\"draft\",\"path\":\"a\"},{\"kind\":\"draft\",\"path\":\"b\"},{\"kind\":\"final\",\"path\":\"c\"}]}}"
     _check(input_values(sdk_manifest).find("source") >= 0, "SDK input values")
     _check(declared_inputs(sdk_manifest) == "{\"source\":\"hello\"}", "SDK declared inputs")
     _check(conduction(sdk_manifest) == "{\"ingest\":{\"chars\":5}}", "SDK conduction")
     _check(upstream_reactions(sdk_manifest).find("\"path\":\"b\"") >= 0, "SDK upstream reaction objects")
     _check(find_reaction(sdk_manifest, "draft") == "{\"kind\":\"draft\",\"path\":\"b\"}", "SDK latest reaction selection")
-    var envelope = output("{\"ok\":true}", "[{\"kind\":\"report\"},3,{\"kind\":\"manifest\"}]", "[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2}]", "{\"telemetry\":{\"ms\":12}}")
-    _check(output_reactions(envelope).find("\"v\":2") >= 0 and find_output_reaction(envelope, "draft") == "{\"kind\":\"draft\",\"v\":2}", "SDK output reaction envelope")
-    _check(output_metadata(envelope) == "{\"telemetry\":{\"ms\":12}}", "SDK output metadata")
+    var request = request_message("parent", "echo", "echo", "{\"ok\":true}")
+    var envelope = output(request, "{\"ok\":true,\"evidence\":[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2}]}")
+    _check(output_reactions(envelope).find("\"v\":2") >= 0 and find_output_reaction(envelope, "draft") == "{\"kind\":\"draft\",\"v\":2}", "SDK output evidence in payload")
 
     # SDK malformed/type diagnostics are stable and execution remains an explicit
     # native boundary (no subprocess, UUID, clock, or Python fallback).
@@ -132,9 +139,9 @@ adapter = { kind = "manual_homeostat" }
     _check(sdk_invalid_json, "SDK malformed JSON diagnostic")
     var sdk_invalid_type = False
     try:
-        _ = input_values("{\"input\":[]}")
+        _ = input_values("{\"payload\":[]}")
     except err:
-        sdk_invalid_type = String(err).find("sdk.invalid_type at /manifest/input") >= 0
+        sdk_invalid_type = String(err).find("sdk.invalid_type at /manifest/payload") >= 0
     _check(sdk_invalid_type, "SDK input type diagnostic")
     var unavailable = run_manifest_effector()
     _check(unavailable.is_unavailable() and unavailable.code == "sdk.execution_unavailable", "SDK unavailable execution code")

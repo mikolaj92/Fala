@@ -91,8 +91,8 @@ def _fixture_payload(outcome: Value) raises -> Value:
     """Return the domain payload represented by a fixture result outcome."""
     if "output" not in outcome.object(): return Value(parse_string="{}")
     var payload = outcome.object()["output"].copy()
-    if payload.is_object() and "protocol" in payload.object() and "message_kind" in payload.object() and "values" in payload.object() and payload.object()["values"].is_object():
-        return payload.object()["values"].copy()
+    if payload.is_object() and "protocol" in payload.object() and "kind" in payload.object() and payload.object()["kind"].is_string() and payload.object()["kind"].string() == "result" and "payload" in payload.object() and payload.object()["payload"].is_object():
+        return payload.object()["payload"].copy()
     return payload^
 
 
@@ -134,7 +134,6 @@ def _fixture_missing_variants(
     var missing = String("[")
     var first = True
     for effector in path.effectors:
-        if effector.contract_mode == "legacy": continue
         var schema = Value(parse_string=effector.output_schema_json)
         var variants = finite_output_variants(schema)
         if not variants.proven: continue

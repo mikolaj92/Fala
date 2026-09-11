@@ -1,4 +1,4 @@
-"""Real FEP subprocess boundary (not just codec conformance)."""
+"""Real Fala subprocess boundary (not just codec conformance)."""
 import json
 import sys
 from pathlib import Path
@@ -9,26 +9,22 @@ import fala
 
 
 def test_package_enforces_domain_output_before_consumer(tmp_path):
-    golden_request = Path(__file__).parents[2] / "conformance/fep-v1/request.valid.json"
-    request_setup = f"import json\nrequest = json.loads(open({str(golden_request)!r}).read())\n"
     source = tmp_path / "source.py"
     source.write_text(
-        "from fala.fep import build_result\n"
-        "from fala.sdk import load_manifest, write_result\n"
+        "from fala.protocol import Result\n"
+        "from fala.sdk import input_values, load_manifest, write_result\n"
         "m = load_manifest()\n"
-        + request_setup
-        + "write_result(build_result(request, values=m['input']['payload']))\n"
+        "write_result(Result.from_request(m, payload=input_values(m)['payload']))\n"
     )
     marker = tmp_path / "consumer-called"
     consumer = tmp_path / "consumer.py"
     consumer.write_text(
         "from pathlib import Path\n"
-        "from fala.fep import build_result\n"
-        "from fala.sdk import load_manifest, write_result\n"
+        "from fala.protocol import Result\n"
+        "from fala.sdk import input_values, load_manifest, write_result\n"
         "m = load_manifest()\n"
         f"Path({str(marker)!r}).write_text('called')\n"
-        + request_setup
-        + "write_result(build_result(request, values={'accepted': m['input']['conduction']['source']['artifact']}))\n"
+        "write_result(Result.from_request(m, payload={'accepted': input_values(m)['conduction']['source']['artifact']}))\n"
     )
     schema = {
         "type": "object", "required": ["route"],

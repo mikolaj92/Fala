@@ -10,7 +10,7 @@ from emberjson import Value, Object, to_string
 from fala.json import canonical_json_text, json_values_equal, quote_json_string
 from fala.reactions import content_address_json
 from fala.schema import initialize_native_schema
-from fala.effector_protocol import validate_message
+from fala.effector_protocol import domain_payload
 
 from fala.status import ProcessStatus, RunStatus, can_transition_process, can_transition_run, can_replay_terminal_process
 
@@ -1106,15 +1106,8 @@ struct NativeJournal(Movable):
         var current = self.get_process(run_id, process_id)
         if current.output_schema_json != "":
             try:
-                var output = Value(parse_string=output_json)
                 var schema = Value(parse_string=current.output_schema_json)
-                var domain_output = output.copy()
-                if output.is_object() and "protocol" in output.object() and "message_kind" in output.object() and output.object()["message_kind"].is_string() and output.object()["message_kind"].string() == "effector.result":
-                    var wire = Object(capacity=len(output.object()))
-                    for pair in output.object().items():
-                        if pair.key != "adapter": wire[pair.key] = pair.value.copy()
-                    _ = validate_message(to_string(Value(wire^)), "effector.result")
-                    domain_output = output.object()["values"].copy()
+                var domain_output = Value(parse_string=domain_payload(output_json))
                 validate_json_schema_value(domain_output, schema, "/output_json")
             except err:
                 raise Error(String(SQLiteError(code=1, message="journal: output does not match output_schema_json: " + String(err))))

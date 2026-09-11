@@ -1,0 +1,1 @@
+{"from":"echo","id":"msg:sha256:1881da225433c2e3db2911004ac9e325406af3a955a2e994affcddda02426e16","job":"echo","kind":"result","payload":{"text":"hello"},"protocol":"fala","ref":"msg:sha256:ab48e1001217df9736d19a2781fc2b45e0b98a46217ea0181ee0e5377261f3c8","status":"ok","to":"parent"}

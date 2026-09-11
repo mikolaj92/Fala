@@ -27,6 +27,7 @@ from fala.journal_port import (
     EventRecord,
     JournalBatch,
 )
+from fala.effector_protocol import domain_payload
 from fala.memory_journal import InMemoryJournal
 from fala.processes import ProcessRecord, transition_process
 from fala.status import ProcessStatus, RunStatus, can_transition_run
@@ -483,7 +484,7 @@ struct MemoryRuntime(Movable):
                         if not first:
                             conduction_body += ","
                         first = False
-                        conduction_body += "\"" + up.effector_id + "\":" + up.output_json
+                        conduction_body += "\"" + up.effector_id + "\":" + domain_payload(up.output_json)
                 conduction_body += "}"
                 extra.input_json = "{\"conduction\":" + conduction_body + "}"
                 self.extras[ready.id] = extra^

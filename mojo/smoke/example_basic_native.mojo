@@ -156,7 +156,7 @@ def main() raises:
             item.conduction.copy(),
             item.timeout_seconds,
             item.config_json,
-            "{}",
+            item.output_schema_json,
             "{\"retry_policy\":\"" + item.retry_policy + "\"}",
             List[String](),
         )

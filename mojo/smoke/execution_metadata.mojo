@@ -7,12 +7,12 @@ def expect(value: Bool, message: String) raises:
 
 
 def main() raises:
-    var package = "{\"id\":\"p\",\"capabilities\":[{\"id\":\"publish\",\"secret_handles\":[\"TOKEN\"]}],\"correlation_paths\":[{\"id\":\"x\",\"effectors\":[{\"id\":\"e\",\"capability\":\"publish\",\"adapter\":{\"kind\":\"subprocess\",\"command\":[\"true\"],\"inherit_env\":[\"TOKEN\"],\"env\":{\"AUTH\":\"${env:TOKEN}\"}}}]}]}"
+    var package = "{\"id\":\"p\",\"capabilities\":[{\"id\":\"publish\",\"secret_handles\":[\"TOKEN\"]}],\"correlation_paths\":[{\"id\":\"x\",\"effectors\":[{\"id\":\"e\",\"capability\":\"publish\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"subprocess\",\"command\":[\"true\"],\"inherit_env\":[\"TOKEN\"],\"env\":{\"AUTH\":\"${env:TOKEN}\"}}}]}]}"
     var manifest = validate_package_json_text(package)
     var public = serialize_package_json(manifest)
     expect(public.find("secret_handles") >= 0 and public.find("canary-secret-value") < 0, "manifest stores handles only")
     var rejected = False
-    try: _ = validate_package_json_text("{\"id\":\"p\",\"capabilities\":[{\"id\":\"publish\",\"secret_handles\":[\"TOKEN\"]}],\"correlation_paths\":[{\"id\":\"x\",\"effectors\":[{\"id\":\"e\",\"capability\":\"publish\",\"adapter\":{\"kind\":\"subprocess\",\"command\":[\"true\"],\"inherit_env\":[\"OTHER\"]}}]}]}")
+    try: _ = validate_package_json_text("{\"id\":\"p\",\"capabilities\":[{\"id\":\"publish\",\"secret_handles\":[\"TOKEN\"]}],\"correlation_paths\":[{\"id\":\"x\",\"effectors\":[{\"id\":\"e\",\"capability\":\"publish\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"subprocess\",\"command\":[\"true\"],\"inherit_env\":[\"OTHER\"]}}]}]}")
     except err: rejected = String(err).find("manifest.secret_scope") >= 0
     expect(rejected, "undeclared secret request fails closed")
     var usage = validate_usage_json("{\"duration_seconds\":1.5,\"input_tokens\":10,\"output_tokens\":2,\"cost\":0.25,\"unit\":\"USD\"}")

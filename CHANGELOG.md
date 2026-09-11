@@ -1,5 +1,26 @@
 ## Unreleased
 
+- Parent–child wire is one Fala envelope (`protocol: fala`): `from`, `to`, `job`,
+  `ref`, `status`, `payload`. There is no FEP/1 and no `fala/2`. Native kernel
+  still returns the domain object; the parent wraps it. Subprocess manifest is a
+  typed `Request`; `write_result` accepts only a typed `Result`. `speak`
+  round-trips bytes.
+- Every effector must declare a non-empty `output_schema` that names the
+  answer. `{ type = "object" }` is not a contract. `contract_mode` is gone;
+  packages without an answer contract are rejected.
+- Drop consumer-host leftovers from the product tree. The verifier is `full-smoke`.
+- `full-smoke` proves the parent autonom: SQLite `run_until_idle`, identity replay, and durable child stop. The journal encyclopedia stays in `extended-smoke`.
+- CLI help and dispatch no longer advertise unimplemented archive/export/replay
+  commands; unknown verbs fail as `unsupported_command`.
+- Move version-stamp checking to `tools/check_stamps.py` and drop the empty `src/` tree.
+- Drop leftover CLI aliases: `runs create` / `run create`, `relations`, `bridges list`,
+  and singular `homeostat *`. Unknown verbs fail as `unsupported_command`.
+- Public Python host no longer exports `host_drive_json`; native JSON helpers stay
+  as an internal serialization boundary.
+- Rename `fala.fep` to `fala.protocol` and `FEPError` to `ProtocolError`. Wire
+  codes stay `fep.*`. Examples live under `examples/effectors`.
+
+
 ## 0.8.2
 
 **Darwin native process-host build fix and post-0.8.1 maintenance.**
@@ -10,13 +31,12 @@
   parent result instead of leaving a no-op policy (#262).
 - OUTPUT_CONTRACTS describes shipped 0.8.x contract-first/coverage behavior
   instead of citing closed #237–#239 as unfinished (#263).
-- `sdk.output()` returns a FEP/1 `effector.result`, so `write_result` and
+- `sdk.output()` returns a typed Fala result, so `write_result` and
   `run_manifest_effector` accept it (#264).
 - The wheel includes `fala/py.typed`, matching the `Typing :: Typed`
   classifier (#265).
-- Closed-issue `.lokay/` leftovers are no longer tracked in the product tree
-  (#266).
-- FEP/1 codecs report `fep.type_invalid` at `/input` or `/config` instead of
+- Closed-issue leftovers are no longer tracked in the product tree (#266).
+- Fala codecs report `fep.type_invalid` at `/payload` or `/config` instead of
   blaming `/input` as an output contract (#267).
 - Installed wheels keep Mojo sources and patches under `fala/`, not as
   top-level `site-packages` trees (#268).

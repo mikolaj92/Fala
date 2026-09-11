@@ -54,8 +54,6 @@ struct PackageEffector(Copyable, Movable):
     var output_schema_json: String
     var output_schema_declared: Bool
     var output_contract_ref: String
-    var contract_mode: String
-    var contract_mode_declared: Bool
     var when_json: String
     var context_policy: String
     var context_source: String
@@ -65,7 +63,7 @@ struct PackageEffector(Copyable, Movable):
     var description: String
     var tags: List[String]
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = "", output_schema_json: String = "{}", output_schema_declared: Bool = False, output_contract_ref: String = "", contract_mode: String = "contract_first", contract_mode_declared: Bool = False):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = "", output_schema_json: String = "{}", output_schema_declared: Bool = False, output_contract_ref: String = ""):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
@@ -81,8 +79,6 @@ struct PackageEffector(Copyable, Movable):
         self.output_schema_json = output_schema_json
         self.output_schema_declared = output_schema_declared
         self.output_contract_ref = output_contract_ref
-        self.contract_mode = contract_mode
-        self.contract_mode_declared = contract_mode_declared
         self.when_json = when_json
         self.context_policy = context_policy
         self.context_source = context_source
@@ -355,6 +351,46 @@ def _json_schema(value: Value, path: String) raises:
             _error("manifest.unknown", child_path, "unknown JSON Schema keyword")
 
 
+def _schema_names_answer(schema: Value) raises -> Bool:
+    """True when the schema names the answer the parent will observe."""
+    if not schema.is_object():
+        return False
+    var obj = schema.object().copy()
+    if "const" in obj or "enum" in obj:
+        return True
+    if "required" in obj:
+        var required = obj["required"].copy()
+        if required.is_array() and len(required.array()) > 0:
+            return True
+    if "properties" in obj:
+        var properties = obj["properties"].copy()
+        if properties.is_object() and len(properties.object()) > 0:
+            return True
+    if "items" in obj:
+        return True
+    for combinator in ["oneOf", "anyOf", "allOf"]:
+        if combinator in obj:
+            var branches = obj[combinator].copy()
+            if branches.is_array() and len(branches.array()) > 0:
+                return True
+    if "type" in obj:
+        var declared = obj["type"].copy()
+        if declared.is_string() and declared.string() != "object":
+            return True
+        if declared.is_array():
+            for item in declared.array():
+                if item.is_string() and item.string() != "object":
+                    return True
+    return False
+
+
+def _output_contract(schema: Value, path: String) raises:
+    if not schema.is_object() or len(schema.object()) == 0:
+        _error("manifest.value", path, "a non-empty output_schema is required; {} is not a contract")
+    if not _schema_names_answer(schema):
+        _error("manifest.value", path, "{ type = \"object\" } is not a contract")
+
+
 def _nonempty(value: Value, path: String) raises -> String:
     var result = _string(value, path)
     if result == "":
@@ -610,9 +646,9 @@ def _capability_secret_handles(capabilities: Value, capability: String) raises -
     return result^
 
 
-def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), capability_contracts: Value = Value(), package_version: String = "2") raises -> PackageEffector:
+def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), capability_contracts: Value = Value()) raises -> PackageEffector:
     if not value.is_object(): _error("manifest.type", path, "expected effector object")
-    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation", "output_schema", "output_contract_ref", "contract_mode"], path)
+    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation", "output_schema", "output_contract_ref"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "effector id")
     var conduction = List[String]()
     var item = _optional(value, "conduction")
@@ -697,20 +733,6 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
         if compensation_capability == capability: _error("manifest.value", path + "/compensation/capability", "compensation capability must differ from original capability")
         if len(capabilities) != 0 and not _contains(capabilities, compensation_capability): _error("manifest.dangling_reference", path + "/compensation/capability", "unknown compensation capability")
         compensation_json = canonical_json_text(to_string(item^))
-    var contract_mode = String("contract_first")
-    var contract_mode_declared = False
-    if package_version == "1":
-        contract_mode = "legacy"
-        contract_mode_declared = True
-    elif package_version == "2" and "contract_mode" not in value.object() and not ("output_schema" in value.object() or "output_contract_ref" in value.object()):
-        contract_mode = "legacy"
-        contract_mode_declared = True
-    if "contract_mode" in value.object():
-        item = value.object()["contract_mode"].copy()
-        if item.is_null(): _error("manifest.type", path + "/contract_mode", "explicit null is not allowed")
-        contract_mode = _string(item, path + "/contract_mode")
-        if contract_mode != "contract_first" and contract_mode != "legacy": _error("manifest.value", path + "/contract_mode", "expected contract_first or legacy")
-        contract_mode_declared = True
     var output_contract_ref = String("")
     item = _optional(value, "output_contract_ref")
     if not item.is_null(): output_contract_ref = _nonempty(item^, path + "/output_contract_ref")
@@ -720,14 +742,17 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
         item = value.object()["output_schema"].copy()
         if item.is_null(): _error("manifest.type", path + "/output_schema", "explicit null is not allowed")
         _json_schema(item.copy(), path + "/output_schema")
+        _output_contract(item.copy(), path + "/output_schema")
         output_schema_json = canonical_json_text(to_string(item.copy()))
         output_schema_declared = True
+    else:
+        _error("manifest.missing", path + "/output_schema", "output contract is required")
     var config_json = String("{}")
     item = _optional(value, "config")
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json, output_schema_json=output_schema_json, output_schema_declared=output_schema_declared, output_contract_ref=output_contract_ref, contract_mode=contract_mode, contract_mode_declared=contract_mode_declared)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json, output_schema_json=output_schema_json, output_schema_declared=output_schema_declared, output_contract_ref=output_contract_ref)
 def _replace_all(source: String, needle: String, replacement: String) -> String:
     var result = String("")
     var rest = source
@@ -833,7 +858,7 @@ def _template_effectors(template: Value, expansion: Value, path: String) raises 
     return _json_value(result_text^)
 
 
-def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), templates: Value = Value(), capability_contracts: Value = Value(), package_version: String = "2") raises -> PackageCorrelationPath:
+def _path(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), templates: Value = Value(), capability_contracts: Value = Value()) raises -> PackageCorrelationPath:
     if not value.is_object(): _error("manifest.type", path, "expected correlation path object")
     _known(value, ["id", "title", "description", "tags", "effectors", "prefix_effectors", "expansion", "suffix_effectors", "accumulate_upstream_reactions", "input_schema", "terminals"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "correlation path id")
@@ -860,7 +885,7 @@ def _path(value: Value, path: String, manifest_parent: String, capabilities: Lis
     if not effects_value.is_array() or len(effects_value.array()) == 0: _error("manifest.value", path + "/effectors", "must be nonempty array")
     var effectors = List[PackageEffector](); var i = 0
     for item in effects_value.array():
-        var effector = _effector(item.copy(), path + "/effectors/" + String(i), manifest_parent, capabilities, capability_contracts.copy(), package_version)
+        var effector = _effector(item.copy(), path + "/effectors/" + String(i), manifest_parent, capabilities, capability_contracts.copy())
         for prior in effectors:
             if prior.id == effector.id: _error("manifest.duplicate", path + "/effectors/" + String(i) + "/id", "duplicate effector id")
         effectors.append(effector.copy()); i += 1
@@ -898,6 +923,7 @@ def _path(value: Value, path: String, manifest_parent: String, capabilities: Lis
             if status != "succeeded" and status != "failed" and status != "cancelled" and status != "timed_out" and status != "skipped": _error("manifest.value", terminal_path + "/status", "expected terminal process status")
             var output_schema = _required_nonnull(terminal, "output_schema", terminal_path)
             _json_schema(output_schema.copy(), terminal_path + "/output_schema")
+            _output_contract(output_schema.copy(), terminal_path + "/output_schema")
             var when_json = String("")
             var when_value = _optional(terminal, "when")
             if not when_value.is_null():
@@ -932,7 +958,6 @@ def _effector_json(effector: PackageEffector) raises -> Value:
     result["id"] = Value(effector.id)
     if effector.output_schema_declared: result["output_schema"] = _json_value(effector.output_schema_json)
     if effector.output_contract_ref != "": result["output_contract_ref"] = Value(effector.output_contract_ref)
-    if effector.contract_mode_declared: result["contract_mode"] = Value(effector.contract_mode)
     if effector.title != "": result["title"] = Value(effector.title)
     if effector.description != "": result["description"] = Value(effector.description)
     if len(effector.tags) != 0:
@@ -1129,7 +1154,7 @@ def _load_package_value(root: Value, path: String) raises -> PackageManifest:
     if len(paths_value.array()) == 0: _error("manifest.value", "/correlation_paths", "must be nonempty array")
     var paths = List[PackageCorrelationPath](); var i = 0
     for item in paths_value.array():
-        var path_item = _path(item.copy(), "/correlation_paths/" + String(i), manifest_parent, capability_ids, templates.copy(), capabilities_value.copy(), version)
+        var path_item = _path(item.copy(), "/correlation_paths/" + String(i), manifest_parent, capability_ids, templates.copy(), capabilities_value.copy())
         for prior in paths:
             if prior.id == path_item.id: _error("manifest.duplicate", "/correlation_paths/" + String(i) + "/id", "duplicate correlation path id")
         paths.append(path_item.copy()); i += 1

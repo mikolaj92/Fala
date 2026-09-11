@@ -99,11 +99,11 @@ def host_drive(
         request["impulse"] = dict(impulse)
     if outputs is not None:
         request["outputs"] = dict(outputs)
-    return host_drive_json(request)
+    return _host_drive_json(request)
 
 
-def host_drive_json(request: str | Mapping[str, Any]) -> dict[str, Any]:
-    """Low-level JSON entry (see ``_native.host_drive_json``)."""
+def _host_drive_json(request: str | Mapping[str, Any]) -> dict[str, Any]:
+    """Serialize a memory-path request and call the native object host."""
     if isinstance(request, Mapping):
         payload = json.dumps(request)
     else:
@@ -454,12 +454,11 @@ def host_run_package(
     """Drive one correlation path from a TOML package on a SQLite journal (Mojo).
 
     Ensures both native libraries required by the durable subprocess path before
-    loading the Mojo host. For paths declaring typed terminals, ``path_result``
-    is the single validated canonical composition result: terminal id, projected
-    values, evidence references, and path digest. Legacy paths return
-    ``path_result=None``. The returned ``effector_results`` mapping is keyed by
-    package effector id; each value contains process ``id`` and ``status`` plus
-    decoded ``output`` and ``error`` JSON values for the stored process.
+    loading the Mojo host. ``path_result`` is the single validated canonical
+    composition result: terminal id, projected values, evidence references, and
+    path digest. The returned ``effector_results`` mapping is keyed by package
+    effector id; each value contains process ``id`` and ``status`` plus decoded
+    ``output`` and ``error`` JSON values for the stored process.
 
     For a non-terminal process, stored ``{}`` is the typed no-result / no-error
     placeholder and is returned as empty objects. Malformed stored JSON fails

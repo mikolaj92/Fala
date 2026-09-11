@@ -27,6 +27,7 @@ id = "cascade"
 [[correlation_paths.effectors]]
 id = "takt_step"
 capability = "takt.cascade"
+output_schema = { type = "object", required = ["ok", "outcome", "node_id"], properties = { ok = { type = "boolean" }, outcome = { type = "string" }, node_id = { type = "string" }, tact = { type = "integer" } } }
 adapter = { kind = "subprocess", command = ["../takt/tools/takt_step.sh"] }
 
 [runtime.backend]

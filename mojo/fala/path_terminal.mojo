@@ -20,7 +20,8 @@ def select_path_terminal(path: PackageCorrelationPath, rows: List[ProcessRow], p
             if row.id != process_prefix + ":" + terminal.source_effector or row.status != terminal.status: continue
             var envelope = Value(parse_string=row.output_json if terminal.status == "succeeded" or terminal.status == "skipped" else row.error_json)
             var values = envelope.copy()
-            if envelope.is_object() and "values" in envelope.object(): values = envelope.object()["values"].copy()
+            if envelope.is_object() and "kind" in envelope.object() and envelope.object()["kind"].is_string() and envelope.object()["kind"].string() == "result" and "payload" in envelope.object():
+                values = envelope.object()["payload"].copy()
             if terminal.when_json != "":
                 var condition = Value(parse_string=terminal.when_json)
                 var current = values.copy()
@@ -35,7 +36,8 @@ def select_path_terminal(path: PackageCorrelationPath, rows: List[ProcessRow], p
             count += 1
             result.id = terminal.id
             result.values_json = to_string(values)
-            if envelope.is_object() and "reactions" in envelope.object() and envelope.object()["reactions"].is_array(): result.evidence_json = to_string(envelope.object()["reactions"])
+            if envelope.is_object() and "payload" in envelope.object() and envelope.object()["payload"].is_object() and "evidence" in envelope.object()["payload"].object() and envelope.object()["payload"].object()["evidence"].is_array():
+                result.evidence_json = to_string(envelope.object()["payload"].object()["evidence"])
     if count > 1: raise Error("path.terminal.ambiguous: ambiguous declared path terminals")
     if count == 0 and len(path.terminals) > 0 and require_match: raise Error("path.terminal.missing: no declared path terminal matched")
     return result^

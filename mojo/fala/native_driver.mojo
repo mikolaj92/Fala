@@ -1343,6 +1343,7 @@ struct AllRunDriverResult(Copyable, Movable):
     var waiting: Bool
     var failed: Bool
     var timed_out: Bool
+    var cancelled: Bool
     var ticks: Int
     var runs_scanned: Int
     var rows_scanned: Int
@@ -1361,6 +1362,7 @@ struct AllRunDriverResult(Copyable, Movable):
         waiting: Bool = False,
         failed: Bool = False,
         timed_out: Bool = False,
+        cancelled: Bool = False,
         ticks: Int = 0,
         runs_scanned: Int = 0,
         rows_scanned: Int = 0,
@@ -1377,6 +1379,7 @@ struct AllRunDriverResult(Copyable, Movable):
         self.waiting = waiting
         self.failed = failed
         self.timed_out = timed_out
+        self.cancelled = cancelled
         self.ticks = ticks
         self.runs_scanned = runs_scanned
         self.rows_scanned = rows_scanned

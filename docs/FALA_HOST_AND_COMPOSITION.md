@@ -9,8 +9,8 @@ The official Mojo 1.0 bridge is `PyInit_*` + `PythonModuleBuilder`;
 `ensure_native` stays because `import mojo.importer` cannot pass package
 import paths.
 
-This document separates **what every Fala is** from the historical fleet
-machinery once associated with `fala_runtime`.
+This document separates **what every Fala is** from nested composition.
+Fleet pools and peer discovery are out of product.
 
 ---
 
@@ -21,9 +21,8 @@ machinery once associated with `fala_runtime`.
 2. **Fala must be able to run children.** Without a local process host
    (subprocess / equivalent), the product is only an in-process callback
    engine — incomplete as a Unix-shaped correlator.
-3. **Historical `fala_runtime` combined two different jobs.** The current
-   product keeps local hosting and effector execution, while multi-runtime
-   pools and fleet selection are removed from Fala identity.
+3. **Local hosting is identity; fleet selection is not.** Nested work is a
+   subprocess plus a separate child journal, not a pool of peers.
 
 Nested autonomy does **not** require that parent and child “know” each other
 as peers in a pool. It requires **separate journals** and an **explicit
@@ -31,19 +30,11 @@ handoff** (process boundary + optional envelope import), same as Unix pipes.
 
 ---
 
-## Web and platform UI boundary
+## Headless product
 
-Fala is a headless Mojo correlator and local process host. It does not expose
-an HTTP application, authentication/session/account/admin pages, templates, or
-static frontend assets. The optional `python/fala` package is a JSON host
-binding, not a web app factory.
-
-Fala is therefore not a platform COMPAT web host: `product_shell`, Basecoat,
-HTMX, Alpine, `/static/platform/` assets, and platform auth/user-management
-pins have no attachment point in this repository. Adding a frontend stack
-would create a second product surface rather than align an existing one. Any
-future web host should adopt the platform shell and assets at that host's
-boundary instead of adding chrome to Fala.
+Fala is a Mojo correlator and local process host. It does not expose an HTTP
+application, templates, or frontend assets. The optional `python/fala` package
+is a JSON host binding, not a web app.
 
 ---
 
@@ -62,10 +53,9 @@ can use these local boundaries.
 | **Reaction store** | bytes outside the journal; metadata/refs inside |
 | **CLI (core)** | implemented `init`, run create/lifecycle/list/inspect/observe, and event/domain inspection on one journal (`--db`); ops retention/bridge/rebuild remain separate |
 
-The native CLI's `run_until_idle` name is reserved for the embedded/library API;
-it is not a standalone command. CLI mutations use explicit `--db`, `--run-id`,
-and `--now` flags where required. The `schema fala-package` name is reserved
-for the native boundary; its schema encoder is not implemented here.
+`run_until_idle` is the embedded parent loop that sits until children answer,
+go silent, or are stopped; it is not a CLI command. CLI mutations use explicit
+`--db`, `--run-id`, and `--now` flags where required.
 
 **Not** Essential Fala (optional ops): journal retention / maintain, reaction GC,
 bridge outbox/inbox, heavy projection rebuild (`ops_maintenance`, `ops_bridge`,
@@ -99,9 +89,9 @@ boundaries (manifests, redaction, no open parent DB handles).
 Treat the expanded graph like code before opening a runtime journal:
 
 ```bash
-fala graph expand --package lokay.fala-package.toml
-fala graph validate --package lokay.fala-package.toml
-fala graph fingerprint --package lokay.fala-package.toml
+fala graph expand --package package.toml
+fala graph validate --package package.toml
+fala graph fingerprint --package package.toml
 fala graph diff --before old.fala-package.toml --after new.fala-package.toml
 ```
 
@@ -139,7 +129,9 @@ closed; production argv and native functions are never called. The resulting
 journal remains available to `explain`, while the canonical report records the
 fingerprint, terminal, fixture-only policy, attempts/event order, and status.
 
-Effector-level `output_schema` is retained during rehearsal. Payload validation
+Every effector declares a non-empty `output_schema` that names the answer.
+`{ type = "object" }` is not a contract. Rehearsal retains that contract.
+Payload validation
 and typed terminal selection are shared with production; see
 [output contracts](OUTPUT_CONTRACTS.md) for the supported schema subset.
 Rehearsal fails closed when a finite declared variant has no fixture. A passing
@@ -187,8 +179,7 @@ No `RuntimePool` or mutual registry exists. The address of the child is the
 Parent/child composition uses separate journals and an explicit handoff:
 
 1. Parent runs a subprocess effector whose declared child program owns its
-   own database path. The reserved native `run-until-idle` boundary is not a
-   currently executable standalone CLI command.
+   own database path.
 2. Child never shares the parent journal path.
 3. Results return through the subprocess contract (`result.json`) and/or the bridge commands below:
 ```text
@@ -206,11 +197,10 @@ each other.”
 ## Optional Python host binding
 
 The wheel ships `python/fala` as a convenience boundary over the authoritative
-Mojo engine. `host_drive` / `host_drive_json` and `open_memory` drive the memory
+Mojo engine. `host_drive` and `open_memory` drive the memory
 path; `open_sqlite`, `host_run_package`, and `delete_terminal_run` cross a JSON
 boundary into the native Mojo extension for durable hosting. `MemoryHost` is a
-small builder around the memory path. None of these APIs duplicates the engine
-or restores the removed `python_function` adapter.
+small builder around the memory path. None of these APIs duplicates the engine.
 
 The `host_run_package` binding uses an empty native-function registry; a package
 whose selected path requires `native_function` therefore cannot execute through
@@ -226,87 +216,25 @@ not expose manifest adapter metadata.
 
 ---
 
-## Historical `fala_runtime` — what to keep vs peel
+## Nested composition
 
-| Concern today under `fala_runtime` | Destination |
-| --- | --- |
-| Driver must not hard-require Correlator/`sqlite://` | **Fala** (host/driver hygiene) |
-| Enqueue “work elsewhere” as a process that waits | **Re-express as local patterns** first: subprocess to another `fala` CLI, or `waiting` + external complete |
-| Bridge outbox/inbox rows on **this** journal | **Optional local surface** (export/import envelopes for one run) — not peer mesh |
-| Foreign runtime/run identifiers in imported envelopes | Keep as opaque envelope data; not a live directory of peers |
-| `RuntimePool`, fleet policies, `fala_runtime` adapter | **Removed** from the product surface |
-| Network peer mesh | **Out of Fala** |
-
-| Old name | Status |
-| --- | --- |
-| adapter `fala_runtime` | **removed** — use `subprocess` + separate journal |
-| RuntimePool / create-pool CLI | **removed** |
-| process host | **core local boundary** |
-
----
-
-## Multi-runtime — removed from product
-
-**Removed from Fala product surface** (adapter, driver, CLI, public exports):
-
-- adapter kind `fala_runtime`
-- `RuntimePool` / `DelegationPolicy` operator APIs
-- pool policies (`least_busy`, `round_robin`, …)
-- `enqueue_fala_runtime_process` / fleet selection
-
-Existing databases may physically retain historical `runtime_pools` and
-`delegation_policies` tables. Current code ignores those tables; fresh schemas
-do not create them, and neither the tables nor their index are exposed by the
-CLI. They are not Fala identity or an active fleet surface.
-
-Nested composition is only:
+Nested work is only:
 
 ```text
 subprocess (or CLI) → child process → separate journal
 optional bridge file / local two-path deliver when the operator chooses paths
 ```
 
-Each Fala is complete alone. No peer mesh.
-
----
+Each Fala is complete alone. No peer mesh. Fleet pools, peer discovery, and
+network multi-hop delivery are out of product; see
+[`MIGRATIONS.md`](MIGRATIONS.md).
 
 ## Bridge: keep the thin meaning
 
 Bridge stays useful as **explicit envelope handoff** between two journals the
-operator (or parent process) already chose:
-
-| Mode | Core? | Role |
-| --- | --- | --- |
-| Network multi-hop / pools | out of Fala |
-
-v1 semantic merge remains: validate envelope, budgets if present, **no raw
-StateFact injection** from child into parent privileged tables.
-
----
-
-## Optional Nostr transport
-
-Nostr and Fala overlap mechanically at the envelope boundary: both preserve
-typed messages, identifiers, causal references, signatures/provenance, and
-fan-out to independently acting receivers. Their cybernetic roles differ.
-Nostr answers who published a statement and how relays distribute it; Fala
-decides what an accepted impulse means inside one local conduction topology,
-which capability may react, how that reaction is materialized, and how the
-correlator's journal continues.
-
-A Nostr integration is therefore an optional signed transport for bridge
-envelopes, not Fala's identity, journal, claim/lease protocol, scheduler, or
-delivery guarantee. Relay acceptance does not mean execution, and duplicate or
-out-of-order delivery must cross the same validated, idempotent bridge boundary
-as file import. Public envelopes select declared capabilities; they do not carry
-arbitrary `argv`, `cwd`, environment values, or secrets. Large reactions remain
-out of band and travel as canonical references, digests, and metadata.
-
-This boundary keeps each Fala complete and locally ordered. It does not add a
-required peer mesh, relay discovery, global journal, marketplace, payment
-layer, or exactly-once claim.
-
----
+operator (or parent process) already chose. v1 semantic merge remains: validate
+envelope, budgets if present, **no raw StateFact injection** from child into
+parent privileged tables.
 
 ## Current implementation status
 
@@ -315,7 +243,6 @@ layer, or exactly-once claim.
 | Event stream and Journal sinks | Implemented: InMemory and reference SQLite; Jsonl/Tee are available sinks |
 | Driver and `native_function` | Implemented |
 | Separate-journal child composition | Supported through subprocess handoff and explicit bridge envelopes |
-| RuntimePool / `fala_runtime` / fleet selection | Removed from the product surface |
 
 ## Adapter kinds (product)
 
@@ -325,12 +252,8 @@ layer, or exactly-once claim.
 | `native_function` | **core** (Mojo registry) |
 | `manual_homeostat` | **core** |
 | `child_path` | **host compile** to subprocess (`python/fala/child_path.py`) |
-| `python_function` | **removed** |
-| `fala_runtime` | **removed** |
 
-`runtime_ref` is not an adapter field. A `runtime_ref` key in a manifest or
-adapter JSON is an unknown field; the migration layer retains the explicit
-historical `fala_runtime` rejection instead of reviving that surface.
+Unknown adapter kinds fail closed. `runtime_ref` is not an adapter field.
 
 
 ---

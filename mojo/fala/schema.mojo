@@ -9,7 +9,6 @@ strings.
 from fala.sqlite import Connection, SQLiteError
 from std.collections import List
 
-# Keep this in lock-step with src/fala/runtime_backend.py.
 comptime SCHEMA_VERSION: Int = 6
 
 # The backend currently creates fourteen named tables.  The migration

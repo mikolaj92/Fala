@@ -10,4 +10,5 @@ id = "arbitrate"
 [[correlation_paths.effectors]]
 id = "splot_step"
 capability = "arbitrate"
+output_schema = { type = "object", required = ["decision"], properties = { decision = { type = "object", required = ["status"], properties = { status = { type = "string" }, selected_candidate_id = { type = ["string", "null"] } } } } }
 adapter = { kind = "subprocess", command = ["../Splot/tools/splot_step.sh"] }

@@ -35,10 +35,12 @@ effects, not ACID transactions across systems.
 
 ## Execution model
 
-Default `run_until_idle` is a **claim → execute → complete** loop under one
-worker lease. Its default driver is deliberately sequential: one process per
-tick (`claims_per_round=1`). Logical independence in a correlation graph does
-not itself promise simultaneous execution.
+Default `run_until_idle` is the parent observation loop: **claim → ask →
+record** under one worker lease. The child is a separate autonom. Fala offers
+the answer contract, records what came back, may ask again, and may kill the
+OS process. It does not become the child. The default driver is sequential:
+one process per tick (`claims_per_round=1`). Logical independence in a
+correlation graph does not itself promise simultaneous execution.
 
 ## Conditional conduction
 
