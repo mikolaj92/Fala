@@ -16,6 +16,7 @@ from fala.correlation_persistence import (
     persist_correlation_plan,
 )
 from fala.journal import NativeJournal, ProcessRow, RunRecord
+from fala.host_journal import realtime_utc_timestamp
 from fala.native_driver import (
     RunFinalizationResult,
     RunUntilIdleResult,
@@ -237,6 +238,7 @@ def run_correlation_path(
     correlation_path_digest: String = "",
     runtime_version: String = "",
     backend_version: String = "",
+    realtime_timestamps: Bool = False,
 ) raises -> CorrelationRuntimeResult:
     """Create/replay, persist, drive, and finalize one native correlation path.
 
@@ -404,8 +406,10 @@ def run_correlation_path(
         max_ticks,
         registry,
         plan,
+        realtime_timestamps=realtime_timestamps,
     )
-    var finalized = finalize_run(journal, run_id, driven.stopped_reason, max_ticks, now)
+    var finalized_at = realtime_utc_timestamp() if realtime_timestamps else now
+    var finalized = finalize_run(journal, run_id, driven.stopped_reason, max_ticks, finalized_at)
     var final_record = journal.get_run_record(run_id)
     return CorrelationRuntimeResult(
         run_status=final_record.status,

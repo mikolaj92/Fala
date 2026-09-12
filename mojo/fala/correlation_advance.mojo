@@ -31,6 +31,7 @@ from fala.json import canonical_json_text, json_values_equal
 from fala.journal import NativeJournal, ProcessRow, CorrelationChildTransition
 
 from fala.sqlite import SQLiteError
+from fala.host_journal import realtime_utc_timestamp
 
 
 @fieldwise_init
@@ -544,7 +545,12 @@ def _metadata_without_wait_marker(metadata: String) raises -> String:
         if pair.key != "__correlation_wait_diagnostic": root[pair.key] = pair.value.copy()
     return canonical_json_text(to_string(root^))
 
-def _persist_wait_diagnostic(mut journal: NativeJournal, plan: CorrelationInstantiationPlan, diagnostic: CorrelationWaitDiagnostic) raises:
+def _persist_wait_diagnostic(
+    mut journal: NativeJournal,
+    plan: CorrelationInstantiationPlan,
+    diagnostic: CorrelationWaitDiagnostic,
+    realtime_timestamps: Bool = False,
+) raises:
     """Persist one canonical wait marker, clearing stale markers atomically."""
     var marker = ""
     var holder = ""
@@ -568,11 +574,13 @@ def _persist_wait_diagnostic(mut journal: NativeJournal, plan: CorrelationInstan
                 if existing == canonical_json_text(marker): continue
                 var updated = _metadata_with_wait_marker(row.metadata, marker)
                 var stmt = journal.db.query("UPDATE processes SET metadata=?,updated_at=? WHERE run_id=? AND id=?")
-                stmt.bind_text(1, updated); stmt.bind_text(2, "correlation.advance"); stmt.bind_text(3, plan.run_id); stmt.bind_text(4, row.id); _ = stmt.step()
+                var updated_at = realtime_utc_timestamp() if realtime_timestamps else "correlation.advance"
+                stmt.bind_text(1, updated); stmt.bind_text(2, updated_at); stmt.bind_text(3, plan.run_id); stmt.bind_text(4, row.id); _ = stmt.step()
             elif has_marker:
                 var updated = _metadata_without_wait_marker(row.metadata)
                 var stmt = journal.db.query("UPDATE processes SET metadata=?,updated_at=? WHERE run_id=? AND id=?")
-                stmt.bind_text(1, updated); stmt.bind_text(2, "correlation.advance"); stmt.bind_text(3, plan.run_id); stmt.bind_text(4, row.id); _ = stmt.step()
+                var updated_at = realtime_utc_timestamp() if realtime_timestamps else "correlation.advance"
+                stmt.bind_text(1, updated); stmt.bind_text(2, updated_at); stmt.bind_text(3, plan.run_id); stmt.bind_text(4, row.id); _ = stmt.step()
         journal.db.commit()
     except err:
         journal.db.rollback()
@@ -638,7 +646,11 @@ def _condition_matches(item: CorrelationProcessPlan, plan: CorrelationInstantiat
         raise Error("correlation.advance.invalid_condition at /processes/" + item.id + "/when/equals: expected value must be scalar")
     return canonical_json_text(to_string(current^)) == canonical_json_text(to_string(expected^))
 
-def advance_correlation(mut journal: NativeJournal, plan: CorrelationInstantiationPlan) raises -> CorrelationAdvanceResult:
+def advance_correlation(
+    mut journal: NativeJournal,
+    plan: CorrelationInstantiationPlan,
+    realtime_timestamps: Bool = False,
+) raises -> CorrelationAdvanceResult:
     """Reconcile durable correlation rows to a deterministic fixed point."""
     _validate(plan)
     var initial = journal.list_processes(plan.run_id)
@@ -679,13 +691,15 @@ def advance_correlation(mut journal: NativeJournal, plan: CorrelationInstantiati
                     child_plans.append(canonical_item.copy())
                 else:
                     var skipped_output = '{"reason":"condition_not_met","when":' + canonical_item.when_json + '}'
-                    _ = journal.skip_process(plan.run_id, item.id, "correlation", rows[row_index].created_at, skipped_output, "process.skip:" + item.id)
+                    var skipped_at = realtime_utc_timestamp() if realtime_timestamps else rows[row_index].created_at
+                    _ = journal.skip_process(plan.run_id, item.id, "correlation", skipped_at, skipped_output, "process.skip:" + item.id)
                     changed = True
         if len(children) > 0:
-            _ = journal.apply_correlation_children(plan.run_id, children)
+            var readied_at = realtime_utc_timestamp() if realtime_timestamps else ""
+            _ = journal.apply_correlation_children(plan.run_id, children, at=readied_at)
             for item in child_plans: all_promoted.append(item.copy())
             changed = True
-        _persist_wait_diagnostic(journal, plan, last_diagnostic)
+        _persist_wait_diagnostic(journal, plan, last_diagnostic, realtime_timestamps)
     if changed:
         raise Error("correlation.advance.nonconvergent at /processes: fixed-point iteration exceeded process count")
     var refreshed = journal.list_processes(plan.run_id)

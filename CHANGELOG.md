@@ -1,5 +1,16 @@
 ## Unreleased
 
+## 0.8.3
+
+**Lifecycle-clock compatibility maintenance for the 0.8 line.**
+
+- The live Python `host_run_package` wrapper records UTC wall-clock timestamps
+  at actual lifecycle transitions, including delayed subprocess completion;
+  raw native requests retain deterministic `now` behavior unless they opt in
+  to `realtime_timestamps` (#284).
+- No FEP change, package or adapter protocol migration, or conduction-semantics
+  change.
+
 ## 0.8.2
 
 **Darwin native process-host build fix and post-0.8.1 maintenance.**

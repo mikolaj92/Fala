@@ -21,6 +21,7 @@ from fala.adapters import (
 )
 from fala.durable_subprocess import wait_durable_subprocess
 from fala.native_process_host import native_process_host_available
+from fala.host_journal import realtime_utc_timestamp
 from fala.journal import NativeJournal, ProcessRow
 from fala.sqlite import SQLiteError
 from fala.status import RunStatus
@@ -29,6 +30,13 @@ from fala.models import WaitDiagnosticIssue, WaitGraphDiagnostic
 from fala.correlation_advance import advance_correlation
 from fala.json import quote_json_string as _json_quote
 from fala.execution_metadata import validate_usage_json
+
+
+def _lifecycle_timestamp(supplied: String, realtime_timestamps: Bool) raises -> String:
+    """Use live wall time only for an explicitly opted-in runtime host run."""
+    if realtime_timestamps:
+        return realtime_utc_timestamp()
+    return supplied
 
 def _empty_wait_graph() -> WaitGraphDiagnostic:
     return WaitGraphDiagnostic(run_id="", impulse_id="", deadlocked=False, deadlocks=List[List[String]](), wait_edges=Dict[String, List[String]](), blocked=List[WaitDiagnosticIssue](), open_homeostats=List[String](), pending=List[String](), ready=List[String](), running=List[String](), waiting=List[String](), retry_wait=List[String](), succeeded=List[String](), failed=List[String](), skipped=List[String](), cancel_requested=List[String](), cancelled=List[String](), timed_out=List[String](), blocked_process_ids=List[String](), reason="", code="")
@@ -948,20 +956,22 @@ def drive_once(
     now: String,
     lease_expires_at: String,
     registry: NativeFunctionRegistry,
+    realtime_timestamps: Bool = False,
 ) raises -> DriverResult:
     """Claim one supplied process and dispatch it without unsupported transports."""
     var preflight = _preflight_adapter(adapter)
     if worker_id == "":
         raise Error(String(SQLiteError(code=1, message="driver: worker_id must not be empty")))
+    var claimed_at = _lifecycle_timestamp(now, realtime_timestamps)
     var claimed = journal.claim_process(
-        process.run_id, process.id, worker_id, now, lease_expires_at
+        process.run_id, process.id, worker_id, claimed_at, lease_expires_at
     )
     if not preflight.is_ok():
         # Claim before failing so unsupported work cannot remain ready/pending
         # while run finalization reports waiting.  No effector output is made.
         var error_json = _adapter_error_json(preflight)
         var stored = journal.fail_process(
-            claimed.run_id, claimed.id, worker_id, now, error_json
+            claimed.run_id, claimed.id, worker_id, claimed_at, error_json
         )
         var failure_rows = List[ProcessRow]()
         failure_rows.append(stored^)
@@ -992,7 +1002,8 @@ def drive_once(
         else:
             var session = launched.take()
             var wait_status = wait_durable_subprocess(
-                journal, claimed.run_id, claimed.id, session.process, worker_id, now
+                journal, claimed.run_id, claimed.id, session.process, worker_id, claimed_at,
+                realtime_timestamps=realtime_timestamps,
             )
             if wait_status == "cancelled":
                 return DriverResult(cancelled=True, ticks=1, process_id=claimed.id)
@@ -1011,7 +1022,7 @@ def drive_once(
             result.homeostat_id,
             claimed.id,
             worker_id,
-            now,
+            _lifecycle_timestamp(now, realtime_timestamps),
             result.output_json,
             result.metadata_json,
             "homeostat.open:" + result.homeostat_id,
@@ -1023,14 +1034,14 @@ def drive_once(
             _validate_result_usage(result)
         except err:
             var invalid_usage = AdapterError("usage_invalid", String(err))
-            var failed_row = journal.fail_process(claimed.run_id, claimed.id, worker_id, now, _adapter_error_json(invalid_usage))
+            var failed_row = journal.fail_process(claimed.run_id, claimed.id, worker_id, _lifecycle_timestamp(now, realtime_timestamps), _adapter_error_json(invalid_usage))
             var invalid_rows = List[ProcessRow](); invalid_rows.append(failed_row^)
             return DriverResult(failed=True, ticks=1, process_id=claimed.id, error=invalid_usage, failure_rows=invalid_rows^)
         _ = journal.complete_process(
             claimed.run_id,
             claimed.id,
             worker_id,
-            now,
+            _lifecycle_timestamp(now, realtime_timestamps),
             _success_output_json(result),
             "{}",
         )
@@ -1043,26 +1054,27 @@ def drive_once(
         failure.code == "timeout" or failure.code == "adapter_timeout"
     )
     var error_json = _adapter_error_json(failure)
+    var transition_at = _lifecycle_timestamp(now, realtime_timestamps)
     var stored: ProcessRow
     # Retry transitions are immediately claimable at the transition timestamp,
     # matching reference retry_process and bounded-drive semantics.
-    var retry_due = _retry_due(claimed, now)
+    var retry_due = _retry_due(claimed, transition_at)
     var retry_allowed = _automatic_retry_allowed(claimed.metadata)
     if timed_out and retry_allowed and claimed.attempt < claimed.max_attempts:
         stored = journal.retry_process(
-            claimed.run_id, claimed.id, worker_id, now, retry_due, error_json
+            claimed.run_id, claimed.id, worker_id, transition_at, retry_due, error_json
         )
     elif timed_out:
         stored = journal.timeout_process(
-            claimed.run_id, claimed.id, worker_id, now, error_json
+            claimed.run_id, claimed.id, worker_id, transition_at, error_json
         )
     elif retry_allowed and claimed.attempt < claimed.max_attempts:
         stored = journal.retry_process(
-            claimed.run_id, claimed.id, worker_id, now, retry_due, error_json
+            claimed.run_id, claimed.id, worker_id, transition_at, retry_due, error_json
         )
     else:
         stored = journal.fail_process(
-            claimed.run_id, claimed.id, worker_id, now, error_json
+            claimed.run_id, claimed.id, worker_id, transition_at, error_json
         )
     var failure_rows = List[ProcessRow]()
     failure_rows.append(stored^)
@@ -1110,6 +1122,7 @@ def drive_until_idle(
     max_ticks: Int,
     registry: NativeFunctionRegistry,
     claims_per_round: Int = 1,
+    realtime_timestamps: Bool = False,
 ) raises -> DriverResult:
     """Drive supplied adapters against durable rows until idle or bounded.
 
@@ -1139,6 +1152,7 @@ def drive_until_idle(
     while aggregate.ticks < max_ticks:
         var claimed_this_round = 0
         while claimed_this_round < claims_per_round and aggregate.ticks < max_ticks:
+            var tick_now = _lifecycle_timestamp(now, realtime_timestamps)
             var durable = List[ProcessRow]()
             if run_id != "": durable = journal.list_processes(run_id)
             var best = -1
@@ -1146,18 +1160,18 @@ def drive_until_idle(
             var index = 0
             while index < len(durable):
                 var supplied = _supplied_process_index(processes, run_id, durable[index].id)
-                if supplied >= 0 and _row_claimable(durable[index], now):
+                if supplied >= 0 and _row_claimable(durable[index], tick_now):
                     if best < 0 or _row_before(durable[index], durable[best]):
                         best = index
                         best_supplied = supplied
                 index += 1
             if best < 0: break
             var candidate = durable[best].copy()
-            if candidate.status == "running" and candidate.lease_owner != "" and candidate.lease_expires_at <= now:
+            if candidate.status == "running" and candidate.lease_owner != "" and candidate.lease_expires_at <= tick_now:
                 # Resolve the old owner's lease first.  This preserves one attempt
                 # per claim and emits the journal transition before re-claiming.
                 var maintained = maintain_process(
-                    journal, candidate, candidate.lease_owner, now, now,
+                    journal, candidate, candidate.lease_owner, tick_now, tick_now,
                     "{\"code\":\"lease_expired\",\"message\":\"process lease expired\"}",
                 )
                 if maintained.status == "failed":
@@ -1168,7 +1182,8 @@ def drive_until_idle(
                     continue
                 candidate = journal.get_process(candidate.run_id, candidate.id)
             var one = drive_once(
-                journal, candidate, adapters[best_supplied], worker_id, now, lease_expires_at, registry
+                journal, candidate, adapters[best_supplied], worker_id, tick_now, lease_expires_at, registry,
+                realtime_timestamps=realtime_timestamps,
             )
             if one.ticks == 0 and not one.error.is_ok():
                 aggregate.failed = True
@@ -1224,6 +1239,7 @@ def run_until_idle(
     max_ticks: Int,
     registry: NativeFunctionRegistry,
     stop: Bool = False,
+    realtime_timestamps: Bool = False,
 ) raises -> RunUntilIdleResult:
     """Drive a run and return durable rows with a deterministic stop reason."""
     if worker_id == "":
@@ -1247,7 +1263,10 @@ def run_until_idle(
     if stop:
         reason = "stopped"
     else:
-        aggregate = drive_until_idle(journal, processes, adapters, worker_id, now, lease_expires_at, max_ticks, registry)
+        aggregate = drive_until_idle(
+            journal, processes, adapters, worker_id, now, lease_expires_at,
+            max_ticks, registry, realtime_timestamps=realtime_timestamps,
+        )
         if aggregate.ticks >= max_ticks: reason = "max_ticks"
         elif not aggregate.error.is_ok(): reason = "failed"
         else: reason = "idle"
@@ -1612,7 +1631,12 @@ def finalize_run(
         if key == "": key = "run.finalize:" + run_id + ":" + target
         _ = journal.transition_run_status(run_id, target, now, key, reason=reason)
     return RunFinalizationResult(status=target, reason=reason, already_terminal=False, total_count=total, completed_count=completed, failed_count=failed, waiting_count=waiting, incomplete_count=incomplete)
-def advance_after_terminal(mut journal: NativeJournal, plan: CorrelationInstantiationPlan, process_id: String = "") raises -> Bool:
+def advance_after_terminal(
+    mut journal: NativeJournal,
+    plan: CorrelationInstantiationPlan,
+    process_id: String = "",
+    realtime_timestamps: Bool = False,
+) raises -> Bool:
     """Reconcile correlation readiness after a terminal process transition."""
     if plan.run_id == "":
         raise Error(String(SQLiteError(code=1, message="driver: correlation plan run_id must not be empty")))
@@ -1620,7 +1644,7 @@ def advance_after_terminal(mut journal: NativeJournal, plan: CorrelationInstanti
         var row = journal.get_process(plan.run_id, process_id)
         if row.status != "succeeded" and row.status != "skipped" and row.status != "failed" and row.status != "cancelled" and row.status != "timed_out":
             return False
-    _ = advance_correlation(journal, plan)
+    _ = advance_correlation(journal, plan, realtime_timestamps=realtime_timestamps)
     return True
 
 def drive_correlation_once(
@@ -1632,12 +1656,19 @@ def drive_correlation_once(
     lease_expires_at: String,
     registry: NativeFunctionRegistry,
     plan: CorrelationInstantiationPlan,
+    realtime_timestamps: Bool = False,
 ) raises -> DriverResult:
     """Drive one effector and immediately reconcile downstream readiness."""
-    var result = drive_once(journal, process, adapter, worker_id, now, lease_expires_at, registry)
+    var result = drive_once(
+        journal, process, adapter, worker_id, now, lease_expires_at, registry,
+        realtime_timestamps=realtime_timestamps,
+    )
     if result.completed or result.failed or result.timed_out or result.cancelled:
         try:
-            _ = advance_after_terminal(journal, plan, result.process_id)
+            _ = advance_after_terminal(
+                journal, plan, result.process_id,
+                realtime_timestamps=realtime_timestamps,
+            )
         except err:
             raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
     return result^
@@ -1652,6 +1683,7 @@ def drive_correlation_until_idle(
     max_ticks: Int,
     registry: NativeFunctionRegistry,
     plan: CorrelationInstantiationPlan,
+    realtime_timestamps: Bool = False,
 ) raises -> RunUntilIdleResult:
     """Advance and drive a correlation queue to a deterministic fixed point."""
     if max_ticks < 1:
@@ -1662,7 +1694,7 @@ def drive_correlation_until_idle(
     var last = DriverResult(idle=True)
     while ticks < max_ticks:
         try:
-            _ = advance_correlation(journal, plan)
+            _ = advance_correlation(journal, plan, realtime_timestamps=realtime_timestamps)
         except err:
             raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
         var before = journal.list_processes(plan.run_id)
@@ -1672,13 +1704,19 @@ def drive_correlation_until_idle(
             if adapter_index < 0:
                 raise Error(String(SQLiteError(code=1, message="driver: correlation adapter mapping missing for " + durable_process.id)))
             current_adapters.append(adapters[adapter_index].copy())
-        var result = drive_until_idle(journal, before, current_adapters, worker_id, now, lease_expires_at, 1, registry)
+        var result = drive_until_idle(
+            journal, before, current_adapters, worker_id, now, lease_expires_at, 1, registry,
+            realtime_timestamps=realtime_timestamps,
+        )
         last = result.copy()
         if result.ticks == 0:
             break
         ticks += result.ticks
         try:
-            _ = advance_after_terminal(journal, plan, result.process_id)
+            _ = advance_after_terminal(
+                journal, plan, result.process_id,
+                realtime_timestamps=realtime_timestamps,
+            )
         except err:
             raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
     # Reconcile once more before deriving the run boundary.  External terminal
@@ -1686,10 +1724,13 @@ def drive_correlation_until_idle(
     # process_id in this drive loop; the existing helper safely replays durable
     # readiness and dead-upstream cancellation without fabricating execution.
     try:
-        _ = advance_after_terminal(journal, plan)
+        _ = advance_after_terminal(journal, plan, realtime_timestamps=realtime_timestamps)
     except err:
         raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
-    var final = run_until_idle(journal, processes, adapters, worker_id, now, lease_expires_at, 1, registry, stop=True)
+    var final = run_until_idle(
+        journal, processes, adapters, worker_id, now, lease_expires_at, 1, registry,
+        stop=True, realtime_timestamps=realtime_timestamps,
+    )
     final.ticks = ticks
     var durable_final = journal.list_processes(plan.run_id)
     var all_succeeded = len(durable_final) > 0
@@ -1714,5 +1755,8 @@ def drive_correlation_until_idle(
     elif last.ticks == 0 and final.stopped_reason == "idle":
         final.ok = True
         final.stopped_reason = "idle"
-    _ = finalize_run(journal, plan.run_id, final.stopped_reason, max_ticks, now)
+    _ = finalize_run(
+        journal, plan.run_id, final.stopped_reason, max_ticks,
+        _lifecycle_timestamp(now, realtime_timestamps),
+    )
     return final^
