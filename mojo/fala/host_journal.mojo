@@ -2,11 +2,53 @@
 
 Python keeps the public function names. Durable INSERT/UPDATE lives here.
 """
+from std.ffi import c_int, external_call
+from std.memory.alloc import alloc, Layout
+from std.origin import MutUntrackedOrigin
+
 from emberjson import Object, to_string
 from fala.journal import NativeJournal
 from fala.json import parse_json, quote_json_string
 from fala.schema_contract import ensure_host_journal
 from fala.status import ProcessStatus, RunStatus, can_transition_process, can_transition_run
+
+comptime CCharPtr = MutPointer[Int8, MutUntrackedOrigin]
+
+
+def realtime_utc_timestamp() raises -> String:
+    """Read POSIX wall time as the journal's second-resolution UTC format.
+
+    The POSIX `timespec` begins with an aligned `time_t`; pass that first field
+    to `gmtime_r`, which writes a `struct tm` into separately aligned storage.
+    Keep the same `YYYY-MM-DDTHH:MM:SSZ` representation used by host requests
+    so lexical lease/retry comparisons never mix fractional and whole seconds.
+    """
+    # CLOCK_REALTIME is 0 on the supported POSIX targets (macOS and Linux).
+    var timespec = alloc(Layout[UInt](count=2)).into_managed()
+    var utc_fields = alloc(Layout[UInt](count=16)).into_managed()
+    var output = alloc(Layout[UInt8](count=64)).into_managed()
+    var clock_status = external_call["clock_gettime", c_int](
+        c_int(0), timespec.unsafe_ptr().as_unsafe_any_origin()
+    )
+    if clock_status != 0:
+        raise Error("fala host clock: clock_gettime(CLOCK_REALTIME) failed")
+    var broken_down = external_call["gmtime_r", CCharPtr](
+        timespec.unsafe_ptr().as_unsafe_any_origin(),
+        utc_fields.unsafe_ptr().as_unsafe_any_origin(),
+    )
+    if Int(broken_down) == 0:
+        raise Error("fala host clock: gmtime_r failed")
+    var format = "%Y-%m-%dT%H:%M:%SZ\0"
+    var formatted = external_call["strftime", UInt](
+        output.unsafe_ptr().as_unsafe_any_origin(),
+        UInt(64),
+        CCharPtr(unsafe_from_address=Int(format.as_bytes().unsafe_ptr())),
+        broken_down,
+    )
+    if formatted == 0:
+        raise Error("fala host clock: strftime could not format UTC timestamp")
+    return String(unsafe_from_utf8_ptr=output.unsafe_ptr().as_unsafe_any_origin())
+
 
 def _error(message: String) raises:
     raise Error(message)
