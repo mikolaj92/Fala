@@ -1,6 +1,6 @@
 # Fala
 
-**Version 0.8.2** — Mojo-native engine with an optional thin Python host
+**Version 0.8.3** — Mojo-native engine with an optional thin Python host
 binding; local autonomous Correlator, cybernetic mediation, event-first memory,
 and a POSIX process host.
 
