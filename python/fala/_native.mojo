@@ -246,8 +246,13 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         "worker_id": "python-host",
         "created_at": "2026-01-01T00:00:00Z",
         "now": "2026-01-01T00:00:01Z",
-        "lease_expires_at": "2026-01-01T01:00:00Z"
+        "lease_expires_at": "2026-01-01T01:00:00Z",
+        "realtime_timestamps": false
       }
+
+    Omit ``realtime_timestamps`` to preserve the caller-supplied ``now`` for
+    deterministic native requests. The Python host opts in to lifecycle wall
+    times for its live invocation.
 
     Supports package effectors with adapter kind ``native_function`` (no-op
     registry empty → fails if executed) or ``subprocess`` (process host).
@@ -270,6 +275,7 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     var created_at = _obj_string(root, "created_at", "2026-01-01T00:00:00Z")
     var now = _obj_string(root, "now", "2026-01-01T00:00:01Z")
     var lease = _obj_string(root, "lease_expires_at", "2026-01-01T01:00:00Z")
+    var realtime_timestamps = _obj_bool(root, "realtime_timestamps", False)
 
     var package_bytes = Path(package_path).read_bytes()
     var package_digest = sha256_raw_bytes(package_bytes)
@@ -452,6 +458,7 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
         correlation_path_digest=correlation_path_digest,
         runtime_version=FALA_RUNTIME_VERSION,
         backend_version=FALA_BACKEND_VERSION,
+        realtime_timestamps=realtime_timestamps,
     )
 
     var statuses = String("[")

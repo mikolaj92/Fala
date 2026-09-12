@@ -489,6 +489,9 @@ def host_run_package(
         "worker_id": worker_id,
         "created_at": "",
         "now": "",
+        # This wrapper owns a live host invocation; raw native requests keep
+        # their supplied `now` unless they explicitly opt into wall time.
+        "realtime_timestamps": True,
         "lease_expires_at": "2099-01-01T00:00:00Z",
         # Ambient host env for subprocess inherit_env / base keys (#108 / v0.7.6).
         # Mojo materializes these into adapter.env before dispatch.

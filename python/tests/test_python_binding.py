@@ -204,6 +204,207 @@ def test_host_run_package_subprocess(tmp_path) -> None:
     assert terminal["ping"]["error"] == {}
 
 
+def test_host_run_package_lifecycle_timestamps_capture_delayed_process(tmp_path) -> None:
+    import json
+    import re
+    import sqlite3
+    import sys
+
+    import fala
+
+    source = tmp_path / "delayed.py"
+    source.write_text(
+        _fep_organ("{'ok': True}", extra="import time\ntime.sleep(2.1)\n"),
+        encoding="utf-8",
+    )
+    package = {
+        "version": "2",
+        "id": "lifecycle_timestamps",
+        "capabilities": [{"id": "delayed"}],
+        "correlation_paths": [
+            {
+                "id": "path",
+                "effectors": [
+                    {
+                        "id": "delayed",
+                        "capability": "delayed",
+                        "output_schema": {
+                            "type": "object",
+                            "required": ["ok"],
+                            "properties": {"ok": {"type": "boolean"}},
+                        },
+                        "adapter": {
+                            "kind": "subprocess",
+                            "command": [sys.executable, str(source)],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    package_path = tmp_path / "lifecycle.json"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+    db_path = tmp_path / "lifecycle.sqlite"
+
+    result = fala.host_run_package(
+        db_path=db_path,
+        package_path=package_path,
+        path_id="path",
+        run_id="lifecycle",
+    )
+
+    assert result["run_status"] == "completed"
+    with sqlite3.connect(db_path) as connection:
+        run = connection.execute(
+            "select created_at,updated_at,finished_at from runs where id='lifecycle'"
+        ).fetchone()
+        process = connection.execute(
+            "select created_at,updated_at,started_at,finished_at from processes "
+            "where run_id='lifecycle' and id='path:delayed'"
+        ).fetchone()
+
+    assert run is not None and process is not None
+    assert process[2] < process[3], "runtime process start and completion must have distinct wall times"
+    assert run[0] < run[2], "runtime run creation and completion must have distinct wall times"
+    assert process[1] == process[3]
+    assert run[1] == run[2]
+    for timestamp in (*run, *process):
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp)
+
+
+@pytest.mark.parametrize(
+    ("mode", "process_status"),
+    [("failure", "failed"), ("timeout", "timed_out")],
+)
+def test_host_run_package_lifecycle_timestamps_capture_delayed_failure_or_timeout(
+    tmp_path, mode: str, process_status: str
+) -> None:
+    import json
+    import re
+    import sqlite3
+    import sys
+
+    import fala
+
+    source = tmp_path / f"{mode}.py"
+    if mode == "failure":
+        source.write_text(
+            "import time\ntime.sleep(1.2)\nraise SystemExit(7)\n",
+            encoding="utf-8",
+        )
+    else:
+        source.write_text("import time\ntime.sleep(10)\n", encoding="utf-8")
+    step: dict[str, object] = {
+        "id": "step",
+        "capability": "step",
+        "output_schema": {"type": "object"},
+        "adapter": {"kind": "subprocess", "command": [sys.executable, str(source)]},
+    }
+    if mode == "timeout":
+        step["timeout_seconds"] = 1.2
+    package = {
+        "version": "2",
+        "id": f"lifecycle_{mode}",
+        "capabilities": [{"id": "step"}],
+        "correlation_paths": [{"id": "path", "effectors": [step]}],
+    }
+    package_path = tmp_path / f"{mode}.json"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+    db_path = tmp_path / f"{mode}.sqlite"
+    run_id = f"lifecycle-{mode}"
+
+    result = fala.host_run_package(
+        db_path=db_path,
+        package_path=package_path,
+        path_id="path",
+        run_id=run_id,
+    )
+
+    assert result["run_status"] == "failed"
+    assert result["effector_results"]["step"]["status"] == process_status
+    with sqlite3.connect(db_path) as connection:
+        run = connection.execute(
+            "select created_at,updated_at,finished_at from runs where id=?", (run_id,)
+        ).fetchone()
+        process = connection.execute(
+            "select started_at,updated_at,finished_at from processes "
+            "where run_id=? and id='path:step'",
+            (run_id,),
+        ).fetchone()
+
+    assert run is not None and process is not None
+    assert process[0] < process[2], "failure and timeout must end at their actual transition time"
+    assert run[0] < run[2], "run finalization must use the final transition time"
+    assert process[1] == process[2]
+    assert run[1] == run[2]
+    for timestamp in (*run, *process):
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp)
+
+
+def test_raw_native_host_run_preserves_explicit_now_without_realtime_opt_in(
+    tmp_path,
+) -> None:
+    import json
+    import sqlite3
+
+    from fala import host
+    from fala._build import ensure_native
+
+    fixed_now = "2026-01-02T03:04:05Z"
+    package = {
+        "version": "2",
+        "id": "explicit_clock",
+        "capabilities": [{"id": "step"}],
+        "correlation_paths": [
+            {
+                "id": "path",
+                "effectors": [
+                    {
+                        "id": "step",
+                        "capability": "step",
+                        "output_schema": {
+                            "type": "object",
+                            "required": ["value"],
+                            "properties": {"value": {"type": "number"}},
+                        },
+                        "adapter": {"kind": "native_function", "ref": "not_registered"},
+                    }
+                ],
+            }
+        ],
+    }
+    package_path = tmp_path / "explicit.json"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+    db_path = tmp_path / "explicit.sqlite"
+    request = {
+        "db_path": str(db_path),
+        "package_path": str(package_path),
+        "path_id": "path",
+        "run_id": "explicit",
+        "max_ticks": 4,
+        "worker_id": "explicit-clock-test",
+        "created_at": fixed_now,
+        "now": fixed_now,
+        "lease_expires_at": "2099-01-01T00:00:00Z",
+    }
+
+    host.ensure_sqlite_fire_library()
+    native = ensure_native()
+    result = host._with_sqlite_cwd(lambda: native.host_run_package(json.dumps(request)))
+
+    assert result["run_status"] == "failed"
+    with sqlite3.connect(db_path) as connection:
+        run_timestamps = connection.execute(
+            "select created_at,updated_at,finished_at from runs where id='explicit'"
+        ).fetchone()
+        process_timestamps = connection.execute(
+            "select created_at,updated_at,started_at,finished_at from processes "
+            "where run_id='explicit' and id='path:step'"
+        ).fetchone()
+    assert run_timestamps == (fixed_now, fixed_now, fixed_now)
+    assert process_timestamps == (fixed_now, fixed_now, fixed_now, fixed_now)
+
+
 def test_native_process_host_child_cwd_preserves_parent_cwd(tmp_path) -> None:
     """The native C host changes only the spawned child's working directory."""
     import ctypes
@@ -747,6 +948,139 @@ def test_host_run_package_conditional_conduction_skips_nonmatching_adapter(tmp_p
     assert result["effector_results"]["merge"]["output"]["reason"] == "condition_not_met"
     assert result["effector_results"]["repair"]["status"] == "succeeded"
     assert not sentinel.exists()
+
+
+@pytest.mark.parametrize(
+    ("mode", "producer_status", "run_status", "error_code"),
+    [
+        ("success", "succeeded", "completed", ""),
+        ("nonzero", "failed", "failed", "adapter_failed"),
+        ("timeout", "timed_out", "failed", "adapter_timeout"),
+    ],
+)
+def test_host_run_package_conduction_waits_for_terminal_and_when_gates_success(
+    tmp_path, mode: str, producer_status: str, run_status: str, error_code: str
+) -> None:
+    import json
+    import sqlite3
+    import sys
+
+    import fala
+
+    source = tmp_path / "steps.py"
+    source.write_text(
+        "import sys, time\n"
+        "mode = sys.argv[1]\n"
+        "if mode == 'success':\n"
+        "    time.sleep(0.05)\n"
+        "    payload = {'ok': True}\n"
+        "elif mode == 'nonzero':\n"
+        "    raise SystemExit(7)\n"
+        "elif mode == 'timeout':\n"
+        "    time.sleep(1.0)\n"
+        "    payload = {'ok': True}\n"
+        "else:\n"
+        "    payload = {'ran': True}\n"
+        "from fala.sdk import output, write_result\n"
+        "write_result(output(values=payload))\n",
+        encoding="utf-8",
+    )
+    producer: dict[str, object] = {
+        "id": "producer",
+        "capability": "producer",
+        "output_schema": {
+            "type": "object",
+            "required": ["ok"],
+            "properties": {"ok": {"type": "boolean"}},
+        },
+        "adapter": {
+            "kind": "subprocess",
+            "command": [sys.executable, str(source), mode],
+        },
+    }
+    if mode == "timeout":
+        producer["timeout_seconds"] = 0.2
+    dependent = {
+        "type": "object",
+        "required": ["ran"],
+        "properties": {"ran": {"type": "boolean"}},
+    }
+    package = {
+        "version": "2",
+        "id": f"conduction_{mode}",
+        "capabilities": [{"id": name} for name in ("producer", "always", "success_only")],
+        "correlation_paths": [
+            {
+                "id": "route",
+                "effectors": [
+                    producer,
+                    {
+                        "id": "always",
+                        "capability": "always",
+                        "conduction": ["producer"],
+                        "output_schema": dependent,
+                        "adapter": {
+                            "kind": "subprocess",
+                            "command": [sys.executable, str(source), "dependent"],
+                        },
+                    },
+                    {
+                        "id": "success_only",
+                        "capability": "success_only",
+                        "conduction": ["producer"],
+                        "when": {
+                            "upstream": "producer",
+                            "path": "ok",
+                            "equals": True,
+                        },
+                        "output_schema": dependent,
+                        "adapter": {
+                            "kind": "subprocess",
+                            "command": [sys.executable, str(source), "dependent"],
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    package_path = tmp_path / f"conduction-{mode}.json"
+    db_path = tmp_path / f"conduction-{mode}.sqlite"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+
+    result = fala.host_run_package(
+        db_path=db_path,
+        package_path=package_path,
+        path_id="route",
+        run_id=f"conduction-{mode}",
+        max_ticks=8,
+    )
+
+    assert result["run_status"] == run_status
+    assert result["effector_results"]["producer"]["status"] == producer_status
+    assert result["effector_results"]["always"]["status"] == "succeeded"
+    expected_success_only_status = "succeeded" if mode == "success" else "skipped"
+    assert result["effector_results"]["success_only"]["status"] == expected_success_only_status
+
+    with sqlite3.connect(db_path) as connection:
+        always_input = connection.execute(
+            "select input_json from processes where run_id=? and id='route:always'",
+            (f"conduction-{mode}",),
+        ).fetchone()
+        success_only_output = connection.execute(
+            "select output_json from processes where run_id=? and id='route:success_only'",
+            (f"conduction-{mode}",),
+        ).fetchone()
+    assert always_input is not None
+    conduction = json.loads(always_input[0])["conduction"]["producer"]
+    if error_code:
+        assert conduction["code"] == error_code
+    else:
+        assert conduction == {"ok": True}
+    assert success_only_output is not None
+    if mode == "success":
+        assert json.loads(success_only_output[0])["values"] == {"ran": True}
+    else:
+        assert json.loads(success_only_output[0])["reason"] == "condition_not_met"
 
 
 def test_host_run_package_exposes_decoded_failed_effector_result(tmp_path) -> None:

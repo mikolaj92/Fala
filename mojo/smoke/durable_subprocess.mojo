@@ -61,6 +61,7 @@ def main() raises:
         + "while time.time()<deadline:\n"
         + "    row=con.execute('select status from processes where run_id=? and id=?',(run_id,process_id)).fetchone()\n"
         + "    if row and row[0]=='running':\n"
+        + "        time.sleep(1.2)\n"
         + "        con.execute(\"update processes set status='cancel_requested',updated_at='2026-01-01T00:00:03Z' where run_id=? and id=? and status='running'\",(run_id,process_id))\n"
         + "        con.commit()\n"
         + "        break\n"
@@ -87,20 +88,34 @@ def main() raises:
         "2026-01-01T00:00:01Z",
         "2099-01-01T00:00:00Z",
         NativeFunctionRegistry(),
+        realtime_timestamps=True,
     )
     _ = canceler.wait_result()
     var driven_row = drive_journal.get_process("drive-cancel", "child")
     expect(
-        driven_row.status == "cancelled" and not driven.completed,
-        "drive_once live-cancel reaches cancelled terminal, got " + driven_row.status,
+        driven_row.status == "cancelled" and not driven.completed
+        and driven_row.started_at < driven_row.finished_at,
+        "drive_once live-cancel reaches a timed cancelled terminal, got " + driven_row.status
+        + " started_at=" + driven_row.started_at + " finished_at=" + driven_row.finished_at,
     )
     var drive_events = drive_journal.list_events("drive-cancel")
     var drive_signal = 0
     var drive_terminal = 0
+    var drive_signal_at = ""
+    var drive_terminal_at = ""
     for event in drive_events:
-        if event.event_type == "process.cancel.signal": drive_signal += 1
-        if event.event_type == "process.cancelled": drive_terminal += 1
+        if event.event_type == "process.cancel.signal":
+            drive_signal += 1
+            drive_signal_at = event.created_at
+        if event.event_type == "process.cancelled":
+            drive_terminal += 1
+            drive_terminal_at = event.created_at
     expect(drive_signal == 1 and drive_terminal == 1, "drive_once emits one cancel signal and one cancelled terminal")
+    expect(
+        driven_row.started_at < drive_signal_at and drive_signal_at <= drive_terminal_at
+        and drive_terminal_at == driven_row.finished_at,
+        "drive_once cancellation events use actual lifecycle timestamps",
+    )
     if Path(drive_pid).is_file():
         var child_pid = Int(Path(drive_pid).read_text())
         expect(external_call["kill", c_int](c_int(child_pid), c_int(0)) != 0, "drive_once grandchild process group is gone")
