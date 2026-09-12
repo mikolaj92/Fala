@@ -1,11 +1,25 @@
 from std.collections import List
-from fala.reactions import put_bytes, resolve_uri, is_fala_reaction_uri, digest_from_fala_reaction_uri, content_address_json, FileReactionStore
+from fala.reactions import put_bytes, resolve_uri, is_fala_reaction_uri, digest_from_fala_reaction_uri, content_address_json, sha256_raw_bytes, FileReactionStore
 
 def _check(condition: Bool, message: String) raises:
     if not condition:
         raise Error("reaction parity smoke: " + message)
 
 def main() raises:
+    var empty_bytes = List[UInt8]()
+    _check(sha256_raw_bytes(empty_bytes^) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 empty input")
+    var abc_bytes = List[UInt8]()
+    abc_bytes.append(UInt8(97)); abc_bytes.append(UInt8(98)); abc_bytes.append(UInt8(99))
+    _check(sha256_raw_bytes(abc_bytes^) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA-256 abc")
+    var binary_bytes = List[UInt8]()
+    binary_bytes.append(UInt8(0)); binary_bytes.append(UInt8(128)); binary_bytes.append(UInt8(255))
+    _check(sha256_raw_bytes(binary_bytes^) == "5240672d7b51756b829ad0ef8d9468b7a078afa2f410484fd3892dab47becb72", "SHA-256 exact binary bytes")
+    var block_text = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+    var block_bytes = List[UInt8]()
+    for index in range(block_text.byte_length()):
+        block_bytes.append(block_text.as_bytes()[index])
+    _check(sha256_raw_bytes(block_bytes^) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", "SHA-256 multi-block boundary")
+
     var root = "/tmp/fala-reaction-native-smoke"
     var store = FileReactionStore(root)
     _check(store.location() == root, "reaction store reports configured root")
@@ -71,4 +85,3 @@ def main() raises:
     _check(content_address_json("[null,false,0,1.0,\"x\",{\"b\":2,\"a\":1}]") == "00a16bc8b7a1fbadedf4b380908fd690be6aa5c08aa02392c7058a8d6b1a49c0", "array and float")
     _check(content_address_json("{\"controls\":\"line\\nnext\",\"escaped\":\"quote \\\" and \\\\ slash\"}") == "355a3a7eba556ca6da5247fa3101b9eb7d7d1fe31bd845a5e81cfa274eb45c58", "JSON escaping")
     print("reaction CAS/GC parity smoke ok")
-

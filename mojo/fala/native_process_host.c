@@ -1,6 +1,12 @@
+#if defined(__linux__)
+#define _GNU_SOURCE 1
+#define _POSIX_C_SOURCE 200809L
+#elif defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#endif
+
 #include "native_process_host.h"
 
-#define _DARWIN_C_SOURCE 1
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -336,7 +342,7 @@ fala_process_result fala_process_start(const fala_process_options *options,
     if (result == 0) result = add_redirect(&actions, STDERR_FILENO, options->stderr_fd, options->stderr_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (result != 0) { set_errno_error(process, FALA_PROCESS_SYSTEM_ERROR, "redirect", result); posix_spawn_file_actions_destroy(&actions); goto fail; }
     if (options->cwd != NULL && options->cwd[0] != '\0') {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
         result = posix_spawn_file_actions_addchdir_np(&actions, options->cwd);
 #else
         result = posix_spawn_file_actions_addchdir(&actions, options->cwd);

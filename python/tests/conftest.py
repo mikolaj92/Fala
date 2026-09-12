@@ -18,6 +18,7 @@ os.environ["FALA_HOME"] = str(_ROOT)
 
 _NATIVE_SUBPROCESS_FIXTURE = Path("/tmp/fala-native-subprocess-fixture")
 _FIXTURE_SRC = _ROOT / "mojo" / "smoke" / "native_effector_fixture.c"
+_FIXTURE_BUILDER = _ROOT / "tools" / "build_native_effector_fixture.sh"
 
 
 def pytest_sessionstart(session) -> None:  # noqa: ARG001
@@ -27,9 +28,10 @@ def pytest_sessionstart(session) -> None:  # noqa: ARG001
         dest.is_file()
         and os.access(dest, os.X_OK)
         and dest.stat().st_mtime >= src.stat().st_mtime
+        and dest.stat().st_mtime >= _FIXTURE_BUILDER.stat().st_mtime
     ):
         return
     subprocess.run(
-        ["cc", "-std=c11", "-Wall", "-Wextra", "-o", str(dest), str(src)],
+        [str(_FIXTURE_BUILDER), str(dest)],
         check=True,
     )
