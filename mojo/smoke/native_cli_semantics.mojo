@@ -201,8 +201,6 @@ def main() raises:
     _check(_has(flagged_vacuum, "\"vacuumed\":true") and _has(flagged_vacuum, path), "database vacuum flagged path")
     var invalid_init_ensure = dispatch_native_command("db init --db " + path + " --ensure-schema")
     _check(_has(invalid_init_ensure, "argument_error") and _has(invalid_init_ensure, "--ensure-schema"), "db init rejects ensure-schema")
-    var invalid_migrate_ensure = dispatch_native_command("db migrate --db " + path + " --ensure-schema")
-    _check(_has(invalid_migrate_ensure, "unsupported_command"), "db migrate is not a command")
     var invalid_vacuum_ensure = dispatch_native_command("db vacuum --db " + path + " --ensure-schema")
     _check(_has(invalid_vacuum_ensure, "argument_error") and _has(invalid_vacuum_ensure, "--ensure-schema"), "db vacuum rejects ensure-schema")
 

@@ -226,8 +226,7 @@ optional bridge file / local two-path deliver when the operator chooses paths
 ```
 
 Each Fala is complete alone. No peer mesh. Fleet pools, peer discovery, and
-network multi-hop delivery are out of product; see
-[`MIGRATIONS.md`](MIGRATIONS.md).
+network multi-hop delivery are out of product.
 
 ## Bridge: keep the thin meaning
 

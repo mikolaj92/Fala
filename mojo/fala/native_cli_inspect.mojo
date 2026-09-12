@@ -616,22 +616,7 @@ def _schema_status_json(status: SchemaStatus) -> String:
     if status.runtime_events_has_schema_version: event_schema = "true"
     var current = "false"
     if status.is_current(): current = "true"
-    return "{\"current_version\":" + String(status.current_version) + ",\"latest_version\":" + String(status.latest_version) + ",\"user_version\":" + String(status.user_version) + ",\"migration_version\":" + String(status.migration_version) + ",\"missing_tables\":" + missing + ",\"runtime_events_has_process_id\":" + process_id + ",\"runtime_events_has_schema_version\":" + event_schema + ",\"current\":" + current + "}"
-
-
-def _migration_metadata(mut connection: Connection) raises -> String:
-    var table = connection.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
-    if not table.step():
-        table.close()
-        return "null"
-    table.close()
-    var stmt = connection.query("SELECT id,version,name,applied_at FROM schema_migrations WHERE id='runtime_backend'")
-    if not stmt.step():
-        stmt.close()
-        return "null"
-    var result = "{\"id\":" + _quote(stmt.column_text(0)) + ",\"version\":" + String(stmt.column_int(1)) + ",\"name\":" + _quote(stmt.column_text(2)) + ",\"applied_at\":" + _quote(stmt.column_text(3)) + "}"
-    stmt.close()
-    return result
+    return "{\"current_version\":" + String(status.current_version) + ",\"latest_version\":" + String(status.latest_version) + ",\"user_version\":" + String(status.user_version) + ",\"missing_tables\":" + missing + ",\"runtime_events_has_process_id\":" + process_id + ",\"runtime_events_has_schema_version\":" + event_schema + ",\"current\":" + current + "}"
 
 
 def _status(path: String) raises -> String:
@@ -644,6 +629,5 @@ def _status(path: String) raises -> String:
     var tables = 0
     var count = connection.query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
     if count.step(): tables = count.column_int(0)
-    var migration = _migration_metadata(connection)
     connection.close()
-    return "{\"ok\":true,\"runtime\":\"mojo\",\"database\":" + _quote(path) + ",\"schema_version\":" + String(user_version) + ",\"expected_version\":" + String(SCHEMA_VERSION) + ",\"table_count\":" + String(tables) + ",\"schema\":" + status_json + ",\"migration\":" + migration + ",\"current\":" + current + "}"
+    return "{\"ok\":true,\"runtime\":\"mojo\",\"database\":" + _quote(path) + ",\"schema_version\":" + String(user_version) + ",\"expected_version\":" + String(SCHEMA_VERSION) + ",\"table_count\":" + String(tables) + ",\"schema\":" + status_json + ",\"current\":" + current + "}"

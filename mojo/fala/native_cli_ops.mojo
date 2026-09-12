@@ -315,9 +315,7 @@ def _bridge_deliver(command: String) raises -> String:
 
 
 def _db_status(command: String) raises -> String:
-    var path = _path(command)
-    if _has_option(command, "--ensure-schema"): _ = initialize_database(path)
-    return _status(path)
+    return _status(_path(command))
 
 
 def _rehearse(command: String) raises -> String:

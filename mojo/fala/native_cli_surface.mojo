@@ -1,7 +1,7 @@
 """Python-free native CLI router; command implementations live in sibling modules."""
 from fala.native_cli_help import cli_surface_help
 from fala.native_cli_parse import (
-    _word, _count, _flag, _has_option, _validate, _bool_option, _limit,
+    _word, _count, _flag, _validate, _bool_option, _limit,
     _path, _require_db_value,
 )
 from fala.native_cli_inspect import (
@@ -43,7 +43,6 @@ def dispatch_native_command(command: String) raises -> String:
         elif first == "db":
             if second != "init" and second != "status" and second != "vacuum": return _error("unsupported_command")
             _require_db_value(command, "db")
-            if second != "status" and _has_option(command, "--ensure-schema"): return _error("argument_error", "--ensure-schema is supported only for db status")
             _validate(command, "db", True)
         elif first == "events" and second == "validate-schema": _validate(command, "event-schema")
         elif first == "projections" and second == "rebuild": _validate(command, "projection")

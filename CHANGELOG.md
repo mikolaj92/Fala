@@ -22,6 +22,9 @@
   as an internal serialization boundary.
 - Rename `fala.fep` to `fala.protocol` and `FEPError` to `ProtocolError`. Wire
   codes stay `fep.*`. Examples live under `examples/effectors`.
+- One current schema only. Empty journals initialize; current journals are
+  accepted; anything else fails closed. There is no schema upgrade, package
+  migrator, `--ensure-schema`, or active-run graph rewrite.
 
 
 ## 0.8.2

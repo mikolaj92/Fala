@@ -71,7 +71,7 @@ def test_remaining_native_cli_commands_have_explicit_owners() -> None:
         "parse": ("_integer_option",),
         "inspect": (
             "_schema_model", "_schema_impulse", "_schema_status_json",
-            "_migration_metadata", "_status", "_graph", "_explain", "_bridge_rows",
+            "_status", "_graph", "_explain", "_bridge_rows",
         ),
         "ops": ("_init", "initialize_database", "_vacuum", "_db_status", "_rehearse"),
         "lifecycle": (

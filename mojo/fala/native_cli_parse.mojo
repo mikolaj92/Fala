@@ -136,7 +136,6 @@ def _flag(command: String, name: String, default: String = "") -> String:
 def _known_option(kind: String, item: String) -> Bool:
     var option = _option_base(item)
     if option == "--db": return True
-    if kind == "db" and option == "--ensure-schema": return True
     if kind == "schema": return False
     if kind == "graph" and (option == "--package" or option == "--before" or option == "--after"): return True
     if kind == "init" and (option == "--db" or option == "--reaction-root"): return True
@@ -297,9 +296,6 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
                 index += 1
                 continue
             if kind == "gc" and (option == "--dry-run" or option == "--delete"):
-                index += 1
-                continue
-            if kind == "db" and option == "--ensure-schema":
                 index += 1
                 continue
             if kind == "maintenance" and (option == "--dry-run" or option == "--delete" or option == "--vacuum" or option == "--no-vacuum"):
@@ -497,7 +493,7 @@ def _json(value: String) raises:
 def _metadata_value(command: String) raises -> String:
     var values = _repeat_values(command, "--metadata")
     if len(values) == 0: return "{}"
-    # Preserve the legacy single JSON-object form. Repeated JSON objects are
+    # A single JSON object is accepted once. Repeated JSON objects are
     # ambiguous; key=value entries are the repeatable form.
     var object_values = 0
     for value in values:

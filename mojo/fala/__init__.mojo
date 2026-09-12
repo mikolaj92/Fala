@@ -31,7 +31,7 @@ from .effect_protocol import EffectIntent, EffectObservation, EffectDecision, re
 from .durable_subprocess import wait_durable_subprocess
 from .execution_metadata import validate_usage_json, provenance_json, aggregate_usage
 from .context_policy import ResolvedContext, resolve_context
-from .graph_compatibility import classify_graph_change, assert_resume_compatible, migrate_active_run
+from .graph_compatibility import classify_graph_change, assert_resume_compatible
 from .compensation import CompensationDecision, compensation_input, reconcile_compensation
 from .effector_protocol import request_message, result_message, validate_message
 from .journal import (
@@ -88,7 +88,7 @@ from .reactions import (
 )
 from .schema import (
     SCHEMA_VERSION, SCHEMA_SQL, table_names, initialize_schema,
-    SchemaStatus, schema_status, migrate_schema, initialize_native_schema,
+    SchemaStatus, schema_status, initialize_native_schema,
 )
 from .schema_contract import ensure_host_journal
 from .host_journal import (
@@ -137,7 +137,6 @@ from .reaction_effects import (
 )
 from .bridge_transport import BridgeTransportResult, deliver_local_bridge, deliver_local_bridge_delivery
 from .native_cli_surface import cli_surface_help, dispatch_native_command
-from .migration import MigrationReport, legacy_to_native_json, migrate_package_json
 
 # Event-stream core — memory journal path without SQLite.
 from .journal_port import (

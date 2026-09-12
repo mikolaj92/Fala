@@ -81,7 +81,6 @@ longer owns SQLite directly. The generic JournalPort surface remains useful for
 memory, JSONL, Tee, and the SQLite adapter, but their persistence and atomicity
 semantics are not uniform. The current SQLite authority is the direct
 transactional helper set on `NativeJournal` and `NativeDomainStore`; the
-historical reasons and discarded plans are indexed in [`MIGRATIONS.md`](MIGRATIONS.md);
 release chronology remains in [`CHANGELOG.md`](../CHANGELOG.md).
 
 ## Product tree
@@ -116,7 +115,7 @@ Process, Run, Homeostat, Projection, JournalPort, Effector adapters
 | **sink-ops** | `ops_maintenance` |
 | **bridge** | `ops_bridge`, `bridge_transport` |
 | **cli-ops** | ops section of `native_cli_surface` |
-| **support** | `json`, `toml`, `sqlite`, `migration`, `validation`, `errors` |
+| **support** | `json`, `toml`, `sqlite`, `validation`, `errors` |
 | **domain pack** | `domain_packs/splot` (vocabulary; logic lives in external organs like Splot) |
 
 Essential Fala must not require `ops_maintenance`, `ops_bridge`, or

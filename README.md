@@ -196,7 +196,6 @@ continue to own run creation and finalization policy.
 | Doc | Focus |
 | --- | --- |
 | [`EVENTS_AND_REPLAY.md`](docs/EVENTS_AND_REPLAY.md) | event ordering and replay |
-| [`MIGRATIONS.md`](docs/MIGRATIONS.md) | schema and package migration |
 | [`SECURITY.md`](docs/SECURITY.md) | trust boundary and subprocess safety |
 | [`FALA_ARCHITECTURE_STATUS.md`](docs/FALA_ARCHITECTURE_STATUS.md) | current architecture status |
 | [`SPLOT_DOMAIN_PACK.md`](docs/SPLOT_DOMAIN_PACK.md) | Splot vocabulary and host integration |

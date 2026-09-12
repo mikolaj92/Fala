@@ -1,10 +1,11 @@
-"""Fail-closed schema-v6 contract for host journal ensure.
+"""Fail-closed current-schema contract for host journal ensure.
 
 Current table/index/trigger/FK truth comes from an in-memory SCHEMA_SQL
-apply. Closed legacy PK rebuilds stay here so Python does not copy schema.
+apply. Empty journals are initialized. Existing journals must already be
+current; there is no rebuild path.
 """
 from std.collections import List
-from fala.sqlite import Connection, Statement, SQLiteError
+from fala.sqlite import Connection, Statement
 from fala.schema import (
     SCHEMA_VERSION,
     initialize_native_schema,
@@ -126,83 +127,6 @@ def _shapes_match(left: List[ColumnShape], right: List[ColumnShape]) -> Bool:
     return True
 
 
-def _without_names(shape: List[ColumnShape], names: List[String]) -> List[ColumnShape]:
-    var result = List[ColumnShape]()
-    for col in shape:
-        var drop = False
-        for name in names:
-            if col.name == name:
-                drop = True
-        if not drop:
-            result.append(col.copy())
-    return result^
-
-
-def _legacy_event_shapes() -> List[List[ColumnShape]]:
-    var minimal = List[ColumnShape]()
-    minimal.append(ColumnShape("run_id", "TEXT", 1, "", True, 0)^)
-    minimal.append(ColumnShape("sequence", "INTEGER", 1, "", True, 0)^)
-    minimal.append(ColumnShape("id", "TEXT", 0, "", True, 1)^)
-    minimal.append(ColumnShape("event_type", "TEXT", 1, "", True, 0)^)
-    minimal.append(ColumnShape("payload", "TEXT", 1, "", True, 0)^)
-    minimal.append(ColumnShape("created_at", "TEXT", 1, "", True, 0)^)
-    var process_only = List[ColumnShape]()
-    process_only.append(ColumnShape("run_id", "TEXT", 1, "", True, 0)^)
-    process_only.append(ColumnShape("sequence", "INTEGER", 1, "", True, 0)^)
-    process_only.append(ColumnShape("id", "TEXT", 0, "", True, 1)^)
-    process_only.append(ColumnShape("event_type", "TEXT", 1, "", True, 0)^)
-    process_only.append(ColumnShape("process_id", "TEXT", 0, "", True, 0)^)
-    process_only.append(ColumnShape("payload", "TEXT", 1, "", True, 0)^)
-    process_only.append(ColumnShape("created_at", "TEXT", 1, "", True, 0)^)
-    var schema_only = List[ColumnShape]()
-    schema_only.append(ColumnShape("run_id", "TEXT", 1, "", True, 0)^)
-    schema_only.append(ColumnShape("sequence", "INTEGER", 1, "", True, 0)^)
-    schema_only.append(ColumnShape("id", "TEXT", 0, "", True, 1)^)
-    schema_only.append(ColumnShape("event_type", "TEXT", 1, "", True, 0)^)
-    schema_only.append(ColumnShape("schema_version", "INTEGER", 1, "1", False, 0)^)
-    schema_only.append(ColumnShape("payload", "TEXT", 1, "", True, 0)^)
-    schema_only.append(ColumnShape("created_at", "TEXT", 1, "", True, 0)^)
-    var all_shapes = List[List[ColumnShape]]()
-    all_shapes.append(minimal^)
-    all_shapes.append(process_only^)
-    all_shapes.append(schema_only^)
-    return all_shapes^
-
-
-def _legacy_process_shape(current: List[ColumnShape]) -> List[ColumnShape]:
-    var result = List[ColumnShape]()
-    for col in current:
-        if col.name == "output_schema_json":
-            continue
-        var not_null = 0 if col.name == "id" else col.not_null
-        var pk = 1 if col.name == "id" else 0
-        result.append(ColumnShape(
-            col.name.copy(), col.col_type.copy(), not_null,
-            col.default_value.copy(), col.default_is_null, pk,
-        )^)
-    return result^
-
-
-def _shapes_eq_ordered(left: List[ColumnShape], right: List[ColumnShape]) -> Bool:
-    if len(left) != len(right):
-        return False
-    for i in range(len(left)):
-        if not _col_eq(left[i], right[i]):
-            return False
-    return True
-
-
-def _is_legacy(table: String, actual: List[ColumnShape], current_processes: List[ColumnShape]) raises -> Bool:
-    if table == "runtime_events":
-        for candidate in _legacy_event_shapes():
-            if _shapes_eq_ordered(actual, candidate):
-                return True
-        return False
-    if table == "processes":
-        return _shapes_eq_ordered(actual, _legacy_process_shape(current_processes))
-    return False
-
-
 def _foreign_keys(mut db: Connection, table: String) raises -> List[String]:
     var result = List[String]()
     var stmt = db.query("PRAGMA foreign_key_list(" + table + ")")
@@ -302,153 +226,30 @@ def _named_triggers(mut db: Connection) raises -> List[String]:
     return result^
 
 
-def _validate_schema(mut db: Connection, mut reference: Connection, before_migration: Bool) raises:
-    var processes_current = _shape(reference, "processes")
+def _validate_schema(mut db: Connection, mut reference: Connection) raises:
     for table in table_names():
         if not _table_exists(db, table):
-            if before_migration:
-                continue
             _error("fala journal: schema-v6 table " + _quote_ident(table) + " is missing")
         var actual = _shape(db, table)
         var expected = _shape(reference, table)
-        var allowed = List[List[ColumnShape]]()
-        allowed.append(expected.copy())
-        if before_migration and table == "processes":
-            var drop_schema = List[String]()
-            drop_schema.append("output_schema_json")
-            allowed.append(_without_names(expected.copy(), drop_schema))
-        if before_migration and table == "homeostats":
-            var drop_max = List[String]()
-            drop_max.append("max_attempts")
-            var drop_both = List[String]()
-            drop_both.append("attempt")
-            drop_both.append("max_attempts")
-            allowed.append(_without_names(expected.copy(), drop_max))
-            allowed.append(_without_names(expected.copy(), drop_both))
-        var matched = False
-        for candidate in allowed:
-            if _shapes_match(actual, candidate):
-                matched = True
-        var legacy = before_migration and _is_legacy(table, actual, processes_current)
-        if not legacy and not matched:
+        if not _shapes_match(actual, expected):
             _error("fala journal: incompatible " + table + " table; refusing schema-v6 write")
-        if not legacy:
-            if not _list_eq(_foreign_keys(db, table), _foreign_keys(reference, table)):
-                _error("fala journal: incompatible " + table + " foreign keys; refusing schema-v6 write")
-            if not _set_eq(_unique_sets(db, table), _unique_sets(reference, table)):
-                _error("fala journal: incompatible " + table + " unique constraints; refusing schema-v6 write")
+        if not _list_eq(_foreign_keys(db, table), _foreign_keys(reference, table)):
+            _error("fala journal: incompatible " + table + " foreign keys; refusing schema-v6 write")
+        if not _set_eq(_unique_sets(db, table), _unique_sets(reference, table)):
+            _error("fala journal: incompatible " + table + " unique constraints; refusing schema-v6 write")
     for name in _named_indexes(reference):
         var sql = _object_sql(db, "index", name)
         if sql == "":
-            if before_migration:
-                continue
             _error("fala journal: schema-v6 index " + _quote_ident(name) + " is missing")
         if _index_columns(db, name) != _index_columns(reference, name):
             _error("fala journal: incompatible index " + name + "; refusing schema-v6 write")
     for name in _named_triggers(reference):
         var sql = _object_sql(db, "trigger", name)
         if sql == "":
-            if before_migration:
-                continue
             _error("fala journal: schema-v6 trigger " + _quote_ident(name) + " is missing")
         if _normalize_sql(sql) != _normalize_sql(_object_sql(reference, "trigger", name)):
             _error("fala journal: incompatible trigger " + name + "; refusing schema-v6 write")
-
-
-def _column_names(shape: List[ColumnShape]) -> List[String]:
-    var names = List[String]()
-    for col in shape:
-        names.append(col.name.copy())
-    return names^
-
-
-def _contains_name(names: List[String], wanted: String) -> Bool:
-    for name in names:
-        if name == wanted:
-            return True
-    return False
-
-
-def _create_canonical_table(
-    mut db: Connection, mut reference: Connection, table: String
-) raises:
-    """Create one table from the schema-v6 reference, never copied DDL."""
-    var sql = _object_sql(reference, "table", table)
-    if sql == "":
-        _error("fala journal: canonical table DDL is missing for " + table)
-    db.execute(sql)
-
-
-def _rebuild_legacy_tables(mut db: Connection, mut reference: Connection) raises:
-    var processes_current = _shape(reference, "processes")
-    var rebuild_events = _table_exists(db, "runtime_events") and _is_legacy(
-        "runtime_events", _shape(db, "runtime_events"), processes_current
-    )
-    var rebuild_processes = _table_exists(db, "processes") and _is_legacy(
-        "processes", _shape(db, "processes"), processes_current
-    )
-    if not rebuild_events and not rebuild_processes:
-        return
-    db.execute("PRAGMA foreign_keys=OFF")
-    db.begin_immediate()
-    try:
-        if rebuild_events:
-            var columns = _column_names(_shape(db, "runtime_events"))
-            db.execute("ALTER TABLE runtime_events RENAME TO _fala_legacy_runtime_events")
-            _create_canonical_table(db, reference, "runtime_events")
-            var targets = List[String]()
-            targets.append("run_id")
-            targets.append("sequence")
-            targets.append("id")
-            targets.append("event_type")
-            targets.append("schema_version")
-            targets.append("impulse_id")
-            targets.append("process_id")
-            targets.append("command_id")
-            targets.append("actor")
-            targets.append("correlation_id")
-            targets.append("causation_id")
-            targets.append("payload")
-            targets.append("created_at")
-            var insert = String("INSERT INTO runtime_events (")
-            var select = String(" SELECT ")
-            var first = True
-            for name in targets:
-                if not first:
-                    insert += ","
-                    select += ","
-                first = False
-                insert += name
-                if _contains_name(columns, name):
-                    select += name
-                elif name == "schema_version":
-                    select += "1"
-                else:
-                    select += "NULL"
-            db.execute(insert + ")" + select + " FROM _fala_legacy_runtime_events")
-            db.execute("DROP TABLE _fala_legacy_runtime_events")
-        if rebuild_processes:
-            var columns = _column_names(_shape(db, "processes"))
-            db.execute("ALTER TABLE processes RENAME TO _fala_legacy_processes")
-            _create_canonical_table(db, reference, "processes")
-            var insert = String("INSERT INTO processes (")
-            var select = String(" SELECT ")
-            var first = True
-            for name in columns:
-                if not first:
-                    insert += ","
-                    select += ","
-                first = False
-                insert += name
-                select += name
-            insert += ",output_schema_json)"
-            select += ", '{}' FROM _fala_legacy_processes"
-            db.execute(insert + select)
-            db.execute("DROP TABLE _fala_legacy_processes")
-        db.commit()
-    except err:
-        db.rollback()
-        raise err^
 
 
 def _require_v6(mut db: Connection) raises:
@@ -465,16 +266,16 @@ def _require_v6(mut db: Connection) raises:
 
 
 def ensure_host_journal(path: String) raises:
-    """Validate, rebuild closed legacy PK tables, then initialize schema v6."""
+    """Initialize an empty journal, or accept a current schema-v6 journal."""
     var reference = Connection(":memory:")
     initialize_native_schema(reference)
     var db = Connection(path)
     try:
         if _has_user_table(db):
-            _validate_schema(db, reference, True)
-            _rebuild_legacy_tables(db, reference)
-        initialize_native_schema(db)
-        _validate_schema(db, reference, False)
+            _validate_schema(db, reference)
+        else:
+            initialize_native_schema(db)
+            _validate_schema(db, reference)
         _require_v6(db)
         db.close()
         reference.close()

@@ -1,9 +1,10 @@
 """SQLite schema-v6 definition for the native Fala runtime.
 
-The schema is deliberately exposed as SQL text.  A native SQLite adapter can
+The schema is deliberately exposed as SQL text. A native SQLite adapter can
 execute :func:`initialize_schema`'s result as one script; keeping this module
 adapter-free means it also works with small embedders that only accept SQL
-strings.
+strings. There is no schema-upgrade path: empty journals are initialized,
+current journals are accepted, anything else fails closed.
 """
 
 from fala.sqlite import Connection, SQLiteError
@@ -11,9 +12,7 @@ from std.collections import List
 
 comptime SCHEMA_VERSION: Int = 6
 
-# The backend currently creates fourteen named tables.  The migration
-# table is included in this list (and in the script) so callers can inspect the
-# complete schema rather than only runtime domain tables.
+# Fourteen named tables, including the schema version stamp.
 comptime _TABLE_NAMES: List[String] = [
     "runs",
     "schema_migrations",
@@ -357,11 +356,10 @@ def _trigger_names() -> List[String]:
 
 @fieldwise_init
 struct SchemaStatus(Movable):
-    """Observable schema state without hiding missing or stale migrations."""
+    """Observable current-schema state."""
     var current_version: Int
     var latest_version: Int
     var user_version: Int
-    var migration_version: Int
     var applied_at: String
     var missing_tables: List[String]
     var missing_indices: List[String]
@@ -392,6 +390,14 @@ def _object_exists(mut connection: Connection, object_type: String, name: String
 def _table_exists(mut connection: Connection, name: String) raises -> Bool:
     return _object_exists(connection, "table", name)
 
+def _has_user_table(mut connection: Connection) raises -> Bool:
+    var stmt = connection.query(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1"
+    )
+    var found = stmt.step()
+    stmt.close()
+    return found
+
 def _has_runtime_event_column(mut connection: Connection, column: String) raises -> Bool:
     if not _table_exists(connection, "runtime_events"):
         return False
@@ -403,63 +409,8 @@ def _has_runtime_event_column(mut connection: Connection, column: String) raises
             break
     stmt.close()
     return found
-def _has_table_column(mut connection: Connection, table: String, column: String) raises -> Bool:
-    if not _table_exists(connection, table):
-        return False
-    var stmt = connection.query("PRAGMA table_info(" + table + ")")
-    var found = False
-    while stmt.step():
-        if stmt.column_text(1) == column:
-            found = True
-            break
-    stmt.close()
-    return found
 
-def _validate_legacy_metadata(mut connection: Connection) raises:
-    # An existing metadata table is part of the durable contract.  SQLite's
-    # CREATE TABLE IF NOT EXISTS cannot repair a partial legacy definition;
-    # fail before touching event columns so the surrounding transaction can
-    # roll back without silently discarding migration history.
-    if not _table_exists(connection, "schema_migrations"):
-        return
-    var required = ["id", "version", "name", "applied_at"]
-    for column in required:
-        if not _has_table_column(connection, "schema_migrations", column):
-            raise Error(String(SQLiteError(code=1, message="schema migration metadata is missing column: " + column)))
-
-def _validate_legacy_runtime_events(mut connection: Connection) raises:
-    if not _table_exists(connection, "runtime_events"):
-        return
-    # These columns existed in every reference runtime_events shape.  Optional
-    # v6 columns are added below; a table missing a key column is not safely
-    # migratable because indexes and row identity cannot be preserved.
-    var required = ["run_id", "sequence", "id", "event_type", "payload", "created_at"]
-    for column in required:
-        if not _has_table_column(connection, "runtime_events", column):
-            raise Error(String(SQLiteError(code=1, message="legacy runtime_events is missing column: " + column)))
-
-def _validate_schema_versions(mut connection: Connection) raises:
-    var metadata_present = False
-    var metadata_version = 0
-    if _table_exists(connection, "schema_migrations"):
-        var metadata = connection.query("SELECT version FROM schema_migrations WHERE id='runtime_backend'")
-        if metadata.step():
-            metadata_present = True
-            metadata_version = metadata.column_int(0)
-        metadata.close()
-    var user_version = _user_version(connection)
-    if metadata_present and metadata_version <= 0:
-        raise Error(String(SQLiteError(code=1, message="schema migration version must be positive")))
-    if metadata_present and metadata_version > SCHEMA_VERSION:
-        raise Error(String(SQLiteError(code=1, message="schema migration version is newer than this runtime")))
-    if user_version < 0 or user_version > SCHEMA_VERSION:
-        raise Error(String(SQLiteError(code=1, message="schema user_version is unsupported")))
-    if metadata_present and user_version != metadata_version:
-        raise Error(String(SQLiteError(code=1, message="schema migration version does not match PRAGMA user_version")))
-    if not metadata_present and user_version != 0:
-        raise Error(String(SQLiteError(code=1, message="schema user_version has no migration metadata")))
-
-def _migration_version(mut connection: Connection) raises -> Int:
+def _schema_version(mut connection: Connection) raises -> Int:
     if not _table_exists(connection, "schema_migrations"):
         return 0
     var stmt = connection.query("SELECT version FROM schema_migrations WHERE id='runtime_backend'")
@@ -469,7 +420,7 @@ def _migration_version(mut connection: Connection) raises -> Int:
     stmt.close()
     return result
 
-def _migration_applied_at(mut connection: Connection) raises -> String:
+def _schema_applied_at(mut connection: Connection) raises -> String:
     if not _table_exists(connection, "schema_migrations"):
         return String("")
     var stmt = connection.query("SELECT applied_at FROM schema_migrations WHERE id='runtime_backend'")
@@ -523,13 +474,12 @@ def schema_status(mut connection: Connection) raises -> SchemaStatus:
     if not _object_exists(connection, "trigger", "runtime_events_no_delete"): missing_triggers.append("runtime_events_no_delete")
     if not _object_exists(connection, "trigger", "runtime_commands_no_update"): missing_triggers.append("runtime_commands_no_update")
     if not _object_exists(connection, "trigger", "runtime_commands_no_delete"): missing_triggers.append("runtime_commands_no_delete")
-    var migration = _migration_version(connection)
+    var version = _schema_version(connection)
     return SchemaStatus(
-        current_version=migration,
+        current_version=version,
         latest_version=SCHEMA_VERSION,
         user_version=_user_version(connection),
-        migration_version=migration,
-        applied_at=_migration_applied_at(connection),
+        applied_at=_schema_applied_at(connection),
         missing_tables=missing^,
         missing_indices=missing_indices^,
         missing_triggers=missing_triggers^,
@@ -540,66 +490,20 @@ def schema_status(mut connection: Connection) raises -> SchemaStatus:
 def _require_current_schema(mut connection: Connection) raises:
     var status = schema_status(connection)
     if not status.is_current():
-        raise Error(String(SQLiteError(code=1, message="schema initialization incomplete")))
+        raise Error(String(SQLiteError(code=1, message="schema is not current")))
 
 def _prepare_schema_connection(mut connection: Connection) raises:
     connection.execute("PRAGMA busy_timeout = 30000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
 
-
-def _migrate_schema_in_transaction(mut connection: Connection) raises:
-    _validate_legacy_metadata(connection)
-    _validate_legacy_runtime_events(connection)
-    _validate_schema_versions(connection)
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, version INTEGER NOT NULL, name TEXT NOT NULL, applied_at TEXT NOT NULL)"
-    )
-    # CREATE TABLE IF NOT EXISTS cannot repair an existing legacy table.
-    if _table_exists(connection, "runtime_events"):
-        if not _has_runtime_event_column(connection, "process_id"):
-            connection.execute("ALTER TABLE runtime_events ADD COLUMN process_id TEXT")
-        if not _has_runtime_event_column(connection, "schema_version"):
-            connection.execute(
-                "ALTER TABLE runtime_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
-            )
-        if not _has_runtime_event_column(connection, "impulse_id"):
-            connection.execute("ALTER TABLE runtime_events ADD COLUMN impulse_id TEXT")
-        if not _has_runtime_event_column(connection, "command_id"):
-            connection.execute("ALTER TABLE runtime_events ADD COLUMN command_id TEXT")
-        if not _has_runtime_event_column(connection, "actor"):
-            connection.execute("ALTER TABLE runtime_events ADD COLUMN actor TEXT")
-        if not _has_runtime_event_column(connection, "correlation_id"):
-            connection.execute("ALTER TABLE runtime_events ADD COLUMN correlation_id TEXT")
-        if not _has_runtime_event_column(connection, "causation_id"):
-            connection.execute("ALTER TABLE runtime_events ADD COLUMN causation_id TEXT")
-    if _table_exists(connection, "homeostats"):
-        if not _has_table_column(connection, "homeostats", "attempt"):
-            connection.execute("ALTER TABLE homeostats ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0")
-        if not _has_table_column(connection, "homeostats", "max_attempts"):
-            connection.execute("ALTER TABLE homeostats ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 1")
-    if _table_exists(connection, "processes") and not _has_table_column(connection, "processes", "output_schema_json"):
-        connection.execute("ALTER TABLE processes ADD COLUMN output_schema_json TEXT NOT NULL DEFAULT '{}'")
-    # SCHEMA_SQL is idempotent and supplies all tables, indexes, triggers, and
-    # migration metadata. Keep this as the sole complete-schema execution path.
-    connection.execute(SCHEMA_SQL)
-
-def migrate_schema(mut connection: Connection) raises:
-    """Atomically ensure the complete schema and repair legacy event columns."""
-    _prepare_schema_connection(connection)
-    connection.begin_immediate()
-    try:
-        _migrate_schema_in_transaction(connection)
-        connection.commit()
-    except err:
-        connection.rollback()
-        raise err^
-
-# Connection-specific initialization uses the same atomic migration path.
 def _initialize_connection_schema(mut connection: Connection) raises:
-    _migrate_schema_in_transaction(connection)
+    if _has_user_table(connection):
+        _require_current_schema(connection)
+        return
+    connection.execute(SCHEMA_SQL)
     _require_current_schema(connection)
 
 def initialize_native_schema(mut connection: Connection) raises:
-    """Initialize the complete schema atomically with native storage errors."""
+    """Initialize an empty journal to the current schema, or accept a current one."""
     _prepare_schema_connection(connection)
     connection.begin_immediate()
     try:

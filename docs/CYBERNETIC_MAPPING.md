@@ -59,5 +59,4 @@ include `impulse.accept`/`impulse.accepted`,
 `homeostat.cancel`, and `homeostat.expire`; terminal process events include
 `process.completed`, `process.cancelled`, and `process.timed_out`. The adapter
 kind is `manual_homeostat`. SQLite schema tables include `impulses`,
-`impulse_relations`, `associations`, `reactions`, and `homeostats`; schema
-migrations are tracked in [`MIGRATIONS.md`](MIGRATIONS.md).
+`impulse_relations`, `associations`, `reactions`, and `homeostats`; schema version is stamped on the journal. There is no upgrade path.

@@ -12,7 +12,7 @@ The backend stores:
 - associations, reaction metadata, processes, homeostats, and projections;
 - append-only runtime commands and runtime events;
 - optional bridge inbox/outbox deliveries;
-- schema migration state.
+- schema version stamp.
 
 Reaction bytes are not stored in SQLite by default: the journal stores refs and
 metadata while `FileReactionStore` stores content-addressed bytes.
@@ -31,7 +31,7 @@ Existing databases may physically retain historical `runtime_pools` and
 `delegation_policies` tables. Fresh schema initialization does not create or
 require those tables or `idx_delegation_policies_pool`; active code ignores
 such physical remnants, and generic CLI inspection does not expose them. They
-are migration history, not Fala identity or an active fleet API.
+are not Fala identity or an active fleet API.
 
 Bridge inbox/outbox operations are optional local envelope handoff helpers, not
 shared mutable state or a global transaction. Retention, maintenance, reaction
