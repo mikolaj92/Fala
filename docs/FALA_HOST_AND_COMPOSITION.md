@@ -51,7 +51,7 @@ can use these local boundaries.
 | **Host** | spawn and supervise **local** effectors: argv, cwd, env, timeout, stdin/out files |
 | **Adapter kinds (local)** | `native_function`, `subprocess`, `manual_homeostat`, `child_path` |
 | **Reaction store** | bytes outside the journal; metadata/refs inside |
-| **CLI (core)** | implemented `init`, run create/lifecycle/list/inspect/observe, and event/domain inspection on one journal (`--db`); ops retention/bridge/rebuild remain separate |
+| **CLI (core)** | implemented `db init`, `create-run`, run lifecycle/list/inspect/observe, and event/domain inspection on one journal (`--db`); ops retention/bridge/rebuild remain separate |
 
 `run_until_idle` is the embedded parent loop that sits until children answer,
 go silent, or are stopped; it is not a CLI command. CLI mutations use explicit

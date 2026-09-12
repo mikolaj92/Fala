@@ -1,5 +1,9 @@
 ## Unreleased
 
+## 0.9.0
+
+**One current Fala envelope and schema. No leftover public aliases, no migration path.**
+
 - Parent–child wire is one Fala envelope (`protocol: fala`): `from`, `to`, `job`,
   `ref`, `status`, `payload`. There is no FEP/1 and no `fala/2`. Native kernel
   still returns the domain object; the parent wraps it. Subprocess manifest is a
@@ -25,7 +29,6 @@
 - One current schema only. Empty journals initialize; current journals are
   accepted; anything else fails closed. There is no schema upgrade, package
   migrator, `--ensure-schema`, or active-run graph rewrite.
-
 
 ## 0.8.2
 
