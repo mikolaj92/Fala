@@ -8,6 +8,7 @@ reported, not executed or silently converted into reactions.
 from std.collections import List
 
 from fala.adapters import adapter_spec_from_json
+from fala.effector_protocol import domain_payload
 from fala.reactions import filter_reactions_json
 
 from fala.correlation import (
@@ -358,9 +359,12 @@ def _reaction_list(output: Value, allowed: List[String]) raises -> String:
     """Validate and filter reaction objects through the native JSON boundary."""
     if not output.is_object():
         raise Error("correlation.advance.invalid_reactions: expected output object")
-    if "reactions" not in output.object():
+    var payload = Value(parse_string=domain_payload(canonical_json_text(to_string(output.copy()))))
+    if not payload.is_object():
+        raise Error("correlation.advance.invalid_reactions: expected output object")
+    if "reactions" not in payload.object():
         return "[]"
-    var reactions = output.object()["reactions"].copy()
+    var reactions = payload.object()["reactions"].copy()
     if not reactions.is_array():
         raise Error("correlation.advance.invalid_reactions: reactions must be an array")
     for reaction in reactions.array():
@@ -372,8 +376,7 @@ def _reaction_list(output: Value, allowed: List[String]) raises -> String:
             raise Error("correlation.advance.invalid_reactions: reaction uri must be a string")
         if "id" in reaction.object() and not reaction.object()["id"].is_string():
             raise Error("correlation.advance.invalid_reactions: reaction id must be a string")
-    var output_copy = output.copy()
-    return filter_reactions_json(canonical_json_text(to_string(output_copy^)), allowed)
+    return filter_reactions_json(canonical_json_text(to_string(payload.copy())), allowed)
 def _ancestor_effectors(plan: CorrelationInstantiationPlan, effector_id: String) raises -> List[String]:
     var order = List[String]()
     var seen = List[String]()

@@ -7,6 +7,7 @@ from fala.correlation_persistence import persist_correlation_plan
 from fala.journal import NativeJournal
 from fala.native_driver import drive_correlation_once, drive_correlation_until_idle, diagnose_waits, transition_homeostat_terminal, reopen_homeostat
 from fala.adapters import AdapterSpec, NativeFunctionRegistry
+from fala.effector_protocol import result_message
 
 
 def _check(condition: Bool, message: String) raises:
@@ -40,7 +41,8 @@ def main() raises:
     var plan = _plan("advance-ok", union_schema=True)
     _ = persist_correlation_plan(journal, plan, "2026-01-01T00:00:00Z")
     var root = journal.claim_process("advance-ok", "advance-ok:chain:root", "smoke", "2026-01-01T00:00:01Z", "2026-01-01T00:10:00Z")
-    _ = journal.complete_process(root.run_id, root.id, "smoke", "2026-01-01T00:00:02Z", "{\"adapter\":{\"returncode\":0},\"value\":1,\"noise\":2,\"reactions\":[{\"kind\":\"accepted\"},{\"kind\":\"rejected\"}]}")
+    var root_output = result_message("source", "parent", "source", "advance-ok-request", "{\"value\":1,\"noise\":2,\"reactions\":[{\"kind\":\"accepted\"},{\"kind\":\"rejected\"}]}")
+    _ = journal.complete_process(root.run_id, root.id, "smoke", "2026-01-01T00:00:02Z", root_output)
     var advanced = advance_correlation(journal, plan)
     _check(advanced.rows[0].status == "succeeded" and advanced.rows[1].status == "ready", "type-array OR schema accepts projected object during conduction advancement")
     _check(advanced.rows[1].status == "ready", "dependent becomes ready")
