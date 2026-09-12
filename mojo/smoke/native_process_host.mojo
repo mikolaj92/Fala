@@ -8,6 +8,7 @@ from fala import (
     PROCESS_OK, PROCESS_EXITED, PROCESS_TIMED_OUT, PROCESS_STATUS_TIMED_OUT,
     start_native_process,
 )
+from fala.c_string import mutable_c_string
 
 
 def _check(condition: Bool, message: String) raises:
@@ -16,12 +17,12 @@ def _check(condition: Bool, message: String) raises:
 
 
 def _fresh_root() raises -> String:
-    var template = "/tmp/fala-native-process-host-XXXXXX\0"
-    var c_template = CStringSlice(template)
+    var template = "/tmp/fala-native-process-host-XXXXXX"
+    var c_template = mutable_c_string(template)
     var root_ptr = external_call["mkdtemp", UnsafePointer[UInt8, MutUntrackedOrigin]](c_template.unsafe_ptr())
     if Int(root_ptr) == 0:
         raise Error("native process host smoke: unable to create temporary root")
-    return String(unsafe_from_utf8_ptr=root_ptr)
+    return String(unsafe_from_utf8_ptr=c_template.unsafe_ptr())
 
 
 def _remove_tree(path: Path) raises:

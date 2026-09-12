@@ -38,10 +38,10 @@ if [[ "$need_host" == "1" ]]; then
   export FALA_PROCESS_HOST_LIBRARY="$host_lib"
   # Effector fixture binary used by native_subprocess smoke (argv child).
   fixture="/tmp/fala-native-subprocess-fixture"
-  if [[ ! -x "$fixture" || "$root/mojo/smoke/native_effector_fixture.c" -nt "$fixture" ]]; then
-    cc -std=c11 -Wall -Wextra \
-      -o "$fixture" \
-      "$root/mojo/smoke/native_effector_fixture.c"
+  fixture_source="$root/mojo/smoke/native_effector_fixture.c"
+  fixture_builder="$root/tools/build_native_effector_fixture.sh"
+  if [[ ! -x "$fixture" || "$fixture_source" -nt "$fixture" || "$fixture_builder" -nt "$fixture" ]]; then
+    "$fixture_builder" "$fixture"
   fi
 fi
 

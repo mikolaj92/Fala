@@ -18,6 +18,7 @@ from fala.ops_bridge import (
     retry_bridge_delivery,
 )
 from fala.sqlite import Connection
+from fala.c_string import mutable_c_string
 
 
 
@@ -53,12 +54,12 @@ def _remove_init_tree(path: Path) raises:
         raise Error("native CLI semantics: init workspace cleanup left a path")
 
 def _fresh_init_root() raises -> String:
-    var template = "/tmp/fala-native-cli-init-XXXXXX\0"
-    var c_template = CStringSlice(template)
+    var template = "/tmp/fala-native-cli-init-XXXXXX"
+    var c_template = mutable_c_string(template)
     var root_ptr = external_call["mkdtemp", UnsafePointer[UInt8, MutUntrackedOrigin]](c_template.unsafe_ptr())
     if Int(root_ptr) == 0:
         raise Error("native CLI semantics: unable to create unique init workspace")
-    return String(unsafe_from_utf8_ptr=root_ptr)
+    return String(unsafe_from_utf8_ptr=c_template.unsafe_ptr())
 
 def _seed_bridge_run(mut store: NativeDomainStore, run_id: String) raises:
     var stmt = store.db.query("INSERT INTO runs (id,status,metadata,created_at,updated_at,schema_version) VALUES (?, 'completed', '{}', ?, ?, 6)")
@@ -606,4 +607,3 @@ def main() raises:
     # Retain one deterministic machine-readable end marker for CI and callers.
     print("{\"ok\":true,\"runtime\":\"mojo\",\"scenario\":\"native_cli_semantics\",\"status\":\"passed\"}")
     print("cli-stage-done")
-

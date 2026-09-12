@@ -9,16 +9,17 @@ from fala.reactions import FileReactionStore
 from std.ffi import CStringSlice, c_int, external_call
 from std.os import remove
 from std.pathlib import Path
+from fala.c_string import mutable_c_string
 
 
 def _fresh_reaction_root() raises -> String:
-    var template = "/tmp/fala-maintenance-reactions-smoke-XXXXXX\0"
-    var c_template = CStringSlice(template)
+    var template = "/tmp/fala-maintenance-reactions-smoke-XXXXXX"
+    var c_template = mutable_c_string(template)
     var fd = external_call["mkstemp", c_int](c_template.unsafe_ptr())
     if fd < 0:
         raise Error("domain store maintenance smoke: unable to create unique reaction root")
     _ = external_call["close", c_int](fd)
-    var root = String(template[byte=0:template.byte_length() - 1])
+    var root = String(unsafe_from_utf8_ptr=c_template.unsafe_ptr())
     try:
         remove(root)
     except err:
