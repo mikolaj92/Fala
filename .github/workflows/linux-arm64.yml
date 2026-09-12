@@ -22,5 +22,4 @@ jobs:
       - name: Reproduce domain-maintenance crash with line tables
         run: |
           mise exec -- pixi run sqlite-schema
-          cd vendor/sqlite.fire
-          mise exec -- pixi run mojo run --debug-level=line-tables -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/domain_store_maintenance.mojo
+          mise exec -- pixi run bash -c 'cd vendor/sqlite.fire && mojo run --debug-level=line-tables -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/domain_store_maintenance.mojo'
