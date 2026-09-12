@@ -1,11 +1,25 @@
 from std.collections import List
-from fala.reactions import put_bytes, resolve_uri, is_fala_reaction_uri, digest_from_fala_reaction_uri, content_address_json, sha256_raw_bytes, FileReactionStore
+from fala.reactions import put_bytes, resolve_uri, is_fala_reaction_uri, digest_from_fala_reaction_uri, content_address_json, sha256_raw_bytes, FileReactionStore, _sha256_bit_length
 
 def _check(condition: Bool, message: String) raises:
     if not condition:
         raise Error("reaction parity smoke: " + message)
 
 def main() raises:
+    _check(_sha256_bit_length(0x1fffffffffffffff) == UInt64(0xfffffffffffffff8), "maximum SHA-256 byte length")
+    var oversized_sha256_length_rejected = False
+    try:
+        _ = _sha256_bit_length(0x2000000000000000)
+    except:
+        oversized_sha256_length_rejected = True
+    _check(oversized_sha256_length_rejected, "oversized SHA-256 byte length rejected")
+    var negative_sha256_length_rejected = False
+    try:
+        _ = _sha256_bit_length(-1)
+    except:
+        negative_sha256_length_rejected = True
+    _check(negative_sha256_length_rejected, "negative SHA-256 byte length rejected")
+
     var empty_bytes = List[UInt8]()
     _check(sha256_raw_bytes(empty_bytes^) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA-256 empty input")
     var abc_bytes = List[UInt8]()

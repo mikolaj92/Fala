@@ -12,6 +12,7 @@ from std.memory.alloc import alloc, Layout
 from std.os import listdir, makedirs, remove
 from std.pathlib import Path, cwd
 from emberjson import Array, Object, Value, to_string
+from fala.c_string import mutable_c_string
 from fala.json import canonical_json_text, quote_json_string as _json_quote
 
 comptime FALA_REACTION_SCHEME = "fala-reaction"
@@ -114,12 +115,19 @@ def _sha256_add32(
     return UInt32(total & UInt64(0xffffffff))
 
 
+def _sha256_bit_length(byte_length: Int) raises -> UInt64:
+    """Encode a byte length in SHA-256's unsigned 64-bit bit-length field."""
+    if byte_length < 0 or byte_length > 0x1fffffffffffffff:
+        raise Error("SHA-256 input exceeds its 64-bit length field")
+    return UInt64(byte_length) * UInt64(8)
+
+
 def _sha256_raw_bytes(bytes: List[UInt8]) raises -> String:
+    var bit_length = _sha256_bit_length(len(bytes))
     var message = bytes.copy()
     message.append(UInt8(0x80))
     while len(message) % 64 != 56:
         message.append(UInt8(0))
-    var bit_length = UInt64(len(bytes)) * UInt64(8)
     for index in range(8):
         var shift = 56 - index * 8
         message.append(UInt8((bit_length >> UInt64(shift)) & UInt64(0xff)))
@@ -386,13 +394,13 @@ def _put_raw_bytes(root: String, content: List[UInt8], filename: String, metadat
         var metadata = _reaction_metadata(digest, size_bytes, filename)
         if metadata_json != "": metadata = _reaction_metadata_with_caller(digest, size_bytes, filename, metadata_json)
         return ReactionBlob(digest, size_bytes, filename, metadata)
-    var temp_template = temp_root.__fspath__() + "/reaction-" + digest + "-XXXXXX\0"
-    var temp_c = CStringSlice(temp_template)
+    var temp_template = temp_root.__fspath__() + "/reaction-" + digest + "-XXXXXX"
+    var temp_c = mutable_c_string(temp_template)
     var temp_fd = external_call["mkstemp", c_int](temp_c.unsafe_ptr())
     if temp_fd < 0:
         raise Error("Unable to create temporary reaction blob")
     _ = external_call["close", c_int](temp_fd)
-    var temp = Path(String(temp_template[byte=0:temp_template.byte_length() - 1]))
+    var temp = Path(String(unsafe_from_utf8_ptr=temp_c.unsafe_ptr()))
     temp.write_bytes(content.copy())
     _atomic_rename(temp, target)
     var final_metadata = _reaction_metadata(digest, size_bytes, filename)

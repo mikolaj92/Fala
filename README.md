@@ -119,7 +119,7 @@ host loop. See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md#bounded-autho
 ## Quick proof
 
 The native workspace supports macOS ARM64 (`osx-arm64`) and Linux ARM64
-(`linux-aarch64`). It requires Pixi/Mojo (see `pixi.toml`):
+(`linux-aarch64`, glibc 2.29 or newer). It requires Pixi/Mojo (see `pixi.toml`):
 
 ```bash
 mise exec -- pixi run full-smoke

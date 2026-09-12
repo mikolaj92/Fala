@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #if defined(__APPLE__)
 #include <CommonCrypto/CommonDigest.h>
 #define FALA_SHA256_DIGEST_LENGTH CC_SHA256_DIGEST_LENGTH

@@ -19,7 +19,5 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
-      - name: Build and run domain-maintenance with debug symbols
-        run: |
-          mise exec -- pixi run sqlite-schema
-          mise exec -- pixi run bash -c 'cd vendor/sqlite.fire && mojo build --debug-level=full -I ../../mojo -I ../EmberJson -I src -o /tmp/domain-store-maintenance ../../mojo/smoke/domain_store_maintenance.mojo && /tmp/domain-store-maintenance'
+      - name: Run product smoke suite
+        run: mise exec -- pixi run full-smoke

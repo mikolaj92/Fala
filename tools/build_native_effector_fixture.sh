@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output="${1:?usage: build_native_effector_fixture.sh OUTPUT_PATH}"
 compiler="${CC:-cc}"
-compiler_args=(-std=c11 -Wall -Wextra)
+compiler_args=(-std=c11 -Wall -Wextra -Werror=implicit-function-declaration)
 target_linux=0
 
 if [[ "$(uname -s)" == "Linux" || "${FALA_FORCE_LINUX:-0}" == "1" ]]; then
