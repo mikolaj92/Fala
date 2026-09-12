@@ -19,5 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
-      - name: Run product smoke suite
-        run: mise exec -- pixi run full-smoke
+      - name: Reproduce domain-maintenance crash with line tables
+        run: |
+          mise exec -- pixi run sqlite-schema
+          cd vendor/sqlite.fire
+          mise exec -- pixi run mojo run --debug-level=line-tables -I ../../mojo -I ../EmberJson -I src ../../mojo/smoke/domain_store_maintenance.mojo
