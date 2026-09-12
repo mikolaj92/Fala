@@ -11,7 +11,7 @@ from fala.reactions import FileReactionStore, ReactionBlob
 from fala.runs import RunLifecycle
 from fala.native_cli_ops import _error
 from fala.native_cli_parse import (
-    _safe, _flag, _flag_alias, _has_option, _path, _json, _metadata_value,
+    _safe, _flag, _has_option, _path, _json, _metadata_value,
     _repeat_values, _integer_option,
 )
 
@@ -19,7 +19,7 @@ from fala.native_cli_parse import (
 def _impulse_create(command: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var impulse_id = _flag(command, "--impulse-id"); var impulse_type = _flag(command, "--impulse-type")
     if run_id == "" or impulse_id == "" or impulse_type == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --impulse-id, and --impulse-type are required")))
-    var payload = _flag_alias(command, "--payload", "--payload-json", "{}"); var metadata = _flag_alias(command, "--metadata", "--metadata-json", "{}"); _json(payload); _json(metadata)
+    var payload = _flag(command, "--payload", "{}"); var metadata = _flag(command, "--metadata", "{}"); _json(payload); _json(metadata)
     var now = _flag(command, "--now"); var key = _flag(command, "--idempotency-key", "impulse.accept:" + impulse_id)
     var row = Impulse(id=impulse_id, run_id=run_id, impulse_type=impulse_type, payload=payload, metadata=metadata, created_at=now, updated_at=now)
     var store = NativeDomainStore.open(_path(command)); store.initialize(); var accepted = store.accept_impulse(row, key, now, _flag(command, "--actor"), _flag(command, "--correlation-id"), _flag(command, "--causation-id")); store.close()
@@ -29,7 +29,7 @@ def _impulse_create(command: String) raises -> String:
 def _process_schedule(command: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var process_id = _flag(command, "--process-id"); var process_type = _flag(command, "--process-type")
     if run_id == "" or process_id == "" or process_type == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --process-id, and --process-type are required")))
-    var input_json = _flag_alias(command, "--input", "--input-json", "{}"); var metadata = _flag_alias(command, "--metadata", "--metadata-json", "{}"); var output_schema = _flag(command, "--output-schema", "{}"); _json(input_json); _json(metadata); _json(output_schema)
+    var input_json = _flag(command, "--input", "{}"); var metadata = _flag(command, "--metadata", "{}"); var output_schema = _flag(command, "--output-schema", "{}"); _json(input_json); _json(metadata); _json(output_schema)
     var now = _flag(command, "--now"); var journal = NativeJournal.open(_path(command)); journal.initialize()
     var row = journal.schedule_process(run_id, process_id, process_type, now, input_json, metadata, _flag(command, "--impulse-id"), _integer_option(command, "--priority", 0), _integer_option(command, "--max-attempts", 1), _flag(command, "--available-at", now), output_schema, _flag(command, "--idempotency-key", "process.schedule:" + process_id), _flag(command, "--actor")); journal.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"process\",\"id\":" + _quote(row.id) + ",\"run_id\":" + _quote(row.run_id) + ",\"status\":" + _quote(row.status) + "}"
@@ -38,7 +38,7 @@ def _process_schedule(command: String) raises -> String:
 def _process_transition(command: String, target: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var process_id = _flag(command, "--process-id"); var actor = _flag(command, "--actor", "cli"); var now = _flag(command, "--now")
     if run_id == "" or process_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id and --process-id are required")))
-    var error_json = _flag_alias(command, "--error", "--error-json", "{}"); _json(error_json); var journal = NativeJournal.open(_path(command)); journal.initialize(); var row = ProcessRow(run_id="", id="", process_type="", impulse_id="", status="", priority=0, attempt=0, max_attempts=1, available_at="", lease_owner="", lease_expires_at="", input_json="{}", output_json="{}", error_json="{}", metadata="{}", created_at="", updated_at="", started_at="", finished_at="", output_schema_json="{}")
+    var error_json = _flag(command, "--error", "{}"); _json(error_json); var journal = NativeJournal.open(_path(command)); journal.initialize(); var row = ProcessRow(run_id="", id="", process_type="", impulse_id="", status="", priority=0, attempt=0, max_attempts=1, available_at="", lease_owner="", lease_expires_at="", input_json="{}", output_json="{}", error_json="{}", metadata="{}", created_at="", updated_at="", started_at="", finished_at="", output_schema_json="{}")
     if target == "cancel": row = journal.cancel_process(run_id, process_id, actor, now, error_json)
     else: row = journal.timeout_process(run_id, process_id, actor, now, error_json)
     journal.close(); return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"process\",\"id\":" + _quote(row.id) + ",\"run_id\":" + _quote(row.run_id) + ",\"status\":" + _quote(row.status) + "}"
@@ -47,7 +47,7 @@ def _process_transition(command: String, target: String) raises -> String:
 def _association_append(command: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var association_id = _flag(command, "--association-id"); var kind = _flag(command, "--kind")
     if run_id == "" or association_id == "" or kind == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --association-id, and --kind are required")))
-    var values = _flag_alias(command, "--values", "--values-json", "{}"); var metadata = _flag_alias(command, "--metadata", "--metadata-json", "{}"); _json(values); _json(metadata)
+    var values = _flag(command, "--values", "{}"); var metadata = _flag(command, "--metadata", "{}"); _json(values); _json(metadata)
     var row = Association(id=association_id, run_id=run_id, kind=kind, impulse_id=_flag(command, "--impulse-id"), values=values, metadata=metadata, created_at=_flag(command, "--now")); var store = NativeDomainStore.open(_path(command)); store.initialize(); store.put_association(row); store.close()
     return "{\"ok\":true,\"runtime\":\"mojo\",\"resource\":\"association\",\"id\":" + _quote(association_id) + ",\"run_id\":" + _quote(run_id) + "}"
 
@@ -69,7 +69,7 @@ def _reaction_record(command: String) raises -> String:
         raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --kind, --path, and --reaction-root are required")))
     if not _safe(input_path) or not _safe(reaction_root):
         raise Error(String(SQLiteError(code=2, message="argument_error: invalid reaction path")))
-    var metadata_raw = _flag(command, "--metadata-json", "{}")
+    var metadata_raw = _flag(command, "--metadata", "{}")
     var metadata = String("")
     try:
         metadata = canonical_json_text(metadata_raw)
@@ -131,7 +131,7 @@ def _reaction_record(command: String) raises -> String:
 def _homeostat_transition(command: String, operation: String) raises -> String:
     var run_id = _flag(command, "--run-id"); var homeostat_id = _flag(command, "--homeostat-id"); var process_id = _flag(command, "--process-id"); var actor = _flag(command, "--actor", "cli"); var now = _flag(command, "--now")
     if run_id == "" or homeostat_id == "" or process_id == "": raise Error(String(SQLiteError(code=2, message="argument_error: --run-id, --homeostat-id, and --process-id are required")))
-    var output = _flag(command, "--output", "{}"); var error_json = _flag_alias(command, "--error", "--error-json", "{}"); var metadata = _flag_alias(command, "--metadata", "--metadata-json", "{}"); _json(output); _json(error_json); _json(metadata)
+    var output = _flag(command, "--output", "{}"); var error_json = _flag(command, "--error", "{}"); var metadata = _flag(command, "--metadata", "{}"); _json(output); _json(error_json); _json(metadata)
     var key = _flag(command, "--idempotency-key", "homeostat." + operation + ":" + homeostat_id)
     if operation == "reopen" and not _has_option(command, "--idempotency-key"): key = ""
     var journal = NativeJournal.open(_path(command)); journal.initialize(); var row = ProcessRow(run_id="", id="", process_type="", impulse_id="", status="", priority=0, attempt=0, max_attempts=1, available_at="", lease_owner="", lease_expires_at="", input_json="{}", output_json="{}", error_json="{}", metadata="{}", created_at="", updated_at="", started_at="", finished_at="", output_schema_json="{}")
@@ -163,8 +163,8 @@ def _homeostat_domain_values(command: String) raises -> String:
 
 def _homeostat_domain(command: String, operation: String) raises -> String:
     if operation == "open":
-        var values = _flag(command, "--values-json", "{}")
-        var metadata = _flag(command, "--metadata-json", "{}")
+        var values = _flag(command, "--values", "{}")
+        var metadata = _flag(command, "--metadata", "{}")
         try:
             var values_parsed = parse_json(values)
             var metadata_parsed = parse_json(metadata)

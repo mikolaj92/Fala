@@ -15,6 +15,9 @@
 - Move version-stamp checking to `tools/check_stamps.py` and drop the empty `src/` tree.
 - Drop leftover CLI aliases: `runs create` / `run create`, `relations`, `bridges list`,
   and singular `homeostat *`. Unknown verbs fail as `unsupported_command`.
+- One verb per command: no `ops` prefix, no `doctor`, no `db migrate`/`db schema`.
+  JSON flags are `--payload`/`--input`/`--metadata`/`--error`/`--values`. Public
+  process reads expose `input`/`output`/`error`/`output_schema` only.
 - Public Python host no longer exports `host_drive_json`; native JSON helpers stay
   as an internal serialization boundary.
 - Rename `fala.fep` to `fala.protocol` and `FEPError` to `ProtocolError`. Wire

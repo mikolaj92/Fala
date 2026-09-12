@@ -43,7 +43,7 @@ Composable operators may import these; composing a small flow does **not** requi
 | **ops maintenance** | run retention, journal maintain, reaction CAS GC, delete_run | `ops_maintenance.mojo` (**bodies live here**) |
 | **ops bridge** | outbox/inbox enqueue, import, claim/deliver/retry, budgets | `ops_bridge.mojo` (**bodies live here**; + `bridge_transport`) |
 | **ops projections** | heavy projection rebuild (`run_summary`) | `ops_projections.mojo` (**bodies live here**) |
-| **CLI ops surface** | `ops maintain-journal`, `ops gc`, `ops projections rebuild`, `ops bridge list/deliver/export/import` | `native_cli_surface` progressive disclosure |
+| **CLI ops surface** | `maintain-journal`, `gc`, `projections rebuild`, `bridge list/deliver/export/import` | `native_cli_surface` |
 
 Ops free functions take `mut store: NativeDomainStore` and use the shared SQLite
 connection plus private store helpers (`_require_run`, `_text`,

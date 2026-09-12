@@ -25,14 +25,6 @@ def dispatch_native_command(command: String) raises -> String:
     try:
         var first = _word(command, 0)
         var second = _word(command, 1)
-        # Progressive disclosure: `ops <cmd>...` is an alias for operator tools.
-        if first == "ops" and second != "":
-            var rest = second
-            var idx = 2
-            while idx < _count(command):
-                rest += " " + _word(command, idx)
-                idx += 1
-            return dispatch_native_command(rest)
         if first == "graph":
             if second != "expand" and second != "validate" and second != "fingerprint" and second != "diff": return _error("unsupported_command")
             _validate(command, "graph")
@@ -49,12 +41,10 @@ def dispatch_native_command(command: String) raises -> String:
             return _gc(command)
         if first == "schema": _validate(command, "schema", True)
         elif first == "db":
+            if second != "init" and second != "status" and second != "vacuum": return _error("unsupported_command")
             _require_db_value(command, "db")
             if second != "status" and _has_option(command, "--ensure-schema"): return _error("argument_error", "--ensure-schema is supported only for db status")
             _validate(command, "db", True)
-        elif first == "doctor":
-            _require_db_value(command, "doctor")
-            _validate(command, "doctor", True)
         elif first == "events" and second == "validate-schema": _validate(command, "event-schema")
         elif first == "projections" and second == "rebuild": _validate(command, "projection")
         elif first == "runs" and second == "list": _validate(command, "run-list")
@@ -87,16 +77,14 @@ def dispatch_native_command(command: String) raises -> String:
         if command == "reactions inspect" or command.startswith("reactions inspect "): return _domain_inspect(_path(command), "reaction", "reactions", _flag(command, "--run-id"), _flag(command, "--reaction-id"), "--reaction-id")
         if command == "associations inspect" or command.startswith("associations inspect "): return _domain_inspect(_path(command), "association", "associations", _flag(command, "--run-id"), _flag(command, "--association-id"), "--association-id")
         if command == "schema model" or command.startswith("schema model "): return _schema_model()
-        if command == "db init" or command == "db migrate": return _error("argument_error", "--db is required")
+        if command == "db init": return _error("argument_error", "--db is required")
         if command.startswith("db init "): return initialize_database(_path(command))
-        if command.startswith("db migrate "): return initialize_database(_path(command))
         if command == "runs list" or command.startswith("runs list "): return _runs(_path(command), _flag(command,"--status"), _flag(command,"--run-id"), _limit(command), _bool_option(command, "--jsonl"))
         if command == "runs observe" or command.startswith("runs observe "):
             return _run_observe(_path(command), _flag(command, "--run-id"))
         if command == "runs inspect" or command.startswith("runs inspect "): _validate(command, "inspect"); return _run_inspect(_path(command), _flag(command, "--run-id"))
         if command == "db status" or command.startswith("db status "):
             return _db_status(command)
-        if command == "db schema" or command.startswith("db schema "): return _schema_model()
         if command == "db vacuum" or command.startswith("db vacuum "): return _vacuum(_path(command))
         if command == "maintain-journal" or command.startswith("maintain-journal "): return _maintain_journal(command)
         if command == "create-run" or command.startswith("create-run "): _validate(command, "create"); return _create(command)
@@ -125,8 +113,6 @@ def dispatch_native_command(command: String) raises -> String:
         if command == "bridge list" or command.startswith("bridge list "):
             _validate(command, "bridge-list")
             return _bridge_rows(command, "bridge")
-        if command == "doctor" or command.startswith("doctor "):
-            return _db_status(command)
         return _error("unsupported_command")
     except err:
         var detail = String(err)

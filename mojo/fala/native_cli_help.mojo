@@ -5,7 +5,7 @@ def cli_surface_help() -> String:
     # Ops (progressive disclosure): maintain-journal, gc, projections rebuild, and bridge verbs.
     var text = "# core — package/run/inspect one journal\n"
     text += "schema impulse\nschema model\n"
-    text += "db init\ndb migrate\ndb status\ndb schema\ndoctor\n"
+    text += "db init\ndb status\n"
     text += "create-run\n"
     text += "impulses create\nprocesses schedule\nprocesses cancel\nprocesses timeout\nassociations append\n"
     text += "runs list\nruns inspect\nruns observe\n"
@@ -30,11 +30,10 @@ def cli_surface_help() -> String:
     text += "explain --db PATH --package PATH --run-id ID [--process-id ID | --terminal ID]\n"
     text += "rehearse --package PATH --fixture PATH --path-id ID --journal PATH --report PATH\n"
     text += "# ops — optional operator tools (not required to compose a flow)\n"
-    text += "ops maintain-journal (alias: maintain-journal)\n"
-    text += "ops gc (alias: gc)\n"
-    text += "ops projections rebuild (alias: projections rebuild)\n"
+    text += "maintain-journal\n"
+    text += "gc\n"
+    text += "projections rebuild\n"
     text += "bridge list\nbridge deliver\nbridge export\nbridge import\n"
     text += "db vacuum\n"
     text += "init"
     return text
-

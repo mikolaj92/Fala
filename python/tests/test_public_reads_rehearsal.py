@@ -23,6 +23,7 @@ def test_reads_are_sorted_json_safe_and_activation_metadata_is_generic(tmp_path)
     assert fala.get_run(db,'missing') is None
     process=fala.list_processes(db,'z')[0]
     assert process['metadata'] == {'effector_id':'e'} and process['input'] == {'x':1}
+    assert 'input_json' not in process and 'output_json' not in process
     json.dumps([runs, process], allow_nan=False)
 
 

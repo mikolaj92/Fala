@@ -80,10 +80,11 @@ def _row(row: sqlite3.Row, columns: tuple[str, ...]) -> dict[str, Any]:
         raise RuntimeError("fala read: run has an invalid schema version")
     if "run_id" in result and (not isinstance(result["run_id"], str) or not result["run_id"]):
         raise RuntimeError("fala read: process run_id must be non-empty text")
-    # Stable ergonomic aliases; raw storage names remain present for compatibility.
     if "input_json" in result:
-        result["input"] = result["input_json"]
-        result["output"] = result["output_json"]
+        result["input"] = result.pop("input_json")
+        result["output"] = result.pop("output_json")
+        result["error"] = result.pop("error_json")
+        result["output_schema"] = result.pop("output_schema_json")
     json.dumps(result, allow_nan=False, sort_keys=True)
     return result
 

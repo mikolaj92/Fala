@@ -133,28 +133,22 @@ def _flag(command: String, name: String, default: String = "") -> String:
                 return default
         index += 1
     return default
-def _flag_alias(command: String, primary: String, alt: String, default: String = "") -> String:
-    if _has_option(command, primary): return _flag(command, primary, default)
-    return _flag(command, alt, default)
-
-
 def _known_option(kind: String, item: String) -> Bool:
     var option = _option_base(item)
     if option == "--db": return True
     if kind == "db" and option == "--ensure-schema": return True
-    if kind == "doctor" and option == "--ensure-schema": return True
     if kind == "schema": return False
     if kind == "graph" and (option == "--package" or option == "--before" or option == "--after"): return True
     if kind == "init" and (option == "--db" or option == "--reaction-root"): return True
     if kind == "create" and (option == "--run-id" or option == "--metadata" or option == "--now" or option == "--title" or option == "--idempotency-key" or option == "--package-id" or option == "--package-version" or option == "--package-digest" or option == "--correlation-path-id" or option == "--correlation-path-digest" or option == "--runtime-version" or option == "--backend-version"): return True
     if kind == "transition" and (option == "--run-id" or option == "--now" or option == "--idempotency-key" or option == "--reason"): return True
-    if kind == "impulse-create" and (option == "--run-id" or option == "--impulse-id" or option == "--impulse-type" or option == "--payload" or option == "--payload-json" or option == "--metadata" or option == "--metadata-json" or option == "--now" or option == "--idempotency-key" or option == "--actor" or option == "--correlation-id" or option == "--causation-id"): return True
-    if kind == "process-schedule" and (option == "--run-id" or option == "--process-id" or option == "--process-type" or option == "--impulse-id" or option == "--input" or option == "--input-json" or option == "--metadata" or option == "--metadata-json" or option == "--priority" or option == "--max-attempts" or option == "--available-at" or option == "--output-schema" or option == "--now" or option == "--idempotency-key" or option == "--actor"): return True
-    if kind == "process-transition" and (option == "--run-id" or option == "--process-id" or option == "--actor" or option == "--now" or option == "--error" or option == "--error-json" or option == "--idempotency-key"): return True
-    if kind == "association-append" and (option == "--run-id" or option == "--association-id" or option == "--kind" or option == "--impulse-id" or option == "--values" or option == "--values-json" or option == "--metadata" or option == "--metadata-json" or option == "--now" or option == "--idempotency-key" or option == "--actor"): return True
-    if kind == "homeostat-open" and (option == "--run-id" or option == "--homeostat-id" or option == "--process-id" or option == "--kind" or option == "--impulse-id" or option == "--values-json" or option == "--actor" or option == "--now" or option == "--output" or option == "--metadata" or option == "--metadata-json" or option == "--idempotency-key"): return True
-    if kind == "homeostat-transition" and (option == "--run-id" or option == "--homeostat-id" or option == "--process-id" or option == "--actor" or option == "--now" or option == "--output" or option == "--error" or option == "--error-json" or option == "--metadata" or option == "--metadata-json" or option == "--idempotency-key"): return True
-    if kind == "homeostat-domain-open" and (option == "--run-id" or option == "--homeostat-id" or option == "--impulse-id" or option == "--kind" or option == "--values-json" or option == "--metadata-json" or option == "--idempotency-key"): return True
+    if kind == "impulse-create" and (option == "--run-id" or option == "--impulse-id" or option == "--impulse-type" or option == "--payload" or option == "--metadata" or option == "--now" or option == "--idempotency-key" or option == "--actor" or option == "--correlation-id" or option == "--causation-id"): return True
+    if kind == "process-schedule" and (option == "--run-id" or option == "--process-id" or option == "--process-type" or option == "--impulse-id" or option == "--input" or option == "--metadata" or option == "--priority" or option == "--max-attempts" or option == "--available-at" or option == "--output-schema" or option == "--now" or option == "--idempotency-key" or option == "--actor"): return True
+    if kind == "process-transition" and (option == "--run-id" or option == "--process-id" or option == "--actor" or option == "--now" or option == "--error" or option == "--idempotency-key"): return True
+    if kind == "association-append" and (option == "--run-id" or option == "--association-id" or option == "--kind" or option == "--impulse-id" or option == "--values" or option == "--metadata" or option == "--now" or option == "--idempotency-key" or option == "--actor"): return True
+    if kind == "homeostat-open" and (option == "--run-id" or option == "--homeostat-id" or option == "--process-id" or option == "--kind" or option == "--impulse-id" or option == "--values" or option == "--actor" or option == "--now" or option == "--output" or option == "--metadata" or option == "--idempotency-key"): return True
+    if kind == "homeostat-transition" and (option == "--run-id" or option == "--homeostat-id" or option == "--process-id" or option == "--actor" or option == "--now" or option == "--output" or option == "--error" or option == "--metadata" or option == "--idempotency-key"): return True
+    if kind == "homeostat-domain-open" and (option == "--run-id" or option == "--homeostat-id" or option == "--impulse-id" or option == "--kind" or option == "--values" or option == "--metadata" or option == "--idempotency-key"): return True
     if kind == "homeostat-domain-transition" and (option == "--run-id" or option == "--homeostat-id" or option == "--value" or option == "--idempotency-key"): return True
     if kind == "run-observe" and (option == "--db" or option == "--run-id"): return True
     if kind == "inspect" and (option == "--run-id" or option == "--impulse-type-id" or option == "--relation-id" or option == "--reaction-id" or option == "--association-id" or option == "--impulse-id" or option == "--process-id" or option == "--command-id"): return True
@@ -179,7 +173,7 @@ def _known_option(kind: String, item: String) -> Bool:
     if kind == "projection" and (option == "--run-id" or option == "--name" or option == "--now"): return True
     if kind == "maintenance" and (option == "--older-than-days" or option == "--keep-last" or option == "--reaction-root" or option == "--dry-run" or option == "--delete" or option == "--vacuum" or option == "--no-vacuum"): return True
     if kind == "gc" and (option == "--reaction-root" or option == "--run-id" or option == "--older-than" or option == "--dry-run" or option == "--delete"): return True
-    if kind == "reaction-record" and (option == "--run-id" or option == "--reaction-root" or option == "--path" or option == "--kind" or option == "--reaction-id" or option == "--impulse-id" or option == "--media-type" or option == "--metadata-json" or option == "--idempotency-key" or option == "--now"): return True
+    if kind == "reaction-record" and (option == "--run-id" or option == "--reaction-root" or option == "--path" or option == "--kind" or option == "--reaction-id" or option == "--impulse-id" or option == "--media-type" or option == "--metadata" or option == "--idempotency-key" or option == "--now"): return True
     if kind == "bridge-deliver" and (option == "--run-id" or option == "--delivery-id" or option == "--target-db" or option == "--idempotency-key" or option == "--import-idempotency-key" or option == "--now"): return True
     if kind == "bridge-export" and (option == "--delivery-id" or option == "--out"): return True
     if kind == "bridge-import" and (option == "--file" or option == "--idempotency-key"): return True
@@ -284,7 +278,7 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
     var index = 0
     var count = _count(command)
     if kind == "run-list" or kind == "run-observe" or kind == "event-schema" or kind == "homeostat-list" or kind == "inspect" or kind == "rows" or kind == "commands-list" or kind == "events-list" or kind == "processes-list" or kind == "impulses-list" or kind == "impulse-types-list" or kind == "impulse-relations-list" or kind == "associations-list" or kind == "reactions-list" or kind == "homeostats-list" or kind == "projections-list" or kind == "bridge-list" or kind == "projection" or kind == "reaction-record" or kind == "bridge-deliver" or kind == "bridge-export" or kind == "bridge-import" or kind == "transition" or kind == "impulse-create" or kind == "process-schedule" or kind == "process-transition" or kind == "association-append" or kind == "homeostat-open" or kind == "homeostat-transition" or kind == "homeostat-domain-open" or kind == "homeostat-domain-transition": index = 2
-    elif kind == "doctor" or kind == "trace" or kind == "diagnose-waits" or kind == "explain" or kind == "rehearse": index = 1
+    elif kind == "trace" or kind == "diagnose-waits" or kind == "explain" or kind == "rehearse": index = 1
     elif kind == "init": index = 1
     elif kind == "create" or kind == "schema" or kind == "maintenance" or kind == "gc": index = 1
     elif kind == "db" or kind == "graph": index = 2
@@ -305,7 +299,7 @@ def _validate(command: String, kind: String, positional: Bool = False) raises:
             if kind == "gc" and (option == "--dry-run" or option == "--delete"):
                 index += 1
                 continue
-            if (kind == "db" or kind == "doctor") and option == "--ensure-schema":
+            if kind == "db" and option == "--ensure-schema":
                 index += 1
                 continue
             if kind == "maintenance" and (option == "--dry-run" or option == "--delete" or option == "--vacuum" or option == "--no-vacuum"):
@@ -467,8 +461,7 @@ def _path(command: String) raises -> String:
     var first = _word(command, 0)
     if path == "":
         if first == "db": path = _positional_path(command, 2)
-        elif first == "doctor": path = _positional_path(command, 1)
-    if path == "" and first != "doctor" and first != "init":
+    if path == "" and first != "init":
         raise Error(String(SQLiteError(code=2, message="argument_error: --db is required")))
     if path == "": path = ".fala/state.sqlite"
     path = _database_url(path)
@@ -480,7 +473,6 @@ def _require_db_value(command: String, kind: String) raises:
     var count = _count(command)
     var index = 0
     if kind == "db": index = 2
-    elif kind == "doctor": index = 1
     while index < count:
         var item = _word(command, index)
         if item == "--db":
