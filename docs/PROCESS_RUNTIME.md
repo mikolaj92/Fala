@@ -42,7 +42,41 @@ OS process. It does not become the child. The default driver is sequential:
 one process per tick (`claims_per_round=1`). Logical independence in a
 correlation graph does not itself promise simultaneous execution.
 
+### Lifecycle timestamps
+
+The Python `fala.host_run_package` entry point represents a live host run. It
+records the request creation time and opts the native runtime into reading a
+fresh UTC wall-clock timestamp for process claims and terminal transitions,
+run finalization, and correlation-created/skipped process transitions. A
+subprocess spanning a whole-second boundary has distinct process `started_at`
+and `finished_at` values; subsecond transitions can share a value because the
+journal timestamp representation remains second-resolution UTC
+(`YYYY-MM-DDTHH:MM:SSZ`). The run's finish reflects its final transition rather
+than the original request time. Keeping the existing representation also
+matches the durable fields used for lease and retry ordering.
+
+The low-level `native.host_run_package(JSON)` binding keeps deterministic clock
+control: unless `realtime_timestamps` is explicitly set to `true`, lifecycle
+transitions use the request's supplied `now`. Tests, replay fixtures, and
+callers simulating a fixed clock can therefore keep their explicit timestamps.
+The opt-in changes transition timestamps only; the request's `created_at`
+continues to identify when the run was created.
+
 ## Conditional conduction
+
+An unconditional `conduction` edge is sequencing and terminal-data delivery;
+it is not a success gate. Fala makes a dependent ready after every declared
+upstream is terminal. It places a successful upstream's projected output, or
+an unsuccessful upstream's error object, under
+`input.conduction.<upstream-id>` and invokes the dependent adapter. That
+dependent may succeed after handling an error, but a failed or timed-out
+upstream still makes the run fail at finalization.
+
+When an operation requires a successful upstream value, author an explicit
+`when` condition over that value. The conditional adapter runs only when the
+source succeeded and the declared scalar matches; a failed or timed-out source
+skips the conditional process. This keeps the success requirement in the graph
+instead of making Fala infer it from an unconditional dependency.
 
 An effector may declare one deterministic condition over a direct upstream
 output:

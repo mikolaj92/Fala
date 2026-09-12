@@ -77,7 +77,7 @@ def main() raises:
         var invalid_result = persist_correlation_plan(journal, invalid_plan, "2026-01-01T00:00:00Z")
         _ = invalid_result
     except err:
-        invalid_rejected = String(err).find("invalid_output_schema") >= 0
+        invalid_rejected = String(err).find("schema.invalid at /processes/run-persist:invalid:bad/output_schema_json/type:") >= 0
     _check(invalid_rejected, "invalid output schema rejected")
 
     var invalid_union = List[CorrelationEffectorSpec]()
@@ -88,7 +88,7 @@ def main() raises:
         var invalid_union_result = persist_correlation_plan(journal, invalid_union_plan, "2026-01-01T00:00:00Z")
         _ = invalid_union_result
     except err:
-        invalid_union_rejected = String(err).find("invalid_output_schema") >= 0
+        invalid_union_rejected = String(err).find("schema.invalid at /processes/run-persist:invalid-union:bad-union/output_schema_json/type:") >= 0
     _check(invalid_union_rejected, "invalid output schema union rejected")
 
     var empty_union = List[CorrelationEffectorSpec]()
@@ -99,7 +99,7 @@ def main() raises:
         var empty_union_result = persist_correlation_plan(journal, empty_union_plan, "2026-01-01T00:00:00Z")
         _ = empty_union_result
     except err:
-        empty_union_rejected = String(err).find("invalid_output_schema") >= 0
+        empty_union_rejected = String(err).find("schema.invalid at /processes/run-persist:empty-union:empty-union/output_schema_json/type:") >= 0
     _check(empty_union_rejected, "empty output schema union rejected")
 
     var duplicate_union = List[CorrelationEffectorSpec]()
@@ -110,7 +110,7 @@ def main() raises:
         var duplicate_union_result = persist_correlation_plan(journal, duplicate_union_plan, "2026-01-01T00:00:00Z")
         _ = duplicate_union_result
     except err:
-        duplicate_union_rejected = String(err).find("invalid_output_schema") >= 0
+        duplicate_union_rejected = String(err).find("schema.invalid at /processes/run-persist:duplicate-union:duplicate-union/output_schema_json/type:") >= 0
     _check(duplicate_union_rejected, "duplicate output schema union rejected")
 
     var union_journal = NativeJournal(":memory:\0")
