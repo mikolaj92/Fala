@@ -1,4 +1,12 @@
+#define _POSIX_C_SOURCE 200809L
+
+#if defined(__APPLE__)
 #include <CommonCrypto/CommonDigest.h>
+#define FALA_SHA256_DIGEST_LENGTH CC_SHA256_DIGEST_LENGTH
+#else
+#include <openssl/sha.h>
+#define FALA_SHA256_DIGEST_LENGTH SHA256_DIGEST_LENGTH
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,17 +57,24 @@ static char *json_string(const char *json, const char *key) {
 }
 
 static char *hex_sha256(const char *text) {
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    unsigned char digest[FALA_SHA256_DIGEST_LENGTH];
     static const char *hex = "0123456789abcdef";
-    char *out = malloc(CC_SHA256_DIGEST_LENGTH * 2 + 1);
+    char *out = malloc(FALA_SHA256_DIGEST_LENGTH * 2 + 1);
     int i;
     if (out == NULL) return NULL;
+#if defined(__APPLE__)
     CC_SHA256(text, (CC_LONG)strlen(text), digest);
-    for (i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
+#else
+    if (SHA256((const unsigned char *)text, strlen(text), digest) == NULL) {
+        free(out);
+        return NULL;
+    }
+#endif
+    for (i = 0; i < FALA_SHA256_DIGEST_LENGTH; i++) {
         out[i * 2] = hex[(digest[i] >> 4) & 0xf];
         out[i * 2 + 1] = hex[digest[i] & 0xf];
     }
-    out[CC_SHA256_DIGEST_LENGTH * 2] = '\0';
+    out[FALA_SHA256_DIGEST_LENGTH * 2] = '\0';
     return out;
 }
 

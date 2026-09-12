@@ -1,17 +1,18 @@
 """Native filesystem content-addressed reaction storage.
 
-The public boundary intentionally accepts UTF-8 Mojo ``String`` values.  SHA-256
-is provided by the platform CommonCrypto C ABI on Darwin; no Python runtime is
-loaded.  Files are written to a temporary sibling and committed with POSIX
-``rename`` so readers never observe a partial blob.
+SHA-256 is implemented in Mojo so raw-byte content addressing works on every
+supported POSIX target without a platform crypto ABI. Files are written to a
+temporary sibling and committed with POSIX ``rename`` so readers never observe
+a partial blob.
 """
 
 from std.collections import List
-from std.ffi import CStringSlice, c_int, c_uint, external_call
+from std.ffi import CStringSlice, c_int, external_call
 from std.memory.alloc import alloc, Layout
 from std.os import listdir, makedirs, remove
 from std.pathlib import Path, cwd
 from emberjson import Array, Object, Value, to_string
+from fala.c_string import mutable_c_string
 from fala.json import canonical_json_text, quote_json_string as _json_quote
 
 comptime FALA_REACTION_SCHEME = "fala-reaction"
@@ -98,17 +99,121 @@ def _reaction_metadata_with_caller(digest: String, size_bytes: Int, filename: St
     metadata["storage"] = Value(storage^)
     return canonical_json_text(to_string(Value(metadata^)))
 
+def _sha256_rotr(value: UInt32, amount: Int) -> UInt32:
+    return (value >> UInt32(amount)) | (value << UInt32(32 - amount))
+
+
+def _sha256_add32(
+    a: UInt32,
+    b: UInt32,
+    c: UInt32 = UInt32(0),
+    d: UInt32 = UInt32(0),
+    e: UInt32 = UInt32(0),
+) -> UInt32:
+    """Add SHA-256 words modulo 2^32 without relying on overflow behavior."""
+    var total = UInt64(a) + UInt64(b) + UInt64(c) + UInt64(d) + UInt64(e)
+    return UInt32(total & UInt64(0xffffffff))
+
+
+def _sha256_bit_length(byte_length: Int) raises -> UInt64:
+    """Encode a byte length in SHA-256's unsigned 64-bit bit-length field."""
+    if byte_length < 0 or byte_length > 0x1fffffffffffffff:
+        raise Error("SHA-256 input exceeds its 64-bit length field")
+    return UInt64(byte_length) * UInt64(8)
+
+
 def _sha256_raw_bytes(bytes: List[UInt8]) raises -> String:
-    var output = alloc(Layout[UInt8](count=32)).into_managed()
-    var input = bytes.unsafe_ptr()
-    _ = external_call["CC_SHA256", Pointer[UInt8, MutUntrackedOrigin]](
-        input, c_uint(len(bytes)), output.unsafe_ptr().as_unsafe_any_origin()
-    )
+    var bit_length = _sha256_bit_length(len(bytes))
+    var message = bytes.copy()
+    message.append(UInt8(0x80))
+    while len(message) % 64 != 56:
+        message.append(UInt8(0))
+    for index in range(8):
+        var shift = 56 - index * 8
+        message.append(UInt8((bit_length >> UInt64(shift)) & UInt64(0xff)))
+
+    var state = List[UInt32]()
+    state.append(UInt32(0x6a09e667)); state.append(UInt32(0xbb67ae85))
+    state.append(UInt32(0x3c6ef372)); state.append(UInt32(0xa54ff53a))
+    state.append(UInt32(0x510e527f)); state.append(UInt32(0x9b05688c))
+    state.append(UInt32(0x1f83d9ab)); state.append(UInt32(0x5be0cd19))
+
+    var constants = List[UInt32]()
+    constants.append(UInt32(0x428a2f98)); constants.append(UInt32(0x71374491))
+    constants.append(UInt32(0xb5c0fbcf)); constants.append(UInt32(0xe9b5dba5))
+    constants.append(UInt32(0x3956c25b)); constants.append(UInt32(0x59f111f1))
+    constants.append(UInt32(0x923f82a4)); constants.append(UInt32(0xab1c5ed5))
+    constants.append(UInt32(0xd807aa98)); constants.append(UInt32(0x12835b01))
+    constants.append(UInt32(0x243185be)); constants.append(UInt32(0x550c7dc3))
+    constants.append(UInt32(0x72be5d74)); constants.append(UInt32(0x80deb1fe))
+    constants.append(UInt32(0x9bdc06a7)); constants.append(UInt32(0xc19bf174))
+    constants.append(UInt32(0xe49b69c1)); constants.append(UInt32(0xefbe4786))
+    constants.append(UInt32(0x0fc19dc6)); constants.append(UInt32(0x240ca1cc))
+    constants.append(UInt32(0x2de92c6f)); constants.append(UInt32(0x4a7484aa))
+    constants.append(UInt32(0x5cb0a9dc)); constants.append(UInt32(0x76f988da))
+    constants.append(UInt32(0x983e5152)); constants.append(UInt32(0xa831c66d))
+    constants.append(UInt32(0xb00327c8)); constants.append(UInt32(0xbf597fc7))
+    constants.append(UInt32(0xc6e00bf3)); constants.append(UInt32(0xd5a79147))
+    constants.append(UInt32(0x06ca6351)); constants.append(UInt32(0x14292967))
+    constants.append(UInt32(0x27b70a85)); constants.append(UInt32(0x2e1b2138))
+    constants.append(UInt32(0x4d2c6dfc)); constants.append(UInt32(0x53380d13))
+    constants.append(UInt32(0x650a7354)); constants.append(UInt32(0x766a0abb))
+    constants.append(UInt32(0x81c2c92e)); constants.append(UInt32(0x92722c85))
+    constants.append(UInt32(0xa2bfe8a1)); constants.append(UInt32(0xa81a664b))
+    constants.append(UInt32(0xc24b8b70)); constants.append(UInt32(0xc76c51a3))
+    constants.append(UInt32(0xd192e819)); constants.append(UInt32(0xd6990624))
+    constants.append(UInt32(0xf40e3585)); constants.append(UInt32(0x106aa070))
+    constants.append(UInt32(0x19a4c116)); constants.append(UInt32(0x1e376c08))
+    constants.append(UInt32(0x2748774c)); constants.append(UInt32(0x34b0bcb5))
+    constants.append(UInt32(0x391c0cb3)); constants.append(UInt32(0x4ed8aa4a))
+    constants.append(UInt32(0x5b9cca4f)); constants.append(UInt32(0x682e6ff3))
+    constants.append(UInt32(0x748f82ee)); constants.append(UInt32(0x78a5636f))
+    constants.append(UInt32(0x84c87814)); constants.append(UInt32(0x8cc70208))
+    constants.append(UInt32(0x90befffa)); constants.append(UInt32(0xa4506ceb))
+    constants.append(UInt32(0xbef9a3f7)); constants.append(UInt32(0xc67178f2))
+
+    var schedule = List[UInt32]()
+    for _ in range(64):
+        schedule.append(UInt32(0))
+    for block_start in range(0, len(message), 64):
+        for word_index in range(16):
+            var offset = block_start + word_index * 4
+            var word = (UInt32(message[offset]) << 24) | (UInt32(message[offset + 1]) << 16)
+            word = word | (UInt32(message[offset + 2]) << 8) | UInt32(message[offset + 3])
+            schedule[word_index] = word
+        for word_index in range(16, 64):
+            var x = schedule[word_index - 15]
+            var sigma0 = _sha256_rotr(x, 7) ^ _sha256_rotr(x, 18) ^ (x >> 3)
+            x = schedule[word_index - 2]
+            var sigma1 = _sha256_rotr(x, 17) ^ _sha256_rotr(x, 19) ^ (x >> 10)
+            schedule[word_index] = _sha256_add32(
+                schedule[word_index - 16], sigma0,
+                schedule[word_index - 7], sigma1,
+            )
+
+        var a = state[0]; var b = state[1]; var c = state[2]; var d = state[3]
+        var e = state[4]; var f = state[5]; var g = state[6]; var h = state[7]
+        for round_index in range(64):
+            var sum1 = _sha256_rotr(e, 6) ^ _sha256_rotr(e, 11) ^ _sha256_rotr(e, 25)
+            var choose = (e & f) ^ ((~e) & g)
+            var temp1 = _sha256_add32(h, sum1, choose, constants[round_index], schedule[round_index])
+            var sum0 = _sha256_rotr(a, 2) ^ _sha256_rotr(a, 13) ^ _sha256_rotr(a, 22)
+            var majority = (a & b) ^ (a & c) ^ (b & c)
+            var temp2 = _sha256_add32(sum0, majority)
+            h = g; g = f; f = e; e = _sha256_add32(d, temp1)
+            d = c; c = b; b = a; a = _sha256_add32(temp1, temp2)
+
+        state[0] = _sha256_add32(state[0], a); state[1] = _sha256_add32(state[1], b)
+        state[2] = _sha256_add32(state[2], c); state[3] = _sha256_add32(state[3], d)
+        state[4] = _sha256_add32(state[4], e); state[5] = _sha256_add32(state[5], f)
+        state[6] = _sha256_add32(state[6], g); state[7] = _sha256_add32(state[7], h)
+
     var digest = String()
-    for i in range(32):
-        var value = output.unsafe_ptr()[unsafe_offset=i]
-        digest += _HEX[byte=Int(value >> 4)]
-        digest += _HEX[byte=Int(value & 15)]
+    for word_index in range(8):
+        var word = state[word_index]
+        for nibble_index in range(8):
+            var shift = 28 - nibble_index * 4
+            digest += _HEX[byte=Int((word >> UInt32(shift)) & UInt32(15))]
     return digest
 
 
@@ -289,13 +394,13 @@ def _put_raw_bytes(root: String, content: List[UInt8], filename: String, metadat
         var metadata = _reaction_metadata(digest, size_bytes, filename)
         if metadata_json != "": metadata = _reaction_metadata_with_caller(digest, size_bytes, filename, metadata_json)
         return ReactionBlob(digest, size_bytes, filename, metadata)
-    var temp_template = temp_root.__fspath__() + "/reaction-" + digest + "-XXXXXX\0"
-    var temp_c = CStringSlice(temp_template)
+    var temp_template = temp_root.__fspath__() + "/reaction-" + digest + "-XXXXXX"
+    var temp_c = mutable_c_string(temp_template)
     var temp_fd = external_call["mkstemp", c_int](temp_c.unsafe_ptr())
     if temp_fd < 0:
         raise Error("Unable to create temporary reaction blob")
     _ = external_call["close", c_int](temp_fd)
-    var temp = Path(String(temp_template[byte=0:temp_template.byte_length() - 1]))
+    var temp = Path(String(unsafe_from_utf8_ptr=temp_c.unsafe_ptr()))
     temp.write_bytes(content.copy())
     _atomic_rename(temp, target)
     var final_metadata = _reaction_metadata(digest, size_bytes, filename)
