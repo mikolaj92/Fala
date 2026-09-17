@@ -53,8 +53,9 @@ are TOML or canonical JSON; JSON is also the subprocess wire format.
 
 Historical names are not compatibility aliases. Current command/event pairs
 include `impulse.accept`/`impulse.accepted`,
-`association.record`/`association.recorded`, and
-`reaction.record`/`reaction.recorded`. Homeostat commands are
+`association.record`/`association.recorded`,
+`reaction.record`/`reaction.recorded`, and
+`violation.record`/`violation.recorded`. Homeostat commands are
 `homeostat.save`, `homeostat.open`, `homeostat.complete`,
 `homeostat.cancel`, and `homeostat.expire`; terminal process events include
 `process.completed`, `process.cancelled`, and `process.timed_out`. The adapter

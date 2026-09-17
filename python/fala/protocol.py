@@ -17,10 +17,33 @@ PROTOCOL = "fala"
 _REQUEST_KIND = "request"
 _RESULT_KIND = "result"
 _REQUEST_FIELDS = frozenset(
-    {"protocol", "kind", "id", "from", "to", "job", "payload", "config"}
+    {
+        "protocol",
+        "kind",
+        "id",
+        "from",
+        "to",
+        "job",
+        "payload",
+        "config",
+        "contract_id",
+        "contract_version",
+    }
 )
 _RESULT_FIELDS = frozenset(
-    {"protocol", "kind", "id", "from", "to", "job", "ref", "status", "payload"}
+    {
+        "protocol",
+        "kind",
+        "id",
+        "from",
+        "to",
+        "job",
+        "ref",
+        "status",
+        "payload",
+        "contract_id",
+        "contract_version",
+    }
 )
 _STATUSES = frozenset({"ok", "error"})
 
@@ -64,6 +87,31 @@ def _require_text(value: Mapping[str, Any], key: str) -> str:
     return item
 
 
+def _require_contract_pair(value: Mapping[str, Any]) -> tuple[str, str]:
+    contract_id = _require_text(value, "contract_id")
+    contract_version = _require_text(value, "contract_version")
+    return contract_id, contract_version
+
+
+def _contract_body(contract_id: str, contract_version: str) -> dict[str, str]:
+    if not contract_id:
+        raise ProtocolError("fep.required", "/contract_id")
+    if not contract_version:
+        raise ProtocolError("fep.required", "/contract_version")
+    return {"contract_id": contract_id, "contract_version": contract_version}
+
+
+def contract_pair_from_schema(schema: Mapping[str, Any] | str) -> tuple[str, str]:
+    """Address a frozen output schema as the only spoken contract."""
+
+    if isinstance(schema, str):
+        text = json.dumps(json.loads(schema), ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True)
+    else:
+        text = json.dumps(schema, ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return "schema:sha256:" + digest, "1"
+
+
 def _require_object(value: Mapping[str, Any], key: str) -> dict[str, Any]:
     item = value.get(key)
     if not isinstance(item, dict):
@@ -84,6 +132,8 @@ class Request:
     job: str
     payload: Mapping[str, Any]
     config: Mapping[str, Any] = field(default_factory=dict)
+    contract_id: str = ""
+    contract_version: str = ""
     id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -103,6 +153,7 @@ class Request:
             "job": self.job,
             "payload": dict(self.payload),
             "config": dict(self.config),
+            **_contract_body(self.contract_id, self.contract_version),
         }
         object.__setattr__(self, "id", _message_id(body))
 
@@ -119,6 +170,7 @@ class Request:
             "job": self.job,
             "payload": dict(self.payload),
             "config": dict(self.config),
+            **_contract_body(self.contract_id, self.contract_version),
             "id": self.id,
         }
 
@@ -140,6 +192,8 @@ class Result:
     payload: Mapping[str, Any]
     status: str = "ok"
     recipient: str = "parent"
+    contract_id: str = ""
+    contract_version: str = ""
     id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -159,6 +213,7 @@ class Result:
             "ref": self.ref,
             "status": self.status,
             "payload": dict(self.payload),
+            **_contract_body(self.contract_id, self.contract_version),
         }
         object.__setattr__(self, "id", _message_id(body))
 
@@ -176,49 +231,12 @@ class Result:
             "ref": self.ref,
             "status": self.status,
             "payload": dict(self.payload),
+            **_contract_body(self.contract_id, self.contract_version),
             "id": self.id,
         }
 
     def __getitem__(self, key: str) -> Any:
         return self.to_message()[key]
-
-    @classmethod
-    def ok(
-        cls,
-        *,
-        sender: str,
-        job: str,
-        ref: str,
-        payload: Mapping[str, Any],
-        recipient: str = "parent",
-    ) -> Result:
-        return cls(
-            sender=sender,
-            job=job,
-            ref=ref,
-            payload=payload,
-            status="ok",
-            recipient=recipient,
-        )
-
-    @classmethod
-    def error(
-        cls,
-        *,
-        sender: str,
-        job: str,
-        ref: str,
-        payload: Mapping[str, Any],
-        recipient: str = "parent",
-    ) -> Result:
-        return cls(
-            sender=sender,
-            job=job,
-            ref=ref,
-            payload=payload,
-            status="error",
-            recipient=recipient,
-        )
 
     @classmethod
     def from_request(
@@ -235,6 +253,8 @@ class Result:
             ref=request.id,
             payload=payload,
             status=status,
+            contract_id=request.contract_id,
+            contract_version=request.contract_version,
         )
 
 
@@ -258,6 +278,7 @@ def _validated_wire(message: Mapping[str, Any], expected_kind: str | None) -> Me
     recipient = _require_text(value, "to")
     job = _require_text(value, "job")
     payload = _require_object(value, "payload")
+    contract_id, contract_version = _require_contract_pair(value)
     supplied = _require_text(value, "id")
     if kind == _REQUEST_KIND:
         config = _require_object(value, "config")
@@ -271,6 +292,8 @@ def _validated_wire(message: Mapping[str, Any], expected_kind: str | None) -> Me
             job=job,
             payload=payload,
             config=config,
+            contract_id=contract_id,
+            contract_version=contract_version,
         )
         if request.id != supplied:
             raise ProtocolError("fep.digest_mismatch", "/id")
@@ -290,6 +313,8 @@ def _validated_wire(message: Mapping[str, Any], expected_kind: str | None) -> Me
         ref=ref,
         status=status,
         payload=payload,
+        contract_id=contract_id,
+        contract_version=contract_version,
     )
     if result.id != supplied:
         raise ProtocolError("fep.digest_mismatch", "/id")
@@ -333,6 +358,8 @@ def request_message(
     job: str,
     payload: Mapping[str, Any],
     config: Mapping[str, Any] | None = None,
+    contract_id: str = "",
+    contract_version: str = "",
 ) -> Request:
     """Construct a typed request; the request id is derived automatically."""
 
@@ -342,6 +369,8 @@ def request_message(
         job=job,
         payload=payload,
         config={} if config is None else config,
+        contract_id=contract_id,
+        contract_version=contract_version,
     )
 
 
@@ -353,6 +382,8 @@ def result_message(
     payload: Mapping[str, Any],
     status: str = "ok",
     recipient: str = "parent",
+    contract_id: str = "",
+    contract_version: str = "",
 ) -> Result:
     """Construct a typed result; the result id is derived automatically."""
 
@@ -363,7 +394,61 @@ def result_message(
         ref=ref,
         status=status,
         payload=payload,
+        contract_id=contract_id,
+        contract_version=contract_version,
     )
+
+
+def _as_request(request: Mapping[str, Any] | Request | str) -> Request:
+    typed = parse(request, "request") if isinstance(request, str) else validate(request, "request")
+    if not isinstance(typed, Request):
+        raise ProtocolError("fep.unexpected_message_kind", "/kind")
+    return typed
+
+
+def _as_result(result: Mapping[str, Any] | Result | str) -> Result:
+    typed = parse(result, "result") if isinstance(result, str) else validate(result, "result")
+    if not isinstance(typed, Result):
+        raise ProtocolError("fep.unexpected_message_kind", "/kind")
+    return typed
+
+
+def assert_same_contract(
+    request: Mapping[str, Any] | Request | str,
+    result: Mapping[str, Any] | Result | str,
+) -> None:
+    """Fail closed when a result does not echo the request's contract pair."""
+
+    typed_request = _as_request(request)
+    typed_result = _as_result(result)
+    if (
+        typed_request.contract_id != typed_result.contract_id
+        or typed_request.contract_version != typed_result.contract_version
+    ):
+        raise ProtocolError("fep.contract_mismatch", "/contract_id")
+
+
+def assert_answers(
+    request: Mapping[str, Any] | Request | str,
+    result: Mapping[str, Any] | Result | str,
+) -> None:
+    """Fail closed unless ``result`` is a dialogue answer to ``request``.
+
+    Checks identity direction (``from``/``to``), ``job``, ``ref``, and the
+    contract pair. Envelope shape is validated first via :func:`validate`.
+    """
+
+    typed_request = _as_request(request)
+    typed_result = _as_result(result)
+    if typed_result.ref != typed_request.id:
+        raise ProtocolError("fep.ref_mismatch", "/ref")
+    if typed_result.job != typed_request.job:
+        raise ProtocolError("fep.job_mismatch", "/job")
+    if typed_result.sender != typed_request.recipient:
+        raise ProtocolError("fep.direction_mismatch", "/from")
+    if typed_result.recipient != typed_request.sender:
+        raise ProtocolError("fep.direction_mismatch", "/to")
+    assert_same_contract(typed_request, typed_result)
 
 
 def build_result(
@@ -374,10 +459,10 @@ def build_result(
 ) -> Result:
     """Build a typed result that answers ``request``."""
 
-    typed = request if isinstance(request, Request) else validate(request, "request")
-    if not isinstance(typed, Request):
-        raise ProtocolError("fep.unexpected_message_kind", "/kind")
-    return Result.from_request(typed, payload=payload, status=status)
+    typed = _as_request(request)
+    result = Result.from_request(typed, payload=payload, status=status)
+    assert_answers(typed, result)
+    return result
 
 
 def speak(
@@ -407,7 +492,9 @@ __all__ = [
     "PROTOCOL",
     "Request",
     "Result",
+    "assert_answers",
     "canonical",
+    "contract_pair_from_schema",
     "parse",
     "build_result",
     "request_message",

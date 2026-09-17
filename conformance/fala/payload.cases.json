@@ -1,0 +1,63 @@
+[
+  {
+    "name": "echo-text",
+    "layer": "L2",
+    "schema": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {"text": {"type": "string"}}
+    },
+    "payload": {"text": "hello"},
+    "accept": true
+  },
+  {
+    "name": "missing-required",
+    "layer": "L2",
+    "code": "fep.payload_invalid",
+    "pointer": "/payload/text",
+    "schema": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {"text": {"type": "string"}}
+    },
+    "payload": {},
+    "accept": false
+  },
+  {
+    "name": "wrong-type",
+    "layer": "L2",
+    "code": "fep.payload_invalid",
+    "pointer": "/payload/text",
+    "schema": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {"text": {"type": "string"}}
+    },
+    "payload": {"text": 1},
+    "accept": false
+  },
+  {
+    "name": "enum-miss",
+    "layer": "L2",
+    "code": "fep.payload_invalid",
+    "pointer": "/payload/route",
+    "schema": {
+      "type": "object",
+      "required": ["route"],
+      "properties": {"route": {"enum": ["ready", "wait"]}}
+    },
+    "payload": {"route": "other"},
+    "accept": false
+  },
+  {
+    "name": "const-ok",
+    "layer": "L2",
+    "schema": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": {"ok": {"const": true}}
+    },
+    "payload": {"ok": true},
+    "accept": true
+  }
+]

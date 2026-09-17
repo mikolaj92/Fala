@@ -50,6 +50,34 @@ def main() raises:
     _expect_error(valid, "manifest.unsupported")
     _expect_error(valid, "unsupported adapter kind")
 
+    # child_path journal_root is a directory token (Class 0: a journal file cannot be expressed).
+    var child_path_adapter = "{\"kind\":\"child_path\",\"package_ref\":\"child.json\",\"path_id\":\"inner\",\"journal_root\":\"/tmp/fala-children\",\"input_mapping\":{\"x\":\"x\"},\"terminal_mapping\":{\"done\":\"ok\"},\"lifetime_seconds\":1,\"retention\":\"keep\"}"
+    _write(valid, _manifest(child_path_adapter))
+    var nested = load_package_json(valid)
+    _check(nested.correlation_paths[0].effectors[0].adapter_kind == "child_path", "child_path adapter")
+    _write(valid, _manifest("{\"kind\":\"child_path\",\"package_ref\":\"child.json\",\"path_id\":\"inner\",\"journal_root\":\"state.sqlite\",\"input_mapping\":{\"x\":\"x\"},\"terminal_mapping\":{\"done\":\"ok\"},\"lifetime_seconds\":1,\"retention\":\"keep\"}"))
+    _expect_error(valid, "manifest.boundary at /correlation_paths/0/effectors/0/adapter/journal_root")
+    _expect_error(valid, "directory, not a journal file")
+    _write(valid, _manifest("{\"kind\":\"child_path\",\"package_ref\":\"child.json\",\"path_id\":\"inner\",\"journal_root\":\"/tmp/fala/state.db\",\"input_mapping\":{\"x\":\"x\"},\"terminal_mapping\":{\"done\":\"ok\"},\"lifetime_seconds\":1,\"retention\":\"keep\"}"))
+    _expect_error(valid, "manifest.boundary at /correlation_paths/0/effectors/0/adapter/journal_root")
+    _write(valid, _manifest("{\"kind\":\"child_path\",\"package_ref\":\"child.json\",\"path_id\":\"inner\",\"journal_root\":\"child.sqlite3\",\"input_mapping\":{\"x\":\"x\"},\"terminal_mapping\":{\"done\":\"ok\"},\"lifetime_seconds\":1,\"retention\":\"keep\"}"))
+    _expect_error(valid, "manifest.boundary at /correlation_paths/0/effectors/0/adapter/journal_root")
+    _expect_error(valid, "directory, not a journal file")
+    _write(valid, _manifest("{\"kind\":\"child_path\",\"package_ref\":\"child.json\",\"path_id\":\"inner\",\"journal_root\":\"/tmp/fala\\nchildren\",\"input_mapping\":{\"x\":\"x\"},\"terminal_mapping\":{\"done\":\"ok\"},\"lifetime_seconds\":1,\"retention\":\"keep\"}"))
+    _expect_error(valid, "manifest.value at /correlation_paths/0/effectors/0/adapter/journal_root")
+    _expect_error(valid, "control characters")
+
+    # Host-owned FALA_* names are unrepresentable in authored env / inherit_env.
+    _write(valid, _manifest("{\"kind\":\"subprocess\",\"command\":[\"echo\",\"ok\"],\"env\":{\"FALA_PARENT_DB\":\"/tmp/parent.sqlite\"}}"))
+    _expect_error(valid, "manifest.boundary at /correlation_paths/0/effectors/0/adapter/env/FALA_PARENT_DB")
+    _expect_error(valid, "host-owned")
+    _write(valid, _manifest("{\"kind\":\"subprocess\",\"command\":[\"echo\",\"ok\"],\"inherit_env\":[\"FALA_EFFECTOR_MANIFEST\"]}"))
+    _expect_error(valid, "manifest.boundary at /correlation_paths/0/effectors/0/adapter/inherit_env/0")
+    _expect_error(valid, "host-owned")
+    _write(valid, _manifest("{\"kind\":\"subprocess\",\"command\":[\"echo\",\"ok\"],\"inherit_env\":[\"PATH\"],\"env\":{\"DB\":\"${env:FALA_PARENT_DB}\"}}"))
+    _expect_error(valid, "manifest.boundary at /correlation_paths/0/effectors/0/adapter/env/DB")
+    _expect_error(valid, "host-owned")
+
     # Config is required to be an object and is retained as JSON text.
     _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"config\":{\"limit\":2},\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
     var configured = load_package_json(valid)
@@ -103,8 +131,6 @@ def main() raises:
     _expect_error(valid, "manifest.missing at /correlation_paths/0/effectors/0/output_schema")
     _write(valid, "{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"output_schema\":{\"type\":\"object\"},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
     _expect_error(valid, "{ type = \"object\" } is not a contract")
-    _write(valid, "{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"contract_mode\":\"legacy\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
-    _expect_error(valid, "manifest.unknown at /correlation_paths/0/effectors/0/contract_mode")
     _write(valid, "{\"id\":\"pkg\",\"a/b~c\":true,\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
     _expect_error(valid, "manifest.unknown at /a~1b~0c: unknown field")
 

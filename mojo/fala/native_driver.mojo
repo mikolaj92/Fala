@@ -30,6 +30,7 @@ from fala.models import WaitDiagnosticIssue, WaitGraphDiagnostic
 from fala.correlation_advance import advance_correlation
 from fala.json import quote_json_string as _json_quote
 from fala.execution_metadata import validate_usage_json
+from fala.violations import is_contract_violation, violation_payload
 
 
 def _lifecycle_timestamp(supplied: String, realtime_timestamps: Bool) raises -> String:
@@ -331,6 +332,26 @@ def _adapter_error_json(error: AdapterError) -> String:
     payload["code"] = Value(error.code.copy())
     payload["message"] = Value(error.message.copy())
     return to_string(payload^)
+
+
+def _record_contract_violation(
+    mut journal: NativeJournal,
+    process: ProcessRow,
+    actor: String,
+    at: String,
+    error: AdapterError,
+) raises:
+    if not is_contract_violation(error):
+        return
+    _ = journal.record_violation(
+        process.run_id,
+        process.id,
+        process.attempt,
+        actor,
+        at,
+        violation_payload(process.id, process.impulse_id, error),
+        process.impulse_id,
+    )
 
 
 def _row_claimable(process: ProcessRow, now: String) -> Bool:
@@ -992,6 +1013,7 @@ def drive_once(
         attempt=claimed.attempt,
         max_attempts=claimed.max_attempts,
         run_id=claimed.run_id,
+        output_schema_json=claimed.output_schema_json,
     )
     var result = EffectorResult.failure(AdapterError.none())
     if adapter.kind == AdapterKind.subprocess():
@@ -1034,17 +1056,30 @@ def drive_once(
             _validate_result_usage(result)
         except err:
             var invalid_usage = AdapterError("usage_invalid", String(err))
-            var failed_row = journal.fail_process(claimed.run_id, claimed.id, worker_id, _lifecycle_timestamp(now, realtime_timestamps), _adapter_error_json(invalid_usage))
+            var usage_at = _lifecycle_timestamp(now, realtime_timestamps)
+            _record_contract_violation(journal, claimed, worker_id, usage_at, invalid_usage)
+            var failed_row = journal.fail_process(claimed.run_id, claimed.id, worker_id, usage_at, _adapter_error_json(invalid_usage))
             var invalid_rows = List[ProcessRow](); invalid_rows.append(failed_row^)
             return DriverResult(failed=True, ticks=1, process_id=claimed.id, error=invalid_usage, failure_rows=invalid_rows^)
-        _ = journal.complete_process(
-            claimed.run_id,
-            claimed.id,
-            worker_id,
-            _lifecycle_timestamp(now, realtime_timestamps),
-            _success_output_json(result),
-            "{}",
-        )
+        var completed_at = _lifecycle_timestamp(now, realtime_timestamps)
+        try:
+            _ = journal.complete_process(
+                claimed.run_id,
+                claimed.id,
+                worker_id,
+                completed_at,
+                _success_output_json(result),
+                "{}",
+            )
+        except err:
+            var detail = String(err)
+            if detail.find("output does not match output_schema_json") < 0:
+                raise err^
+            var schema_error = AdapterError("output_schema_invalid", detail)
+            _record_contract_violation(journal, claimed, worker_id, completed_at, schema_error)
+            var schema_row = journal.fail_process(claimed.run_id, claimed.id, worker_id, completed_at, _adapter_error_json(schema_error))
+            var schema_rows = List[ProcessRow](); schema_rows.append(schema_row^)
+            return DriverResult(failed=True, ticks=1, process_id=claimed.id, error=schema_error, failure_rows=schema_rows^)
         return DriverResult(completed=True, ticks=1, process_id=claimed.id)
 
     var failure = result.error.copy()
@@ -1055,6 +1090,7 @@ def drive_once(
     )
     var error_json = _adapter_error_json(failure)
     var transition_at = _lifecycle_timestamp(now, realtime_timestamps)
+    _record_contract_violation(journal, claimed, worker_id, transition_at, failure)
     var stored: ProcessRow
     # Retry transitions are immediately claimable at the transition timestamp,
     # matching reference retry_process and bounded-drive semantics.

@@ -196,7 +196,9 @@ def output(request_json: String, payload_json: String, status: String = "ok") ra
     var recipient = request.object()["from"].string()
     var job = request.object()["job"].string()
     var request_id = request.object()["id"].string()
-    return result_message(sender, recipient, job, request_id, payload_json, status)
+    var contract_id = request.object()["contract_id"].string()
+    var contract_version = request.object()["contract_version"].string()
+    return result_message(sender, recipient, job, request_id, payload_json, status, contract_id, contract_version)
 
 
 def serialize_result(result_json: String) raises -> String:

@@ -9,7 +9,13 @@ from std.os import getenv, makedirs, remove
 from .json import canonical_json_text, quote_json_string as _json_quoted
 from .native_process_host import ProcessHost, start as start_native_process
 from .reactions import sha256_bytes
-from .effector_protocol import request_message, result_message, validate_message
+from .effector_protocol import (
+    assert_same_contract,
+    contract_pair_from_schema,
+    request_message,
+    result_message,
+    validate_message,
+)
 
 struct AdapterKind(Copyable, Movable):
     var value: String
@@ -398,8 +404,9 @@ struct EffectorRequest(Copyable, Movable):
     var attempt: Int
     var max_attempts: Int
     var context_json: String
+    var output_schema_json: String
 
-    def __init__(out self, process_id: String, adapter: AdapterSpec, impulse_id: String = "", input_json: String = "{}", config_json: String = "{}", work_dir: String = "", attempt: Int = 1, max_attempts: Int = 1, run_id: String = "", context_json: String = "null"):
+    def __init__(out self, process_id: String, adapter: AdapterSpec, impulse_id: String = "", input_json: String = "{}", config_json: String = "{}", work_dir: String = "", attempt: Int = 1, max_attempts: Int = 1, run_id: String = "", context_json: String = "null", output_schema_json: String = "{}"):
         self.process_id = process_id
         self.run_id = run_id
         self.adapter = adapter.copy()
@@ -410,6 +417,7 @@ struct EffectorRequest(Copyable, Movable):
         self.attempt = attempt
         self.max_attempts = max_attempts
         self.context_json = context_json
+        self.output_schema_json = output_schema_json
 
 @fieldwise_init
 struct EffectorResult(Copyable, Movable):
@@ -549,7 +557,16 @@ def adapter_manifest_json(request: EffectorRequest) raises -> String:
     if request.context_json != "" and request.context_json != "null":
         merged["context"] = Value(parse_string=request.context_json)
     merged["adapter"] = Value(parse_string=_adapter_metadata_json(request.adapter))
-    return request_message("parent", request.process_id, request.process_id, request.input_json, to_string(Value(merged^)))
+    var contract = contract_pair_from_schema(request.output_schema_json)
+    return request_message(
+        "parent",
+        request.process_id,
+        request.process_id,
+        request.input_json,
+        to_string(Value(merged^)),
+        contract.id,
+        contract.version,
+    )
 def adapter_result_json(result: EffectorResult) raises -> String:
     var output_error = _validate_json_text(result.output_json, "result.output_json")
     if not output_error.is_ok(): raise Error(output_error.message)
@@ -737,6 +754,12 @@ def collect_subprocess(mut session: SubprocessSession, wait_status: Int) -> Effe
         # operator-facing streams only. Redacting result.json corrupts digests/URIs
         # (e.g. sha256 fragments that collide with short env values) — #120.
         var output = validate_message(output_text, "result")
+        var manifest_path = String("")
+        for pair in session.environment.items():
+            if pair.key == "FALA_EFFECTOR_MANIFEST":
+                manifest_path = pair.value
+        if manifest_path != "":
+            assert_same_contract(Path(manifest_path).read_text(), output)
         var metadata = "{\"pid\":" + String(pid) + ",\"signal\":" + String(signal) + "}"
         var success_result = EffectorResult(success=True, output_json=output, stdout=stdout, stderr=stderr, returncode=exit_code, waiting=False, homeostat_id="", metadata_json=metadata, error=AdapterError.none())
         return success_result^
@@ -789,8 +812,20 @@ def execute_native_function(request: EffectorRequest, registry: NativeFunctionRe
     try:
         var payload = canonical_json_text(invocation.output_json)
         var request_json = adapter_manifest_json(request)
-        var request_id = Value(parse_string=request_json).object()["id"].string()
-        output = result_message(request.process_id, "parent", request.process_id, request_id, payload)
+        var request_value = Value(parse_string=request_json)
+        var request_id = request_value.object()["id"].string()
+        var contract_id = request_value.object()["contract_id"].string()
+        var contract_version = request_value.object()["contract_version"].string()
+        output = result_message(
+            request.process_id,
+            "parent",
+            request.process_id,
+            request_id,
+            payload,
+            "ok",
+            contract_id,
+            contract_version,
+        )
     except err:
         return EffectorResult.failure(AdapterError.native_function_failed(request.adapter.`ref`, String(err)))
     return EffectorResult(success=True, output_json=output, stdout="", stderr="", returncode=0, waiting=False, homeostat_id="", metadata_json="{\"registry_ref\":" + _json_quoted(request.adapter.`ref`) + "}", error=AdapterError())

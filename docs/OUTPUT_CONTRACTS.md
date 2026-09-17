@@ -81,10 +81,9 @@ evidence that an agent's claims are true.
 Current behavior:
 
 - Every effector declares a non-empty `output_schema` that names the answer.
-  `{ type = "object" }` is not a contract. `output_contract_ref` may label it;
-  it does not replace it.
+  `{ type = "object" }` is not a contract.
 - The parent does not inspect the child. A result that does not match the
-  declared schema is rejected. There is no side exit and no `contract_mode`.
+  declared schema is rejected. There is no side exit.
 - Graph preflight reports missing finite output-variant coverage before any
   adapter runs (`coverage_guaranteed` / `unverified`).
 - Rehearsal fails closed when a finite declared variant has no fixture.

@@ -1,5 +1,5 @@
 from std.pathlib import Path
-from fala.effector_protocol import request_message, result_message, validate_message
+from fala.effector_protocol import contract_pair_from_schema, request_message, result_message, validate_message
 from fala import AdapterSpec, EffectorRequest, execute_subprocess
 
 
@@ -8,15 +8,16 @@ def expect(value: Bool, message: String) raises:
 
 
 def main() raises:
-    var one = request_message("parent", "review", "review", "{\"b\":2,\"a\":1}")
-    var two = request_message("parent", "review", "review", "{ \"a\": 1, \"b\": 2 }")
+    var contract = contract_pair_from_schema("{}")
+    var one = request_message("parent", "review", "review", "{\"b\":2,\"a\":1}", "{}", contract.id, contract.version)
+    var two = request_message("parent", "review", "review", "{ \"a\": 1, \"b\": 2 }", "{}", contract.id, contract.version)
     expect(one == two and validate_message(one, "request") == one, "canonical stable request ID")
     Path("/tmp/fep-request.json").write_text(one)
     expect(validate_message(Path("/tmp/fep-request.json").read_text()) == one, "filesystem and direct transport match")
     var request_id_start = one.find("\"id\":\"") + 6
     var request_id_end = one.find("\"", request_id_start)
     var request_id = String(one[byte=request_id_start:request_id_end])
-    var result = result_message("review", "parent", "review", request_id, "{\"ok\":true}")
+    var result = result_message("review", "parent", "review", request_id, "{\"ok\":true}", "ok", contract.id, contract.version)
     expect(validate_message(result, "result") == result and result.find("\"ref\":\"" + request_id) >= 0, "result points at exactly one request")
     var bad = False
     try: _ = validate_message(result.replace("\"protocol\":\"fala\"", "\"protocol\":\"unknown\""))
@@ -43,4 +44,9 @@ def main() raises:
     adapter.env["FALA_RESULT"] = "  " + result + "  "
     var accepted = execute_subprocess(EffectorRequest("protocol-result", adapter, "impulse", "{}", "{}"))
     expect(accepted.success and accepted.output_json == result, "valid result is canonical and unredacted")
+    # Matching request is stamped from the same empty schema; a foreign contract fails closed.
+    var foreign = result_message("review", "parent", "review", request_id, "{\"ok\":true}", "ok", "echo-output", "1")
+    adapter.env["FALA_RESULT"] = foreign
+    var mismatched = execute_subprocess(EffectorRequest("protocol-result", adapter, "impulse", "{}", "{}"))
+    expect(not mismatched.success and mismatched.error.code == "adapter_invalid_result" and mismatched.error.message.find("contract_mismatch") >= 0, "contract handshake fails closed")
     print("effector protocol smoke ok")

@@ -1,0 +1,42 @@
+[
+  {
+    "name": "ref-mismatch",
+    "layer": "L1",
+    "code": "fep.ref_mismatch",
+    "pointer": "/ref",
+    "request": {"config":{},"contract_id":"echo-output","contract_version":"1","from":"parent","id":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","job":"echo","kind":"request","payload":{"text":"hello"},"protocol":"fala","to":"echo"},
+    "result": {"contract_id":"echo-output","contract_version":"1","from":"echo","id":"msg:sha256:66037e0a2eea669f5fb9486eee461125e7b9b8c0f7a65261a03c40ded1a86270","job":"echo","kind":"result","payload":{"text":"hello"},"protocol":"fala","ref":"msg:sha256:0000000000000000000000000000000000000000000000000000000000000000","status":"ok","to":"parent"}
+  },
+  {
+    "name": "job-mismatch",
+    "layer": "L1",
+    "code": "fep.job_mismatch",
+    "pointer": "/job",
+    "request": {"config":{},"contract_id":"echo-output","contract_version":"1","from":"parent","id":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","job":"echo","kind":"request","payload":{"text":"hello"},"protocol":"fala","to":"echo"},
+    "result": {"contract_id":"echo-output","contract_version":"1","from":"echo","id":"msg:sha256:edd2bb41a77b13037656a967146b38ab5e92920d8f565e5f47a6ceb9e2a9815a","job":"other","kind":"result","payload":{"text":"hello"},"protocol":"fala","ref":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","status":"ok","to":"parent"}
+  },
+  {
+    "name": "direction-from-mismatch",
+    "layer": "L1",
+    "code": "fep.direction_mismatch",
+    "pointer": "/from",
+    "request": {"config":{},"contract_id":"echo-output","contract_version":"1","from":"parent","id":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","job":"echo","kind":"request","payload":{"text":"hello"},"protocol":"fala","to":"echo"},
+    "result": {"contract_id":"echo-output","contract_version":"1","from":"parent","id":"msg:sha256:e7eb1326db984092d1487f3fec05923b49a3e7960ca88c9ce55ec34e94224c6b","job":"echo","kind":"result","payload":{"text":"hello"},"protocol":"fala","ref":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","status":"ok","to":"parent"}
+  },
+  {
+    "name": "direction-to-mismatch",
+    "layer": "L1",
+    "code": "fep.direction_mismatch",
+    "pointer": "/to",
+    "request": {"config":{},"contract_id":"echo-output","contract_version":"1","from":"parent","id":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","job":"echo","kind":"request","payload":{"text":"hello"},"protocol":"fala","to":"echo"},
+    "result": {"contract_id":"echo-output","contract_version":"1","from":"echo","id":"msg:sha256:2a792edbe4f0f2d034dd35dfad2f22d8d63906b921eff033a75765c408241cdc","job":"echo","kind":"result","payload":{"text":"hello"},"protocol":"fala","ref":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","status":"ok","to":"echo"}
+  },
+  {
+    "name": "contract-mismatch",
+    "layer": "L1",
+    "code": "fep.contract_mismatch",
+    "pointer": "/contract_id",
+    "request": {"config":{},"contract_id":"echo-output","contract_version":"1","from":"parent","id":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","job":"echo","kind":"request","payload":{"text":"hello"},"protocol":"fala","to":"echo"},
+    "result": {"contract_id":"other-output","contract_version":"1","from":"echo","id":"msg:sha256:6db5905df8555fd7e113c8e294324f8cebad5dbbb18367af0183520db4631ae5","job":"echo","kind":"result","payload":{"text":"hello"},"protocol":"fala","ref":"msg:sha256:80e9dac5718ca9316cb3726cb8be5b4f0c533a899e4cf982f26b63a4632c18a8","status":"ok","to":"parent"}
+  }
+]

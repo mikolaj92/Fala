@@ -15,10 +15,10 @@ from .status import RunStatus, can_transition_run
 struct RunLifecycleRecord(Copyable, Movable):
     """Complete run row projection for schema-backed lifecycle metadata.
 
-    ``RunRow`` remains the compatibility projection returned by existing
-    lifecycle mutations.  This record exposes the nullable run columns without
-    changing those callers or inventing persistence outside the runs table.
-    Empty strings represent SQL NULL optional columns.
+    ``RunRow`` is the projection returned by lifecycle mutations. This record
+    exposes the nullable run columns without changing those callers or inventing
+    persistence outside the runs table. Empty strings represent SQL NULL
+    optional columns.
     """
     var id: String
     var status: String

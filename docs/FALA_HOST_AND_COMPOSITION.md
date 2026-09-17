@@ -99,8 +99,9 @@ fala graph diff --before old.fala-package.toml --after new.fala-package.toml
 
 All four commands emit stable JSON. Expansion materializes bounded templates;
 fingerprints cover that canonical topology plus contracts and policies; diff
-classifies nodes, edges, conditions, terminals, capabilities, adapters, retry,
-timeout, and runtime-policy changes. Validation reports source JSON
+classifies nodes, edges, conditions, terminals, capabilities, adapters
+(including `child_path` specs and subprocess command/env), output contracts,
+config, retry, timeout, and runtime-policy changes. Validation reports source JSON
 pointer/TOML paths. These authoring operations only read package files: they do
 not open journals or execute adapters.
 

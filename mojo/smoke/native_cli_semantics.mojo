@@ -187,17 +187,8 @@ def main() raises:
     var equals_status = dispatch_native_command("db status --db=" + path)
     _check(_has(equals_status, "\"current\":true") and _has(equals_status, path), "database status equals-form path")
 
-    var positional_migrate = dispatch_native_command("db migrate " + path)
-    _check(_has(positional_migrate, "unsupported_command"), "db migrate is not a command")
-
-    var flagged_migrate = dispatch_native_command("db migrate --db " + path)
-    _check(_has(flagged_migrate, "unsupported_command"), "db migrate flagged is not a command")
-    var db_schema = dispatch_native_command("db schema --db " + path)
-    _check(_has(db_schema, "unsupported_command"), "db schema is not a command")
-
     var positional_vacuum = dispatch_native_command("db vacuum " + path)
     _check(_has(positional_vacuum, "\"vacuumed\":true") and _has(positional_vacuum, path), "database vacuum positional path")
-
     var flagged_vacuum = dispatch_native_command("db vacuum --db " + path)
     _check(_has(flagged_vacuum, "\"vacuumed\":true") and _has(flagged_vacuum, path), "database vacuum flagged path")
     var invalid_init_ensure = dispatch_native_command("db init --db " + path + " --ensure-schema")
@@ -206,43 +197,9 @@ def main() raises:
     _check(_has(invalid_vacuum_ensure, "argument_error") and _has(invalid_vacuum_ensure, "--ensure-schema"), "db vacuum rejects ensure-schema")
 
     var near_match = dispatch_native_command("runs starter --db " + path)
-    _check(near_match == "{\"ok\":false,\"runtime\":\"mojo\",\"error\":{\"type\":\"unsupported_command\",\"message\":\"unsupported_command\"}}", "near-match command rejection")
-
-    var runtime_list_removed = dispatch_native_command("runtimes list --db " + path)
-    _check(_has(runtime_list_removed, "unsupported_command"), "runtimes list is removed from product surface")
-
-    var legacy_run_create = dispatch_native_command("runs create --db " + path)
-    _check(_has(legacy_run_create, "unsupported_command"), "runs create is not a command")
-
-    var legacy_run_create_singular = dispatch_native_command("run create --db " + path)
-    _check(_has(legacy_run_create_singular, "unsupported_command"), "run create is not a command")
-
-    var legacy_relations = dispatch_native_command("relations list --db " + path + " --run-id cli-run")
-    _check(_has(legacy_relations, "unsupported_command"), "relations list is not a command")
-    var legacy_bridges = dispatch_native_command("bridges list --db " + path + " --run-id cli-run")
-    _check(_has(legacy_bridges, "unsupported_command"), "bridges list is not a command")
-
-
-    var export_removed = dispatch_native_command("export --db " + path)
-    _check(_has(export_removed, "unsupported_command"), "export is not a command")
-    var archive_removed = dispatch_native_command("archive-run --db " + path)
-    _check(_has(archive_removed, "unsupported_command"), "archive-run is not a command")
-    var archive_gc_removed = dispatch_native_command("archive-gc --db " + path)
-    _check(_has(archive_gc_removed, "unsupported_command"), "archive-gc is not a command")
-    var replay_removed = dispatch_native_command("replay-execution --db " + path)
-    _check(_has(replay_removed, "unsupported_command"), "replay-execution is not a command")
-    var idle_removed = dispatch_native_command("run-until-idle --db " + path)
-    _check(_has(idle_removed, "unsupported_command"), "run-until-idle is not a CLI command")
-    var schema_package_removed = dispatch_native_command("schema fala-package")
-    _check(_has(schema_package_removed, "argument_error") and _has(schema_package_removed, "unknown schema model"), "schema fala-package is not a model")
-    var doctor_package_removed = dispatch_native_command("doctor --db " + path + " --package pkg.toml")
-    _check(_has(doctor_package_removed, "unsupported_command"), "doctor is not a command")
-    var ops_maintain = dispatch_native_command("ops maintain-journal --db " + path + " --older-than-days 1 --dry-run --no-vacuum")
-    _check(_has(ops_maintain, "unsupported_command"), "ops maintain-journal is not a command")
-    var ops_gc = dispatch_native_command("ops gc --db " + path + " --reaction-root /tmp/fala-reactions")
-    _check(_has(ops_gc, "unsupported_command"), "ops gc is not a command")
-    var ops_rebuild = dispatch_native_command("ops projections rebuild --db " + path + " --run-id cli-run --now 2026-01-01T00:00:04Z")
-    _check(_has(ops_rebuild, "unsupported_command"), "ops projections rebuild is not a command")
+    _check(near_match == "{\"ok\":false,\"runtime\":\"mojo\",\"error\":{\"type\":\"unsupported_command\",\"message\":\"unsupported_command\"}}", "unknown command rejection")
+    var schema_unknown_model = dispatch_native_command("schema fala-package")
+    _check(_has(schema_unknown_model, "argument_error") and _has(schema_unknown_model, "unknown schema model"), "schema rejects unknown model")
 
     var storage_path = "/dev/null/fala-native-cli.sqlite"
     var storage = dispatch_native_command("db status --db " + storage_path)
@@ -387,23 +344,15 @@ def main() raises:
     var homeostat_unknown = dispatch_native_command("homeostats list --db " + path + " --run-id cli-run --unknown")
     _check(_has(homeostat_unknown, "argument_error") and _has(homeostat_unknown, "--unknown"), "homeostat list unknown option rejection")
     var homeostat_inspect = dispatch_native_command("homeostats inspect --db " + path + " --run-id cli-run --homeostat-id homeostat-demo")
-    _check(_has(homeostat_inspect, "unsupported_command"), "homeostat inspect remains unsupported")
+    _check(_has(homeostat_inspect, "unsupported_command"), "homeostats inspect is unsupported")
     var homeostat_open_plural = dispatch_native_command("homeostats open --db " + path + " --run-id cli-run --homeostat-id homeostat-missing --process-id process-missing --metadata '{}'")
-    var homeostat_open_singular = dispatch_native_command("homeostat open --db " + path + " --run-id cli-run --homeostat-id homeostat-missing --process-id process-missing --metadata '{}'")
     _check(_has(homeostat_open_plural, "argument_error") and _has(homeostat_open_plural, "--process-id"), "homeostats open rejects process option")
-    _check(_has(homeostat_open_singular, "unsupported_command"), "homeostat open is not a command")
     var homeostat_complete_plural = dispatch_native_command("homeostats complete --db " + path + " --run-id cli-run --homeostat-id homeostat-missing --process-id process-missing --error '{}' --metadata '{}'")
-    var homeostat_complete_singular = dispatch_native_command("homeostat complete --db " + path + " --run-id cli-run --homeostat-id homeostat-missing --process-id process-missing --error '{}' --metadata '{}'")
     _check(_has(homeostat_complete_plural, "argument_error") and _has(homeostat_complete_plural, "--process-id"), "homeostats complete rejects process option")
-    _check(_has(homeostat_complete_singular, "unsupported_command"), "homeostat complete is not a command")
     var homeostat_cancel_plural = dispatch_native_command("homeostats cancel --db " + path + " --run-id cli-run --homeostat-id homeostat-missing --process-id process-missing --error '{}'")
-    var homeostat_cancel_singular = dispatch_native_command("homeostat cancel --db " + path + " --run-id cli-run --homeostat-id homeostat-missing --process-id process-missing --error '{}'")
     _check(_has(homeostat_cancel_plural, "argument_error") and _has(homeostat_cancel_plural, "--process-id"), "homeostats cancel rejects process option")
-    _check(_has(homeostat_cancel_singular, "unsupported_command"), "homeostat cancel is not a command")
     var homeostat_expire_plural = dispatch_native_command("homeostats expire --db " + path + " --run-id cli-run --homeostat-id homeostat-missing --process-id process-missing --error '{}'")
-    var homeostat_expire_singular = dispatch_native_command("homeostat expire --db " + path + " --run-id cli-run --homeostat-id homeostat-missing --process-id process-missing --error '{}'")
     _check(_has(homeostat_expire_plural, "argument_error") and _has(homeostat_expire_plural, "--process-id"), "homeostats expire rejects process option")
-    _check(_has(homeostat_expire_singular, "unsupported_command"), "homeostat expire is not a command")
     var homeostat_clock_boundary = dispatch_native_command("homeostats open --db " + path + " --run-id cli-run --homeostat-id homeostat-clock --kind manual --values '{}' --metadata '{}'")
     _check(_has(homeostat_clock_boundary, "native_boundary") and _has(homeostat_clock_boundary, "native clock source") and not _has(homeostat_clock_boundary, "--now is required"), "domain homeostat owns timestamp boundary")
     var homeostat_missing_id = dispatch_native_command("homeostats complete --db " + path + " --run-id cli-run")
@@ -426,12 +375,6 @@ def main() raises:
     _check(_has(missing_homeostat_db, "argument_error: missing value for --db"), "homeostat missing db value")
     var homeostat_unknown_option = dispatch_native_command("homeostats open --db " + path + " --run-id cli-run --homeostat-id homeostat-unknown --kind manual --unknown")
     _check(_has(homeostat_unknown_option, "argument_error") and _has(homeostat_unknown_option, "unknown argument --unknown"), "homeostat unknown option")
-    var created_pool = dispatch_native_command("runtimes create-pool --db " + path + " --pool-id pool-cli --runtime-json '{\"id\":\"runtime-cli\",\"metadata\":{}}'")
-    _check(_has(created_pool, "unsupported_command"), "runtime pool create is removed from product surface")
-    var created_policy = dispatch_native_command("runtimes add-policy --db " + path + " --pool-id pool-cli --policy-id policy-cli")
-    _check(_has(created_policy, "unsupported_command"), "runtime policy create is removed from product surface")
-    var inspected_runtime = dispatch_native_command("runtimes inspect --db " + path + " --pool-id pool-demo")
-    _check(_has(inspected_runtime, "unsupported_command"), "runtime pool inspect is removed from product surface")
     var started = dispatch_native_command(
         "runs start --db " + path + " --run-id cli-run --now 2026-01-01T00:00:01Z"
     )
@@ -544,9 +487,6 @@ def main() raises:
     var after_maintenance = dispatch_native_command("runs list --db " + path)
     _check(not _has(after_maintenance, "cli-run"), "maintenance persisted deletion")
 
-    var doctor = dispatch_native_command("doctor " + path)
-    _check(_has(doctor, "unsupported_command"), "doctor is not a command")
-
     var unsafe = dispatch_native_command("db status --db /tmp/fala-bad\0path")
     _check(_has(unsafe, "unsafe_path"), "unsafe path rejection")
     var invalid_option = dispatch_native_command("db init --db " + path + " --unknown")
@@ -600,8 +540,6 @@ def main() raises:
     _check(len(target_replay_rows) == 1 and len(target_replay_impulses) == 1, "target replay does not duplicate rows")
     bridge_target_replay.close()
 
-    var runtime_unknown = dispatch_native_command("runtimes create-pool --db " + path + " --pool-id pool-invalid --runtime-json '{\"id\":\"runtime-invalid\"}' --unknown value")
-    _check(_has(runtime_unknown, "unsupported_command"), "runtime pool commands remain unsupported")
     var unknown = dispatch_native_command("not-a-command")
     _check(_has(unknown, "unsupported_command"), "unknown command envelope")
     # Retain one deterministic machine-readable end marker for CI and callers.

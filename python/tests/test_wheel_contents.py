@@ -24,6 +24,9 @@ def test_wheel_contains_emberjson_compatibility_patch(tmp_path: Path) -> None:
         names = wheel.namelist()
         assert "fala/py.typed" in names
         assert "fala/patches/emberjson-mojo-1.0.patch" in names
+        assert "fala/conformance/request.valid.json" in names
+        assert "fala/conformance/dialogue.negative.json" in names
+        assert "fala/conformance/payload.cases.json" in names
         assert any(name.startswith("fala/mojo/fala/") and name.endswith(".mojo") for name in names)
         assert "patches/emberjson-mojo-1.0.patch" not in names
         assert not any(name == "mojo/" or name.startswith("mojo/") for name in names)

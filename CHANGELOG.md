@@ -1,5 +1,36 @@
 ## Unreleased
 
+- One public native host surface: object-returning entry points only. Dual
+  `*_json` exports are gone; JSON stays an internal serialization boundary.
+  Results are built with `Result.from_request` / `build_result` only — no
+  `Result.ok` / `Result.error`. Public dialogue check is `assert_answers`
+  (`assert_same_contract` remains an internal helper). Drop `docs/talks`.
+- Required FEP `contract_id` + `contract_version` on every request and result.
+  Parent stamps the pair from the frozen `output_schema`
+  (`schema:sha256:<digest>` / `1`). A result must echo the request pair
+  (`fep.contract_mismatch`). Omitting the pair is `fep.required` (#290).
+- L1 dialogue checks: `assert_answers` / `fala.conformance.check_answer`
+  require matching `ref`, `job`, and flipped `from`/`to` in addition to the
+  contract pair. Shared corpus adds `dialogue.negative.json` and partial L2
+  `payload.cases.json`. Sibling packages run `fala.conformance.run_conformance`
+  (or `check_message` / `check_result`) without a journal; the wheel ships
+  `conformance/fala` under `fala/conformance`.
+- Remove dead `output_contract_ref` (label without resolution). Authoring it is
+  `manifest.unknown`. `graph_diff` now reports `adapter_changed` for `child_path`
+  / subprocess identity, plus `contract_changed` and `config_changed`.
+- Drop tombstone tests and comments for removed surfaces (`contract_mode`,
+  old CLI verbs, singular `homeostat`, runtime pools). Unknown fields/commands
+  stay fail-closed via the current generic checks only.
+- Load-time `child_path`: `journal_root` is a directory, not a journal file;
+  host-owned `FALA_*` environment names cannot be authored (#289).
+- Durable contract blame: `violation.record` / `violation.recorded` on the
+  existing event tables when a child lies (`adapter_invalid_result`,
+  missing `result.json`, invalid usage, or payload outside `output_schema`).
+  A schema miss fails the process instead of raising out of `drive_once`.
+  Hosts with typed path terminals keep `path_result` null on that failure and
+  surface `output_schema_invalid` on `effector_results` rather than
+  `path.terminal.missing`. Schema-v6 is unchanged (#291).
+
 ## 0.9.0
 
 **One current Fala envelope and schema. No leftover public aliases, no migration path.**
@@ -22,7 +53,7 @@
 - One verb per command: no `ops` prefix, no `doctor`, no `db migrate`/`db schema`.
   JSON flags are `--payload`/`--input`/`--metadata`/`--error`/`--values`. Public
   process reads expose `input`/`output`/`error`/`output_schema` only.
-- Public Python host no longer exports `host_drive_json`; native JSON helpers stay
+- Public Python host exposes object entry points only; native JSON helpers stay
   as an internal serialization boundary.
 - Rename `fala.fep` to `fala.protocol` and `FEPError` to `ProtocolError`. Wire
   codes stay `fep.*`. Examples live under `examples/effectors`.

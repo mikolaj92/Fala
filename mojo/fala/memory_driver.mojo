@@ -15,7 +15,7 @@ from fala.adapters import (
     execute_native_function,
 )
 from fala.correlation import CorrelationPathSpec
-from fala.effector_protocol import result_message
+from fala.effector_protocol import contract_pair_from_schema, result_message
 from fala.memory_runtime import MemoryRuntime
 
 
@@ -74,7 +74,8 @@ struct MemoryDriver(Movable):
         if effector_id in self.handlers:
             payload = self.handlers[effector_id]
         var sender = effector_id if effector_id != "" else process_id
-        return result_message(sender, "parent", sender, process_id, payload)
+        var contract = contract_pair_from_schema("{}")
+        return result_message(sender, "parent", sender, process_id, payload, "ok", contract.id, contract.version)
 
     def drive_until_idle(
         mut self,

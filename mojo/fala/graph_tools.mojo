@@ -56,6 +56,28 @@ def _same_strings(a: List[String], b: List[String]) -> Bool:
     return True
 
 
+def _same_env(a: Dict[String, String], b: Dict[String, String]) -> Bool:
+    if len(a) != len(b): return False
+    for pair in a.items():
+        var found = False
+        for other in b.items():
+            if other.key == pair.key and other.value == pair.value: found = True
+        if not found: return False
+    return True
+
+
+def _same_adapter(old: PackageEffector, new: PackageEffector) -> Bool:
+    return (
+        old.adapter_kind == new.adapter_kind
+        and old.adapter_ref == new.adapter_ref
+        and old.adapter_cwd == new.adapter_cwd
+        and old.child_path_json == new.child_path_json
+        and _same_strings(old.adapter_command, new.adapter_command)
+        and _same_strings(old.adapter_inherit_env, new.adapter_inherit_env)
+        and _same_env(old.adapter_env, new.adapter_env)
+    )
+
+
 def _find_terminal(path: PackageCorrelationPath, id: String) -> Int:
     for i in range(len(path.terminals)):
         if path.terminals[i].id == id: return i
@@ -86,7 +108,9 @@ def graph_diff(before_path: String, after_path: String) raises -> String:
             if old.capability != new.capability: _change(changes, first, "capability_changed", pointer + "/capability")
             if old.retry_policy != new.retry_policy: _change(changes, first, "retry_changed", pointer + "/retry_policy")
             if old.timeout_seconds != new.timeout_seconds: _change(changes, first, "timeout_changed", pointer + "/timeout_seconds")
-            if old.adapter_kind != new.adapter_kind or old.adapter_ref != new.adapter_ref: _change(changes, first, "adapter_changed", pointer + "/adapter")
+            if not _same_adapter(old, new): _change(changes, first, "adapter_changed", pointer + "/adapter")
+            if old.output_schema_json != new.output_schema_json: _change(changes, first, "contract_changed", pointer + "/output_schema")
+            if old.config_json != new.config_json: _change(changes, first, "config_changed", pointer + "/config")
         for new in new_path.effectors:
             if _find_effector(old_path, new.id) < 0: _change(changes, first, "node_added", "/correlation_paths/" + old_path.id + "/effectors/" + new.id)
         for old in old_path.terminals:

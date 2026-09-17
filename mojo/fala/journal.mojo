@@ -1285,6 +1285,24 @@ struct NativeJournal(Movable):
     def fail_process(mut self, run_id: String, process_id: String, actor: String, at: String, error_json: String = "{}") raises -> ProcessRow:
         return self._transition_process(run_id,process_id,"failed",actor,at,"{}",error_json)
 
+    def record_violation(
+        mut self,
+        run_id: String,
+        process_id: String,
+        attempt: Int,
+        actor: String,
+        at: String,
+        payload: String,
+        impulse_id: String = "",
+    ) raises -> CommandSubmission:
+        """Persist one attributed contract lie. Lifecycle stays on process.fail."""
+        if process_id == "" or actor == "" or at == "" or payload == "" or attempt < 1:
+            raise Error(String(SQLiteError(code=1, message="journal: violation.record requires process, actor, timestamp, payload, and attempt")))
+        var key = "violation.record:" + process_id + ":" + String(attempt)
+        var events = List[EventInput]()
+        events.append(EventInput(key + ":event", "violation.recorded", payload, at, impulse_id, process_id, 1, actor, "", ""))
+        return self.submit_command(run_id, key, "violation.record", key, payload, at, events^, actor)
+
     def retry_process(mut self, run_id: String, process_id: String, actor: String, at: String, available_at: String, error_json: String = "{}") raises -> ProcessRow:
         return self._transition_process(run_id,process_id,"retry_wait",actor,at,"{}",error_json,available_at)
 

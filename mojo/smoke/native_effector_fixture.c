@@ -92,6 +92,8 @@ int main(int argc, char **argv) {
     char *to;
     char *job;
     char *ref;
+    char *contract_id;
+    char *contract_version;
     const char *payload;
     char *body;
     char *digest;
@@ -126,25 +128,28 @@ int main(int argc, char **argv) {
     to = json_string(manifest, "from");
     job = json_string(manifest, "job");
     ref = json_string(manifest, "id");
+    contract_id = json_string(manifest, "contract_id");
+    contract_version = json_string(manifest, "contract_version");
     free(manifest);
-    if (from == NULL || to == NULL || job == NULL || ref == NULL) {
-        free(from); free(to); free(job); free(ref); fclose(result); return 12;
+    if (from == NULL || to == NULL || job == NULL || ref == NULL || contract_id == NULL || contract_version == NULL) {
+        free(from); free(to); free(job); free(ref); free(contract_id); free(contract_version); fclose(result); return 12;
     }
     payload = (payload_env != NULL && payload_env[0] != '\0') ? payload_env : "{\"ok\":true}";
+    /* Canonical key order matches FEP (sorted keys, no id). */
     body_n = snprintf(NULL, 0,
-        "{\"from\":\"%s\",\"job\":\"%s\",\"kind\":\"result\",\"payload\":%s,\"protocol\":\"fala\",\"ref\":\"%s\",\"status\":\"ok\",\"to\":\"%s\"}",
-        from, job, payload, ref, to);
+        "{\"contract_id\":\"%s\",\"contract_version\":\"%s\",\"from\":\"%s\",\"job\":\"%s\",\"kind\":\"result\",\"payload\":%s,\"protocol\":\"fala\",\"ref\":\"%s\",\"status\":\"ok\",\"to\":\"%s\"}",
+        contract_id, contract_version, from, job, payload, ref, to);
     body = malloc((size_t)body_n + 1);
-    if (body == NULL) { free(from); free(to); free(job); free(ref); fclose(result); return 13; }
+    if (body == NULL) { free(from); free(to); free(job); free(ref); free(contract_id); free(contract_version); fclose(result); return 13; }
     (void)snprintf(body, (size_t)body_n + 1,
-        "{\"from\":\"%s\",\"job\":\"%s\",\"kind\":\"result\",\"payload\":%s,\"protocol\":\"fala\",\"ref\":\"%s\",\"status\":\"ok\",\"to\":\"%s\"}",
-        from, job, payload, ref, to);
+        "{\"contract_id\":\"%s\",\"contract_version\":\"%s\",\"from\":\"%s\",\"job\":\"%s\",\"kind\":\"result\",\"payload\":%s,\"protocol\":\"fala\",\"ref\":\"%s\",\"status\":\"ok\",\"to\":\"%s\"}",
+        contract_id, contract_version, from, job, payload, ref, to);
     digest = hex_sha256(body);
-    if (digest == NULL) { free(body); free(from); free(to); free(job); free(ref); fclose(result); return 14; }
+    if (digest == NULL) { free(body); free(from); free(to); free(job); free(ref); free(contract_id); free(contract_version); fclose(result); return 14; }
     (void)fprintf(result,
-        "{\"from\":\"%s\",\"id\":\"msg:sha256:%s\",\"job\":\"%s\",\"kind\":\"result\",\"payload\":%s,\"protocol\":\"fala\",\"ref\":\"%s\",\"status\":\"ok\",\"to\":\"%s\"}\n",
-        from, digest, job, payload, ref, to);
-    free(digest); free(body); free(from); free(to); free(job); free(ref);
+        "{\"contract_id\":\"%s\",\"contract_version\":\"%s\",\"from\":\"%s\",\"id\":\"msg:sha256:%s\",\"job\":\"%s\",\"kind\":\"result\",\"payload\":%s,\"protocol\":\"fala\",\"ref\":\"%s\",\"status\":\"ok\",\"to\":\"%s\"}\n",
+        contract_id, contract_version, from, digest, job, payload, ref, to);
+    free(digest); free(body); free(from); free(to); free(job); free(ref); free(contract_id); free(contract_version);
     (void)fclose(result);
     return 0;
 }

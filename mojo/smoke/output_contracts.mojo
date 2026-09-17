@@ -1,7 +1,7 @@
 """Shared domain payload corpus: journal and conduction must agree."""
 from emberjson import Value
 from fala.journal import validate_json_schema_value, NativeJournal
-from fala.effector_protocol import result_message
+from fala.effector_protocol import contract_pair_from_schema, result_message
 from fala.correlation_advance import _validate_projected_schema, _project_output
 from fala.correlation_persistence import _project_output as persisted_projection, _validate_output_schema
 from fala.native_package import _json_schema, validate_package_json_text, serialize_correlation_path_json
@@ -58,7 +58,8 @@ def main() raises:
     _ = journal.create_run("contract", "created", "{}", "2026-01-01T00:00:00Z")
     _ = journal.schedule_process("contract", "source", "native_function", "2026-01-01T00:00:00Z", output_schema_json=schema)
     _ = journal.claim_process("contract", "source", "test", "2026-01-01T00:00:01Z", "2099-01-01T00:00:00Z")
-    var message = result_message("source", "parent", "source", "msg:request", '{"route":"ready","artifact":"local.txt"}')
+    var contract = contract_pair_from_schema("{}")
+    var message = result_message("source", "parent", "source", "msg:request", '{"route":"ready","artifact":"local.txt"}', "ok", contract.id, contract.version)
     var fep_projected = _project_output(Value(parse_string=message), schema)
     _validate_projected_schema(fep_projected, Value(parse_string=schema), "/fep-projection")
     var fep_persisted = persisted_projection(Value(parse_string=message), schema)

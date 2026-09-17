@@ -3,8 +3,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 import fala
 
 
@@ -47,6 +45,16 @@ def test_package_enforces_domain_output_before_consumer(tmp_path):
     assert marker.read_text() == "called"
     assert result["path_result"]["values"] == {"accepted": "local.txt"}
     marker.unlink()
-    with pytest.raises(Exception, match="oneOf"):
-        fala.host_run_package(db_path=tmp_path / "bad.sqlite", package_path=package, path_id="ship", inputs={"payload": {"route": "ready", "reason": "wrong variant"}})
+    bad = fala.host_run_package(
+        db_path=tmp_path / "bad.sqlite",
+        package_path=package,
+        path_id="ship",
+        inputs={"payload": {"route": "ready", "reason": "wrong variant"}},
+    )
+    assert bad["run_status"] == "failed"
+    assert bad["path_result"] is None
+    source_error = bad["effector_results"]["source"]["error"]
+    assert source_error["code"] == "output_schema_invalid"
+    assert "oneOf" in source_error["message"]
+    assert bad["effector_results"]["consumer"]["status"] == "skipped"
     assert not marker.exists()

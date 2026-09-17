@@ -22,7 +22,7 @@ def _protocol_organ(values: str, extra: str = "") -> str:
     )
 
 
-def test_native_extension_exports_python_objects_and_keeps_json_compatibility() -> None:
+def test_native_extension_exports_object_host_api() -> None:
     import json
 
     from fala._build import ensure_native
@@ -39,11 +39,12 @@ def test_native_extension_exports_python_objects_and_keeps_json_compatibility() 
         }
     )
     result = native.host_drive(request)
-    serialized = native.host_drive_json(request)
     assert isinstance(result, dict)
     assert result["ok"] is True
-    assert isinstance(serialized, str)
-    assert json.loads(serialized) == result
+    names = set(dir(native))
+    assert "host_drive" in names
+    assert "host_drive_json" not in names
+    assert "delete_terminal_run_json" not in names
 
 
 def test_host_drive_memory_e2e() -> None:
@@ -1771,7 +1772,7 @@ def _ensure_schema(db_path) -> None:
 
     def _call() -> None:
         try:
-            native.delete_terminal_run_json(
+            native.delete_terminal_run(
                 json.dumps({"db_path": str(db.resolve()), "run_id": "__schema_probe__"})
             )
         except Exception as exc:

@@ -546,7 +546,7 @@ struct FileReactionStore:
             index += 1
         return result^
     def list_blob_info(self) raises -> List[ReactionBlobInfo]:
-        """Return verified blob metadata without changing legacy list_blobs output."""
+        """Return verified blob metadata for each stored digest."""
         var result = List[ReactionBlobInfo]()
         for location in self.list_blobs():
             var path = Path(location)

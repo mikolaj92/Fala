@@ -1,6 +1,8 @@
 """Python extension: thin in-process Fala *host* surface.
 
-Not a full runtime re-export. JSON helpers cover:
+Object-returning entry points only. Internal JSON helpers stay private and feed
+those wrappers. Surfaces:
+
 - memory path: create_run → impulse → instantiate path → drive_until_idle
 - durable path: open_sqlite probe, package drive, terminal-run deletion
 
@@ -523,9 +525,17 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     effector_results += "}"
     var path_result = String("null")
     if len(package_path_spec.terminals) != 0:
+        # A completed run must land on exactly one declared terminal. A failed
+        # run (schema lie, adapter failure, …) keeps path_result null and
+        # surfaces blame on effector_results / violation.recorded instead of
+        # impersonating path.terminal.missing.
+        var require_terminal = result.run_status == "completed"
         try:
-            var selected = select_path_terminal(package_path_spec, procs, path_id)
-            path_result = "{\"terminal\":" + _quote_json(selected.id) + ",\"values\":" + selected.values_json + ",\"evidence\":" + selected.evidence_json + ",\"path_digest\":" + _quote_json(correlation_path_digest) + "}"
+            var selected = select_path_terminal(
+                package_path_spec, procs, path_id, require_match=require_terminal
+            )
+            if selected.id != "":
+                path_result = "{\"terminal\":" + _quote_json(selected.id) + ",\"values\":" + selected.values_json + ",\"evidence\":" + selected.evidence_json + ",\"path_digest\":" + _quote_json(correlation_path_digest) + "}"
         except err:
             journal.close()
             raise Error("fala.host_run_package_json: " + String(err))
@@ -977,20 +987,13 @@ def PyInit__native() abi("C") -> PythonObject:
     initialize_runtime()
     try:
         var m = PythonModuleBuilder("_native")
-        # Object-first Python API. JSON-named entries remain as a compatible,
-        # explicit serialization boundary for low-level consumers.
+        # One public host surface: object-returning entry points.
         m.def_function[host_drive]("host_drive")
         m.def_function[host_run_package]("host_run_package")
         m.def_function[delete_terminal_run_object]("delete_terminal_run")
         m.def_function[maintain_journal_object]("maintain_journal")
         m.def_function[recover_incomplete]("recover_incomplete")
-        m.def_function[host_drive_json]("host_drive_json")
         m.def_function[open_sqlite_journal]("open_sqlite_journal")
-        m.def_function[open_sqlite_journal_json]("open_sqlite_journal_json")
-        m.def_function[host_run_package_json]("host_run_package_json")
-        m.def_function[delete_terminal_run_json]("delete_terminal_run_json")
-        m.def_function[maintain_journal_json]("maintain_journal_json")
-        m.def_function[recover_incomplete_json]("recover_incomplete_json")
         m.def_function[ensure_journal_object]("ensure_journal")
         m.def_function[upsert_run_metadata_object]("upsert_run_metadata")
         m.def_function[transition_run_object]("transition_run")
@@ -998,13 +1001,6 @@ def PyInit__native() abi("C") -> PythonObject:
         m.def_function[complete_waiting_process_object]("complete_waiting_process")
         m.def_function[record_process_start_object]("record_process_start")
         m.def_function[record_process_finish_object]("record_process_finish")
-        m.def_function[ensure_journal_json]("ensure_journal_json")
-        m.def_function[upsert_run_metadata_json]("upsert_run_metadata_json")
-        m.def_function[transition_run_json]("transition_run_json")
-        m.def_function[upsert_process_json]("upsert_process_json")
-        m.def_function[complete_waiting_process_json]("complete_waiting_process_json")
-        m.def_function[record_process_start_json]("record_process_start_json")
-        m.def_function[record_process_finish_json]("record_process_finish_json")
         return m.finalize()
     except e:
         abort(String("fala._native init failed: ", e))

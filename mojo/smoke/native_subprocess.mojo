@@ -5,7 +5,7 @@ from std.os import remove
 from std.pathlib import Path, cwd
 from fala import AdapterSpec, EffectorRequest, NativeFunctionRegistry, execute_subprocess
 from fala.reactions import sha256_bytes
-from fala.effector_protocol import result_message
+from fala.effector_protocol import contract_pair_from_schema, result_message
 from fala.journal import NativeJournal
 from fala.native_driver import drive_once
 
@@ -48,7 +48,8 @@ def main() raises:
         command.append("success")
         var adapter = AdapterSpec.subprocess(command)
         adapter.env["SECRET"] = "top-secret"
-        var fala_result = result_message("subprocess-smoke", "parent", "subprocess-smoke", "msg:fixture", "{\"ok\":true,\"secret\":\"top-secret\"}")
+        var empty_contract = contract_pair_from_schema("{}")
+        var fala_result = result_message("subprocess-smoke", "parent", "subprocess-smoke", "msg:fixture", "{\"ok\":true,\"secret\":\"top-secret\"}", "ok", empty_contract.id, empty_contract.version)
         adapter.env["FALA_RESULT"] = fala_result
         var request = EffectorRequest("subprocess-smoke", adapter, "impulse", "{\"value\":1}", "{}", root, run_id="run-smoke")
         var result = execute_subprocess(request)
@@ -288,8 +289,111 @@ def main() raises:
             fail_drive.failed and fail_done.status == "failed",
             "unicode failure durable terminal",
         )
+        _check(
+            len(durable.list_events("subprocess-durable", "", "retry", -1, 0, "violation.recorded")) == 0
+                and len(durable.list_events("subprocess-durable", "", "timeout", -1, 0, "violation.recorded")) == 0,
+            "exit and timeout are not contract violations",
+        )
 
-        print("native subprocess smoke ok: manifest result redaction stale-output nonzero timeout unicode")
+        # A child that writes a non-envelope result.json lied. process.failed is
+        # the lifecycle fact; violation.recorded is the homeostat's memory of why.
+        var lie_command = List[String]()
+        lie_command.append("/bin/sh")
+        lie_command.append("-c")
+        lie_command.append("printf '%s' '{\"payload\":{}}' > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\"")
+        var lie_adapter = AdapterSpec.subprocess(lie_command)
+        var lie_row = durable.schedule_process(
+            "subprocess-durable", "liar", "native", "2026-01-01T00:00:12Z", "{}", "{}", "", 1, 1,
+            "2026-01-01T00:00:12Z",
+        )
+        var lie_drive = drive_once(
+            durable, lie_row, lie_adapter, "subprocess-worker",
+            "2026-01-01T00:00:13Z", "2026-01-01T00:01:00Z", NativeFunctionRegistry(),
+        )
+        var lie_done = durable.get_process("subprocess-durable", "liar")
+        var lie_events = durable.list_events("subprocess-durable", "", "liar", -1, 0, "violation.recorded")
+        var lie_commands = durable.list_commands("subprocess-durable", "violation.record")
+        _check(
+            lie_drive.failed
+                and lie_drive.error.code == "adapter_invalid_result"
+                and lie_done.status == "failed"
+                and len(lie_events) == 1
+                and lie_events[0].event_type == "violation.recorded"
+                and lie_events[0].process_id == "liar"
+                and lie_events[0].payload.find("\"blame\":\"effector\"") >= 0
+                and lie_events[0].payload.find("\"process_id\":\"liar\"") >= 0
+                and len(lie_commands) == 1
+                and lie_commands[0].command_type == "violation.record",
+            "lying subprocess leaves violation.recorded with effector blame",
+        )
+        var lie_replay = durable.record_violation(
+            "subprocess-durable", "liar", lie_done.attempt, "subprocess-worker", "2026-01-01T00:00:13Z",
+            lie_events[0].payload, lie_done.impulse_id,
+        )
+        _check(
+            lie_replay.replayed
+                and len(durable.list_events("subprocess-durable", "", "liar", -1, 0, "violation.recorded")) == 1,
+            "violation record is idempotent per attempt",
+        )
+
+        # Exit zero without result.json is still a contract lie (missing output).
+        var missing_command = List[String]()
+        missing_command.append("/bin/sh")
+        missing_command.append("-c")
+        missing_command.append("true")
+        var missing_adapter = AdapterSpec.subprocess(missing_command)
+        var missing_row = durable.schedule_process(
+            "subprocess-durable", "missing-output", "native", "2026-01-01T00:00:13.5Z", "{}", "{}", "", 1, 1,
+            "2026-01-01T00:00:13.5Z",
+        )
+        var missing_drive = drive_once(
+            durable, missing_row, missing_adapter, "subprocess-worker",
+            "2026-01-01T00:00:14Z", "2026-01-01T00:01:00Z", NativeFunctionRegistry(),
+        )
+        var missing_events = durable.list_events("subprocess-durable", "", "missing-output", -1, 0, "violation.recorded")
+        _check(
+            missing_drive.failed
+                and missing_drive.error.code == "adapter_missing_output"
+                and len(missing_events) == 1
+                and missing_events[0].payload.find("\"blame\":\"effector\"") >= 0
+                and missing_events[0].payload.find("\"code\":\"adapter_missing_output\"") >= 0
+                and missing_events[0].payload.find("\"expected\":\"result.json\"") >= 0,
+            "missing result.json leaves violation.recorded",
+        )
+
+        # Valid envelope, payload outside the written contract: fail closed with blame,
+        # do not leave the lease running because complete_process raised.
+        var schema_contract = contract_pair_from_schema("{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}}")
+        var schema_result = result_message("schema-liar", "parent", "schema-liar", "msg:fixture", "{\"text\":\"hello\"}", "ok", schema_contract.id, schema_contract.version)
+        var schema_command = List[String]()
+        schema_command.append("/bin/sh")
+        schema_command.append("-c")
+        schema_command.append("printf '%s' \"$FALA_RESULT\" > \"$FALA_EFFECTOR_OUTPUT_DIR/result.json\"")
+        var schema_adapter = AdapterSpec.subprocess(schema_command)
+        schema_adapter.env["FALA_RESULT"] = schema_result
+        var schema_row = durable.schedule_process(
+            "subprocess-durable", "schema-liar", "native", "2026-01-01T00:00:14Z", "{}", "{}", "", 1, 1,
+            "2026-01-01T00:00:14Z",
+            "{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}}",
+        )
+        var schema_drive = drive_once(
+            durable, schema_row, schema_adapter, "subprocess-worker",
+            "2026-01-01T00:00:15Z", "2026-01-01T00:01:00Z", NativeFunctionRegistry(),
+        )
+        var schema_done = durable.get_process("subprocess-durable", "schema-liar")
+        var schema_events = durable.list_events("subprocess-durable", "", "schema-liar", -1, 0, "violation.recorded")
+        _check(
+            schema_drive.failed
+                and schema_drive.error.code == "output_schema_invalid"
+                and schema_done.status == "failed"
+                and schema_done.lease_owner == ""
+                and len(schema_events) == 1
+                and schema_events[0].payload.find("\"blame\":\"effector\"") >= 0
+                and schema_events[0].payload.find("\"code\":\"output_schema_invalid\"") >= 0,
+            "payload outside output_schema is a recorded violation, not a raised lease",
+        )
+
+        print("native subprocess smoke ok: manifest result redaction stale-output nonzero timeout unicode violation")
     except err:
         if root != "": _cleanup(root)
         if attempt_one_root != "": _cleanup(attempt_one_root)

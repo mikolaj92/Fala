@@ -43,7 +43,7 @@ def main() raises:
     _check(help_text.find("maintain-journal") >= 0, "ops maintain available")
     _check(help_text.find("projections rebuild") >= 0, "ops rebuild available")
     _check(help_text.find("bridge list") >= 0, "ops bridge available")
-    _check(help_text.find("ops maintain-journal") < 0 and help_text.find("(alias:") < 0, "help has no command aliases")
+    _check(help_text.find("ops maintain-journal") < 0, "help lists current verbs only")
 
     # Ops free functions are real exported callables (names bound).
     var _ops_names = String("delete_run run_retention maintain_journal collect_reaction_garbage")

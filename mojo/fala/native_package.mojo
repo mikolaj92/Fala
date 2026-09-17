@@ -53,7 +53,6 @@ struct PackageEffector(Copyable, Movable):
     var retry_policy: String
     var output_schema_json: String
     var output_schema_declared: Bool
-    var output_contract_ref: String
     var when_json: String
     var context_policy: String
     var context_source: String
@@ -63,7 +62,7 @@ struct PackageEffector(Copyable, Movable):
     var description: String
     var tags: List[String]
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = "", output_schema_json: String = "{}", output_schema_declared: Bool = False, output_contract_ref: String = ""):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = "", output_schema_json: String = "{}", output_schema_declared: Bool = False):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
@@ -78,7 +77,6 @@ struct PackageEffector(Copyable, Movable):
         self.retry_policy = retry_policy
         self.output_schema_json = output_schema_json
         self.output_schema_declared = output_schema_declared
-        self.output_contract_ref = output_contract_ref
         self.when_json = when_json
         self.context_policy = context_policy
         self.context_source = context_source
@@ -205,6 +203,39 @@ def _base_env_key(value: String) -> Bool:
     return value == "PATH" or value == "HOME" or value == "TMPDIR" or value == "LANG" or value == "LC_ALL" or value == "TZ"
 
 
+def _looks_like_journal_file(root: String) -> Bool:
+    """True when the last path segment names a journal file, not a directory."""
+    var token = String("")
+    var start = 0
+    var i = 0
+    while i <= root.byte_length():
+        var at_end = i == root.byte_length()
+        var ch = String(root[byte=i]) if not at_end else String("/")
+        if at_end or ch == "/":
+            var segment = String(root[byte=start:i])
+            if segment != "" and segment != ".":
+                token = segment
+            start = i + 1
+        i += 1
+    return token.endswith(".sqlite") or token.endswith(".sqlite3") or token.endswith(".db")
+
+
+def _is_host_boundary_env(name: String) -> Bool:
+    """Names the host injects at the process boundary; packages cannot author them."""
+    return name == "FALA_EFFECTOR_MANIFEST" or name == "FALA_EFFECTOR_INPUT_DIR" or name == "FALA_EFFECTOR_OUTPUT_DIR" or name == "FALA_EFFECTOR_ROOT" or name == "FALA_CHILD_PATH_SPEC" or name == "FALA_PARENT_DB" or name == "FALA_PARENT_RUN_ID" or name == "FALA_PARENT_PROCESS_ID"
+
+
+def _assert_journal_root(root: String, path: String) raises:
+    var i = 0
+    while i < root.byte_length():
+        var ch = String(root[byte=i])
+        if ch == "\0" or ch == "\n" or ch == "\r" or ch == "\t" or ch == "\v" or ch == "\f" or ch == "\b" or ch == "\a" or ch == "\x1b":
+            _error("manifest.value", path, "journal_root must not contain control characters")
+        i += 1
+    if _looks_like_journal_file(root):
+        _error("manifest.boundary", path, "child_path journal_root is a directory, not a journal file")
+
+
 def _contains(values: List[String], wanted: String) -> Bool:
     for value in values:
         if value == wanted: return True
@@ -233,6 +264,8 @@ def _validate_env_interpolation(value: String, path: String, inherited: List[Str
         _error("manifest.value", path, "environment interpolation must be exactly ${env:NAME}")
     var key = String(value[byte=6:value.byte_length() - 1])
     _ = _env_name(key, path)
+    if _is_host_boundary_env(key):
+        _error("manifest.boundary", path, "host-owned environment key cannot be authored")
     if not _contains(inherited, key) and not _base_env_key(key):
         _error("manifest.value", path, "environment interpolation is not allowlisted: " + key)
 
@@ -587,6 +620,8 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
         for name in inherit_env:
             var name_path = path + "/inherit_env/" + String(inherit_index)
             _ = _env_name(name, name_path)
+            if _is_host_boundary_env(name):
+                _error("manifest.boundary", name_path, "host-owned environment key cannot be authored")
             var prior_index = 0
             for prior in inherit_env:
                 if prior_index >= inherit_index: break
@@ -602,6 +637,8 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
         for pair in item.object().items():
             var env_path = path + "/env/" + _pointer_token(pair.key)
             _ = _env_name(pair.key, env_path)
+            if _is_host_boundary_env(pair.key):
+                _error("manifest.boundary", env_path, "host-owned environment key cannot be authored")
             var env_value = _string(pair.value.copy(), env_path)
             _validate_env_interpolation(env_value, env_path, inherit_env)
             env[pair.key] = env_value^
@@ -611,6 +648,7 @@ def _adapter(value: Value, path: String, manifest_parent: String) raises -> _Ada
         var package_ref = _nonempty(_required_nonnull(value, "package_ref", path), path + "/package_ref")
         var child_path_id = _runtime_id(_required_nonnull(value, "path_id", path), path + "/path_id", "child path id")
         var journal_root = _nonempty(_required_nonnull(value, "journal_root", path), path + "/journal_root")
+        _assert_journal_root(journal_root, path + "/journal_root")
         var input_mapping = _required_nonnull(value, "input_mapping", path)
         var terminal_mapping = _required_nonnull(value, "terminal_mapping", path)
         if not input_mapping.is_object(): _error("manifest.type", path + "/input_mapping", "expected object")
@@ -648,7 +686,7 @@ def _capability_secret_handles(capabilities: Value, capability: String) raises -
 
 def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), capability_contracts: Value = Value()) raises -> PackageEffector:
     if not value.is_object(): _error("manifest.type", path, "expected effector object")
-    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation", "output_schema", "output_contract_ref"], path)
+    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation", "output_schema"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "effector id")
     var conduction = List[String]()
     var item = _optional(value, "conduction")
@@ -733,9 +771,6 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
         if compensation_capability == capability: _error("manifest.value", path + "/compensation/capability", "compensation capability must differ from original capability")
         if len(capabilities) != 0 and not _contains(capabilities, compensation_capability): _error("manifest.dangling_reference", path + "/compensation/capability", "unknown compensation capability")
         compensation_json = canonical_json_text(to_string(item^))
-    var output_contract_ref = String("")
-    item = _optional(value, "output_contract_ref")
-    if not item.is_null(): output_contract_ref = _nonempty(item^, path + "/output_contract_ref")
     var output_schema_json = String("{}")
     var output_schema_declared = False
     if "output_schema" in value.object():
@@ -752,7 +787,7 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json, output_schema_json=output_schema_json, output_schema_declared=output_schema_declared, output_contract_ref=output_contract_ref)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json, output_schema_json=output_schema_json, output_schema_declared=output_schema_declared)
 def _replace_all(source: String, needle: String, replacement: String) -> String:
     var result = String("")
     var rest = source
@@ -957,7 +992,6 @@ def _effector_json(effector: PackageEffector) raises -> Value:
     var result = Object(capacity=14)
     result["id"] = Value(effector.id)
     if effector.output_schema_declared: result["output_schema"] = _json_value(effector.output_schema_json)
-    if effector.output_contract_ref != "": result["output_contract_ref"] = Value(effector.output_contract_ref)
     if effector.title != "": result["title"] = Value(effector.title)
     if effector.description != "": result["description"] = Value(effector.description)
     if len(effector.tags) != 0:

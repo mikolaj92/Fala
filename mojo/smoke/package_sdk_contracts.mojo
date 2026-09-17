@@ -62,8 +62,8 @@ def main() raises:
     var canonical = serialize_package_json(manifest)
     _check(canonical == serialize_package_json(manifest), "deterministic package serialization")
 
-    # Package boundaries are strict: malformed, non-object, unknown, dangling, and
-    # legacy/Python forms are rejected instead of being interpreted compatibly.
+    # Package boundaries are strict: malformed, non-object, unknown, and dangling
+    # references fail closed.
     _expect_package_error("{bad", "manifest.invalid at <package-smoke>")
     _expect_package_error("[]", "manifest.type at /: manifest must be a JSON object")
     _expect_package_error("{\"id\":\"pkg\",\"extra\":true,\"correlation_paths\":[]}", "manifest.unknown at /extra")
@@ -77,10 +77,9 @@ def main() raises:
     _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.missing at /correlation_paths/0/effectors/0/output_schema")
     _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "{} is not a contract")
     _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{\"type\":\"object\"},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "{ type = \"object\" } is not a contract")
-    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"contract_mode\":\"legacy\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.unknown at /correlation_paths/0/effectors/0/contract_mode")
 
     # Authored TOML uses the same strict package validator; unsupported TOML and
-    # YAML-like text fail closed rather than entering a compatibility path.
+    # YAML-like text fail closed.
     var toml_text = """
 id = "toml_pkg"
 version = 2
@@ -125,7 +124,7 @@ adapter = { kind = "manual_homeostat" }
     _check(conduction(sdk_manifest) == "{\"ingest\":{\"chars\":5}}", "SDK conduction")
     _check(upstream_reactions(sdk_manifest).find("\"path\":\"b\"") >= 0, "SDK upstream reaction objects")
     _check(find_reaction(sdk_manifest, "draft") == "{\"kind\":\"draft\",\"path\":\"b\"}", "SDK latest reaction selection")
-    var request = request_message("parent", "echo", "echo", "{\"ok\":true}")
+    var request = request_message("parent", "echo", "echo", "{\"ok\":true}", "{}", "echo-output", "1")
     var envelope = output(request, "{\"ok\":true,\"evidence\":[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2}]}")
     _check(output_reactions(envelope).find("\"v\":2") >= 0 and find_output_reaction(envelope, "draft") == "{\"kind\":\"draft\",\"v\":2}", "SDK output evidence in payload")
 

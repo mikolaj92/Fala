@@ -568,11 +568,11 @@ def main() raises:
         past_lease_failed = True
     var past_lease_row = journal.get_process("run-semantics", "past-claim-lease")
     _check(past_lease_failed and past_lease_row.status == "ready" and past_lease_row.attempt == 0 and past_lease_row.lease_owner == "", "past claim lease rejected atomically")
-    # A legacy failed row retaining a lease cannot be retried by a different actor.
+    # A failed row that still holds a lease cannot be retried by a different actor.
     _ = journal.schedule_process("run-semantics", "failed-held-lease", "native", "2026-01-01T00:00:28Z", "{}", "{}", "", 1, 2, "2026-01-01T00:00:28Z")
     var failed_lease_claim = journal.claim_process("run-semantics", "failed-held-lease", "failed-worker", "2026-01-01T00:00:28Z", "2026-01-01T00:01:00Z")
     var failed_lease_fixture = journal.db.query("UPDATE processes SET status='failed', error_json=?, updated_at=? WHERE run_id=? AND id=?")
-    failed_lease_fixture.bind_text(1, "{\"reason\":\"legacy\"}"); failed_lease_fixture.bind_text(2, "2026-01-01T00:00:29Z"); failed_lease_fixture.bind_text(3, "run-semantics"); failed_lease_fixture.bind_text(4, "failed-held-lease"); _ = failed_lease_fixture.step()
+    failed_lease_fixture.bind_text(1, "{\"reason\":\"held\"}"); failed_lease_fixture.bind_text(2, "2026-01-01T00:00:29Z"); failed_lease_fixture.bind_text(3, "run-semantics"); failed_lease_fixture.bind_text(4, "failed-held-lease"); _ = failed_lease_fixture.step()
     var failed_lease_before = journal.get_process("run-semantics", "failed-held-lease")
     var failed_retry_rejected = False
     try:

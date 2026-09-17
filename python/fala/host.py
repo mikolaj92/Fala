@@ -99,10 +99,10 @@ def host_drive(
         request["impulse"] = dict(impulse)
     if outputs is not None:
         request["outputs"] = dict(outputs)
-    return _host_drive_json(request)
+    return _call_host_drive(request)
 
 
-def _host_drive_json(request: str | Mapping[str, Any]) -> dict[str, Any]:
+def _call_host_drive(request: str | Mapping[str, Any]) -> dict[str, Any]:
     """Serialize a memory-path request and call the native object host."""
     if isinstance(request, Mapping):
         payload = json.dumps(request)
@@ -129,7 +129,7 @@ class MemoryHost:
     """Python-side builder that collapses into one ``host_drive`` call.
 
     Keeps the public surface close to open → accept → drive without holding a
-    live Mojo runtime across calls (no dual session state).
+    live Mojo runtime across calls.
     """
 
     def __init__(
