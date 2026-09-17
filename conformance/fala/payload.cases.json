@@ -59,5 +59,104 @@
     },
     "payload": {"ok": true},
     "accept": true
+  },
+  {
+    "name": "oneof-exactly-one",
+    "layer": "L2",
+    "schema": {
+      "oneOf": [
+        {"type": "integer"},
+        {"type": "string"}
+      ]
+    },
+    "payload": 1,
+    "accept": true
+  },
+  {
+    "name": "oneof-ambiguous",
+    "layer": "L2",
+    "code": "fep.payload_invalid",
+    "pointer": "/payload",
+    "schema": {
+      "oneOf": [
+        {"type": "integer"},
+        {"type": "number"}
+      ]
+    },
+    "payload": 1,
+    "accept": false
+  },
+  {
+    "name": "allof-rejected-branch",
+    "layer": "L2",
+    "code": "fep.payload_invalid",
+    "pointer": "/payload",
+    "schema": {
+      "allOf": [
+        {"type": "integer"},
+        {"minimum": 2}
+      ]
+    },
+    "payload": 1,
+    "accept": false
+  },
+  {
+    "name": "unicode-codepoint-length-ok",
+    "layer": "L2",
+    "schema": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1
+    },
+    "payload": "😀",
+    "accept": true
+  },
+  {
+    "name": "unicode-codepoint-minlength-reject",
+    "layer": "L2",
+    "code": "fep.payload_invalid",
+    "pointer": "/payload",
+    "schema": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 4
+    },
+    "payload": "😀",
+    "accept": false
+  },
+  {
+    "name": "unicode-codepoint-maxlength-ok",
+    "layer": "L2",
+    "schema": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 4
+    },
+    "payload": "żółć",
+    "accept": true
+  },
+  {
+    "name": "additional-properties-ok",
+    "layer": "L2",
+    "schema": {
+      "type": "object",
+      "properties": {"text": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "payload": {"text": "hello"},
+    "accept": true
+  },
+  {
+    "name": "additional-properties-reject",
+    "layer": "L2",
+    "code": "fep.payload_invalid",
+    "pointer": "/payload/extra",
+    "schema": {
+      "type": "object",
+      "properties": {"text": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "payload": {"text": "hello", "extra": true},
+    "accept": false
   }
 ]

@@ -288,7 +288,7 @@ struct RunLifecycle(Movable):
             raise Error(String(SQLiteError(code=1, message="Unknown run status: " + status)))
         var cid = command_id if command_id != "" else idempotency_key
         var eid = cid + ":event"
-        var replayed = False
+        var replayed: Bool
         self.journal.db.begin_immediate()
         try:
             var prior = self.journal.db.query("SELECT id FROM runtime_commands WHERE run_id=? AND idempotency_key=?")
@@ -316,7 +316,7 @@ struct RunLifecycle(Movable):
                 else: event.bind_text(4, actor)
                 event.bind_text(5, create_payload); event.bind_text(6, created_at); _ = event.step()
             self.journal.db.commit()
-        except err:
+        except _:
             self.journal.db.rollback()
             raise Error(String(SQLiteError(code=1, message="run creation failed")))
         var stored = self.get_record(run_id)

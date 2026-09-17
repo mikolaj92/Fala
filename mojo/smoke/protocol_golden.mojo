@@ -1,5 +1,7 @@
 from std.pathlib import Path
+from emberjson import Value
 from fala.effector_protocol import assert_answers, request_message, result_message, validate_message
+from fala.journal import validate_json_schema_value
 
 
 def expect(value: Bool, message: String) raises:
@@ -70,4 +72,19 @@ def main() raises:
     except err:
         job_mismatch = String(err).find("fep.job_mismatch") >= 0
     expect(job_mismatch, "result job must equal request job")
+    var payload_cases = Value(parse_string=Path("../../conformance/fala/payload.cases.json").read_text())
+    expect(payload_cases.is_array() and len(payload_cases.array()) > 0, "L2 corpus is a nonempty array")
+    for index in range(len(payload_cases.array())):
+        var vector = payload_cases.array()[index].copy()
+        var name = vector.object()["name"].string()
+        var accept = vector.object()["accept"].bool()
+        var rejected = False
+        try:
+            validate_json_schema_value(vector.object()["payload"].copy(), vector.object()["schema"].copy(), "/payload")
+        except:
+            rejected = True
+        if accept:
+            expect(not rejected, "L2 valid rejected: " + name)
+        else:
+            expect(rejected, "L2 invalid accepted: " + name)
     print("protocol golden smoke ok")

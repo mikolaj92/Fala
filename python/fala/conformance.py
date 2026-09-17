@@ -86,7 +86,7 @@ def dialogue_negatives() -> list[dict[str, Any]]:
 
 
 def payload_cases() -> list[dict[str, Any]]:
-    """L2 payload/schema cases (partial subset for unit checks)."""
+    """L2 payload/schema cases for the supported schema subset."""
 
     return list(_load_json("payload.cases.json"))
 
@@ -169,9 +169,10 @@ _SUPPORTED_SCHEMA_KEYS = frozenset(
 
 
 def check_payload(payload: Any, schema: Mapping[str, Any], *, path: str = "/payload") -> None:
-    """L2 (partial): validate ``payload`` against a supported schema subset.
+    """L2: validate ``payload`` against the supported schema subset.
 
-    Full journal evaluation remains authoritative for production hosts. This
+    String ``minLength`` / ``maxLength`` count Unicode code points. Full
+    journal evaluation remains authoritative for production hosts. This
     checker is for effector packages that need local fail-closed unit checks
     without opening a Fala journal.
     """

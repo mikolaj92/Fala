@@ -75,7 +75,7 @@ runtime.
 |---|---|---|
 | L0 envelope | `request.valid.json`, `result.valid.json`, `negative.json` | `fala.conformance.check_message` |
 | L1 dialogue | `dialogue.negative.json` (+ valid pair) | `fala.conformance.check_answer` / `assert_answers` |
-| L2 payload | `payload.cases.json` (partial subset) | `fala.conformance.check_payload` |
+| L2 payload | `payload.cases.json` | `fala.conformance.check_payload` |
 
 Sibling effector packages validate without opening a journal:
 
