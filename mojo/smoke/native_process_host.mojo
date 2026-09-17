@@ -1,9 +1,10 @@
 from std.collections import List
 from std.ffi import CStringSlice, c_int, external_call
 from std.memory import UnsafePointer, MutUnsafePointer
-from std.memory import alloc
+from std.origin import MutUntrackedOrigin
 from std.os import remove
 from std.pathlib import Path
+from std.sys import CompilationTarget
 from fala import (
     PROCESS_OK, PROCESS_EXITED, PROCESS_TIMED_OUT, PROCESS_STATUS_TIMED_OUT,
     start_native_process,
@@ -37,6 +38,25 @@ def _remove_tree(path: Path) raises:
         _check(result == 0, "temporary directory cleanup failed")
     else:
         remove(path.__fspath__())
+
+
+def _monotonic_ms() raises -> Int:
+    var timespec = List[UInt](capacity=2)
+    timespec.append(0)
+    timespec.append(0)
+    var clock_id = 6
+    if not CompilationTarget.is_macos():
+        clock_id = 1
+    var status = external_call["clock_gettime", c_int](
+        c_int(clock_id), timespec.unsafe_ptr().as_unsafe_any_origin()
+    )
+    _check(status == 0, "clock_gettime(CLOCK_MONOTONIC) failed")
+    return Int(timespec[0]) * 1000 + Int(timespec[1]) // 1_000_000
+
+
+def _sleep_ms(milliseconds: Int):
+    if milliseconds > 0:
+        _ = external_call["usleep", c_int](c_int(milliseconds * 1000))
 
 
 def _argv(first: String, second: String = "", third: String = "") -> List[String]:
@@ -133,6 +153,23 @@ def main() raises:
         _check(timeout.wait_result() == PROCESS_TIMED_OUT, "timeout result")
         _check(timeout.status() == PROCESS_STATUS_TIMED_OUT and timeout.was_timed_out(), "timeout state")
         timeout.destroy()
+
+        var budget_ms = 300
+        var poll_then_wait = start_native_process(
+            _argv("/bin/sleep", "2"), environment, root, "", "", "", budget_ms, 10)
+        var started_ms = _monotonic_ms()
+        while _monotonic_ms() - started_ms < 250:
+            _ = poll_then_wait.poll_result()
+            _sleep_ms(10)
+        var wait_code = poll_then_wait.wait_result()
+        var elapsed_ms = _monotonic_ms() - started_ms
+        _check(wait_code == PROCESS_TIMED_OUT, "poll then wait timeout result")
+        _check(
+            poll_then_wait.status() == PROCESS_STATUS_TIMED_OUT and poll_then_wait.was_timed_out(),
+            "poll then wait timeout state",
+        )
+        _check(elapsed_ms < budget_ms + 150, "wait reset timeout after poll")
+        poll_then_wait.destroy()
 
         var missing_failed = False
         try:

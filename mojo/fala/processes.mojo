@@ -136,7 +136,7 @@ def ready_processes(
 
     var ordered = List[ProcessRecord]()
     var selected = List[Bool]()
-    for process in remaining:
+    for _ in remaining:
         selected.append(False)
     while len(ordered) < len(remaining):
         var best = -1

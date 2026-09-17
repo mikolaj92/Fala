@@ -1,5 +1,20 @@
 ## Unreleased
 
+## 0.9.2
+
+**L2 corpus closed, wait() clock, product warnings gone.**
+
+- Product Mojo warnings named after 0.9.1 are gone: unused `reason` in
+  `run_until_idle`, unused `replayed` / `except err` on run create, unused
+  `process` in ready-queue sort, unused `output` in native-function execute.
+- L2 corpus covers supported-subset boundaries: `oneOf` exactly one, `allOf`
+  with a rejected branch, Unicode code-point `minLength`/`maxLength`, and
+  `additionalProperties: false`. Golden L2 walk uses index + `.copy()` (Mojo
+  1.0 has no `for case in` over JSON arrays).
+- `fala_process_wait` deadline is `started_ms + timeout_ms`, same as `poll`.
+  Production `wait_durable_subprocess` polls then waits; remaining budget must
+  not reset.
+
 ## 0.9.1
 
 **Mandatory FEP contracts, public conformance, one host path.**
@@ -15,7 +30,7 @@
   (`fep.contract_mismatch`). Omitting the pair is `fep.required` (#290).
 - L1 dialogue checks: `assert_answers` / `fala.conformance.check_answer`
   require matching `ref`, `job`, and flipped `from`/`to` in addition to the
-  contract pair. Shared corpus adds `dialogue.negative.json` and partial L2
+  contract pair. Shared corpus adds `dialogue.negative.json` and L2
   `payload.cases.json`. Sibling packages run `fala.conformance.run_conformance`
   (or `check_message` / `check_result`) without a journal; the wheel ships
   `conformance/fala` under `fala/conformance`.

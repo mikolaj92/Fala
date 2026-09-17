@@ -808,7 +808,6 @@ def execute_native_function(request: EffectorRequest, registry: NativeFunctionRe
     if invocation.error_message != "": return EffectorResult.failure(AdapterError.native_function_failed(request.adapter.`ref`, invocation.error_message))
     var output_error = _validate_json_text(invocation.output_json, "native_function output_json")
     if not output_error.is_ok(): return EffectorResult.failure(output_error)
-    var output = ""
     try:
         var payload = canonical_json_text(invocation.output_json)
         var request_json = adapter_manifest_json(request)
@@ -816,7 +815,7 @@ def execute_native_function(request: EffectorRequest, registry: NativeFunctionRe
         var request_id = request_value.object()["id"].string()
         var contract_id = request_value.object()["contract_id"].string()
         var contract_version = request_value.object()["contract_version"].string()
-        output = result_message(
+        var output = result_message(
             request.process_id,
             "parent",
             request.process_id,
@@ -826,6 +825,6 @@ def execute_native_function(request: EffectorRequest, registry: NativeFunctionRe
             contract_id,
             contract_version,
         )
+        return EffectorResult(success=True, output_json=output, stdout="", stderr="", returncode=0, waiting=False, homeostat_id="", metadata_json="{\"registry_ref\":" + _json_quoted(request.adapter.`ref`) + "}", error=AdapterError())
     except err:
         return EffectorResult.failure(AdapterError.native_function_failed(request.adapter.`ref`, String(err)))
-    return EffectorResult(success=True, output_json=output, stdout="", stderr="", returncode=0, waiting=False, homeostat_id="", metadata_json="{\"registry_ref\":" + _json_quoted(request.adapter.`ref`) + "}", error=AdapterError())

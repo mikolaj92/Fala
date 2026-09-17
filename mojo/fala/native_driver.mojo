@@ -1295,7 +1295,7 @@ def run_until_idle(
         if RunStatus(existing_run.status).is_terminal():
             return RunUntilIdleResult(ok=True, ticks=0, stopped_reason="already_terminal", completed=List[ProcessRow](), failed=List[ProcessRow](), waiting=List[ProcessRow](), deadlocked=False, deadlocks=List[List[String]](), wait_diagnostic=_empty_wait_graph())
     var aggregate = DriverResult(idle=True)
-    var reason = "idle"
+    var reason: String
     if stop:
         reason = "stopped"
     else:
