@@ -10,6 +10,21 @@ Other packages can validate wire results without the Fala runtime::
     check_answer(request, result)
     check_payload(result.payload, schema)
 
+Sibling packages test their own handler against their own schema without a
+journal or golden envelope::
+
+    from fala.conformance import exercise_handler
+
+    def echo(request):
+        return Result.from_request(request, payload=request.payload)
+
+    exercise_handler(
+        echo,
+        {"text": "hello"},
+        {"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}}},
+        job="echo",
+    )
+
 Partial suite (envelope + dialogue + optional payload cases)::
 
     from fala.conformance import run_conformance
@@ -20,7 +35,7 @@ Partial suite (envelope + dialogue + optional payload cases)::
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -32,7 +47,9 @@ from .protocol import (
     Request,
     Result,
     assert_answers,
+    contract_pair_from_schema,
     parse,
+    request_message,
     validate,
 )
 
@@ -279,6 +296,47 @@ def check_result(
     return typed_result
 
 
+def make_request(
+    job: str,
+    payload: Mapping[str, Any],
+    *,
+    schema: Mapping[str, Any] | str,
+    sender: str = "parent",
+    recipient: str | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Request:
+    """Build a parent request whose contract pair is the frozen ``schema``.
+
+    Same stamp as the correlator: ``schema:sha256:<digest>`` / ``1``. Sibling
+    packages use this in unit tests instead of copying golden envelopes.
+    """
+
+    contract_id, contract_version = contract_pair_from_schema(schema)
+    return request_message(
+        sender=sender,
+        recipient=job if recipient is None else recipient,
+        job=job,
+        payload=payload,
+        config=config,
+        contract_id=contract_id,
+        contract_version=contract_version,
+    )
+
+
+def exercise_handler(
+    handler: Callable[[Request], Result],
+    payload: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    *,
+    job: str = "effector",
+    config: Mapping[str, Any] | None = None,
+) -> Result:
+    """Call ``handler`` as the correlator would, then check L1 dialogue and L2 payload."""
+
+    request = make_request(job, payload, schema=schema, config=config)
+    return check_result(request, handler(request), schema=schema)
+
+
 @dataclass(frozen=True)
 class ConformanceFailure:
     layer: str
@@ -396,6 +454,8 @@ __all__ = [
     "corpus_dir",
     "dialogue_negatives",
     "envelope_negatives",
+    "exercise_handler",
+    "make_request",
     "payload_cases",
     "run_conformance",
     "valid_request_text",

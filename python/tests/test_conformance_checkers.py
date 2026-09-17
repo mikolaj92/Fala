@@ -13,12 +13,27 @@ from fala.conformance import (
     corpus_dir,
     dialogue_negatives,
     envelope_negatives,
+    exercise_handler,
+    make_request,
     payload_cases,
     run_conformance,
     valid_request_text,
     valid_result_text,
 )
-from fala.protocol import ProtocolError, Result, assert_answers, build_result, parse
+from fala.protocol import (
+    ProtocolError,
+    Result,
+    assert_answers,
+    build_result,
+    contract_pair_from_schema,
+    parse,
+)
+
+_ECHO_SCHEMA = {
+    "type": "object",
+    "required": ["text"],
+    "properties": {"text": {"type": "string"}},
+}
 
 
 def test_corpus_dir_resolves_shared_vectors():
@@ -95,3 +110,49 @@ def test_run_conformance_partial_layers():
     report = run_conformance(layers=["L0", "L1"])
     assert report["ok"]
     assert set(report["layers"]) == {"L0", "L1"}
+
+
+def test_make_request_stamps_schema_contract():
+    request = make_request("echo", {"text": "hello"}, schema=_ECHO_SCHEMA)
+    contract_id, contract_version = contract_pair_from_schema(_ECHO_SCHEMA)
+    assert request.job == "echo"
+    assert request.recipient == "echo"
+    assert request.payload == {"text": "hello"}
+    assert request.contract_id == contract_id
+    assert request.contract_version == contract_version
+    check_message(request, expected_kind="request")
+
+
+def test_exercise_handler_accepts_echo():
+    def echo(request):
+        return Result.from_request(request, payload=dict(request.payload))
+
+    result = exercise_handler(echo, {"text": "hello"}, _ECHO_SCHEMA, job="echo")
+    assert result.payload == {"text": "hello"}
+    assert result.job == "echo"
+
+
+def test_exercise_handler_rejects_payload_outside_schema():
+    def liar(request):
+        return Result.from_request(request, payload={"n": 1})
+
+    with pytest.raises(ProtocolError) as caught:
+        exercise_handler(liar, {"text": "hello"}, _ECHO_SCHEMA, job="echo")
+    assert caught.value.code == "fep.payload_invalid"
+
+
+def test_exercise_handler_rejects_wrong_job():
+    def liar(request):
+        return Result(
+            sender=request.recipient,
+            job="other",
+            ref=request.id,
+            payload=dict(request.payload),
+            recipient=request.sender,
+            contract_id=request.contract_id,
+            contract_version=request.contract_version,
+        )
+
+    with pytest.raises(ProtocolError) as caught:
+        exercise_handler(liar, {"text": "hello"}, _ECHO_SCHEMA, job="echo")
+    assert caught.value.code == "fep.job_mismatch"

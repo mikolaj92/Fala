@@ -80,13 +80,18 @@ runtime.
 Sibling effector packages validate without opening a journal:
 
 ```python
-from fala.conformance import check_result, run_conformance
+from fala.conformance import check_result, exercise_handler, make_request, run_conformance
 from fala.protocol import Result
 
-request = ...  # load_manifest() / check_message(...)
+schema = {"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}}}
+request = make_request("echo", {"text": "hello"}, schema=schema)
 result = Result.from_request(request, payload={"text": "hello"})
-check_result(request, result, schema={"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}}})
+check_result(request, result, schema=schema)
 
+def echo(request):
+    return Result.from_request(request, payload=request.payload)
+
+exercise_handler(echo, {"text": "hello"}, schema, job="echo")
 assert run_conformance(layers=["L0", "L1"]).get("ok")
 ```
 

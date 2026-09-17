@@ -1,5 +1,15 @@
 ## Unreleased
 
+## 0.9.4
+
+**Sibling packages can test their own FEP messages without a journal.**
+
+- `fala.conformance.make_request` stamps a parent request from a frozen
+  output schema (`schema:sha256:<digest>` / `1`), same pair the correlator uses.
+- `fala.conformance.exercise_handler` calls a handler as the correlator would
+  and checks L1 dialogue plus L2 payload. No `FALA_EFFECTOR_*` env, no golden
+  envelope copy.
+
 ## 0.9.3
 
 **Parent-side native wrap records correlator blame.**
