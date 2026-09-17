@@ -1,5 +1,9 @@
 ## Unreleased
 
+## 0.9.1
+
+**Mandatory FEP contracts, public conformance, one host path.**
+
 - One public native host surface: object-returning entry points only. Dual
   `*_json` exports are gone; JSON stays an internal serialization boundary.
   Results are built with `Result.from_request` / `build_result` only — no
@@ -30,6 +34,8 @@
   Hosts with typed path terminals keep `path_result` null on that failure and
   surface `output_schema_invalid` on `effector_results` rather than
   `path.terminal.missing`. Schema-v6 is unchanged (#291).
+- Wheel keeps `mojo/` and `patches/` under `fala/` only; conformance corpus
+  ships as `fala/conformance` (#278).
 
 ## 0.9.0
 
