@@ -340,6 +340,7 @@ def _record_contract_violation(
     actor: String,
     at: String,
     error: AdapterError,
+    blame: String = "effector",
 ) raises:
     if not is_contract_violation(error):
         return
@@ -349,7 +350,7 @@ def _record_contract_violation(
         process.attempt,
         actor,
         at,
-        violation_payload(process.id, process.impulse_id, error),
+        violation_payload(process.id, process.impulse_id, error, blame),
         process.impulse_id,
     )
 
@@ -1090,7 +1091,12 @@ def drive_once(
     )
     var error_json = _adapter_error_json(failure)
     var transition_at = _lifecycle_timestamp(now, realtime_timestamps)
-    _record_contract_violation(journal, claimed, worker_id, transition_at, failure)
+    # Envelope failures from the parent-side wrap of a native_function are the
+    # correlator's fault; subprocess children keep effector blame.
+    var failure_blame = "effector"
+    if adapter.kind == AdapterKind.native_function() and failure.code == "adapter_invalid_result":
+        failure_blame = "correlator"
+    _record_contract_violation(journal, claimed, worker_id, transition_at, failure, failure_blame)
     var stored: ProcessRow
     # Retry transitions are immediately claimable at the transition timestamp,
     # matching reference retry_process and bounded-drive semantics.

@@ -1,5 +1,18 @@
 ## Unreleased
 
+## 0.9.3
+
+**Parent-side native wrap records correlator blame.**
+
+- `execute_native_function` maps a failed parent envelope (manifest /
+  `result_message` / contract echo) to `adapter_invalid_result` instead of
+  `native_function_failed`, so the journal can record it.
+- A native kernel that already spoke the wire is checked against the request
+  the parent just wrote. Contract mismatch is `fep.contract_mismatch` with
+  `blame=correlator`; subprocess children stay `blame=effector`.
+- `drive_once` stamps that blame on `violation.record` / `violation.recorded`.
+  Native-driver smoke covers the wrap path.
+
 ## 0.9.2
 
 **L2 corpus closed, wait() clock, product warnings gone.**

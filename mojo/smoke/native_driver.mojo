@@ -5,6 +5,7 @@ from fala.journal import NativeJournal, ProcessRow
 from fala.status import ProcessStatus
 from fala.native_driver import AdapterBinding, _automatic_retry_allowed, drive_once, maintain_process, run_until_idle, finalize_run, drive_bound_queue, persist_adapter_binding
 from fala.processes import ProcessRecord, retry_backoff_seconds
+from fala.effector_protocol import result_message
 
 
 def _check(condition: Bool, message: String) raises:
@@ -17,6 +18,21 @@ def _native_bound(input_json: String, config_json: String) raises -> String:
 
 def _native_idle(input_json: String, config_json: String) raises -> String:
     return "{\"ok\":true}"
+
+
+def _native_envelope(input_json: String, config_json: String) raises -> String:
+    # Valid result envelope whose contract does not echo the request pair
+    # stamped from output_schema. The parent owns that wrap.
+    return result_message(
+        "wrap",
+        "parent",
+        "wrap",
+        "msg:sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "{\"ok\":true}",
+        "ok",
+        "other-output",
+        "1",
+    )
 
 
 def _one_process(mut journal: NativeJournal, run_id: String, process_id: String, max_attempts: Int = 2) raises -> ProcessRow:
@@ -372,4 +388,36 @@ def main() raises:
             and terminal_stop.stopped_reason == "already_terminal",
         "already-terminal precedence over stop",
     )
-    print("native driver smoke success: retry backoff binding reload lease terminal stop precedence bounded max_ticks idle durable failures")
+
+    # Correlator blame: the child payload is a valid result envelope, yet the
+    # parent-side wrap in execute_native_function raises fep.contract_mismatch
+    # against its own manifest. The envelope is the parent's, so the journal
+    # must record blame=correlator, not effector.
+    _ = journal.create_run("driver-correlator", "active", "{}", "2026-01-01T00:30:00Z")
+    var envelope_schema = "{\"type\":\"object\",\"required\":[\"protocol\",\"kind\",\"payload\"],\"properties\":{\"protocol\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"payload\":{\"type\":\"object\"}}}"
+    _ = journal.schedule_process(
+        "driver-correlator", "wrap", "native", "2026-01-01T00:30:00Z", "{}", "{}", "", 1, 1,
+        "2026-01-01T00:30:00Z", envelope_schema,
+    )
+    registry.register("native.envelope", _native_envelope)
+    var correlate_drive = drive_once(
+        journal,
+        journal.get_process("driver-correlator", "wrap"),
+        AdapterSpec.native_function("native.envelope"),
+        "correlator-worker",
+        "2026-01-01T00:30:01Z",
+        "2026-01-01T00:31:00Z",
+        registry,
+    )
+    var correlate_events = journal.list_events("driver-correlator", "", "wrap", -1, 0, "violation.recorded")
+    _check(
+        correlate_drive.failed
+            and correlate_drive.error.code == "adapter_invalid_result"
+            and correlate_drive.error.message.find("fep.contract_mismatch") >= 0
+            and journal.get_process("driver-correlator", "wrap").status == "failed"
+            and len(correlate_events) == 1
+            and correlate_events[0].payload.find("\"blame\":\"correlator\"") >= 0
+            and correlate_events[0].payload.find("\"code\":\"fep.contract_mismatch\"") >= 0,
+        "parent-side wrap failure records correlator blame",
+    )
+    print("native driver smoke success: retry backoff binding reload lease terminal stop precedence bounded max_ticks idle durable failures correlator blame")

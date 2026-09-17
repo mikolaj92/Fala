@@ -10,8 +10,10 @@ from .json import canonical_json_text, quote_json_string as _json_quoted
 from .native_process_host import ProcessHost, start as start_native_process
 from .reactions import sha256_bytes
 from .effector_protocol import (
+    assert_answers,
     assert_same_contract,
     contract_pair_from_schema,
+    domain_payload,
     request_message,
     result_message,
     validate_message,
@@ -812,6 +814,13 @@ def execute_native_function(request: EffectorRequest, registry: NativeFunctionRe
         var payload = canonical_json_text(invocation.output_json)
         var request_json = adapter_manifest_json(request)
         var request_value = Value(parse_string=request_json)
+        var parsed = Value(parse_string=payload)
+        # A native kernel returns a domain object. If it already spoke the
+        # wire, the parent still owns the envelope: check it against the
+        # request it just wrote. Mismatch is fep.contract_mismatch — correlator.
+        if parsed.is_object() and "protocol" in parsed.object() and "kind" in parsed.object() and parsed.object()["kind"].is_string() and parsed.object()["kind"].string() == "result":
+            assert_same_contract(request_json, payload)
+            payload = domain_payload(payload)
         var request_id = request_value.object()["id"].string()
         var contract_id = request_value.object()["contract_id"].string()
         var contract_version = request_value.object()["contract_version"].string()
@@ -825,6 +834,10 @@ def execute_native_function(request: EffectorRequest, registry: NativeFunctionRe
             contract_id,
             contract_version,
         )
+        assert_answers(request_json, output)
         return EffectorResult(success=True, output_json=output, stdout="", stderr="", returncode=0, waiting=False, homeostat_id="", metadata_json="{\"registry_ref\":" + _json_quoted(request.adapter.`ref`) + "}", error=AdapterError())
     except err:
-        return EffectorResult.failure(AdapterError.native_function_failed(request.adapter.`ref`, String(err)))
+        # The parent envelope (result_message / manifest / contract echo) failed,
+        # not the child payload: same invalid-envelope code so the journal
+        # records it, blame is classified at the driver call site as correlator.
+        return EffectorResult.failure(AdapterError.subprocess_invalid_result(String(err)))

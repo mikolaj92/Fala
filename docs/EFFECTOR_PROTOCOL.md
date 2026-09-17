@@ -96,5 +96,7 @@ over hand-built dicts.
 
 Bare JSON, missing `protocol`, and unknown fields fail as
 `adapter_invalid_result`. Native kernel returns the domain object; the parent
-wraps it into this envelope before the journal. Subprocess must return the
-envelope itself. The journal validates `payload` against `output_schema`.
+wraps it into this envelope before the journal and checks the wrap against the
+request it just wrote. A contract mismatch on that wrap is the correlator's
+(`blame=correlator`). Subprocess must return the envelope itself; a lying child
+is `blame=effector`. The journal validates `payload` against `output_schema`.
