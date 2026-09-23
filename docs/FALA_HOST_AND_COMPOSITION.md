@@ -23,6 +23,11 @@ Fleet pools and peer discovery are out of product.
    engine — incomplete as a Unix-shaped correlator.
 3. **Local hosting is identity; fleet selection is not.** Nested work is a
    subprocess plus a separate child journal, not a pool of peers.
+4. **Process == graph.** One process is one correlation path and one
+   `host_run_package`. Order, repetition, and accumulation are conduction
+   edges or effectors. A host loop that calls `host_run_package` once per
+   item is a second process. The host may write the item list into the
+   package and call once. It may not drive the items.
 
 Nested autonomy does **not** require that parent and child “know” each other
 as peers in a pool. It requires **separate journals** and an **explicit
