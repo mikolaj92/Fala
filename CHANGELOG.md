@@ -1,5 +1,20 @@
 ## Unreleased
 
+**Toolchain: Mojo 1.1.0 (MAX 26.6).**
+
+- Pin `pixi.toml` to `mojo = "==1.1.0"`. Product version stays 0.9.4.
+- Keep the Python host on `PyInit_*` + `PythonModuleBuilder` and
+  `mojo build --emit shared-lib`. Do not switch to `mojo.importer`.
+- Replace `patches/emberjson-mojo-1.0.patch` with
+  `patches/emberjson-mojo-1.1.patch` on the same EmberJson revision
+  (`951f4ef`). Mojo 1.1 removes `SIMD.size` / `InlineArray` /
+  `_WriteBufferStack` / `@parameter` closures / `ImplicitlyDeletable`;
+  the patch maps those to `Self.length` / `Array` / `_FlushingWriteBuffer` /
+  `@__parameter` / `Deinitable` and hashes `Lazy` bytes.
+- sqlite.fire stays at upstream `v0.1.1` (`2cb4da9`). That tree already
+  uses `def`/`comptime`, and `CStringSlice` remains a 1.1 compatibility
+  alias. `v0.1.2` is still a Mojo 1.0.0 pin.
+
 **Documentation: one picture, no leftover identity essays.**
 
 - README is the product picture: Fala composes small programs into a graph;

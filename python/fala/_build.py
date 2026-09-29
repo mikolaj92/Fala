@@ -337,7 +337,7 @@ def _source_is_pinned(source_dir: Path, revision: str) -> bool:
 
 def _ensure_ember_json_sources(root: Path) -> None:
     source_dir = root / "vendor" / "EmberJson"
-    patch = root / "patches" / "emberjson-mojo-1.0.patch"
+    patch = root / "patches" / "emberjson-mojo-1.1.patch"
     if not _source_is_pinned(source_dir, _EMBER_JSON_REV):
         shutil.rmtree(source_dir, ignore_errors=True)
         _clone_pinned_source(
