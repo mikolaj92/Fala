@@ -685,18 +685,6 @@ def _wait_cycles(edges: Dict[String, List[String]]) raises -> List[List[String]]
     for node in nodes: _wait_cycle_visit(node, edges, path, visiting, visited, cycles)
     return cycles^
 
-def _wait_bucket(values: Dict[String, List[String]], status: String) raises -> List[String]:
-    if status == "pending": return values["pending"].copy()
-    if status == "ready": return values["ready"].copy()
-    if status == "running": return values["running"].copy()
-    if status == "waiting": return values["waiting"].copy()
-    if status == "retry_wait": return values["retry_wait"].copy()
-    if status == "succeeded": return values["succeeded"].copy()
-    if status == "failed": return values["failed"].copy()
-    if status == "cancel_requested": return values["cancel_requested"].copy()
-    if status == "cancelled": return values["cancelled"].copy()
-    return values["timed_out"].copy()
-
 def _sort_wait_ids(mut values: List[String]):
     var i = 1
     while i < len(values):
@@ -1757,17 +1745,8 @@ def drive_correlation_until_idle(
         if result.ticks == 0:
             break
         ticks += result.ticks
-        try:
-            _ = advance_after_terminal(
-                journal, plan, result.process_id,
-                realtime_timestamps=realtime_timestamps,
-            )
-        except err:
-            raise Error(String(SQLiteError(code=1, message="driver: correlation advancement failed: " + String(err))))
-    # Reconcile once more before deriving the run boundary.  External terminal
-    # transitions (for example homeostat or delegation closure) may not have a
-    # process_id in this drive loop; the existing helper safely replays durable
-    # readiness and dead-upstream cancellation without fabricating execution.
+    # One post-loop advance covers dependents of the last tick and terminals
+    # that were not claimed in this drive (homeostat / delegation closure).
     try:
         _ = advance_after_terminal(journal, plan, realtime_timestamps=realtime_timestamps)
     except err:

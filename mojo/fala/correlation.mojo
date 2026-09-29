@@ -1,4 +1,10 @@
-"""Pure correlation-path graph utilities for the native Fala runtime."""
+"""Pure correlation-path graph utilities for the native Fala runtime.
+
+A node is an effector: fixed authored input, structured output (ok|fail plus
+the finite process states). Edges are declared conduction. The durable state
+machine in correlation_advance is the runtime; this module plans and projects
+it without a second completed/failed graph.
+"""
 
 from std.collections import List
 from std.collections import Dict
@@ -16,27 +22,9 @@ struct EffectorNode(Copyable, Movable):
         self.id = id
         self.conduction = conduction.copy()
 
-    @staticmethod
-    def root(id: String) -> EffectorNode:
-        return EffectorNode(id, List[String]())
-
-
-struct ConductionEdge(Copyable, Movable):
-    """A directed edge from upstream to downstream effector."""
-
-    var upstream: String
-    var downstream: String
-
-    def __init__(out self, upstream: String, downstream: String):
-        self.upstream = upstream
-        self.downstream = downstream
-
-    def __eq__(self, other: Self) -> Bool:
-        return self.upstream == other.upstream and self.downstream == other.downstream
-
 
 struct Readiness(Copyable, Movable):
-    """Effectors ready now and effectors blocked by dependencies."""
+    """Effectors ready now and effectors blocked by unmet conduction."""
 
     var ready: List[String]
     var blocked: List[String]
@@ -45,62 +33,11 @@ struct Readiness(Copyable, Movable):
         self.ready = ready.copy()
         self.blocked = blocked.copy()
 
-
-struct CorrelationGraph(Copyable, Movable):
-    """Validated graph."""
-
-    var nodes: List[EffectorNode]
-    var edges: List[ConductionEdge]
-
-    def __init__(
-        out self,
-        nodes: List[EffectorNode],
-    ) raises:
-        validate_graph(nodes)
-        self.nodes = nodes.copy()
-        self.edges = conduction_edges(nodes)
-
-    def topological_order(self) raises -> List[String]:
-        return _topological_order(self.nodes)
-
-    def readiness(self, completed: List[String], failed: List[String]) raises -> Readiness:
-        return readiness(self, completed, failed)
-
 def _contains(values: List[String], wanted: String) -> Bool:
     for value in values:
         if value == wanted:
             return True
     return False
-
-
-def _insert_sorted(mut values: List[String], value: String):
-    var position = 0
-    while position < len(values) and values[position] < value:
-        position += 1
-    values.append(value)
-    var index = len(values) - 1
-    while index > position:
-        values[index] = values[index - 1]
-        index -= 1
-    values[position] = value
-
-
-def effector_ids(nodes: List[EffectorNode]) -> List[String]:
-    """Return unique effector ids in deterministic lexical order."""
-    var ids = List[String]()
-    for node in nodes:
-        if not _contains(ids, node.id):
-            _insert_sorted(ids, node.id)
-    return ids^
-
-
-def conduction_edges(nodes: List[EffectorNode]) -> List[ConductionEdge]:
-    """Expand conduction declarations into upstream-to-downstream edges."""
-    var edges = List[ConductionEdge]()
-    for node in nodes:
-        for upstream in node.conduction:
-            edges.append(ConductionEdge(upstream, node.id))
-    return edges^
 
 
 def validate_graph(
@@ -128,81 +65,6 @@ def validate_graph(
                 raise Error("correlation graph effector " + node.id + " has duplicate conduction reference: " + upstream)
             seen_upstreams.append(upstream)
 
-def _topological_order(
-    nodes: List[EffectorNode],
-) raises -> List[String]:
-    var ids = effector_ids(nodes)^
-    var remaining = ids^
-    var order = List[String]()
-    while len(remaining) > 0:
-        var selected = ""
-        for candidate in remaining:
-            var node_index = 0
-            while node_index < len(nodes) and nodes[node_index].id != candidate:
-                node_index += 1
-            var ready = True
-            if node_index < len(nodes):
-                for upstream in nodes[node_index].conduction:
-                    if not _contains(order, upstream):
-                        ready = False
-                        break
-            if ready:
-                selected = candidate
-                break
-        if selected == "":
-            for candidate in remaining:
-                order.append(candidate)
-            remaining.clear()
-            break
-        order.append(selected)
-        var index = 0
-        while index < len(remaining) and remaining[index] != selected:
-            index += 1
-        if index < len(remaining):
-            _ = remaining.pop(index)
-    return order^
-
-
-def topological_order(graph: CorrelationGraph) raises -> List[String]:
-    """Return deterministic upstream-before-downstream order."""
-    return _topological_order(graph.nodes)
-
-
-def readiness(
-    graph: CorrelationGraph,
-    completed: List[String],
-    failed: List[String],
-) raises -> Readiness:
-    """Calculate ready and blocked nodes from completed and failed sets."""
-    var ids = effector_ids(graph.nodes)^
-    for id in completed:
-        if not _contains(ids, id):
-            raise Error("completed set references unknown effector: " + id)
-    for id in failed:
-        if not _contains(ids, id):
-            raise Error("failed set references unknown effector: " + id)
-        if _contains(completed, id):
-            raise Error("effector cannot be both completed and failed: " + id)
-
-    var ready = List[String]()
-    var blocked = List[String]()
-    for id in ids:
-        if _contains(completed, id) or _contains(failed, id):
-            continue
-        var node_index = 0
-        while node_index < len(graph.nodes) and graph.nodes[node_index].id != id:
-            node_index += 1
-        var can_run = True
-        if node_index < len(graph.nodes):
-            for upstream in graph.nodes[node_index].conduction:
-                if not (_contains(completed, upstream) or _contains(failed, upstream)):
-                    can_run = False
-                    break
-        if can_run:
-            ready.append(id)
-        else:
-            blocked.append(id)
-    return Readiness(ready^, blocked^)
 @fieldwise_init
 struct CorrelationInputField(Copyable, Movable):
     """One authored input field; injected keys are rejected at the boundary."""
@@ -342,21 +204,6 @@ struct CorrelationAdvancePlan(Copyable, Movable):
     var wait_diagnostic: CorrelationWaitDiagnostic
     var replayed: Bool
 
-
-
-def _has_json_key(text: String, key: String) -> Bool:
-    var needle = '"' + key + '"'
-    var width = needle.byte_length()
-    if width > text.byte_length(): return False
-    for index in range(text.byte_length() - width + 1):
-        if String(text[byte=index:index + width]) != needle: continue
-        var cursor = index + width
-        while cursor < text.byte_length():
-            var ch = String(text[byte=cursor:cursor + 1])
-            if ch != " " and ch != "\n" and ch != "\r" and ch != "\t": break
-            cursor += 1
-        if cursor < text.byte_length() and String(text[byte=cursor:cursor + 1]) == ":": return True
-    return False
 
 
 def validate_correlation_inputs(fields: List[CorrelationInputField]) raises:
@@ -547,7 +394,12 @@ def _feedback_cycle_member(states: List[CorrelationExecutionState], start: Strin
 
 
 def advance_correlation_states(path: CorrelationPathSpec, states: List[CorrelationExecutionState]) raises -> CorrelationAdvancePlan:
-    """Compute root/chain/diamond readiness and diagnostics."""
+    """Compute root/chain/diamond readiness and diagnostics.
+
+    `path` is kept so existing plan/smoke call sites stay one graph object; the
+    durable machine already lives in `states` (id, status, conduction).
+    """
+    _ = path
     var readied = List[CorrelationProcessPlan]()
     var projected = List[CorrelationConductionValue]()
     var blocked = List[CorrelationBlocked]()
@@ -585,10 +437,10 @@ def advance_correlation_states(path: CorrelationPathSpec, states: List[Correlati
                 var item = blocked[index].copy()
                 item.reason = "feedback_cycle_wait"
                 blocked[index] = item.copy()
-    var wait_diagnostic = diagnose_correlation_wait(path, states, blocked, readied)
+    var wait_diagnostic = diagnose_correlation_wait(states, blocked)
     return CorrelationAdvancePlan(readied=readied^, conduction=projected^, blocked=blocked^, cancelled=cancelled^, wait_diagnostic=wait_diagnostic^, replayed=False)
 
-def diagnose_correlation_wait(path: CorrelationPathSpec, states: List[CorrelationExecutionState], blocked: List[CorrelationBlocked], readied: List[CorrelationProcessPlan]) -> CorrelationWaitDiagnostic:
+def diagnose_correlation_wait(states: List[CorrelationExecutionState], blocked: List[CorrelationBlocked]) -> CorrelationWaitDiagnostic:
     """Return a stable persisted diagnosis for an actual feedback-cycle wait."""
     var ids = List[String]()
     if len(blocked) > 0:

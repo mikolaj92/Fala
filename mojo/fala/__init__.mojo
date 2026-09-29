@@ -46,9 +46,9 @@ from .processes import (
     retry_process, expire_process,
 )
 from .correlation import (
-    EffectorNode, ConductionEdge, Readiness, CorrelationGraph,
-    effector_ids, conduction_edges, validate_graph, topological_order,
-    readiness, CorrelationInputField, CorrelationEffectorSpec,
+    EffectorNode, Readiness,
+    validate_graph,
+    CorrelationInputField, CorrelationEffectorSpec,
     CorrelationPathSpec, CorrelationProcessPlan, CorrelationInstantiationPlan,
     CorrelationExecutionState, CorrelationConductionValue, CorrelationBlocked,
     CorrelationAdvancePlan, CorrelationWaitDiagnostic,

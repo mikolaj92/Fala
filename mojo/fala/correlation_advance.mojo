@@ -1,8 +1,7 @@
 """Native, durable correlation advancement over journal process projections.
 
-Readiness is computed with the pure correlation graph helpers, while SQLite is
-used only for the atomic pending-to-ready promotion.  Dead upstreams are
-reported, not executed or silently converted into reactions.
+Readiness is pending→ready once every declared upstream is terminal. Failed
+upstreams conduct their error payload; they do not cancel dependents.
 """
 
 from std.collections import List
@@ -22,7 +21,6 @@ from fala.correlation import (
     CorrelationProcessPlan,
     CorrelationAdvancePlan,
     Readiness,
-    diagnose_correlation_wait,
     advance_correlation_states,
     project_conduction,
     validate_correlation_input_json,
@@ -306,48 +304,7 @@ def _project_output(output: Value, output_schema_json: String) raises -> Value:
                 if pair.key in source: projected[pair.key] = source[pair.key].copy()
             return Value(projected^)
     return Value(source^)
-def _schema_number(value: Value) -> Float64:
-    if value.is_float(): return value.float()
-    if value.is_int(): return Float64(value.int())
-    if value.is_uint(): return Float64(value.uint())
-    return 0.0
 
-def _schema_kind_matches(value: Value, kind: String) -> Bool:
-    if kind == "object": return value.is_object()
-    if kind == "array": return value.is_array()
-    if kind == "string": return value.is_string()
-    if kind == "boolean": return value.is_bool()
-    if kind == "number": return value.is_int() or value.is_uint() or value.is_float()
-    if kind == "integer":
-        if value.is_int() or value.is_uint(): return True
-        if value.is_float():
-            var numeric = value.float()
-            if numeric != numeric or numeric < -9223372036854775808.0 or numeric >= 9223372036854775808.0:
-                return False
-            return Float64(Int(numeric)) == numeric
-        return False
-    if kind == "null": return value.is_null()
-    return False
-
-def _schema_type_matches(value: Value, schema: Value) raises -> Bool:
-    if not schema.is_object() or "type" not in schema.object(): return True
-    var type_value = schema.object()["type"].copy()
-    if type_value.is_string(): return _schema_kind_matches(value, type_value.string())
-    if type_value.is_array():
-        var matched = False
-        for member in type_value.array():
-            if not member.is_string(): return False
-            if _schema_kind_matches(value, member.string()): matched = True
-        return matched
-    return False
-
-
-
-def _schema_codepoint_length(value: String) -> Int:
-    var count = 0
-    for _ in value.codepoint_slices():
-        count += 1
-    return count
 def _validate_projected_schema(value: Value, schema: Value, path: String) raises:
     """Use the journal validator for domain variants before projection checks."""
     from fala.journal import validate_json_schema_value
@@ -666,6 +623,7 @@ def advance_correlation(
     var last_conduction = List[CorrelationConductionValue]()
     var last_blocked = List[CorrelationBlocked]()
     var last_diagnostic = CorrelationWaitDiagnostic(List[String](), False, "", "")
+    var path = _path_for_plan(plan)
     var changed = True
     var rounds = 0
     while changed and rounds <= len(plan.processes):
@@ -673,7 +631,7 @@ def advance_correlation(
         rounds += 1
         var rows = journal.list_processes(plan.run_id)
         var states = _states(plan, rows)
-        var computed = advance_correlation_states(_path_for_plan(plan), states)
+        var computed = advance_correlation_states(path, states)
         last_conduction = computed.conduction.copy()
         last_blocked = computed.blocked.copy()
         last_diagnostic = _wait_diagnostic(computed)
@@ -709,12 +667,8 @@ def advance_correlation(
 
 
 def _path_for_plan(plan: CorrelationInstantiationPlan) raises -> CorrelationPathSpec:
+    """Rebuild the call-site path token once; advancement reads states, not this object."""
     var effectors = List[CorrelationEffectorSpec]()
-    var accumulate_upstream_reactions = False
     for item in plan.processes:
-        var metadata = Value(parse_string=item.metadata_json)
-        if metadata.is_object():
-            if "accumulate_upstream_reactions" in metadata.object() and metadata.object()["accumulate_upstream_reactions"].is_bool():
-                accumulate_upstream_reactions = accumulate_upstream_reactions or metadata.object()["accumulate_upstream_reactions"].bool()
         effectors.append(CorrelationEffectorSpec.create(item.effector_id, "", item.conduction.copy(), when_json=item.when_json))
-    return CorrelationPathSpec(plan.correlation_path_id, effectors^, accumulate_upstream_reactions)
+    return CorrelationPathSpec(plan.correlation_path_id, effectors^)
