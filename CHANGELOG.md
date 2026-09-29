@@ -23,6 +23,8 @@
   symbol into the Linux `_native` shared library.
 - Mojo 1.1 forbids implicit variable declarations. The thin-core-layers
   smoke declares `var help_text`.
+- Process-host smokes use builtin `Pointer` instead of removed
+  `MutUnsafePointer` / `std.memory.UnsafePointer`.
 
 **Documentation: one picture, no leftover identity essays.**
 

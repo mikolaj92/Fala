@@ -1,6 +1,5 @@
 from std.collections import List
 from std.ffi import CStringSlice, c_int, external_call
-from std.memory import UnsafePointer, MutUnsafePointer
 from std.origin import MutUntrackedOrigin
 from std.os import remove
 from std.pathlib import Path
@@ -20,7 +19,7 @@ def _check(condition: Bool, message: String) raises:
 def _fresh_root() raises -> String:
     var template = "/tmp/fala-native-process-host-XXXXXX"
     var c_template = mutable_c_string(template)
-    var root_ptr = external_call["mkdtemp", UnsafePointer[UInt8, MutUntrackedOrigin]](c_template.unsafe_ptr())
+    var root_ptr = external_call["mkdtemp", Pointer[UInt8, MutUntrackedOrigin]](c_template.unsafe_ptr())
     if Int(root_ptr) == 0:
         raise Error("native process host smoke: unable to create temporary root")
     return String(unsafe_from_utf8_ptr=c_template.unsafe_ptr())
