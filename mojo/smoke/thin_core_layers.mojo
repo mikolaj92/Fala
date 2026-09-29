@@ -21,9 +21,6 @@ def _check(condition: Bool, message: String) raises:
 
 
 def main() raises:
-    # Core types resolve without needing ops for type identity.
-    _check(True, "core imports")
-
     help_text = cli_surface_help()
     _check(help_text.find("# core") >= 0, "help marks core section")
     _check(help_text.find("# ops") >= 0, "help marks ops section")
@@ -46,12 +43,14 @@ def main() raises:
     _check(help_text.find("ops maintain-journal") < 0, "help lists current verbs only")
 
     # Ops free functions are real exported callables (names bound).
-    var _ops_names = String("delete_run run_retention maintain_journal collect_reaction_garbage")
-    _check(_ops_names.find("delete_run") >= 0, "maintenance ops bound")
-    var _bridge_names = String("enqueue_bridge_delivery import_bridge_delivery")
-    _check(_bridge_names.find("enqueue") >= 0, "bridge ops bound")
-    var _proj_names = String("rebuild_projections rebuild_projections_with_command")
-    _check(_proj_names.find("rebuild") >= 0, "projection ops bound")
+    _ = delete_run
+    _ = run_retention
+    _ = maintain_journal
+    _ = collect_reaction_garbage
+    _ = enqueue_bridge_delivery
+    _ = import_bridge_delivery
+    _ = rebuild_projections
+    _ = rebuild_projections_with_command
 
     # JournalPort types remain the durability boundary for memory core path.
     var journal = InMemoryJournal()

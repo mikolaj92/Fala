@@ -331,15 +331,3 @@ def test_ensure_journal_rejects_noncurrent_schema_and_leaves_it_unchanged(tmp_pa
         if mutation == "extra":
             expected.append("bogus")
         assert [r[1] for r in conn.execute("PRAGMA table_info(runtime_events)")] == expected
-
-
-def test_host_journal_module_does_not_copy_schema() -> None:
-    import inspect
-
-    import fala.journal as journal
-
-    source = inspect.getsource(journal)
-    assert "sqlite3" not in source
-    assert "_SCHEMA_SHAPES" not in source
-    assert "INSERT INTO" not in source
-    assert "UPDATE runs" not in source

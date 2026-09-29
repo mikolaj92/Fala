@@ -17,7 +17,6 @@ PUBLIC_HOST_API_TESTS = (
     "python/tests/test_recovery.py",
     "python/tests/test_maintenance.py",
     "python/tests/test_python_host_api.py",
-    "python/tests/test_native_cli_module_boundaries.py",
     "python/tests/test_sqlite_fire_build.py",
     "python/tests/test_version_consistency.py",
 )

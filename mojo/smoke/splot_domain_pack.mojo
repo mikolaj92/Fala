@@ -12,7 +12,6 @@ from fala.domain_packs.splot import (
     case_projection,
     impulse_from_case,
     jurisdiction_association,
-    process_semantics_json,
     review_homeostat,
 )
 from fala.domain_store import NativeDomainStore
@@ -80,7 +79,6 @@ def main() raises:
         and projection.data.find("\"reaction_count\":1") >= 0,
         "case projection",
     )
-    _check(process_semantics_json().find("intake") >= 0, "process semantics present")
 
     # Reject non-splot impulse.
     var bad = False

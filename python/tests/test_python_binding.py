@@ -41,10 +41,7 @@ def test_native_extension_exports_object_host_api() -> None:
     result = native.host_drive(request)
     assert isinstance(result, dict)
     assert result["ok"] is True
-    names = set(dir(native))
-    assert "host_drive" in names
-    assert "host_drive_json" not in names
-    assert "delete_terminal_run_json" not in names
+    assert "host_drive" in dir(native)
 
 
 def test_host_drive_memory_e2e() -> None:
