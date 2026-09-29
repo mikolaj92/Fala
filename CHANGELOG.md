@@ -1,5 +1,16 @@
 ## Unreleased
 
+**Documentation: one picture, no leftover identity essays.**
+
+- README is the product picture: Fala composes small programs into a graph;
+  a node is one job with structured output; an LLM is not the spine.
+- Deleted duplicated/historical docs: `CONCEPTUAL_MODEL`,
+  `UNIX_AND_CYBERNETICS`, `CYBERNETIC_MAPPING`, `EVENTS_AND_REPLAY`,
+  `SPLOT_DOMAIN_PACK`, `TAKT_DOMAIN_PACK`.
+- Remaining contract docs rewritten to match 0.9.4 code (no fleet-as-optional,
+  no HTML-report surface, no JournalPort-atomicity overclaim, no DONE
+  checklists). Domain pack mappings live in `DOMAIN_PACKS.md`.
+
 ## 0.9.4
 
 **Sibling packages can test their own FEP messages without a journal.**

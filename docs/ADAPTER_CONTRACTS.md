@@ -1,84 +1,67 @@
 # Adapter Contracts
 
 Fala's default effector boundary is a local subprocess. All adapters execute
-one claimed process; the runtime owns process state, events, reactions metadata,
-and journal writes.
+one claimed process; the runtime owns process state, events, reaction
+metadata, and journal writes.
 
-## Adapter kinds
-
-- `subprocess`: local command as an argument list; the primary child boundary.
-- `native_function`: registered in-process Mojo callable (embedded/tests).
+- `subprocess`: argv list; primary child boundary.
+- `native_function`: registered in-process Mojo callable.
 - `manual_homeostat`: durable operator wait.
-- `child_path`: package-authored nested correlation path. The loader stores the
-  child spec; `host_run_package` compiles it to argv + `python/fala/child_path.py`.
-  It is not a fourth process-host transport and does not restore `fala_runtime`.
+- `child_path`: package-authored nested path. The loader stores the spec;
+  `host_run_package` compiles it to argv + `python/fala/child_path.py`. It
+  is not a fourth process-host transport.
 
-`python_function` and `fala_runtime` are removed product kinds. A nested Fala
-uses `subprocess`/`child_path` and a separate journal; pool/fleet selection is
-not an adapter. See [`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
+Unknown adapter kinds fail closed. `runtime_ref` is not an adapter field.
+Nested Fala uses `subprocess` / `child_path` and a separate journal.
 
-## Subprocess wire boundary
+## Subprocess wire
 
-Each attempt receives:
+Each attempt receives `input/manifest.json` and writes `output/result.json`.
+The manifest **is** a Fala `request` (see
+[`EFFECTOR_PROTOCOL.md`](EFFECTOR_PROTOCOL.md)):
 
-```text
-input/manifest.json
-output/result.json
-```
-
-The manifest **is** a Fala `request`:
-
-- `from` / `to` / `job` / `id`: who asks, which child, which work, this message;
-- `payload`: named input;
-- `config`: `attempt`, `max_attempts`, optional `impulse_id` / `context`, and adapter metadata.
+- `from` / `to` / `job` / `id`: who asks, which child, which work, this message
+- `payload`: named input
+- `config`: `attempt`, `max_attempts`, optional `impulse_id` / `context`,
+  and adapter metadata
 
 Retries preserve `execution_id` and increment `attempt`. Automatic retry is
-at-least-once delivery for external effects: a timeout or crash may leave an
-external effect completed even when the runtime result is not committed, and a
-later attempt may execute again. `attempt` identifies only the physical try; it
-is not an idempotency key. Effectors must durably deduplicate by stable
-`execution_id` before performing the external effect. If that guarantee cannot
-be made, set `retry_policy = "none"`.
+at-least-once for external effects. Deduplicate by `execution_id` before an
+external effect, or set `retry_policy = "none"`.
 
-The runtime gives every attempt an isolated work directory scoped by run,
-process, impulse, and attempt. It writes the manifest, captures stdout/stderr,
-validates `output/result.json` as a JSON object, and structurally canonicalizes
-that object before committing the runtime result; the submitted JSON bytes are
-not byte-preserved. Capabilities may declare `secret_handles`; a subprocess may resolve only those
-handles for its concrete attempt. Package and journal metadata retain handle
-names, never values. An undeclared handle fails package validation before
-execution. Resolved values are scoped to that adapter environment and redacted
-from operator-facing stdout/stderr streams; public graph inspection and
-`explain` never include values.
+Every attempt gets an isolated work directory. The runtime writes the
+manifest, captures stdout/stderr, validates `output/result.json` as a JSON
+object, and structurally canonicalizes it before commit. Capabilities may
+declare `secret_handles`; a subprocess may resolve only those handles for
+its attempt. Package and journal metadata retain handle names, never values.
+Resolved values are redacted from operator-facing stdout/stderr. Public
+graph inspection and `explain` never include values.
 
 Terminal execution metadata uses a provider-neutral provenance envelope:
 package/path fingerprints, capability, adapter identity/version, stable
 execution ID, attempt, timestamps, optional model/tool IDs, and validated
 `usage`. Usage supports non-negative duration, input/output tokens, and cost
-with a required unit. Aggregation preserves per-effector provenance and sums
-compatible units; malformed usage fails the attempt closed. Packages without
-secret or usage declarations retain the existing behavior.
+with a required unit. Malformed usage fails the attempt closed.
 
-An effector may declare vendor-neutral context continuity as `context_policy =
-"fresh" | "resume" | "inherit"`. Resume keys derive from explicit
-run/process/impulse identity and remain stable across physical retries;
-`context_invalidation_digest` changes the key when material inputs change.
-Inherit additionally requires a direct `context_source` whose durable process
-is succeeded and has provenance. The subprocess manifest contains only the
-resolved policy/key/source/digest. Fala stores no transcript or vendor session
-ID; an adapter that cannot implement the declared policy must fail unsupported,
-not silently start fresh. Omitting the policy preserves previous behavior.
+An effector may declare `context_policy = "fresh" | "resume" | "inherit"`.
+Resume keys derive from run/process/impulse identity and stay stable across
+physical retries; `context_invalidation_digest` changes the key when
+material inputs change. Inherit requires a direct `context_source` whose
+durable process succeeded and has provenance. The manifest contains only the
+resolved policy/key/source/digest. Fala stores no transcript or vendor
+session ID. An adapter that cannot implement the declared policy must fail
+unsupported, not silently start fresh.
 
-Adapters never mutate a JournalPort,
-NativeJournal, SQLite database, or other Fala journal directly.
+Adapters never mutate a JournalPort, NativeJournal, SQLite database, or
+other Fala journal directly.
 
-Package loading validates known adapter kinds, subprocess command shape,
-and the environment boundary.
+## `child_path`
 
-A `child_path` effector is authored without `command`/`ref`/`env`. Required
-fields are `package_ref`, `path_id`, `journal_root`, `input_mapping`,
-`terminal_mapping`, `lifetime_seconds`, and `retention` (`keep` keeps the child
-journal; `delete_on_success` unlinks it after a typed parent `path_result`):
+Authored without `command` / `ref` / `env`. Required: `package_ref`,
+`path_id`, `journal_root` (a directory, not a journal file),
+`input_mapping`, `terminal_mapping`, positive `lifetime_seconds`, and
+`retention` (`keep` or `delete_on_success`). Host-owned `FALA_*`
+environment names cannot be authored.
 
 ```toml
 adapter = {
@@ -93,16 +76,15 @@ adapter = {
 }
 ```
 
-The runner is `python/fala/child_path.py`. Native CLI dispatch does not compile
-this kind; only the Python host does.
+The child run ID and journal filename are a stable digest of the parent
+run/process identity. Typed `path_result` returns through `result.json`,
+with `child_ref = {journal, run_id, path_digest, terminal}` in parent
+values/metadata. `delete_on_success` unlinks the child SQLite file (and
+WAL/SHM sidecars) after that typed result. Native CLI dispatch does not
+compile this kind; only the Python host does.
 
-Python subprocesses may use `fala.sdk` to read
-`FALA_EFFECTOR_MANIFEST`, inspect declared inputs, conduction, upstream/output
-reactions, regulation, and config, then write
-`FALA_EFFECTOR_OUTPUT_DIR/result.json`. These helpers do not expose manifest
-adapter metadata. This is a helper for the wire contract, not a `python_function`
-adapter.
-
-See [`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md) for claims and leases,
-[`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md) for transaction invariants, and
-[`SECURITY.md`](SECURITY.md) for the trust boundary.
+Python subprocesses may use `fala.sdk` to read `FALA_EFFECTOR_MANIFEST` and
+write `FALA_EFFECTOR_OUTPUT_DIR/result.json`. See
+[`PROCESS_RUNTIME.md`](PROCESS_RUNTIME.md),
+[`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md), and
+[`SECURITY.md`](SECURITY.md).

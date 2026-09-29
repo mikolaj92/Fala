@@ -1,131 +1,84 @@
 # Fala
 
-**Version 0.9.4** — Mojo-native engine with an optional thin Python host
-binding; local autonomous Correlator, cybernetic mediation, event-first memory,
-and a POSIX process host.
+**Version 0.9.4** — Mojo engine, optional thin Python host.
 
-## Local autonomous Correlator
+Fala composes small programs into a graph. A node is one effector: one job,
+one structured answer. An LLM can sit on a node; it is not the spine.
 
-Fala is a parent autonom: a cybernetic mediator that observes other autonomous organs.
-It accepts typed **Impulses**, asks **Effectors** for structured answers under
-named contracts, and records associations and reactions. It does not tell a
-child how to work, how long to live, or what a failure means. It may ask
-again, ask the child to stop, and kill the OS process. A child crash does not
-take down the parent.
-
-Unix process composition is the implementation boundary, not the product
-identity. Each organ keeps its own journal. `run_until_idle` is the embedded
-parent loop that sits until children answer, go silent, or are stopped; it is
-not a standalone CLI command.
+You author a TOML or JSON package. Fala asks each node for its answer under a
+named `output_schema`, records what came back, and may ask again or stop the
+OS process. It does not enter the child. A child crash stays in the child.
 
 ```text
-you compose:   TOML/JSON package → Impulse → embedded run_until_idle → JournalPort
-Fala mediates: cybernetic contracts + conduction + process host
-organs live:   native_function | subprocess | manual_homeostat | child_path
+package (TOML/JSON)
+        │
+        ▼
+  CorrelationPath  =  the graph
+        │
+        ├── native_function   in-process Mojo callable
+        ├── subprocess        argv child, JSON on the filesystem
+        ├── manual_homeostat  operator wait
+        └── child_path        nested package, compiled to argv
+        │
+        ▼
+  JournalPort  →  memory | SQLite | JSONL | tee
 ```
 
-## Core picture
-
-```text
-Impulse / package (TOML or JSON)
-        │
-        ▼
-  CorrelationPath (named contracts)
-        │
-        ├── native_function   (in-process Mojo registry)
-        ├── subprocess        (OS child + JSON manifest boundary)
-        ├── manual_homeostat  (operator wait and regulation)
-        └── child_path        (host compiles nested package to argv)
-        │
-        ▼
-  JournalPort → InMemory | SQLite | JSONL | Tee
-        │
-        ▼
-  events · associations · reactions · processes · projections
-```
-
-SQLite is the bundled reference sink; memory, JSONL, and tee sinks implement
-the same JournalPort. Reaction bytes live in the local reaction store, while
-the journal records metadata and references.
+SQLite is the bundled reference sink. Memory, JSONL, and tee implement the
+same port with weaker persistence. Reaction bytes live in a local store; the
+journal keeps metadata and references.
 
 ## What it is for
 
 | Use | Example |
 | --- | --- |
 | Local correlation paths | ingest → enrich → export as durable processes |
-| Host Mojo tools | run Splot or any argv child as a subprocess effector |
-| Domain packs | Signals, Splot, and Takt vocabulary on Fala records |
+| Host a sibling tool | run Splot or any argv child as a subprocess effector |
+| Domain vocabulary | Signals, Splot, and Takt names on Fala records |
 | Observable runs | journaled leases, retries, homeostats, and projections |
-| Embedded / CLI | embedded code drives a run to idle; CLI creates/lists/inspects one local run |
 
 ## What it is not
 
-- Not a fleet or multi-runtime peer mesh
-- Not Redis/Postgres/Kafka; local journals and filesystem reactions are the
-  default
+- Not an LLM agent framework. Models are optional effectors.
+- Not a fleet or multi-runtime peer mesh.
+- Not Redis/Postgres/Kafka. Local journals are the default.
 
-## Mojo-native engine
+## Engine
 
-| Surface | Current contract |
+| Surface | Contract |
 | --- | --- |
 | Engine | Mojo only (`mojo/fala/`) |
-| Host binding | Optional thin Python package (`python/fala/`), a JSON bridge to Mojo—not a second engine. An installed wheel keeps the engine at `fala/mojo/` and patches at `fala/patches/`; it does not drop `mojo/` or `patches/` into `site-packages`. Checkout builds still use `FALA_HOME`. |
+| Host binding | Optional `python/fala/` JSON bridge — not a second engine. An installed wheel keeps the engine at `fala/mojo/` and patches at `fala/patches/`. Checkout builds still use `FALA_HOME`. |
 | Packages | TOML or canonical JSON |
 | Adapters | `subprocess`, `native_function`, `manual_homeostat`, `child_path` |
-| Journal | `JournalPort`, memory/SQLite/JSONL/tee sinks |
+| Journal | `JournalPort`; memory / SQLite / JSONL / tee sinks |
 | Proof | Mojo smokes under `mojo/smoke/` and `pixi.toml` |
 
-```text
-mojo/fala/      Mojo Correlator, JournalPort, driver, host, packages, CLI
-python/fala/    optional host binding and subprocess-effector SDK
-mojo/smoke/     executable gates
-examples/       TOML packages and domain vocabulary
-docs/           architecture and contracts
-vendor/         dynamically managed EmberJson and sqlite.fire dependencies
-tools/          native smoke helpers
-```
+`run_until_idle` is the embedded parent loop (claim → ask → record), not a
+CLI verb. The native CLI creates, lists, and inspects one local run and
+requires `--db`, `--run-id`, and `--now` where those commands need them.
 
-## Adapters and process execution
-
-| Kind | Role |
-| --- | --- |
-| `subprocess` | argv child; manifest in `input/`, result in `output/result.json` |
-| `native_function` | in-process Mojo callable from the native registry |
-| `manual_homeostat` | durable operator wait and explicit completion |
-| `child_path` | package-authored nested path; host compiles it to the subprocess runner in `python/fala/child_path.py` |
-
-`run_until_idle` is that parent loop (claim → ask → record), not a command to
-the child and not a standalone CLI verb. Each process has a run-scoped identity,
-lease, and isolated work directory. The native CLI exposes create/lifecycle/
-list/inspect on one journal and requires `--db`, `--run-id`, and `--now` where
-those commands need them. Independent work can use multi-claim batches or
-separate Fala instances with separate journals.
-See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md).
-
-Fala is a mediator, not a workflow tyrant: terminal upstreams conduct success
-or error payloads to dependents, and the receiving effector decides what the
-payload means. A failed upstream does not silently cancel its dependents.
-Package authors may add `when = { upstream, path, equals }` to select a branch
-from a successful direct-upstream JSON scalar. Fala records a nonmatching branch
-as `skipped`; it does not assign meaning to the compared domain value.
+Every effector declares a non-empty `output_schema` that names the answer.
+`{ type = "object" }` is not a contract. Terminal upstreams conduct success
+or error payloads; the receiving effector decides what they mean. Package
+authors may add `when = { upstream, path, equals }` to select a branch from a
+successful direct-upstream JSON scalar. A nonmatching branch is `skipped`.
 
 Repeated finite topology can be authored once with `path_templates` and a
-bounded path `expansion`. Loading materializes it into ordinary effectors before
-run creation; canonical inspection and path digests see the full graph. The
-mandatory `max_items` prevents unbounded generation, while `serial = true`
-authors explicit dependencies between instances rather than hiding order in a
-host loop. See [`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md#bounded-authoring-expansion).
+bounded `expansion`. Loading materializes ordinary effectors before run
+creation. `max_items` is mandatory. See
+[`docs/PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md).
 
 ## Quick proof
 
-The native workspace supports macOS ARM64 (`osx-arm64`) and Linux ARM64
-(`linux-aarch64`, glibc 2.29 or newer). It requires Pixi/Mojo (see `pixi.toml`):
+macOS ARM64 (`osx-arm64`) and Linux ARM64 (`linux-aarch64`, glibc 2.29+).
+Requires Pixi/Mojo (see `pixi.toml`):
 
 ```bash
 mise exec -- pixi run full-smoke
-mise exec -- pixi run core-smoke    # no SQLite
-mise exec -- pixi run host-smoke    # process host and subprocess boundary
-mise exec -- pixi run python-host-api  # public Python host binding
+mise exec -- pixi run core-smoke      # no SQLite
+mise exec -- pixi run host-smoke      # process host and subprocess boundary
+mise exec -- pixi run python-host-api # public Python host binding
 ```
 
 ## Examples
@@ -142,13 +95,13 @@ mise exec -- pixi run splot-domain
 mise exec -- pixi run splot-integration
 ```
 
-Fala does not import Splot. Splot is an optional child product; Fala owns
-conduction, process hosting, and the journal.
+Fala does not import Splot. Splot is an optional child product.
 
 ### Durable in-process callbacks (Python)
 
-For a resident Python component that must record one attempt without a subprocess,
-create the run through the normal durable lifecycle and call `record_in_process`:
+For a resident Python component that must record one attempt without a
+subprocess, create the run through the normal durable lifecycle and call
+`record_in_process`:
 
 ```python
 result = fala.record_in_process(
@@ -161,46 +114,29 @@ result = fala.record_in_process(
 )
 ```
 
-The callback is invoked once. Its JSON-recordable result is stored in one succeeded
-process row and returned unchanged; exceptions produce a failed row and are re-raised.
-Invalid JSON diagnostics/results fail closed. Executions sharing a journal are
-non-blocking single-flight. This primitive records only the callback attempt: callers
-continue to own run creation and finalization policy.
+The callback runs once. Its JSON-recordable result is stored in one succeeded
+process row and returned unchanged; exceptions produce a failed row and are
+re-raised. Invalid JSON fails closed. Executions sharing a journal are
+non-blocking single-flight. Callers still own run creation and finalization.
 
 ## Docs
 
-### Identity and philosophy
-
 | Doc | Focus |
 | --- | --- |
-| [`CONCEPTUAL_MODEL.md`](docs/CONCEPTUAL_MODEL.md) | canonical ontology and conduction rules |
-| [`CYBERNETIC_MAPPING.md`](docs/CYBERNETIC_MAPPING.md) | historical → current lexicon and Mojo surfaces |
-| [`UNIX_AND_CYBERNETICS.md`](docs/UNIX_AND_CYBERNETICS.md) | Unix composition and cybernetic synthesis |
-| [`DOMAIN_PACKS.md`](docs/DOMAIN_PACKS.md) | domain vocabulary boundaries |
-| [`TAKT_DOMAIN_PACK.md`](docs/TAKT_DOMAIN_PACK.md) | Takt domain adapter |
+| [`PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md) | claims, leases, retries, `when`, expansion |
+| [`ADAPTER_CONTRACTS.md`](docs/ADAPTER_CONTRACTS.md) | subprocess and `child_path` wire |
+| [`EFFECTOR_PROTOCOL.md`](docs/EFFECTOR_PROTOCOL.md) | parent–child envelope |
+| [`OUTPUT_CONTRACTS.md`](docs/OUTPUT_CONTRACTS.md) | `output_schema` subset |
+| [`FALA_HOST_AND_COMPOSITION.md`](docs/FALA_HOST_AND_COMPOSITION.md) | process host, graph CLI, Python binding |
+| [`RUNTIME_SEMANTICS.md`](docs/RUNTIME_SEMANTICS.md) | command/event transactions |
+| [`JOURNALPORT_CORE_PATH.md`](docs/JOURNALPORT_CORE_PATH.md) | JournalPort vs SQLite helpers |
+| [`SQLITE_BACKEND.md`](docs/SQLITE_BACKEND.md) | reference sink |
+| [`REACTIONS_AND_REFERENCES.md`](docs/REACTIONS_AND_REFERENCES.md) | reaction bytes and refs |
+| [`SECURITY.md`](docs/SECURITY.md) | trust boundary |
+| [`DOMAIN_PACKS.md`](docs/DOMAIN_PACKS.md) | Signals, Splot, Takt vocabulary |
+| [`FALA_ARCHITECTURE_STATUS.md`](docs/FALA_ARCHITECTURE_STATUS.md) | current map |
 
-### Runtime and boundaries
-
-| Doc | Focus |
-| --- | --- |
-| [`RUNTIME_SEMANTICS.md`](docs/RUNTIME_SEMANTICS.md) | transaction and state invariants |
-| [`PROCESS_RUNTIME.md`](docs/PROCESS_RUNTIME.md) | claims, leases, retries, and execution |
-| [`ADAPTER_CONTRACTS.md`](docs/ADAPTER_CONTRACTS.md) | subprocess and effector wire boundary |
-| [`FALA_HOST_AND_COMPOSITION.md`](docs/FALA_HOST_AND_COMPOSITION.md) | process-host composition |
-| [`JOURNALPORT_CORE_PATH.md`](docs/JOURNALPORT_CORE_PATH.md) | JournalPort core path |
-| [`SQLITE_BACKEND.md`](docs/SQLITE_BACKEND.md) | reference sink details |
-| [`REACTIONS_AND_REFERENCES.md`](docs/REACTIONS_AND_REFERENCES.md) | reaction bytes and references |
-
-### Operations and assurance
-
-| Doc | Focus |
-| --- | --- |
-| [`EVENTS_AND_REPLAY.md`](docs/EVENTS_AND_REPLAY.md) | event ordering and replay |
-| [`SECURITY.md`](docs/SECURITY.md) | trust boundary and subprocess safety |
-| [`FALA_ARCHITECTURE_STATUS.md`](docs/FALA_ARCHITECTURE_STATUS.md) | current architecture status |
-| [`SPLOT_DOMAIN_PACK.md`](docs/SPLOT_DOMAIN_PACK.md) | Splot vocabulary and host integration |
-
-[`CHANGELOG.md`](CHANGELOG.md) contains release history.
+[`CHANGELOG.md`](CHANGELOG.md) is release history.
 
 ## License
 
