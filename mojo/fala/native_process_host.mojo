@@ -95,9 +95,10 @@ def _validate_start_inputs(argv: List[String], env: List[String], cwd_path: Stri
 
 def _host_library_name() -> String:
     """Shared library name for this POSIX target (Darwin dylib / Linux so)."""
-    if CompilationTarget.is_macos():
+    comptime if CompilationTarget.is_macos():
         return "libfala_process_host.dylib"
-    return "libfala_process_host.so"
+    else:
+        return "libfala_process_host.so"
 
 
 def _directory_of(path: String) raises -> String:
@@ -126,7 +127,7 @@ def _realpath_string(path: String) raises -> String:
 
 def _executable_path() raises -> String:
     """Resolve the current process executable (Darwin or Linux)."""
-    if CompilationTarget.is_macos():
+    comptime if CompilationTarget.is_macos():
         var size = alloc(Layout[UInt32].single()).into_managed()
         size.unsafe_ptr().unsafe_write(UInt32(1))
         var probe = alloc(Layout[UInt8].single()).into_managed()
@@ -146,25 +147,26 @@ def _executable_path() raises -> String:
         var raw = String(unsafe_from_utf8_ptr=buffer.unsafe_ptr())
         _ = buffer
         return _realpath_string(raw)
-    # Linux / other POSIX: /proc/self/exe
-    var link = "/proc/self/exe\0"
-    var buffer = alloc(Layout[UInt8](count=4096)).into_managed()
-    var n = external_call["readlink", c_int](
-        CStr(unsafe_from_address=Int(link.as_bytes().unsafe_ptr())),
-        buffer.unsafe_ptr().as_unsafe_any_origin(),
-        c_int(4095),
-    )
-    if n < 0:
-        raise Error("fala process host: unable to read /proc/self/exe (POSIX host requires Linux or Darwin)")
-    buffer.unsafe_ptr()[unsafe_offset=Int(n)] = 0
-    var raw = String(unsafe_from_utf8_ptr=buffer.unsafe_ptr())
-    _ = buffer
-    return _realpath_string(raw)
+    else:
+        # Linux / other POSIX: /proc/self/exe
+        var link = "/proc/self/exe\0"
+        var buffer = alloc(Layout[UInt8](count=4096)).into_managed()
+        var n = external_call["readlink", c_int](
+            CStr(unsafe_from_address=Int(link.as_bytes().unsafe_ptr())),
+            buffer.unsafe_ptr().as_unsafe_any_origin(),
+            c_int(4095),
+        )
+        if n < 0:
+            raise Error("fala process host: unable to read /proc/self/exe (POSIX host requires Linux or Darwin)")
+        buffer.unsafe_ptr()[unsafe_offset=Int(n)] = 0
+        var raw = String(unsafe_from_utf8_ptr=buffer.unsafe_ptr())
+        _ = buffer
+        return _realpath_string(raw)
 
 
 def _library_path() raises -> String:
     """Resolve only an explicit or executable-relative process-host library."""
-    if not CompilationTarget.is_macos() and not CompilationTarget.is_linux():
+    comptime if not CompilationTarget.is_macos() and not CompilationTarget.is_linux():
         raise Error("fala native process host requires Darwin or Linux")
     var configured = getenv("FALA_PROCESS_HOST_LIBRARY")
     if configured != "":

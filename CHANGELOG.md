@@ -18,6 +18,9 @@
 - Mojo 1.1 rejects intra-package access without an explicit import.
   `native_cli_inspect` now imports `diagnose_wait_graph` from
   `native_driver` instead of relying on package-wide lookup.
+- Darwin-only `_NSGetExecutablePath` FFI is behind `comptime if
+  CompilationTarget.is_macos()`. A runtime `if` still emitted that
+  symbol into the Linux `_native` shared library.
 
 **Documentation: one picture, no leftover identity essays.**
 
