@@ -1,173 +1,99 @@
 # Fala Process Runtime
 
 Processes are schedulable execution units attached to a run and optionally to
-an Impulse. Their persistence boundary depends on the configured sink. In the
-current SQLite core, `NativeJournal` and `NativeDomainStore` own direct
-transactional helpers; SQLite is the reference sink, not the process identity.
+an Impulse. Persistence depends on the sink. In SQLite, `NativeJournal` and
+`NativeDomainStore` own the transactions.
 
-## Runtime boundary
-
-Fala owns:
-
-- run and impulse state;
-- process scheduling, claims, and worker leases;
-- retry and timeout state;
-- command idempotency and event append;
-- association and reaction metadata;
-- homeostat state and projection rebuilds;
-- bridge outbox/inbox records.
-
-Adapters own execution only. They receive validated JSON input at the adapter
-boundary and return validated output for the Correlator to commit.
-
-## Explicit compensation
-
-An effector may declare `compensation = { path_id, capability }`, where the
-capability is deliberately distinct from the original effect capability. This
-is a named child-path contract, not implicit rollback: only an authored graph
-edge invokes it after a confirmed effect receipt exists. The child input carries
-the exact authoritative identity/evidence receipt and a stable idempotency key.
-It observes before acting and records one of `compensated`, `already_absent`,
-`compensation_failed`, or `not_compensable`. Retry after a crash observes and
-confirms instead of duplicating reversal. Ordinary failure never schedules
-compensation, and original history is immutable. These are saga-like external
-effects, not ACID transactions across systems.
+Fala owns run and impulse state; process scheduling, claims, and leases;
+retry and timeout; command idempotency and event append; association and
+reaction metadata; homeostat state; projection rebuilds; bridge
+outbox/inbox. Adapters own execution only: validated JSON in, validated
+JSON out.
 
 ## Execution model
 
 Default `run_until_idle` is the parent observation loop: **claim → ask →
-record** under one worker lease. The child is a separate autonom. Fala offers
-the answer contract, records what came back, may ask again, and may kill the
-OS process. It does not become the child. The default driver is sequential:
-one process per tick (`claims_per_round=1`). Logical independence in a
-correlation graph does not itself promise simultaneous execution.
+record** under one worker lease. The child is a separate autonom. The
+default driver is sequential: one process per tick (`claims_per_round=1`).
+Graph independence does not itself promise simultaneous execution.
 
-### Lifecycle timestamps
+`fala.host_run_package` records request creation time and opts the native
+runtime into a fresh UTC wall-clock for process claims, terminals, run
+finalization, and correlation-created/skipped transitions. Journal
+timestamps are second-resolution UTC (`YYYY-MM-DDTHH:MM:SSZ`). The low-level
+`native.host_run_package(JSON)` binding stays deterministic unless
+`realtime_timestamps` is `true`.
 
-The Python `fala.host_run_package` entry point represents a live host run. It
-records the request creation time and opts the native runtime into reading a
-fresh UTC wall-clock timestamp for process claims and terminal transitions,
-run finalization, and correlation-created/skipped process transitions. A
-subprocess spanning a whole-second boundary has distinct process `started_at`
-and `finished_at` values; subsecond transitions can share a value because the
-journal timestamp representation remains second-resolution UTC
-(`YYYY-MM-DDTHH:MM:SSZ`). The run's finish reflects its final transition rather
-than the original request time. Keeping the existing representation also
-matches the durable fields used for lease and retry ordering.
+Pass `claims_per_round > 1` to `drive_until_idle`, or call
+`drive_ready_batch` with `max_claims`, for several sequential
+claim/execute/complete ticks in one driver round. This is not an atomic
+claim batch and not concurrent execution.
 
-The low-level `native.host_run_package(JSON)` binding keeps deterministic clock
-control: unless `realtime_timestamps` is explicitly set to `true`, lifecycle
-transitions use the request's supplied `now`. Tests, replay fixtures, and
-callers simulating a fixed clock can therefore keep their explicit timestamps.
-The opt-in changes transition timestamps only; the request's `created_at`
-continues to identify when the run was created.
+Durable subprocess cancellation polls the journal while retaining the live
+process-host handle. `cancel_requested` records the operator request, then
+`drive_once` sends SIGTERM to the private process group and may escalate to
+SIGKILL. `native_function` cannot be preempted. `manual_homeostat` is
+cancelled in the journal. After driver death, recovery reclaims the lease
+only; OS process ownership is not reconstructed from a stale PID.
+
+Automatic retry is at-least-once for external effects. `execution_id` is the
+stable idempotency key; `attempt` is only the physical try. Effectors must
+durably deduplicate before an external effect, or set
+`retry_policy = "none"`. The native driver enforces `retry_policy` for
+adapter failure, timeout, and expired-lease maintenance.
+
+Native process-host discovery: `FALA_PROCESS_HOST_LIBRARY` if set, otherwise
+the packaged library relative to the executable. No cwd or source-tree
+fallback.
+
+Process identity is `(run_id, process_id)`. Default correlation-path ids are
+`{run_id}:{path_spec_id}:{effector_id}` when `correlation_path_id` is
+omitted. The native driver leaves `EffectorRequest.work_dir` empty; the
+subprocess adapter then chooses `FALA_EFFECTOR_ROOT` or the host cwd and
+creates a hashed `.fala-effector-*` directory. Parallel composition is
+separate Fala instances with separate journals — see
+[`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
 
 ## Conditional conduction
 
-An unconditional `conduction` edge is sequencing and terminal-data delivery;
-it is not a success gate. Fala makes a dependent ready after every declared
-upstream is terminal. It places a successful upstream's projected output, or
-an unsuccessful upstream's error object, under
-`input.conduction.<upstream-id>` and invokes the dependent adapter. That
-dependent may succeed after handling an error, but a failed or timed-out
-upstream still makes the run fail at finalization.
+An unconditional `conduction` edge is sequencing and terminal-data delivery,
+not a success gate. Dependents become ready when every declared upstream is
+terminal. Success output or error object is placed under
+`input.conduction.<upstream-id>`. A failed or timed-out upstream still makes
+the run fail at finalization.
 
-When an operation requires a successful upstream value, author an explicit
-`when` condition over that value. The conditional adapter runs only when the
-source succeeded and the declared scalar matches; a failed or timed-out source
-skips the conditional process. This keeps the success requirement in the graph
-instead of making Fala infer it from an unconditional dependency.
-
-An effector may declare one deterministic condition over a direct upstream
-output:
+When a successful upstream value is required, author `when` over that value.
+The conditional adapter runs only when the source succeeded and the declared
+scalar matches; otherwise the process is `skipped`.
 
 ```toml
 when = { upstream = "review", path = "decision.verdict", equals = "approve" }
 ```
 
-Fala waits for every declared conduction dependency. It then reads the named
-object path from the schema-projected output of the successful upstream.
-A match makes the effector ready. A non-match records the effector as
-`skipped` with `condition_not_met`, without executing its adapter. Missing
-keys, malformed declarations, non-scalar values, and a non-successful condition
-source fail closed. The comparison has no domain semantics: Fala compares the
-declared JSON scalar and leaves the status vocabulary to the product graph.
-
 `when.upstream` must also appear in the effector's direct `conduction` list.
-This keeps branch evidence local, durable, and visible in the correlation path.
+Missing keys, malformed declarations, non-scalar values, and a
+non-successful condition source fail closed. Fala compares the JSON scalar;
+it assigns no domain meaning.
 
-### Serial multi-claim loop (same journal)
-Pass `claims_per_round > 1` to `drive_until_idle`, or call
-`drive_ready_batch` with `max_claims`, to permit several claim/execute/complete
-ticks in one driver round. The current driver still executes them sequentially
-under one lease owner; this is neither an atomic claim batch nor concurrent
-execution, and exact persistence behavior depends on the selected sink.
+## Explicit compensation
 
-This remains one Fala, not a fleet.
-
-Durable subprocess cancellation polls the journal while retaining the live
-process-host handle. `cancel_requested` records the operator request, then
-`drive_once` sends SIGTERM to the private process group, waits a bounded grace
-period, and escalates the whole group to SIGKILL when needed. Signal/escalation
-and the single `cancelled` terminal are journal events; replaying the cancel
-key is idempotent. A race with natural completion observes one durable
-terminal. `native_function` calls cannot be preempted and finish cooperatively;
-`manual_homeostat` has no live child and is cancelled directly in the journal.
-After driver death, recovery can only reclaim/terminalize the lease: OS process
-ownership is intentionally not reconstructed from an untrusted stale PID.
-
-Low-level journal/process retry primitives are policy-neutral. The native
-driver enforces `retry_policy` for adapter failure, timeout, and expired-lease
-maintenance; callers invoking low-level retry APIs directly own that policy.
-
-External effects under automatic retry are delivered at least once: a timeout
-or crash can leave an external effect completed before the runtime result is
-committed, and a later attempt may run again. `execution_id` is the stable
-idempotency key across attempts; `attempt` identifies only the physical try and
-must not be used as that key. Effectors must durably deduplicate before
-performing an external effect. Set `retry_policy = "none"` when that guarantee
-cannot be made.
-
-Native process-host library discovery is explicit: use the absolute path in
-`FALA_PROCESS_HOST_LIBRARY` when set; otherwise use only the packaged library
-relative to the executable. There is no cwd or source-tree fallback.
-
-### Multi-workspace (separate journals)
-
-Unix-style parallel composition uses multiple Fala instances, each with its own
-journal path (or a memory driver with a distinct `stream_id`). Nested organs
-use a subprocess and a separate child journal; see
-[`FALA_HOST_AND_COMPOSITION.md`](FALA_HOST_AND_COMPOSITION.md).
-
-Fala is not a cluster scheduler. Process identity is scoped by run: the journal
-key is `(run_id, process_id)`, and default correlation-path ids are
-`{run_id}:{path_spec_id}:{effector_id}` when `correlation_path_id` is omitted.
-The native driver leaves `EffectorRequest.work_dir` empty. A direct adapter
-caller may provide it explicitly; otherwise the subprocess adapter chooses
-`FALA_EFFECTOR_ROOT` or the host current directory and creates a hashed,
-per-attempt `.fala-effector-*` directory from run, process, impulse, and attempt.
-Consumers remain responsible for distinct journal and reaction-store paths.
-
-Leases provide ownership and crash recovery; they do not orchestrate arbitrary
-parallel document jobs.
+An effector may declare `compensation = { path_id, capability }` with a
+capability distinct from the original effect. Only an authored graph edge
+invokes it after a confirmed effect receipt exists. The child observes
+before acting and records `compensated`, `already_absent`,
+`compensation_failed`, or `not_compensable`. Ordinary failure never
+schedules compensation. Original history is immutable.
 
 ## Process state
 
-Current process statuses are:
+`pending`, `ready`, `running`, `waiting`, `retry_wait`, `succeeded`,
+`failed`, `skipped`, `cancel_requested`, `cancelled`, `timed_out`.
 
-`pending`, `ready`, `running`, `waiting`, `retry_wait`, `succeeded`, `failed`,
-`skipped`, `cancel_requested`, `cancelled`, and `timed_out`.
-A nonmatching `when` records the effector as terminal `skipped` without
-invoking its adapter.
-
-Adapters cannot mutate these statuses directly. State changes go through
-Correlator operations and append runtime events. See
-[`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md) for transaction and transition
-invariants.
+Adapters cannot mutate these statuses. A nonmatching `when` records
+`skipped` without invoking the adapter. See
+[`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md).
 
 ## Adapter kinds
-
-Fala package effectors declare adapters in TOML (canonical JSON is equivalent):
 
 ```toml
 [[correlation_paths]]
@@ -179,26 +105,18 @@ capability = "normalize"
 adapter = { kind = "native_function", ref = "example.normalize" }
 ```
 
-Supported adapter kinds:
-
 - `native_function`: registered in-process Mojo callable.
-- `subprocess`: local command as an argument list—the process-host boundary.
+- `subprocess`: argv list; process-host boundary.
 - `manual_homeostat`: explicit operator homeostat.
-- `child_path`: nested package path compiled by the Python host to argv; see
-  [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md) and `python/fala/child_path.py`.
+- `child_path`: nested package path compiled by the Python host; see
+  [`ADAPTER_CONTRACTS.md`](ADAPTER_CONTRACTS.md).
 
-Subprocess commands are argument lists, not shell strings. The host prepares
-JSON input manifests, captures stdout/stderr, validates result manifests, and
-commits resulting events, reactions, and associations through the applicable
-native SQLite transaction helpers when using the SQLite core.
+## Bounded authoring expansion
 
-### Bounded authoring expansion
-
-A package may define `[[path_templates]]` once and materialize a finite list of
-instances in a correlation path. Expansion happens while loading and validating
-the package, before a run is created. The runtime therefore receives only an
-ordinary `CorrelationPath`: expanded IDs, dependencies, and order are visible in
-`serialize_package_json`, and that canonical topology produces the path digest.
+A package may define `[[path_templates]]` once and materialize a finite list
+of instances. Expansion happens while loading, before run creation. The
+runtime receives an ordinary `CorrelationPath`. Canonical inspection and
+path digests see the full graph.
 
 ```toml
 [[path_templates]]
@@ -228,22 +146,16 @@ items = [
 ]
 ```
 
-`max_items` is mandatory. `items` may be empty or contain at most that many
-objects. Parameter types are `string`, `integer`, `number`, or `boolean`.
-Missing, unknown, or mistyped parameters fail closed. Expanded effector IDs
-must still be globally unique inside the path. With `serial = true`, the first
-effector of each instance with no authored dependencies explicitly conducts
-from the previous instance's final effector; this is graph materialization, not
-a scheduler or adapter loop. Existing schema-v2 packages using `effectors`
-continue unchanged.
+`max_items` is mandatory. Parameter types are `string`, `integer`, `number`,
+or `boolean`. With `serial = true`, the first effector of each instance with
+no authored dependencies conducts from the previous instance's final
+effector. This is graph materialization, not a host loop.
 
-### Typed path contracts
+## Typed path contracts
 
 A correlation path may declare an `input_schema` and a closed set of
-`terminals`. Input is validated before run creation. After finalization, exactly
-one terminal must match its source effector's terminal process status and
-optional value condition; zero or multiple matches fail closed. The selected
-values are validated against that terminal's independent `output_schema`.
+`terminals`. Input is validated before run creation. After finalization,
+exactly one terminal must match; zero or multiple matches fail closed.
 
 ```toml
 [correlation_paths.input_schema]
@@ -260,15 +172,11 @@ output_schema = { type = "object", required = ["state"] }
 ```
 
 The host returns `path_result = { terminal, values, evidence, path_digest }`.
-Per-effector results remain available for inspection. Terminal selection and
-schema validation are replay-stable because both the expanded path contract and
-result are canonical and the durable run pins `correlation_path_digest`.
-Paths without `terminals` retain their existing behavior and return a null path
-result. Names such as `delivered`, `waiting`, `repairable`, and `failed` are
-consumer-domain examples only; Fala assigns them no built-in meaning.
+Paths without `terminals` return a null path result. Names such as
+`delivered` are consumer-domain examples only.
 
-Current package schema version 2 declares the durable runtime boundary
-explicitly:
+Package schema version 2 selects implementations; it does not define the
+ontology:
 
 ```toml
 [runtime.backend]
@@ -280,14 +188,5 @@ kind = "filesystem"
 root = ".fala/reactions"
 ```
 
-This configuration selects implementations; neither SQLite nor the filesystem
-reaction store defines Fala's ontology.
-
-## Local inspection
-
-Use the native Mojo CLI to inspect persisted processes and waits. Commands emit
-JSON and accept the Journal/sink path explicitly; see the CLI help for the
-current command names and options. The durable records include process state,
-homeostat state, lease ownership, and wait diagnostics.
-
-External queues and web servers are not required for local execution.
+Native CLI inspects persisted processes as JSON. External queues and web
+servers are not required.

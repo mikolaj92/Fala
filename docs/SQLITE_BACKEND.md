@@ -1,45 +1,31 @@
 # SQLite Backend
 
-SQLite is Fala's bundled **reference journal sink** for the event-first core.
-The public sink is `SqliteJournalPort`; its native engine is `NativeJournal`.
-The port implements JournalPort while the engine provides the SQLite-backed
-domain operations. See [`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md)
-and [`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md).
+SQLite is the bundled **reference journal sink**. The public sink is
+`SqliteJournalPort`; the engine is `NativeJournal`. See
+[`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md) and
+[`RUNTIME_SEMANTICS.md`](RUNTIME_SEMANTICS.md).
 
-The backend stores:
+The backend stores runs, impulses, types, relations, associations, reaction
+metadata, processes, homeostats, projections, append-only commands and
+events, optional bridge inbox/outbox, and a schema version stamp.
 
-- runs, impulses, impulse types, and impulse relations;
-- associations, reaction metadata, processes, homeostats, and projections;
-- append-only runtime commands and runtime events;
-- optional bridge inbox/outbox deliveries;
-- schema version stamp.
-
-Reaction bytes are not stored in SQLite by default: the journal stores refs and
-metadata while `FileReactionStore` stores content-addressed bytes.
+Reaction bytes are not stored in SQLite by default. The journal stores refs
+and metadata; `FileReactionStore` stores content-addressed bytes.
 
 `NativeJournal` and `NativeDomainStore` helpers commit command/event/state
-changes atomically. Run creation, status changes, impulse acceptance, process
-scheduling and transitions, homeostat transitions, and projection saves use
-those helper transactions. `SqliteJournalPort.append_batch` is not that
-guarantee: it dispatches only the leading unit to `NativeJournal` and ignores
-non-leading units as write inputs, so it does not provide atomic multi-unit
-batch replay. See [`JOURNALPORT_CORE_PATH.md`](JOURNALPORT_CORE_PATH.md).
-Runtime commands and events are protected against direct updates and deletes;
-core facts are appended through those helper/command paths.
+changes atomically. `SqliteJournalPort.append_batch` is not that guarantee:
+it dispatches only the leading unit.
 
 Existing databases may physically retain historical `runtime_pools` and
-`delegation_policies` tables. Fresh schema initialization does not create or
-require those tables or `idx_delegation_policies_pool`; active code ignores
-such physical remnants, and generic CLI inspection does not expose them. They
-are not Fala identity or an active fleet API.
+`delegation_policies` tables. Fresh schema initialization does not create
+them. Active code ignores those remnants; they are not an API.
 
-Bridge inbox/outbox operations are optional local envelope handoff helpers, not
-shared mutable state or a global transaction. Retention, maintenance, reaction
-GC, and projection rebuilds are optional ops layers. Maintenance transactions
-cover SQLite row changes only; reaction GC scans SQLite references and then
-deletes filesystem CAS blobs as a separate operation, not as one cross-store
-transaction. Maintenance is not a normal runtime mutation path.
+Bridge inbox/outbox is optional local envelope handoff, not a global
+transaction. Retention, maintenance, reaction GC, and projection rebuilds
+are optional ops. Maintenance covers SQLite row changes only; reaction GC
+scans SQLite references and then deletes filesystem CAS blobs as a separate
+operation.
 
-SQLite initializes with WAL mode, foreign keys, and a busy timeout. The sink is
-local-first and requires no Redis, Postgres, queue broker, web server, Docker,
-or external service.
+SQLite initializes with WAL mode, foreign keys, and a busy timeout. The sink
+is local-first and requires no Redis, Postgres, queue broker, web server,
+Docker, or external service.
