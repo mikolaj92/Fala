@@ -21,6 +21,8 @@
 - Darwin-only `_NSGetExecutablePath` FFI is behind `comptime if
   CompilationTarget.is_macos()`. A runtime `if` still emitted that
   symbol into the Linux `_native` shared library.
+- Mojo 1.1 forbids implicit variable declarations. The thin-core-layers
+  smoke declares `var help_text`.
 
 **Documentation: one picture, no leftover identity essays.**
 

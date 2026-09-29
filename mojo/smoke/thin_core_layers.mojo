@@ -21,7 +21,7 @@ def _check(condition: Bool, message: String) raises:
 
 
 def main() raises:
-    help_text = cli_surface_help()
+    var help_text = cli_surface_help()
     _check(help_text.find("# core") >= 0, "help marks core section")
     _check(help_text.find("# ops") >= 0, "help marks ops section")
     # Happy-path composer path is listed under core before ops tools.
