@@ -15,6 +15,9 @@
 - sqlite.fire stays at upstream `v0.1.1` (`2cb4da9`). That tree already
   uses `def`/`comptime`, and `CStringSlice` remains a 1.1 compatibility
   alias. `v0.1.2` is still a Mojo 1.0.0 pin.
+- Mojo 1.1 rejects intra-package access without an explicit import.
+  `native_cli_inspect` now imports `diagnose_wait_graph` from
+  `native_driver` instead of relying on package-wide lookup.
 
 **Documentation: one picture, no leftover identity essays.**
 
