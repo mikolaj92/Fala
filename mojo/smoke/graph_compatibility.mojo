@@ -17,9 +17,25 @@ def main() raises:
     expect(classify_graph_change(old, additive).find("compatible_additive") >= 0, "description is compatible additive")
     expect(classify_graph_change(old, breaking).find("forbidden_for_active_run") >= 0, "gate removal forbidden")
     expect(classify_graph_change(old, breaking).find("incompatible") < 0, "node rename is forbidden, not a resume path")
+    expect(classify_graph_change(old, old).find("\"classification\":\"identical\"") >= 0, "unchanged graph is identical")
     expect(assert_resume_compatible(graph_fingerprint(old), old) == "identical", "identical resume")
+    expect(assert_resume_compatible(graph_fingerprint(old), additive, old) == "compatible_additive", "additive resume is allowed")
+    var retry = "/tmp/fala-compat-retry.json"
+    Path(retry).write_text(Path(old).read_text().replace("\"adapter\":{\"kind\":\"manual_homeostat\"}", "\"retry_policy\":\"none\",\"adapter\":{\"kind\":\"manual_homeostat\"}"))
+    expect(classify_graph_change(old, retry).find("\"classification\":\"incompatible\"") >= 0, "retry change is incompatible")
+    var timeout = "/tmp/fala-compat-timeout.json"
+    Path(timeout).write_text(Path(old).read_text().replace("\"adapter\":{\"kind\":\"manual_homeostat\"}", "\"timeout_seconds\":5,\"adapter\":{\"kind\":\"manual_homeostat\"}"))
+    expect(classify_graph_change(old, timeout).find("\"classification\":\"incompatible\"") >= 0, "timeout change is incompatible")
     var blocked = False
     try: _ = assert_resume_compatible(graph_fingerprint(old), breaking, old)
     except err: blocked = String(err).find("resume_mismatch") >= 0
     expect(blocked, "active resume fails closed")
+    var missing_before = False
+    try: _ = assert_resume_compatible(graph_fingerprint(old), breaking)
+    except err: missing_before = String(err).find("resume_mismatch") >= 0
+    expect(missing_before, "fingerprint mismatch without before-path fails closed")
+    var retry_blocked = False
+    try: _ = assert_resume_compatible(graph_fingerprint(old), retry, old)
+    except err: retry_blocked = String(err).find("incompatible") >= 0
+    expect(retry_blocked, "incompatible resume fails closed")
     print("graph compatibility smoke ok")

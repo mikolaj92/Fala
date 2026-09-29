@@ -42,4 +42,33 @@ def main() raises:
     expect(shared.find("manifest.boundary") >= 0 and shared.find("/correlation_paths/0/effectors/0/adapter/journal_root") >= 0 and shared.find("\"valid\":false") >= 0, "child journal file is a load diagnostic")
     var cli = dispatch_native_command("graph fingerprint --package " + a)
     expect(cli.find("\"fingerprint\"") >= 0 and cli.find("\"ok\":true") >= 0, "CLI stable JSON")
+    var expanded_cli = dispatch_native_command("graph expand --package " + a)
+    expect(expanded_cli.find("\"ok\":true") >= 0 and expanded_cli.find("quality") >= 0, "CLI expand ok")
+    var validate_ok = dispatch_native_command("graph validate --package " + a)
+    expect(validate_ok.find("\"ok\":true") >= 0 and validate_ok.find("\"valid\":true") >= 0, "CLI validate ok")
+    var validate_fail = dispatch_native_command("graph validate --package " + invalid)
+    expect(validate_fail.find("\"ok\":false") >= 0 and validate_fail.find("manifest.dangling_reference") >= 0, "CLI validate fail")
+    var unknown_hop = dispatch_native_command("graph rehearse --package " + a)
+    expect(unknown_hop.find("\"ok\":false") >= 0 and unknown_hop.find("unsupported_command") >= 0, "unknown graph hop is fail")
+
+    var cycle_pkg = root + "-cycle.json"
+    Path(cycle_pkg).write_text("{\"id\":\"cycle\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"left\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"conduction\":[\"right\"]},{\"id\":\"right\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"conduction\":[\"left\"]}]}]}")
+    var cycle = graph_validate(cycle_pkg)
+    expect(cycle.find("\"valid\":false") >= 0 and cycle.find("graph.cycle") >= 0, "dependency cycle is fail")
+
+    var open_wait_pkg = root + "-open-wait.json"
+    Path(open_wait_pkg).write_text("{\"id\":\"open\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"review\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    var open_wait = graph_validate(open_wait_pkg)
+    expect(open_wait.find("\"valid\":false") >= 0 and open_wait.find("graph.open_wait") >= 0, "unclosed manual wait is fail")
+
+    var equal = graph_diff(a, same)
+    expect(equal.find("\"equal\":true") >= 0, "identical graphs are equal")
+    var edges_pkg = root + "-edges.json"
+    Path(edges_pkg).write_text("{\"id\":\"edges\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"decide\",\"output_schema\":{\"type\":\"object\",\"required\":[\"route\"],\"properties\":{\"route\":{\"enum\":[\"ready\",\"wait\"]}}},\"adapter\":{\"kind\":\"manual_homeostat\"}},{\"id\":\"consume\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"},\"conduction\":[\"decide\"],\"when\":{\"upstream\":\"decide\",\"path\":\"route\",\"equals\":\"ready\"}}],\"terminals\":[{\"id\":\"done\",\"source_effector\":\"consume\",\"status\":\"succeeded\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"]}},{\"id\":\"waiting\",\"source_effector\":\"decide\",\"status\":\"succeeded\",\"when\":{\"path\":\"route\",\"equals\":\"wait\"},\"output_schema\":{\"type\":\"object\",\"required\":[\"route\"]}}]}]}")
+    var edges_changed_pkg = root + "-edges-changed.json"
+    Path(edges_changed_pkg).write_text(Path(edges_pkg).read_text().replace("\"conduction\":[\"decide\"]", "\"conduction\":[\"decide\"],\"retry_policy\":\"none\"").replace("\"when\":{\"upstream\":\"decide\",\"path\":\"route\",\"equals\":\"ready\"}", "\"when\":{\"upstream\":\"decide\",\"path\":\"route\",\"equals\":\"wait\"}"))
+    var edges = graph_diff(edges_pkg, edges_changed_pkg)
+    expect(edges.find("condition_changed") >= 0 and edges.find("retry_changed") >= 0 and edges.find("\"equal\":false") >= 0, "condition and retry are classified")
+    var diff_cli = dispatch_native_command("graph diff --before " + a + " --after " + changed)
+    expect(diff_cli.find("\"ok\":true") >= 0 and diff_cli.find("capability_changed") >= 0, "CLI diff ok")
     print("graph tools smoke ok")
