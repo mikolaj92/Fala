@@ -13,7 +13,7 @@ from emberjson import Array, Object, Value, to_string
 
 from fala.correlation import CorrelationInstantiationPlan, CorrelationProcessPlan
 from fala.correlation import Readiness
-from fala.correlation_advance import _ancestor_effectors, _reaction_list, _validate_projected_schema
+from fala.correlation_advance import _ancestor_effectors, _project_output, _reaction_list, _validate_projected_schema
 from fala.json import canonical_json_text
 from fala.journal import NativeJournal, ProcessRow
 from fala.adapters import adapter_spec_from_json
@@ -295,26 +295,6 @@ def _same_row(row: ProcessRow, item: CorrelationProcessPlan) raises -> Bool:
         and _same_metadata(row, item)
     )
 
-def _project_output(output: Value, output_schema_json: String) raises -> Value:
-    """Strip adapter envelopes and project domain output for durable conduction."""
-    if not output.is_object():
-        raise Error("expected JSON object")
-    var source = Object(capacity=len(output.object()))
-    for pair in output.object().items():
-        if pair.key != "adapter": source[pair.key] = pair.value.copy()
-    if "protocol" in source and "kind" in source and source["kind"].is_string() and source["kind"].string() == "result" and "payload" in source and source["payload"].is_object():
-        var domain = source["payload"].object().copy()
-        source = domain^
-    var schema = Value(parse_string=output_schema_json)
-    from fala.journal import schema_projection_properties
-    if schema.is_object():
-        var properties = schema_projection_properties(schema, Value(source.copy()))
-        if len(properties) > 0:
-            var projected = Object(capacity=len(properties))
-            for pair in properties.items():
-                if pair.key in source: projected[pair.key] = source[pair.key].copy()
-            return Value(projected^)
-    return Value(source^)
 
 def _initial_input(item: CorrelationProcessPlan) raises -> String:
     """Persist authored input plus the path marker's root regulation policy."""
@@ -479,21 +459,6 @@ def _persist_new_rows(mut journal: NativeJournal, plan: CorrelationInstantiation
         journal.db.rollback()
         raise SQLiteError(code=1, message="correlation persistence: pending initialization failed")
 
-
-def _readiness(mut journal: NativeJournal, plan: CorrelationInstantiationPlan) raises -> Readiness:
-    var rows = journal.list_processes(plan.run_id)
-    var ready = List[String]()
-    var blocked = List[String]()
-    for item in plan.processes:
-        var row_index = _find_row(rows, item.id)
-        if row_index < 0:
-            raise Error("correlation.persistence.unknown_path at /processes/" + item.id + ": durable process row is missing")
-        var row = rows[row_index].copy()
-        if row.status == "ready":
-            ready.append(item.effector_id)
-        elif row.status == "pending":
-            blocked.append(item.effector_id)
-    return Readiness(ready=ready^, blocked=blocked^)
 
 def _readiness_from_rows(plan: CorrelationInstantiationPlan, rows: List[ProcessRow]) raises -> Readiness:
     var ready = List[String]()

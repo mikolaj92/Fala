@@ -157,7 +157,15 @@ def _coverage_diagnostic(path_index: Int, graph: PackageCorrelationPath, effecto
     return ""
 
 
-def _coverage_report(manifest: PackageManifest) raises -> String:
+@fieldwise_init
+struct GraphCoverageReport(Copyable, Movable):
+    var diagnostics: String
+    var guaranteed: Bool
+    var unverified: String
+    var report_json: String
+
+
+def _coverage_report(manifest: PackageManifest) raises -> GraphCoverageReport:
     var diagnostics = String("[")
     var first = True
     var guaranteed = True
@@ -184,7 +192,8 @@ def _coverage_report(manifest: PackageManifest) raises -> String:
                 first = False
     diagnostics += "]"
     unverified += "]"
-    return "{\"diagnostics\":" + diagnostics + ",\"guaranteed\":" + ("true" if guaranteed else "false") + ",\"unverified\":" + unverified + "}"
+    var report_json = "{\"diagnostics\":" + diagnostics + ",\"guaranteed\":" + ("true" if guaranteed else "false") + ",\"unverified\":" + unverified + "}"
+    return GraphCoverageReport(diagnostics=diagnostics, guaranteed=guaranteed, unverified=unverified, report_json=report_json)
 
 
 def graph_validate(path: String) -> String:
@@ -218,13 +227,9 @@ def graph_validate(path: String) -> String:
                 if not closed:
                     return "{\"diagnostics\":[{\"code\":\"graph.open_wait\",\"message\":\"manual wait has no downstream or terminal closure\",\"path\":\"/correlation_paths/" + String(path_index) + "/effectors/" + String(effector_index) + "/adapter\"}],\"valid\":false}"
         var coverage = _coverage_report(manifest)
-        var valid = coverage.find("\"diagnostics\":[]") >= 0
-        var guaranteed = coverage.find("\"guaranteed\":true") >= 0
-        var unverified_start = coverage.find("\"unverified\":")
-        var unverified = "[]"
-        if unverified_start >= 0: unverified = String(coverage[byte=unverified_start + 13:coverage.byte_length() - 1])
-        if valid: return "{\"diagnostics\":[],\"valid\":true,\"coverage_guaranteed\":" + ("true" if guaranteed else "false") + ",\"unverified\":" + unverified + "}"
-        return "{\"diagnostics\":" + coverage + ",\"valid\":false}"
+        if coverage.diagnostics == "[]":
+            return "{\"diagnostics\":[],\"valid\":true,\"coverage_guaranteed\":" + ("true" if coverage.guaranteed else "false") + ",\"unverified\":" + coverage.unverified + "}"
+        return "{\"diagnostics\":" + coverage.report_json + ",\"valid\":false}"
     except err:
         var message = String(err)
         var at = message.find(" at ")
