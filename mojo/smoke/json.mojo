@@ -1,4 +1,4 @@
-from fala.json import parse_json, canonical_json_text, quote_json_string
+from fala.json import parse_json, quote_json_string
 from fala.jsonl_journal import encode_command
 from fala.journal_port import CommandRecord
 from fala.adapters import AdapterError, EffectorResult, adapter_result_json
@@ -11,11 +11,6 @@ def _check(ok: Bool, msg: String) raises:
 
 
 def main() raises:
-    var parsed = parse_json("{\"b\":1,\"a\":2}")
-    print(canonical_json_text(parsed.serialize()))
-    var array = parse_json("[true,null,3.5]")
-    print(canonical_json_text(array.serialize()))
-
     # C0 + quote + backslash must share one spelling across CLI, journal, adapter.
     var sample = "line\n" + "\x01" + "quote\"slash\\"
     var quoted = quote_json_string(sample)

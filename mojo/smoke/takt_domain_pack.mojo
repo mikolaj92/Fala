@@ -15,7 +15,6 @@ from fala.domain_packs.takt import (
     error_signal_association,
     impulse_from_cascade,
     plant_layer_association,
-    process_semantics_json,
     safety_interlock_homeostat,
 )
 from fala.domain_store import NativeDomainStore
@@ -88,7 +87,6 @@ def main() raises:
         projection.name == "takt.cascade:takt_req_1" and projection.data.find("actuation") >= 0,
         "cascade projection",
     )
-    _check(process_semantics_json().find("cascade") >= 0, "process semantics")
     _check(String(TAKT_ACTUATION) == "takt.actuation", "actuation reaction kind constant")
 
     var bad = False

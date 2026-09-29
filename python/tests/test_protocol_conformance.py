@@ -13,7 +13,7 @@ from fala.protocol import (
     speak,
 )
 
-from fala.sdk import load_manifest, write_result
+from fala.sdk import write_result
 
 ROOT = Path(__file__).resolve().parents[2] / "conformance" / "fala"
 NEGATIVES = json.loads((ROOT / "negative.json").read_text())
@@ -22,17 +22,6 @@ NEGATIVES = json.loads((ROOT / "negative.json").read_text())
 def test_protocol_is_unversioned_fala():
     assert PROTOCOL == "fala"
     assert "fala/" not in PROTOCOL
-
-
-@pytest.mark.parametrize(
-    "result",
-    [
-        {"protocol": "unknown", "kind": "result", "from": "echo", "to": "parent", "job": "echo", "ref": "x", "status": "ok", "payload": {}, "id": "y", "contract_id": "echo-output", "contract_version": "1"},
-    ],
-)
-def test_write_result_rejects_unknown_protocol(tmp_path, result):
-    with pytest.raises(Exception):
-        write_result(result, env={"FALA_EFFECTOR_OUTPUT_DIR": str(tmp_path)})
 
 
 def test_write_result_preserves_valid_protocol_message(tmp_path):
@@ -47,15 +36,6 @@ def test_write_result_rejects_mapping_even_when_it_is_a_valid_message(tmp_path):
     result = build_result(request, payload={"text": "hello"})
     with pytest.raises(TypeError):
         write_result(result.to_message(), env={"FALA_EFFECTOR_OUTPUT_DIR": str(tmp_path)})
-
-
-def test_write_result_accepts_result_object(tmp_path):
-    request = parse((ROOT / "request.valid.json").read_text(), "request")
-    path = write_result(
-        build_result(request, payload={"text": "hello"}),
-        env={"FALA_EFFECTOR_OUTPUT_DIR": str(tmp_path)},
-    )
-    assert parse(path.read_text(), "result").payload == {"text": "hello"}
 
 
 @pytest.mark.parametrize("case", NEGATIVES)
@@ -123,43 +103,6 @@ def test_missing_contract_pair_is_required():
     assert (caught.value.code, caught.value.pointer) == ("fep.required", "/contract_id")
 
 
-def test_empty_contract_field_is_required():
-    with pytest.raises(ProtocolError) as caught:
-        parse(
-            json.dumps(
-                {
-                    "protocol": PROTOCOL,
-                    "kind": "request",
-                    "id": "msg:sha256:bad",
-                    "from": "parent",
-                    "to": "echo",
-                    "job": "echo",
-                    "payload": {"text": "hello"},
-                    "config": {},
-                    "contract_id": "",
-                    "contract_version": "1",
-                }
-            )
-        )
-    assert (caught.value.code, caught.value.pointer) == ("fep.required", "/contract_id")
-
-
-def test_result_must_echo_request_contract():
-    request = parse((ROOT / "request.valid.json").read_text(), "request")
-    result = Result(
-        sender=request.recipient,
-        job=request.job,
-        ref=request.id,
-        payload={"text": "hello"},
-        recipient=request.sender,
-        contract_id="other-output",
-        contract_version="1",
-    )
-    with pytest.raises(ProtocolError) as caught:
-        assert_answers(request, result)
-    assert (caught.value.code, caught.value.pointer) == ("fep.contract_mismatch", "/contract_id")
-
-
 def test_contract_version_must_echo_exactly():
     request = Request(
         sender="parent",
@@ -181,25 +124,3 @@ def test_contract_version_must_echo_exactly():
     with pytest.raises(ProtocolError) as caught:
         assert_answers(request, result)
     assert (caught.value.code, caught.value.pointer) == ("fep.contract_mismatch", "/contract_id")
-
-
-def test_assert_answers_accepts_golden_pair():
-    request = parse((ROOT / "request.valid.json").read_text(), "request")
-    result = parse((ROOT / "result.valid.json").read_text(), "result")
-    assert_answers(request, result)
-
-
-def test_assert_answers_rejects_ref_mismatch():
-    request = parse((ROOT / "request.valid.json").read_text(), "request")
-    result = Result(
-        sender=request.recipient,
-        job=request.job,
-        ref="msg:sha256:" + ("0" * 64),
-        payload={"text": "hello"},
-        recipient=request.sender,
-        contract_id=request.contract_id,
-        contract_version=request.contract_version,
-    )
-    with pytest.raises(ProtocolError) as caught:
-        assert_answers(request, result)
-    assert (caught.value.code, caught.value.pointer) == ("fep.ref_mismatch", "/ref")

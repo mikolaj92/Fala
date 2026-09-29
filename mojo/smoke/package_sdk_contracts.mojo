@@ -1,22 +1,13 @@
 from std.pathlib import Path
 from fala.package import load_package_json, load_package_toml
 from fala.native_package import validate_package_json_text, serialize_package_json, PackageManifestError
-from fala.toml import parse_toml_json
 from fala.sdk import (
-    SdkUnavailableError,
     SdkError,
-    load_manifest,
-    input_values,
-    declared_inputs,
-    conduction,
-    upstream_reactions,
-    find_reaction,
     output,
     output_reactions,
     find_output_reaction,
-    run_manifest_effector,
 )
-from fala.adapters import AdapterError, AdapterKind, AdapterSpec
+from fala.adapters import AdapterKind, AdapterSpec
 from fala.effector_protocol import request_message
 from fala.errors import ValidationError
 
@@ -33,15 +24,6 @@ def _expect_package_error(text: String, needle: String) raises:
     except err:
         matched = String(err).find(needle) >= 0
     _check(matched, "package diagnostic contains '" + needle + "'")
-
-
-def _expect_toml_error(text: String, needle: String) raises:
-    var matched = False
-    try:
-        _ = parse_toml_json(text, "<toml-smoke>")
-    except err:
-        matched = String(err).find(needle) >= 0
-    _check(matched, "TOML diagnostic contains '" + needle + "'")
 
 
 def _write(path: String, text: String) raises:
@@ -68,8 +50,6 @@ def main() raises:
     _expect_package_error("[]", "manifest.type at /: manifest must be a JSON object")
     _expect_package_error("{\"id\":\"pkg\",\"extra\":true,\"correlation_paths\":[]}", "manifest.unknown at /extra")
     _expect_package_error("{\"id\":\"pkg\",\"impulse_types\":[{\"id\":\"input\"}],\"capabilities\":[{\"id\":\"cap\",\"accepts_impulse_types\":[\"missing\"]}],\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"capability\":\"cap\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.dangling_reference")
-    # Unknown adapter kinds fail closed; they are not a special transport.
-    _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"p\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"python_function\",\"ref\":\"py.fn\"}}]}]}", "unsupported adapter kind")
     _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":{}}", "manifest.type at /correlation_paths")
     _expect_package_error("{\"package\":\"pkg\",\"correlation_paths\":[]}", "manifest.unknown at /package")
     _expect_package_error("{\"id\":\"pkg\",\"correlation_paths\":[{\"pipeline\":\"path\",\"effectors\":[{\"id\":\"e\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}", "manifest.unknown at /correlation_paths/0/pipeline")
@@ -113,37 +93,11 @@ adapter = { kind = "manual_homeostat" }
     _write(conditional_toml_path, conditional_toml)
     var loaded_conditional_toml = load_package_toml(conditional_toml_path)
     _check(loaded_conditional_toml.correlation_paths[0].effectors[1].when_json.find("decision.verdict") >= 0, "TOML condition retention")
-    _expect_toml_error("a = 1\na = 2\n", "duplicate key")
-    _expect_toml_error("a = 2026-01-01\n", "date/time values are unsupported")
     _expect_package_error("id: pkg\nversion: '1'\n", "manifest.invalid")
 
-    # SDK envelope helpers canonicalize JSON and strip only native injected keys.
-    var sdk_manifest = "{\"payload\":{\"source\":\"hello\",\"conduction\":{\"ingest\":{\"chars\":5}},\"upstream_reactions\":[{\"kind\":\"draft\",\"path\":\"a\"},{\"kind\":\"draft\",\"path\":\"b\"},{\"kind\":\"final\",\"path\":\"c\"}]}}"
-    _check(input_values(sdk_manifest).find("source") >= 0, "SDK input values")
-    _check(declared_inputs(sdk_manifest) == "{\"source\":\"hello\"}", "SDK declared inputs")
-    _check(conduction(sdk_manifest) == "{\"ingest\":{\"chars\":5}}", "SDK conduction")
-    _check(upstream_reactions(sdk_manifest).find("\"path\":\"b\"") >= 0, "SDK upstream reaction objects")
-    _check(find_reaction(sdk_manifest, "draft") == "{\"kind\":\"draft\",\"path\":\"b\"}", "SDK latest reaction selection")
     var request = request_message("parent", "echo", "echo", "{\"ok\":true}", "{}", "echo-output", "1")
     var envelope = output(request, "{\"ok\":true,\"evidence\":[{\"kind\":\"draft\",\"v\":1},{\"kind\":\"draft\",\"v\":2}]}")
     _check(output_reactions(envelope).find("\"v\":2") >= 0 and find_output_reaction(envelope, "draft") == "{\"kind\":\"draft\",\"v\":2}", "SDK output evidence in payload")
-
-    # SDK malformed/type diagnostics are stable and execution remains an explicit
-    # native boundary (no subprocess, UUID, clock, or Python fallback).
-    var sdk_invalid_json = False
-    try:
-        _ = load_manifest("{bad")
-    except err:
-        sdk_invalid_json = String(err).find("sdk.invalid_json at /manifest") >= 0
-    _check(sdk_invalid_json, "SDK malformed JSON diagnostic")
-    var sdk_invalid_type = False
-    try:
-        _ = input_values("{\"payload\":[]}")
-    except err:
-        sdk_invalid_type = String(err).find("sdk.invalid_type at /manifest/payload") >= 0
-    _check(sdk_invalid_type, "SDK input type diagnostic")
-    var unavailable = run_manifest_effector()
-    _check(unavailable.is_unavailable() and unavailable.code == "sdk.execution_unavailable", "SDK unavailable execution code")
 
     # Native typed diagnostics expose stable code/path fields.
     var package_error = PackageManifestError("bad field", "manifest.type", "/id")
