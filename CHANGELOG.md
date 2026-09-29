@@ -7,13 +7,11 @@
   `mojo build --emit shared-lib`. Do not switch to `mojo.importer`.
 - Replace `patches/emberjson-mojo-1.0.patch` with
   `patches/emberjson-mojo-1.1.patch` on the same EmberJson revision
-  (`951f4ef`). Mojo 1.1 removes `SIMD.size` / `InlineArray` /
-  `_WriteBufferStack` / `@parameter` closures / `ImplicitlyDeletable`
-  and implicit `var`. The patch aliases `std.collections.Array as
-  InlineArray` (so it does not shadow EmberJson's JSON `Array`), maps
-  the other names to `Self.length` / `_FlushingWriteBuffer` /
-  `@__parameter` / `Deinitable`, hashes `Lazy` bytes, and declares
-  `var old` in the JSON-pointer integer parser.
+  (`951f4ef`). The patch is EmberJson's own 1.1-nightly language port of
+  that architecture (`4eba24a`) plus MAX 26.6 follow-ups:
+  `_FlushingWriteBuffer`, `String(capacity_bytes=...)`, and `Lazy`
+  hashing bytes. Stdlib `Array` is imported as `StdArray` so it does
+  not shadow EmberJson's JSON `Array`.
 - sqlite.fire stays at upstream `v0.1.1` (`2cb4da9`). That tree already
   uses `def`/`comptime`, and `CStringSlice` remains a 1.1 compatibility
   alias. `v0.1.2` is still a Mojo 1.0.0 pin.

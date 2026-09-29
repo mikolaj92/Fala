@@ -1,8 +1,87 @@
 diff --git a/emberjson/_deserialize/_parser_helper.mojo b/emberjson/_deserialize/_parser_helper.mojo
-index fb91aab..80cdcb9 100644
+index fb91aab..038183a 100644
 --- a/emberjson/_deserialize/_parser_helper.mojo
 +++ b/emberjson/_deserialize/_parser_helper.mojo
-@@ -266,7 +266,7 @@ def copy_to_string[
+@@ -1,5 +1,5 @@
+ from emberjson.utils import BytePtr, CheckedPointer, select, ByteVec
+-from std.memory import UnsafePointer, unsafe_memcpy
++from std.memory import unsafe_memcpy
+ from emberjson.simd import SIMDBool, SIMD8_WIDTH, SIMD8xT
+ from std.builtin.dtype import _uint_type_of_width
+ from emberjson.constants import (
+@@ -143,7 +143,7 @@ struct StringBlock(TrivialRegisterPassable):
+     @always_inline
+     def find(src: BytePtr) -> StringBlock:
+         # FIXME: Port minify to use CheckedPointer
+-        var v = src.load[width=SIMD8_WIDTH]()
++        var v = src.unsafe_load[width=SIMD8_WIDTH]()
+         # NOTE: ASCII first printable character ` ` https://www.ascii-code.com/
+         return StringBlock(v.eq(`\\`), v.eq(`"`), v.lt(` `))
+ 
+@@ -159,7 +159,7 @@ def is_hex_digits(c: ByteVec[4]) -> Bool:
+ 
+ @always_inline
+ def hex_to_u32(p: BytePtr) raises -> UInt32:
+-    var bytes = p.load[width=4]()
++    var bytes = p.unsafe_load[width=4]()
+ 
+     if unlikely(not is_hex_digits(bytes)):
+         raise Error("Invalid hex digit encountered")
+@@ -178,10 +178,10 @@ def handle_unicode_codepoint(
+     # because theoretically no string can be built with "\u" only
+     # But if this points to bytes received over the wire, it makes sense
+     # unless we use _is_valid_utf8 at the beginning of where this is called
+-    if unlikely(p + 3 >= end):
++    if unlikely(p.unsafe_offset(3) >= end):
+         raise Error("Bad unicode codepoint")
+     var c1 = hex_to_u32(p)
+-    p += 4
++    p = p.unsafe_offset(4)
+ 
+     if unlikely(c1 >= 0xDC00 and c1 < 0xE000):
+         raise Error("Invalid unicode: lone surrogate")
+@@ -196,19 +196,19 @@ def handle_unicode_codepoint(
+     # pair is a semantic decision that is determined by the specific processor.
+     if c1 >= 0xD800 and c1 < 0xDC00:
+         # TODO: same as the above TODO
+-        if unlikely(p + 5 >= end):
++        if unlikely(p.unsafe_offset(5) >= end):
+             raise Error("Bad unicode codepoint")
+-        elif unlikely(not (p[0] == `\\` and p[1] == `u`)):
++        elif unlikely(not (p[] == `\\` and p[unsafe_offset=1] == `u`)):
+             raise Error("Bad unicode codepoint")
+ 
+-        p += 2
++        p = p.unsafe_offset(2)
+         var c2 = hex_to_u32(p)
+ 
+         if unlikely(c2 < 0xDC00 or c2 >= 0xE000):
+             raise Error("Bad unicode codepoint")
+ 
+         c1 = (((c1 - 0xD800) << 10) | (c2 - 0xDC00)) | 0x10000
+-        p += 4
++        p = p.unsafe_offset(4)
+ 
+     if unlikely(c1 > 0x10FFFF):
+         raise Error("Invalid unicode")
+@@ -239,12 +239,12 @@ def _next_backslash[
+     for unpadded buffers.
+     """
+     while ptr_dist(p, end) >= SIMD8_WIDTH:
+-        var bs = pack_into_integer(p.load[width=SIMD8_WIDTH]().eq(`\\`))
++        var bs = pack_into_integer(p.unsafe_load[width=SIMD8_WIDTH]().eq(`\\`))
+         if bs != 0:
+-            return p + Int(count_trailing_zeros(bs))
+-        p += SIMD8_WIDTH
++            return p.unsafe_offset(Int(count_trailing_zeros(bs)))
++        p = p.unsafe_offset(SIMD8_WIDTH)
+     while p < end and p[] != `\\`:
+-        p += 1
++        p = p.unsafe_offset(1)
+     return p
+ 
+ 
+@@ -266,12 +266,12 @@ def copy_to_string[
      """
      var length = ptr_dist(start, end)
  
@@ -11,21 +90,183 @@ index fb91aab..80cdcb9 100644
      def decode_escaped() raises -> String:
          # This will usually slightly overallocate if the string contains
          # escaped unicode
+         var dest = List[UInt8](capacity=length)
+-        var p = start + first_escape
++        var p = start.unsafe_offset(first_escape)
+ 
+         if first_escape > 0:
+             dest.resize(first_escape, 0)
+@@ -295,36 +295,36 @@ def copy_to_string[
+ 
+             # If we hit backslash, handle escape
+             if p < end:
+-                p += 1  # skip backslash
++                p = p.unsafe_offset(1)  # skip backslash
+                 if p < end:
+-                    var c = p[0]
++                    var c = p[]
+                     if c == `u`:
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                         handle_unicode_codepoint(p, dest, end)
+                     elif c == `"`:
+                         dest.append(`"`)
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                     elif c == `\\`:
+                         dest.append(`\\`)
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                     elif c == `/`:
+                         dest.append(`/`)
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                     elif c == `b`:
+                         dest.append(`\b`)
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                     elif c == `f`:
+                         dest.append(`\f`)
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                     elif c == `n`:
+                         dest.append(`\n`)
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                     elif c == `r`:
+                         dest.append(`\r`)
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                     elif c == `t`:
+                         dest.append(`\t`)
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                     else:
+                         raise Error("Invalid escape sequence")
+         return String(unsafe_from_utf8=dest^)
+@@ -361,7 +361,7 @@ def unsafe_is_made_of_eight_digits_fast(src: BytePtr) -> Bool:
+     Safety:
+         This is only safe if there are at least 8 bytes remaining.
+     """
+-    var val = src.bitcast[UInt64]()[0]
++    var val = src.unsafe_bitcast[UInt64]()[]
+     return (
+         (val & 0xF0F0F0F0F0F0F0F0)
+         | (((val + 0x0606060606060606) & 0xF0F0F0F0F0F0F0F0) >> 4)
+@@ -386,7 +386,7 @@ def unsafe_parse_eight_digits(out val: UInt64, p: BytePtr):
+     Safety:
+         This is only safe if there are at least 8 bytes remaining.
+     """
+-    val = p.bitcast[UInt64]()[0]
++    val = p.unsafe_bitcast[UInt64]()[]
+     val = (val & 0x0F0F0F0F0F0F0F0F) * 2561 >> 8
+     val = (val & 0x00FF00FF00FF00FF) * 6553601 >> 16
+     val = (val & 0x0000FFFF0000FFFF) * 42949672960001 >> 32
+@@ -424,6 +424,6 @@ def at_or_nul[assume_padded: Bool = False](p: CheckedPointer) -> Byte:
+ def significant_digits(p: BytePtr, digit_count: Int) -> Int:
+     var start = p
+     while start[] == `0` or start[] == `.`:
+-        start += 1
++        start = start.unsafe_offset(1)
+ 
+     return digit_count - ptr_dist(p, start)
 diff --git a/emberjson/_deserialize/parser.mojo b/emberjson/_deserialize/parser.mojo
-index ac79ace..aadab08 100644
+index ac79ace..5fc67d8 100644
 --- a/emberjson/_deserialize/parser.mojo
 +++ b/emberjson/_deserialize/parser.mojo
-@@ -18,7 +18,7 @@ from emberjson.value import Value, Null
+@@ -16,9 +16,8 @@ from emberjson.array import Array
+ from emberjson.object import Object, _ObjectParseIndex
+ from emberjson.value import Value, Null
  from std.bit import count_trailing_zeros
- from std.memory import UnsafePointer, unsafe_memset
+-from std.memory import UnsafePointer, unsafe_memset
++from std.memory import unsafe_memset
  from std.sys.intrinsics import unlikely, likely
 -from std.collections import InlineArray
-+from std.collections import Array as InlineArray
  from ._parser_helper import (
      copy_to_string,
      TRUE,
-@@ -1348,7 +1348,7 @@ def minify(s: String, out out_str: String) raises:
-     var end = ptr + s_len
+@@ -218,7 +217,7 @@ struct Parser[origin: ImmOrigin, options: ParseOptions = ParseOptions()]:
+     def __init__(
+         out self,
+         *,
+-        ptr: UnsafePointer[Byte, origin=Self.origin],
++        ptr: Pointer[Byte, origin=Self.origin],
+         length: Int,
+     ):
+         # `_assume_padded` removes bounds checks from every hot loop, which
+@@ -229,7 +228,7 @@ struct Parser[origin: ImmOrigin, options: ParseOptions = ParseOptions()]:
+             "options with `_assume_padded` require a `PaddedBuffer`:"
+             " construct with `Parser(padded=...)`"
+         )
+-        self.data = CheckedPointer(ptr, ptr, ptr + length)
++        self.data = CheckedPointer(ptr, ptr, ptr.unsafe_offset(length))
+         self.size = length
+ 
+     def __init__(
+@@ -248,7 +247,7 @@ struct Parser[origin: ImmOrigin, options: ParseOptions = ParseOptions()]:
+         var p: BytePtr[
+             Self.origin
+         ] = padded._data.unsafe_ptr().unsafe_origin_cast[Self.origin]()
+-        self.data = CheckedPointer(p, p, p + padded._len)
++        self.data = CheckedPointer(p, p, p.unsafe_offset(padded._len))
+         self.size = padded._len
+ 
+     @always_inline
+@@ -413,7 +412,7 @@ struct Parser[origin: ImmOrigin, options: ParseOptions = ParseOptions()]:
+         if unlikely(self.bytes_remaining() < 4):
+             raise Error('Encountered EOF when expecting "true"')
+         # Safety: Safe because we checked the amount of bytes remaining
+-        var w = self.data.p.bitcast[UInt32]()[]
++        var w = self.data.p.unsafe_bitcast[UInt32]()[]
+         if w != TRUE:
+             raise Error("Expected 'true', received: ", to_string(w))
+         self.data += 4
+@@ -425,7 +424,7 @@ struct Parser[origin: ImmOrigin, options: ParseOptions = ParseOptions()]:
+         if unlikely(self.bytes_remaining() < 4):
+             raise Error('Encountered EOF when expecting "false"')
+         # Safety: Safe because we checked the amount of bytes remaining
+-        var w = self.data.p.bitcast[UInt32]()[0]
++        var w = self.data.p.unsafe_bitcast[UInt32]()[]
+         if w != ALSE:
+             raise Error("Expected 'false', received: f", to_string(w))
+         self.data += 4
+@@ -633,7 +632,7 @@ struct Parser[origin: ImmOrigin, options: ParseOptions = ParseOptions()]:
+         var lower = UInt64(first_product)
+ 
+         if unlikely(upper & 0x1FF == 0x1FF):
+-            second_product = full_multiplication(
++            var second_product = full_multiplication(
+                 i, lut[POWER_OF_FIVE_128](index + 1)
+             )
+             var upper_s = UInt64(second_product >> 64)
+@@ -1005,7 +1004,7 @@ struct Parser[origin: ImmOrigin, options: ParseOptions = ParseOptions()]:
+         if unlikely(self.bytes_remaining() < 4):
+             raise Error("Encountered EOF when expecting 'null'")
+         # Safety: Safe because we checked the amount of bytes remaining
+-        var w = self.data.p.bitcast[UInt32]()[0]
++        var w = self.data.p.unsafe_bitcast[UInt32]()[]
+         if w != NULL:
+             raise Error("Expected 'null', received: ", to_string(w))
+         self.data += 4
+@@ -1261,7 +1260,7 @@ struct Parser[origin: ImmOrigin, options: ParseOptions = ParseOptions()]:
+         if esc == `u`:
+             if unlikely(
+                 ptr_dist(self.data.p, self.data.end) < 4
+-                or not is_hex_digits(self.data.p.load[width=4]())
++                or not is_hex_digits(self.data.p.unsafe_load[width=4]())
+             ):
+                 raise Error("Invalid hex digit encountered")
+             self.data += 4
+@@ -1342,41 +1341,41 @@ def minify(s: String, out out_str: String) raises:
+         A copy of the input string with all whitespace characters removed.
+     """
+     var s_len = s.byte_length()
+-    out_str = String(capacity=s_len)
++    out_str = String(capacity_bytes=s_len)
+ 
+     var ptr = BytePtr[origin_of(s)](s.unsafe_ptr())
+-    var end = ptr + s_len
++    var end = ptr.unsafe_offset(s_len)
  
      @always_inline
 -    @parameter
@@ -33,19 +274,128 @@ index ac79ace..aadab08 100644
      def _load_chunk(
          p: type_of(ptr), cond: Bool
      ) -> SIMD[DType.uint8, SIMD8_WIDTH]:
+         if cond:
+-            return ptr.load[width=SIMD8_WIDTH]()
++            return ptr.unsafe_load[width=SIMD8_WIDTH]()
+         else:
+             var chunk = SIMD[DType.uint8, SIMD8_WIDTH](` `)
+ 
+             for i in range(Int(end) - Int(ptr)):
+-                chunk[i] = ptr[i]
++                chunk[i] = ptr[unsafe_offset=i]
+             return chunk
+ 
+     while ptr < end:
+-        var is_block_iter = likely(ptr + SIMD8_WIDTH < end)
++        var is_block_iter = likely(ptr.unsafe_offset(SIMD8_WIDTH) < end)
+         var chunk = _load_chunk(ptr, is_block_iter)
+ 
+         var bits = get_non_space_bits(chunk)
+         while bits == 0 and ptr < end:
+-            ptr += SIMD8_WIDTH
+-            chunk = ptr.load[width=SIMD8_WIDTH]()
++            ptr = ptr.unsafe_offset(SIMD8_WIDTH)
++            chunk = ptr.unsafe_load[width=SIMD8_WIDTH]()
+             bits = get_non_space_bits(chunk)
+ 
+         var trailing = count_trailing_zeros(bits)
+-        ptr += trailing
++        ptr = ptr.unsafe_offset(trailing)
+ 
+         if ptr[] == `"`:
+             var p = ptr
+-            p += 1
++            p = p.unsafe_offset(1)
+             var block = StringBlock.find(p)
+             var length = 1
+ 
+@@ -1386,13 +1385,13 @@ def minify(s: String, out out_str: String) raises:
+                 elif block.has_backslash():
+                     var ind = Int(block.bs_index()) + 2
+                     length += ind
+-                    p += ind
++                    p = p.unsafe_offset(ind)
+                 else:
+                     var ind = SIMD8_WIDTH if is_block_iter else (
+                         Int(end) - Int(ptr)
+                     )
+                     length += ind
+-                    p += ind
++                    p = p.unsafe_offset(ind)
+                 block = StringBlock.find(p)
+ 
+             length += Int(block.quote_index() + 1)
+@@ -1401,7 +1400,7 @@ def minify(s: String, out out_str: String) raises:
+                     unsafe_ptr=ptr, length=length
+                 )
+             )
+-            ptr += length
++            ptr = ptr.unsafe_offset(length)
+ 
+         else:
+             var chunk = _load_chunk(ptr, is_block_iter)
+@@ -1415,4 +1414,4 @@ def minify(s: String, out out_str: String) raises:
+                     unsafe_ptr=ptr, length=Int(valid_bits)
+                 )
+             )
+-            ptr += valid_bits
++            ptr = ptr.unsafe_offset(valid_bits)
+diff --git a/emberjson/_deserialize/query.mojo b/emberjson/_deserialize/query.mojo
+index 81f2f48..8cfe79b 100644
+--- a/emberjson/_deserialize/query.mojo
++++ b/emberjson/_deserialize/query.mojo
+@@ -37,7 +37,7 @@ from std.sys.intrinsics import unlikely
+ def _q_byte(base: BytePtr, positions: List[UInt32], cur: Int) raises -> Byte:
+     if unlikely(cur >= len(positions)):
+         raise Error("Unexpected EOF")
+-    return base[Int(positions[cur])]
++    return base[unsafe_offset=Int(positions[cur])]
+ 
+ 
+ def _skip_value_positions(
+@@ -56,7 +56,7 @@ def _skip_value_positions(
+         while depth > 0:
+             if unlikely(cur >= n):
+                 raise Error("Unexpected EOF")
+-            var c = base[Int(positions[cur])]
++            var c = base[unsafe_offset=Int(positions[cur])]
+             depth += (
+                 Int(c == `{`) + Int(c == `[`) - Int(c == `}`) - Int(c == `]`)
+             )
+@@ -70,8 +70,8 @@ def _key_matches(
+ ) raises -> Bool:
+     """Compares the key's DECODED bytes against `needle`; keys containing
+     escapes (rare) are decoded before comparison."""
+-    var start = base + start_off
+-    var end = base + end_off
++    var start = base.unsafe_offset(start_off)
++    var end = base.unsafe_offset(end_off)
+     var nb = needle.as_bytes()
+     var bs = _next_backslash(start, end)
+     if bs >= end:
+@@ -113,7 +113,7 @@ def parse_pointer[
+         var whole = Parser[options=options](s)
+         return whole.parse()
+ 
+-    var base = UnsafePointer(s.unsafe_ptr())
++    var base = Pointer(s.unsafe_ptr())
+     var positions = List[UInt32]()
+     structural_index[False](base, s.byte_length(), positions)
+     if unlikely(len(positions) == 0):
+@@ -187,7 +187,7 @@ def parse_pointer[
+     # Materialize (and fully validate) just the target subtree.
+     var off = Int(positions[cur])
+     var p = Parser[options=options](
+-        ptr=base + off, length=s.byte_length() - off
++        ptr=base.unsafe_offset(off), length=s.byte_length() - off
+     )
+     return p.parse_value()
+ 
 diff --git a/emberjson/_deserialize/reflection.mojo b/emberjson/_deserialize/reflection.mojo
-index 3fa9c6a..84c1198 100644
+index 3fa9c6a..2db667e 100644
 --- a/emberjson/_deserialize/reflection.mojo
 +++ b/emberjson/_deserialize/reflection.mojo
-@@ -2,6 +2,7 @@ from std.reflection import reflect
- 
- from std.builtin.rebind import downcast
- from std.collections import Set
-+from std.collections import Array as InlineArray
- from std.memory import ArcPointer, OwnedPointer
- 
- from .parser import Parser
-@@ -19,7 +20,7 @@ from std.sys import bit_width_of
+@@ -19,7 +19,7 @@ from std.sys import bit_width_of
  comptime non_struct_error = "Cannot deserialize non-struct type"
  
  
@@ -54,7 +404,7 @@ index 3fa9c6a..84c1198 100644
  
  
  trait Deserializer:
-@@ -105,7 +106,7 @@ def __all_dtors_are_trivial[T: AnyType]() -> Bool:
+@@ -105,7 +105,7 @@ def __all_dtors_are_trivial[T: AnyType]() -> Bool:
      comptime r = reflect[T]
      comptime for i in range(r.field_count()):
          comptime type = r.field_types()[i]
@@ -63,7 +413,19 @@ index 3fa9c6a..84c1198 100644
              return False
      return True
  
-@@ -279,7 +280,7 @@ __extension SIMD(JsonDeserializable):
+@@ -162,9 +162,9 @@ def _default_deserialize[
+     else:
+         p.expect(`{`)
+ 
+-        # maybe an optimization since the InlineArray ctor uses a for loop
++        # maybe an optimization since the Array ctor uses a for loop
+         # but according to the IR this will just inline the computed values
+-        var seen = materialize[InlineArray[Bool, field_count](fill=False)]()
++        var seen = materialize[Array[Bool, field_count](fill=False)]()
+ 
+         while p.peek() != `}`:
+             if unlikely(p.peek() != `"`):
+@@ -279,7 +279,7 @@ __extension SIMD(JsonDeserializable):
      ](mut p: Parser[origin, options], out s: Self) raises:
          s = Self()
  
@@ -72,7 +434,7 @@ index 3fa9c6a..84c1198 100644
          @always_inline
          def parse_simd_element(
              mut p: Parser[origin, options],
-@@ -292,16 +293,16 @@ __extension SIMD(JsonDeserializable):
+@@ -292,16 +292,16 @@ __extension SIMD(JsonDeserializable):
              else:
                  return Scalar[Self.dtype](Int(p.expect_bool()))
  
@@ -93,7 +455,18 @@ index 3fa9c6a..84c1198 100644
              p.expect(`]`)
  
      @staticmethod
-@@ -400,7 +401,7 @@ __extension List(JsonDeserializable):
+@@ -380,7 +380,9 @@ __extension Optional(JsonDeserializable):
+     def from_json[
+         origin: ImmOrigin, options: ParseOptions, //
+     ](mut p: Parser[origin, options], out s: Self) raises:
+-        comptime assert conforms_to(Self.T, _Base), "Optional element type must conform to _Base"
++        comptime assert conforms_to(
++            Self.T, _Base
++        ), "Optional element type must conform to _Base"
+         if p.peek() == `n`:
+             p.expect_null()
+             s = None
+@@ -400,7 +402,7 @@ __extension List(JsonDeserializable):
          p.expect(`[`)
  
          # Build into a list whose element type is downcast to `_Base` (which is
@@ -102,7 +475,7 @@ index 3fa9c6a..84c1198 100644
          # a parse call raises, then rebind back to `Self` (same layout).
          var lst = List[downcast[Self.T, _Base]]()
  
-@@ -428,13 +429,13 @@ __extension Dict(JsonDeserializable):
+@@ -428,13 +430,13 @@ __extension Dict(JsonDeserializable):
          p.expect(`{`)
  
          # `Dict.__setitem__` now requires evidence that `K` and `V` are
@@ -119,7 +492,7 @@ index 3fa9c6a..84c1198 100644
          var d = Dict[K2, V2, Self.H]()
  
          while p.peek() != `}`:
-@@ -466,14 +467,14 @@ __extension Tuple(JsonDeserializable):
+@@ -466,19 +468,17 @@ __extension Tuple(JsonDeserializable):
          p.expect(`[`)
          __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(s))
  
@@ -133,20 +506,47 @@ index 3fa9c6a..84c1198 100644
 +        @__parameter
          def drop_prefix[n: Int](var partial: Self):
 -            @parameter
+-            def drop_elt[idx: Int](var elt: Self.element_types[idx]):
 +            @__parameter
-             def drop_elt[idx: Int](var elt: Self.element_types[idx]):
++            def drop_elt[idx: Int](var elt: Self.Ts[idx]):
                  comptime if idx < n:
-                     _ = rebind_var[downcast[Self.element_types[idx], _Base]](
-@@ -519,7 +520,7 @@ __extension Array(JsonDeserializable):
+-                    _ = rebind_var[downcast[Self.element_types[idx], _Base]](
+-                        elt^
+-                    )
++                    _ = rebind_var[downcast[Self.Ts[idx], _Base]](elt^)
+                 else:
+                     forget_deinit(elt^)
+ 
+@@ -486,8 +486,8 @@ __extension Tuple(JsonDeserializable):
+ 
+         comptime for i in range(Self.__len__()):
+             try:
+-                UnsafePointer(to=s[i]).unsafe_write(
+-                    _deserialize_impl[downcast[Self.element_types[i], _Base]](p)
++                Pointer(to=s[i]).unsafe_write(
++                    _deserialize_impl[downcast[Self.Ts[i], _Base]](p)
+                 )
+             except e:
+                 drop_prefix[i](s^)
+@@ -519,14 +519,14 @@ __extension Array(JsonDeserializable):
          j.expect(`[`)
  
          # Build into an array whose element type is downcast to `_Base` (which
 -        # is `ImplicitlyDeletable`) so cleanup is possible if a parse call
 +        # is `Deinitable`) so cleanup is possible if a parse call
          # raises, then rebind back to `Self` (same layout).
-         var arr = InlineArray[downcast[Self.T, _Base], Self.length](
+-        var arr = InlineArray[downcast[Self.T, _Base], Self.length](
++        var arr = Array[downcast[Self.T, _Base], Self.length](
              uninitialized=True
-@@ -548,12 +549,12 @@ __extension Set(JsonDeserializable):
+         )
+ 
+         for i in range(Self.length):
+-            UnsafePointer(to=arr[i]).unsafe_write(
++            Pointer(to=arr[i]).unsafe_write(
+                 _deserialize_impl[downcast[Self.T, _Base]](j)
+             )
+ 
+@@ -548,12 +548,12 @@ __extension Set(JsonDeserializable):
      ](mut j: Parser[origin, options], out s: Self) raises:
          j.expect(`[`)
  
@@ -162,10 +562,18 @@ index 3fa9c6a..84c1198 100644
          var acc = Set[T2, Self.H]()
  
 diff --git a/emberjson/_deserialize/slow_float_parse.mojo b/emberjson/_deserialize/slow_float_parse.mojo
-index 6397759..35931e4 100644
+index 6397759..8523401 100644
 --- a/emberjson/_deserialize/slow_float_parse.mojo
 +++ b/emberjson/_deserialize/slow_float_parse.mojo
-@@ -293,7 +293,7 @@ def parse_decimal(out answer: Decimal, mut p: CheckedPointer) raises:
+@@ -11,7 +11,6 @@ from ._parser_helper import (
+ )
+ from emberjson.utils import select, StackArray, CheckedPointer, lut
+ from std.memory.unsafe import bitcast
+-from std.memory import UnsafePointer
+ from std.builtin.dtype import _uint_type_of_width
+ from std.sys.info import bit_width_of
+ from std.utils.numerics import FPUtils
+@@ -293,7 +292,7 @@ def parse_decimal(out answer: Decimal, mut p: CheckedPointer) raises:
          0, 0, False, p[] == `-`, StackArray[Byte, MAX_DIGITS](fill=0)
      )
  
@@ -174,36 +582,413 @@ index 6397759..35931e4 100644
      @always_inline
      def consume_digits() raises:
          while p.dist() > 0 and isdigit(p[]):
+diff --git a/emberjson/_deserialize/tape.mojo b/emberjson/_deserialize/tape.mojo
+index 8fffd09..f9c35d7 100644
+--- a/emberjson/_deserialize/tape.mojo
++++ b/emberjson/_deserialize/tape.mojo
+@@ -31,7 +31,8 @@ from emberjson.constants import (
+     `\f`,
+     acceptable_escapes,
+ )
+-from std.memory import unsafe_memcpy, unsafe_memcmp, alloc, UnsafePointer
++from std.memory import unsafe_memcpy, unsafe_memcmp
++from std.memory.alloc import unsafe_alloc
+ from std.sys.intrinsics import unlikely, likely
+ 
+ 
+@@ -124,26 +125,26 @@ struct _Arena(Movable):
+     capacity per call. Here capacity is checked once per string and
+     content is written exactly once."""
+ 
+-    var _ptr: UnsafePointer[Byte, MutUntrackedOrigin]
++    var _ptr: Pointer[Byte, MutUntrackedOrigin]
+     var _len: Int
+     var _cap: Int
+ 
+     def __init__(out self, *, capacity: Int):
+         self._cap = capacity if capacity > 64 else 64
+-        self._ptr = alloc[Byte](self._cap)
++        self._ptr = unsafe_alloc[Byte](self._cap)
+         self._len = 0
+ 
+-    def __del__(deinit self):
+-        self._ptr.free()
++    def __deinit__(deinit self):
++        self._ptr.unsafe_free()
+ 
+     @no_inline
+     def _grow(mut self, needed: Int):
+         var new_cap = self._cap * 2
+         if new_cap < needed:
+             new_cap = needed
+-        var new_ptr = alloc[Byte](new_cap)
++        var new_ptr = unsafe_alloc[Byte](new_cap)
+         unsafe_memcpy(dest=new_ptr, src=self._ptr, count=self._len)
+-        self._ptr.free()
++        self._ptr.unsafe_free()
+         self._ptr = new_ptr
+         self._cap = new_cap
+ 
+@@ -156,14 +157,14 @@ struct _Arena(Movable):
+ 
+ @always_inline
+ def _arena_len(strings: _Arena, off: Int) -> Int:
+-    return Int((strings._ptr + off).bitcast[UInt32]()[])
++    return Int((strings._ptr.unsafe_offset(off)).unsafe_bitcast[UInt32]()[])
+ 
+ 
+ @always_inline
+ def _arena_view(strings: _Arena, off: Int) -> StringSlice[ImmutAnyOrigin]:
+     var n = _arena_len(strings, off)
+     var ptr = (
+-        (strings._ptr + off + 4)
++        (strings._ptr.unsafe_offset(off).unsafe_offset(4))
+         .as_imm()
+         .unsafe_origin_cast[ImmutAnyOrigin]()
+     )
+@@ -177,7 +178,11 @@ def _arena_str_eq(strings: _Arena, off_a: Int, off_b: Int) -> Bool:
+     if len_a != _arena_len(strings, off_b):
+         return False
+     return (
+-        unsafe_memcmp(strings._ptr + off_a + 4, strings._ptr + off_b + 4, len_a)
++        unsafe_memcmp(
++            strings._ptr.unsafe_offset(off_a).unsafe_offset(4),
++            strings._ptr.unsafe_offset(off_b).unsafe_offset(4),
++            len_a,
++        )
+         == 0
+     )
+ 
+@@ -206,7 +211,7 @@ def _handle_unicode_codepoint_ptr[
+     o1: ImmOrigin, o2: ImmOrigin, //
+ ](
+     mut p: BytePtr[o1],
+-    mut w: UnsafePointer[Byte, MutUntrackedOrigin],
++    mut w: Pointer[Byte, MutUntrackedOrigin],
+     end: BytePtr[o2],
+ ) raises:
+     """`handle_unicode_codepoint` retargeted at a raw write pointer.
+@@ -215,49 +220,49 @@ def _handle_unicode_codepoint_ptr[
+         The caller must have reserved enough space behind `w`; a decoded
+         codepoint never emits more bytes than its escape sequence spans.
+     """
+-    if unlikely(p + 3 >= end):
++    if unlikely(p.unsafe_offset(3) >= end):
+         raise Error("Bad unicode codepoint")
+     var c1 = hex_to_u32(p)
+-    p += 4
++    p = p.unsafe_offset(4)
+ 
+     if unlikely(c1 >= 0xDC00 and c1 < 0xE000):
+         raise Error("Invalid unicode: lone surrogate")
+     if c1 >= 0xD800 and c1 < 0xDC00:
+-        if unlikely(p + 5 >= end):
++        if unlikely(p.unsafe_offset(5) >= end):
+             raise Error("Bad unicode codepoint")
+-        elif unlikely(not (p[0] == `\\` and p[1] == `u`)):
++        elif unlikely(not (p[] == `\\` and p[unsafe_offset=1] == `u`)):
+             raise Error("Bad unicode codepoint")
+ 
+-        p += 2
++        p = p.unsafe_offset(2)
+         var c2 = hex_to_u32(p)
+ 
+         if unlikely(c2 < 0xDC00 or c2 >= 0xE000):
+             raise Error("Bad unicode codepoint")
+ 
+         c1 = (((c1 - 0xD800) << 10) | (c2 - 0xDC00)) | 0x10000
+-        p += 4
++        p = p.unsafe_offset(4)
+ 
+     if unlikely(c1 > 0x10FFFF):
+         raise Error("Invalid unicode")
+ 
+     if c1 < 0x80:
+-        w[0] = UInt8(c1)
+-        w += 1
++        w[] = UInt8(c1)
++        w = w.unsafe_offset(1)
+     elif c1 < 0x800:
+-        w[0] = UInt8(0xC0 | (c1 >> 6))
+-        w[1] = UInt8(0x80 | (c1 & 0x3F))
+-        w += 2
++        w[] = UInt8(0xC0 | (c1 >> 6))
++        w[unsafe_offset=1] = UInt8(0x80 | (c1 & 0x3F))
++        w = w.unsafe_offset(2)
+     elif c1 < 0x10000:
+-        w[0] = UInt8(0xE0 | (c1 >> 12))
+-        w[1] = UInt8(0x80 | ((c1 >> 6) & 0x3F))
+-        w[2] = UInt8(0x80 | (c1 & 0x3F))
+-        w += 3
++        w[] = UInt8(0xE0 | (c1 >> 12))
++        w[unsafe_offset=1] = UInt8(0x80 | ((c1 >> 6) & 0x3F))
++        w[unsafe_offset=2] = UInt8(0x80 | (c1 & 0x3F))
++        w = w.unsafe_offset(3)
+     else:
+-        w[0] = UInt8(0xF0 | (c1 >> 18))
+-        w[1] = UInt8(0x80 | ((c1 >> 12) & 0x3F))
+-        w[2] = UInt8(0x80 | ((c1 >> 6) & 0x3F))
+-        w[3] = UInt8(0x80 | (c1 & 0x3F))
+-        w += 4
++        w[] = UInt8(0xF0 | (c1 >> 18))
++        w[unsafe_offset=1] = UInt8(0x80 | ((c1 >> 12) & 0x3F))
++        w[unsafe_offset=2] = UInt8(0x80 | ((c1 >> 6) & 0x3F))
++        w[unsafe_offset=3] = UInt8(0x80 | (c1 & 0x3F))
++        w = w.unsafe_offset(4)
+ 
+ 
+ def _arena_write[
+@@ -279,17 +284,17 @@ def _arena_write[
+     strings.reserve_extra(5 + raw_len + 8)
+ 
+     var off = strings._len
+-    var content = strings._ptr + off + 4
++    var content = strings._ptr.unsafe_offset(off).unsafe_offset(4)
+     var final_len: Int
+ 
+     comptime decode = not ignore_unicode
+     if decode and found_escaped:
+         var w = content
+-        var p = start + first_escape
++        var p = start.unsafe_offset(first_escape)
+ 
+         if first_escape > 0:
+             unsafe_memcpy(dest=w, src=start, count=first_escape)
+-            w += first_escape
++            w = w.unsafe_offset(first_escape)
+ 
+         while p < end:
+             # Fast scan for next backslash, bulk-copying the clean run.
+@@ -299,47 +304,47 @@ def _arena_write[
+             if p > chunk_start:
+                 var chunk_len = ptr_dist(chunk_start, p)
+                 unsafe_memcpy(dest=w, src=chunk_start, count=chunk_len)
+-                w += chunk_len
++                w = w.unsafe_offset(chunk_len)
+ 
+             if p < end:
+-                p += 1  # skip backslash
++                p = p.unsafe_offset(1)  # skip backslash
+                 if p < end:
+-                    var c = p[0]
++                    var c = p[]
+                     if c == `u`:
+-                        p += 1
++                        p = p.unsafe_offset(1)
+                         _handle_unicode_codepoint_ptr(p, w, end)
+                     elif c == `"`:
+-                        w[0] = `"`
+-                        w += 1
+-                        p += 1
++                        w[] = `"`
++                        w = w.unsafe_offset(1)
++                        p = p.unsafe_offset(1)
+                     elif c == `\\`:
+-                        w[0] = `\\`
+-                        w += 1
+-                        p += 1
++                        w[] = `\\`
++                        w = w.unsafe_offset(1)
++                        p = p.unsafe_offset(1)
+                     elif c == `/`:
+-                        w[0] = `/`
+-                        w += 1
+-                        p += 1
++                        w[] = `/`
++                        w = w.unsafe_offset(1)
++                        p = p.unsafe_offset(1)
+                     elif c == `b`:
+-                        w[0] = `\b`
+-                        w += 1
+-                        p += 1
++                        w[] = `\b`
++                        w = w.unsafe_offset(1)
++                        p = p.unsafe_offset(1)
+                     elif c == `f`:
+-                        w[0] = `\f`
+-                        w += 1
+-                        p += 1
++                        w[] = `\f`
++                        w = w.unsafe_offset(1)
++                        p = p.unsafe_offset(1)
+                     elif c == `n`:
+-                        w[0] = `\n`
+-                        w += 1
+-                        p += 1
++                        w[] = `\n`
++                        w = w.unsafe_offset(1)
++                        p = p.unsafe_offset(1)
+                     elif c == `r`:
+-                        w[0] = `\r`
+-                        w += 1
+-                        p += 1
++                        w[] = `\r`
++                        w = w.unsafe_offset(1)
++                        p = p.unsafe_offset(1)
+                     elif c == `t`:
+-                        w[0] = `\t`
+-                        w += 1
+-                        p += 1
++                        w[] = `\t`
++                        w = w.unsafe_offset(1)
++                        p = p.unsafe_offset(1)
+                     else:
+                         raise Error("Invalid escape sequence")
+         final_len = Int(w) - Int(content)
+@@ -347,8 +352,10 @@ def _arena_write[
+         unsafe_memcpy(dest=content, src=start, count=raw_len)
+         final_len = raw_len
+ 
+-    (strings._ptr + off).bitcast[UInt32]()[] = UInt32(final_len)
+-    content[final_len] = 0
++    (strings._ptr.unsafe_offset(off)).unsafe_bitcast[UInt32]()[] = UInt32(
++        final_len
++    )
++    content[unsafe_offset=final_len] = 0
+     strings._len = off + 4 + final_len + 1
+     return off
+ 
+@@ -456,21 +463,26 @@ def _key_disc(strings: _Arena, off: Int) -> UInt64:
+     8-byte chunks with an overlapping final load. `_arena_write` reserves
+     8 spare bytes so the short-key load stays inside the allocation."""
+     var n = _arena_len(strings, off)
+-    var p = strings._ptr + off + 4
++    var p = strings._ptr.unsafe_offset(off).unsafe_offset(4)
+     if n <= 8:
+         if n == 0:
+             return _DISC_PRIME
+-        var w = p.bitcast[UInt64]()[]
++        var w = p.unsafe_bitcast[UInt64]()[]
+         var mask_shift = UInt64(64 - 8 * n)
+         w = (w << mask_shift) >> mask_shift
+         return (w ^ UInt64(n)) * _DISC_PRIME
+     var acc = UInt64(n) * _DISC_PRIME
+     var i = 0
+     while i + 8 <= n:
+-        acc = (acc ^ (p + i).bitcast[UInt64]()[]) * _DISC_PRIME
++        acc = (
++            acc ^ (p.unsafe_offset(i)).unsafe_bitcast[UInt64]()[]
++        ) * _DISC_PRIME
+         i += 8
+     if i < n:
+-        acc = (acc ^ (p + n - 8).bitcast[UInt64]()[]) * _DISC_PRIME
++        acc = (
++            acc
++            ^ (p.unsafe_offset(n).unsafe_offset(-8)).unsafe_bitcast[UInt64]()[]
++        ) * _DISC_PRIME
+     return acc
+ 
+ 
 diff --git a/emberjson/_deserialize/tape_indexed.mojo b/emberjson/_deserialize/tape_indexed.mojo
-index ada8a95..c5a74cb 100644
+index ada8a95..4587b83 100644
 --- a/emberjson/_deserialize/tape_indexed.mojo
 +++ b/emberjson/_deserialize/tape_indexed.mojo
-@@ -65,7 +65,7 @@ from emberjson.constants import (
+@@ -65,9 +65,8 @@ from emberjson.constants import (
      `\\`,
      acceptable_escapes,
  )
 -from std.collections import InlineArray
-+from std.collections import Array as InlineArray
++from std.collections import Array
  from std.bit import count_trailing_zeros
- from std.memory import UnsafePointer
+-from std.memory import UnsafePointer
  from std.sys.intrinsics import unlikely, likely
-@@ -246,13 +246,13 @@ def _walk_tape_from_index[
-     var stack = InlineArray[_Scope, _MAX_DEPTH](uninitialized=True)
+ 
+ 
+@@ -116,17 +115,20 @@ def _validate_escape_names[
+ ](p: Parser[origin, options], off: Int, end_off: Int) raises:
+     """Escape-name validation for the `ignore_unicode` verbatim path (the
+     decode path validates names itself)."""
+-    var q = p.data.start + off
+-    var end = p.data.start + end_off
++    var q = p.data.start.unsafe_offset(off)
++    var end = p.data.start.unsafe_offset(end_off)
+     while q < end:
+         if q[] == `\\`:
+-            if q + 1 >= end:
++            if q.unsafe_offset(1) >= end:
+                 break
+-            if unlikely((q + 1)[] not in acceptable_escapes):
+-                raise Error("Invalid escape sequence: ", to_string((q + 1)[]))
+-            q += 2
++            if unlikely((q.unsafe_offset(1))[] not in acceptable_escapes):
++                raise Error(
++                    "Invalid escape sequence: ",
++                    to_string((q.unsafe_offset(1))[]),
++                )
++            q = q.unsafe_offset(2)
+             continue
+-        q += 1
++        q = q.unsafe_offset(1)
+ 
+ 
+ def _iscan_string[
+@@ -139,14 +141,14 @@ def _iscan_string[
+     Returns (found_escaped, first_escape offset within the span). Raises
+     on unescaped control characters, mirroring the byte-walk scanner.
+     """
+-    var base = p.data.start + start_off
++    var base = p.data.start.unsafe_offset(start_off)
+     var n = end_off - start_off
+     var i = 0
+     var found = False
+     var first = 0
+     while i < n:
+         # Padded input: a full-width load past the span is safe.
+-        var chunk = (base + i).load[width=SIMD8_WIDTH]()
++        var chunk = (base.unsafe_offset(i)).unsafe_load[width=SIMD8_WIDTH]()
+         var ctrl = pack_into_integer(chunk.lt(` `))
+         var bs = pack_into_integer(chunk.eq(`\\`))
+         var valid = n - i
+@@ -217,7 +219,7 @@ def _walk_tape_from_index[
+ ](
+     mut p: Parser[origin, options],
+     mut sink: TapeSink,
+-    idx_start: UnsafePointer[UInt32, _],
++    idx_start: Pointer[UInt32, _],
+     n_structurals: Int,
+ ) raises:
+     """Stage-2 walk over a precomputed structural index.
+@@ -241,63 +243,67 @@ def _walk_tape_from_index[
+ 
+     var base = p.data.start
+     var idx = idx_start
+-    var idx_last = idx_start + n_structurals
++    var idx_last = idx_start.unsafe_offset(n_structurals)
+ 
+-    var stack = InlineArray[_Scope, _MAX_DEPTH](uninitialized=True)
++    var stack = Array[_Scope, _MAX_DEPTH](uninitialized=True)
      var depth = 0
  
 -    @parameter
 +    @__parameter
      @always_inline
      def advance(out off: Int):
-         off = Int(idx[0])
-         idx += 1
+-        off = Int(idx[0])
+-        idx += 1
++        off = Int(idx[])
++        idx = idx.unsafe_offset(1)
  
 -    @parameter
 +    @__parameter
      @always_inline
      def visit_string(off: Int, out arena_off: Int) raises:
          """The string opening at `off`: its closing quote is the next
-@@ -267,7 +267,7 @@ def _walk_tape_from_index[
+         structural (escaped quotes are masked out of the index)."""
+-        var close = Int(idx[0])
+-        idx += 1
+-        if unlikely(base[close] != `"`):
++        var close = Int(idx[])
++        idx = idx.unsafe_offset(1)
++        if unlikely(base[unsafe_offset=close] != `"`):
+             raise Error("Unexpected EOF")
+         var scan = _iscan_string(p, off + 1, close)
+         arena_off = _arena_write[options.ignore_unicode](
+-            sink.strings, base + off + 1, base + close, scan[0], scan[1]
++            sink.strings,
++            base.unsafe_offset(off).unsafe_offset(1),
++            base.unsafe_offset(close),
++            scan[0],
++            scan[1],
          )
          sink.tape.append(_pack_word(TapeTag.STRING, UInt64(arena_off)))
  
@@ -212,7 +997,33 @@ index ada8a95..c5a74cb 100644
      @always_inline
      def visit_primitive(b: Byte, off: Int) raises:
          if b == `"`:
-@@ -297,7 +297,7 @@ def _walk_tape_from_index[
+             _ = visit_string(off)
+         elif is_numerical_component(b):
+-            p.data.p = base + off
++            p.data.p = base.unsafe_offset(off)
+             var r = p._parse_number_raw()
+             # RawNumber kinds are ordered to match the number tags.
+             sink.tape.append(_pack_word(TapeTag.INT64 + r.kind, 0))
+             sink.tape.append(r.bits)
+             _check_token_end(p)
+         elif b == `t`:
+-            p.data.p = base + off
++            p.data.p = base.unsafe_offset(off)
+             _ = p.parse_true()
+             sink.tape.append(_pack_word(TapeTag.TRUE, 0))
+             _check_token_end(p)
+         elif b == `f`:
+-            p.data.p = base + off
++            p.data.p = base.unsafe_offset(off)
+             _ = p.parse_false()
+             sink.tape.append(_pack_word(TapeTag.FALSE, 0))
+             _check_token_end(p)
+         elif b == `n`:
+-            p.data.p = base + off
++            p.data.p = base.unsafe_offset(off)
+             _ = p.parse_null()
+             sink.tape.append(_pack_word(TapeTag.NULL, 0))
+             _check_token_end(p)
          else:
              raise Error("Invalid json value")
  
@@ -221,7 +1032,7 @@ index ada8a95..c5a74cb 100644
      @always_inline
      def emit_empty(open_tag: Byte, close_tag: Byte):
          var open_idx = len(sink.tape)
-@@ -305,7 +305,7 @@ def _walk_tape_from_index[
+@@ -305,7 +311,7 @@ def _walk_tape_from_index[
          sink.tape.append(_pack_word(close_tag, UInt64(open_idx)))
          sink.tape[open_idx] = _pack_container_open(open_tag, len(sink.tape), 0)
  
@@ -230,7 +1041,7 @@ index ada8a95..c5a74cb 100644
      @always_inline
      def push_scope(is_object: Bool) raises:
          if unlikely(depth >= _MAX_DEPTH):
-@@ -319,7 +319,7 @@ def _walk_tape_from_index[
+@@ -319,7 +325,7 @@ def _walk_tape_from_index[
          sink.tape.append(0)  # patched at scope end
          depth += 1
  
@@ -239,20 +1050,136 @@ index ada8a95..c5a74cb 100644
      @always_inline
      def visit_key(off: Int) raises:
          var arena_off = visit_string(off)
+@@ -332,19 +338,19 @@ def _walk_tape_from_index[
+ 
+     # ---- root dispatch (simdjson walk_document) ----
+     var off = advance()
+-    var b = base[off]
++    var b = base[unsafe_offset=off]
+     var state: Int
+     if b == `{`:
+-        if base[Int(idx[0])] == `}`:
+-            idx += 1
++        if base[unsafe_offset=Int(idx[])] == `}`:
++            idx = idx.unsafe_offset(1)
+             emit_empty(TapeTag.OBJECT_OPEN, TapeTag.OBJECT_CLOSE)
+             state = -1
+         else:
+             push_scope(True)
+             state = _OBJECT_BEGIN
+     elif b == `[`:
+-        if base[Int(idx[0])] == `]`:
+-            idx += 1
++        if base[unsafe_offset=Int(idx[])] == `]`:
++            idx = idx.unsafe_offset(1)
+             emit_empty(TapeTag.ARRAY_OPEN, TapeTag.ARRAY_CLOSE)
+             state = -1
+         else:
+@@ -358,27 +364,27 @@ def _walk_tape_from_index[
+         if state == _OBJECT_BEGIN:
+             # First key of a non-empty object.
+             off = advance()
+-            if unlikely(base[off] != `"`):
++            if unlikely(base[unsafe_offset=off] != `"`):
+                 raise Error("Invalid identifier")
+             visit_key(off)
+             # object_field: colon then value.
+             off = advance()
+-            if unlikely(base[off] != `:`):
++            if unlikely(base[unsafe_offset=off] != `:`):
+                 raise Error("Invalid identifier")
+             stack.unsafe_get(depth - 1).count += 1
+             off = advance()
+-            b = base[off]
++            b = base[unsafe_offset=off]
+             if b == `{`:
+-                if base[Int(idx[0])] == `}`:
+-                    idx += 1
++                if base[unsafe_offset=Int(idx[])] == `}`:
++                    idx = idx.unsafe_offset(1)
+                     emit_empty(TapeTag.OBJECT_OPEN, TapeTag.OBJECT_CLOSE)
+                     state = _OBJECT_CONTINUE
+                 else:
+                     push_scope(True)
+                     state = _OBJECT_BEGIN
+             elif b == `[`:
+-                if base[Int(idx[0])] == `]`:
+-                    idx += 1
++                if base[unsafe_offset=Int(idx[])] == `]`:
++                    idx = idx.unsafe_offset(1)
+                     emit_empty(TapeTag.ARRAY_OPEN, TapeTag.ARRAY_CLOSE)
+                     state = _OBJECT_CONTINUE
+                 else:
+@@ -389,11 +395,11 @@ def _walk_tape_from_index[
+                 state = _OBJECT_CONTINUE
+         elif state == _OBJECT_CONTINUE:
+             off = advance()
+-            b = base[off]
++            b = base[unsafe_offset=off]
+             if b == `,`:
+-                if base[Int(idx[0])] == `}`:
++                if base[unsafe_offset=Int(idx[])] == `}`:
+                     comptime if allow_trailing:
+-                        idx += 1
++                        idx = idx.unsafe_offset(1)
+                         state = _SCOPE_END
+                         continue
+                     raise Error("Illegal trailing comma")
+@@ -406,18 +412,18 @@ def _walk_tape_from_index[
+             # Next element of a non-empty array.
+             stack.unsafe_get(depth - 1).count += 1
+             off = advance()
+-            b = base[off]
++            b = base[unsafe_offset=off]
+             if b == `{`:
+-                if base[Int(idx[0])] == `}`:
+-                    idx += 1
++                if base[unsafe_offset=Int(idx[])] == `}`:
++                    idx = idx.unsafe_offset(1)
+                     emit_empty(TapeTag.OBJECT_OPEN, TapeTag.OBJECT_CLOSE)
+                     state = _ARRAY_CONTINUE
+                 else:
+                     push_scope(True)
+                     state = _OBJECT_BEGIN
+             elif b == `[`:
+-                if base[Int(idx[0])] == `]`:
+-                    idx += 1
++                if base[unsafe_offset=Int(idx[])] == `]`:
++                    idx = idx.unsafe_offset(1)
+                     emit_empty(TapeTag.ARRAY_OPEN, TapeTag.ARRAY_CLOSE)
+                     state = _ARRAY_CONTINUE
+                 else:
+@@ -428,11 +434,11 @@ def _walk_tape_from_index[
+                 state = _ARRAY_CONTINUE
+         elif state == _ARRAY_CONTINUE:
+             off = advance()
+-            b = base[off]
++            b = base[unsafe_offset=off]
+             if b == `,`:
+-                if base[Int(idx[0])] == `]`:
++                if base[unsafe_offset=Int(idx[])] == `]`:
+                     comptime if allow_trailing:
+-                        idx += 1
++                        idx = idx.unsafe_offset(1)
+                         state = _SCOPE_END
+                         continue
+                     raise Error("Illegal trailing comma")
 diff --git a/emberjson/_index/indexer.mojo b/emberjson/_index/indexer.mojo
-index 62d7a73..b60e507 100644
+index 62d7a73..94f3e69 100644
 --- a/emberjson/_index/indexer.mojo
 +++ b/emberjson/_index/indexer.mojo
-@@ -22,6 +22,7 @@ indexed without any heap copy. `assume_padded=True` requires a
+@@ -80,15 +80,13 @@ def structural_index[
+     var prev_scalar_carry: UInt64 = 0
+     var prev_base: UInt32 = 0
  
- from std.bit import count_trailing_zeros, pop_count
- from std.memory import unsafe_memcpy
-+from std.collections import Array as InlineArray
- 
- from emberjson.utils import BytePtr
- from .simd_ops import SimdInput
-@@ -88,7 +89,7 @@ def structural_index[
-     ] = positions.unsafe_ptr()
+-    # Deliberately an `UnsafePointer`: the emit loop writes up to 7 slots past
++    # Deliberately an `Pointer`: the emit loop writes up to 7 slots past
+     # the true structural count (covered by `EMIT_SLACK`), so it wants raw
+     # offset indexing rather than the bounds-tracked `Pointer` `List` vends.
+-    var out_ptr: UnsafePointer[
+-        UInt32, origin_of(positions)
+-    ] = positions.unsafe_ptr()
++    var out_ptr: Pointer[UInt32, origin_of(positions)] = positions.unsafe_ptr()
      var write_pos = 0
  
 -    @parameter
@@ -260,23 +1187,204 @@ index 62d7a73..b60e507 100644
      @always_inline("nodebug")
      def emit(base_idx: UInt32, bits: UInt64):
          """Writes the offset of each set bit into `positions`.
+@@ -107,21 +105,37 @@ def structural_index[
+         var w = write_pos
+         var done = 0
+         while done < cnt:
+-            out_ptr[w + 0] = base_idx + UInt32(count_trailing_zeros(b))
++            out_ptr[unsafe_offset=w + 0] = base_idx + UInt32(
++                count_trailing_zeros(b)
++            )
+             b = b & (b - 1)
+-            out_ptr[w + 1] = base_idx + UInt32(count_trailing_zeros(b))
++            out_ptr[unsafe_offset=w + 1] = base_idx + UInt32(
++                count_trailing_zeros(b)
++            )
+             b = b & (b - 1)
+-            out_ptr[w + 2] = base_idx + UInt32(count_trailing_zeros(b))
++            out_ptr[unsafe_offset=w + 2] = base_idx + UInt32(
++                count_trailing_zeros(b)
++            )
+             b = b & (b - 1)
+-            out_ptr[w + 3] = base_idx + UInt32(count_trailing_zeros(b))
++            out_ptr[unsafe_offset=w + 3] = base_idx + UInt32(
++                count_trailing_zeros(b)
++            )
+             b = b & (b - 1)
+-            out_ptr[w + 4] = base_idx + UInt32(count_trailing_zeros(b))
++            out_ptr[unsafe_offset=w + 4] = base_idx + UInt32(
++                count_trailing_zeros(b)
++            )
+             b = b & (b - 1)
+-            out_ptr[w + 5] = base_idx + UInt32(count_trailing_zeros(b))
++            out_ptr[unsafe_offset=w + 5] = base_idx + UInt32(
++                count_trailing_zeros(b)
++            )
+             b = b & (b - 1)
+-            out_ptr[w + 6] = base_idx + UInt32(count_trailing_zeros(b))
++            out_ptr[unsafe_offset=w + 6] = base_idx + UInt32(
++                count_trailing_zeros(b)
++            )
+             b = b & (b - 1)
+-            out_ptr[w + 7] = base_idx + UInt32(count_trailing_zeros(b))
++            out_ptr[unsafe_offset=w + 7] = base_idx + UInt32(
++                count_trailing_zeros(b)
++            )
+             b = b & (b - 1)
+             w += 8
+             done += 8
+@@ -131,17 +145,17 @@ def structural_index[
+         var base_idx = UInt32(chunk_idx * 64)
+         var input: SimdInput
+         comptime if assume_padded:
+-            input = SimdInput.load(ptr + Int(base_idx))
++            input = SimdInput.load(ptr.unsafe_offset(Int(base_idx)))
+         else:
+             if Int(base_idx) + 64 <= input_len:
+-                input = SimdInput.load(ptr + Int(base_idx))
++                input = SimdInput.load(ptr.unsafe_offset(Int(base_idx)))
+             else:
+                 # Final partial chunk: stage through a zeroed stack buffer
+                 # so the borrowed input is never read past input_len.
+-                var tail = InlineArray[Byte, 64](fill=0)
++                var tail = Array[Byte, 64](fill=0)
+                 unsafe_memcpy(
+                     dest=tail.unsafe_ptr(),
+-                    src=ptr + Int(base_idx),
++                    src=ptr.unsafe_offset(Int(base_idx)),
+                     count=input_len - Int(base_idx),
+                 )
+                 input = SimdInput.load(tail.unsafe_ptr())
+@@ -185,6 +199,8 @@ def structural_index[
+     # Positions are emitted in strictly ascending order, so any position
+     # >= input_len — spurious structurals from the final chunk's zero
+     # bytes — forms a contiguous tail. Trim it.
+-    while write_pos > 0 and Int(out_ptr[write_pos - 1]) >= input_len:
++    while (
++        write_pos > 0 and Int(out_ptr[unsafe_offset=write_pos - 1]) >= input_len
++    ):
+         write_pos -= 1
+     positions.resize(write_pos, UInt32(0))
 diff --git a/emberjson/_index/simd_ops.mojo b/emberjson/_index/simd_ops.mojo
-index df39534..9badc60 100644
+index df39534..7d04004 100644
 --- a/emberjson/_index/simd_ops.mojo
 +++ b/emberjson/_index/simd_ops.mojo
-@@ -28,6 +28,7 @@ Lemire, arXiv:1902.08318). Two layers:
- """
+@@ -13,12 +13,16 @@ Lemire, arXiv:1902.08318). Two layers:
+     parsing coexist. PMULL replaces the six-step shift-XOR scan and an
+     ADDP reduction tree replaces `pack_bits` for movemasks (simdjson's
+     aarch64 kernel formulations).
+-  * An x86 fast layer (`has_avx2()` targets, which implies SSSE3 and
+-    PCLMULQDQ) with the same guard: PCLMULQDQ replaces the shift-XOR
+-    scan (simdjson's westmere/haswell formulation) and the 64-byte
+-    chunk ops recombine the four 16-byte registers into two 32-byte
+-    vectors so compares and movemasks run at AVX2 width (VPCMPEQB +
+-    VPMOVMSKB, simdjson's haswell kernel shape).
++  * An x86 fast layer (`has_avx2()` targets, which implies SSSE3) with
++    the same guard: PCLMULQDQ replaces the shift-XOR scan (simdjson's
++    westmere/haswell formulation) and the 64-byte chunk ops recombine
++    the four 16-byte registers into two 32-byte vectors so compares and
++    movemasks run at AVX2 width (VPCMPEQB + VPMOVMSKB, simdjson's
++    haswell kernel shape).
++
++  Each layer is gated on the target feature its instructions actually
++  require, which is not always the arch-family flag — see `_PMULL` and
++  `_PCLMUL` below.
  
- from std.memory import pack_bits
-+from std.collections import Array as InlineArray
- from std.memory.unsafe import bitcast
- from std.sys.info import CompilationTarget
- from std.sys.intrinsics import llvm_intrinsic
+   * `SimdInput` wraps the 64-byte logical chunk, abstracting the hardware
+     SIMD width, and exposes `load`, `eq`, and `lteq` that produce 64-bit
+@@ -34,10 +38,25 @@ from std.sys.intrinsics import llvm_intrinsic
+ from .portable import prefix_xor_portable
+ 
+ comptime _NEON = CompilationTarget.has_neon()
+-# Every AVX2 CPU (Haswell+/Zen+) also has SSSE3 PSHUFB and PCLMULQDQ, so
+-# one flag gates all three x86 fast paths.
++# Every AVX2 CPU (Haswell+/Zen+) also has SSSE3 PSHUFB, so this flag
++# gates the shuffle and movemask fast paths.
+ comptime _AVX2 = CompilationTarget.has_avx2()
+ 
++# The carryless-multiply intrinsics need their own gates: PMULL64 lives
++# in the aarch64 crypto extension (+aes), not baseline NEON, and
++# PCLMULQDQ needs +pclmul, not merely +avx2. Every CPU we care about
++# ships both, but instruction selection consults the *target feature
++# set*, not the silicon: a build for a generic CPU — which is what
++# conda/rattler packaging does so one artifact runs on any machine of
++# the arch — gets +neon without +aes, and emitting PMULL there is a hard
++# "Cannot select" backend crash rather than a slow path. Falling back to
++# the portable scan keeps such builds working (and it is bit-identical).
++# The arch conjunction is load-bearing: `aes` is also a valid x86
++# feature name (AES-NI), so the feature query alone would not keep the
++# aarch64 intrinsic off an x86 target.
++comptime _PMULL = _NEON and CompilationTarget._has_feature["aes"]()
++comptime _PCLMUL = _AVX2 and CompilationTarget._has_feature["pclmul"]()
++
+ comptime _Chunk16 = SIMD[DType.uint8, 16]
+ comptime _Bool16 = SIMD[DType.bool, 16]
+ comptime _Chunk32 = SIMD[DType.uint8, 32]
+@@ -76,18 +95,18 @@ def prefix_xor(bitmask: UInt64) -> UInt64:
+ 
+     Verified from --emit=asm that both intrinsics earn their keep: the
+     shift-XOR chain is 17 dependent insns on x86 (no shifted-operand ALU)
+-    vs 5 for PCLMULQDQ, and 7 vs 5 on aarch64. Note PMULL64 is part of
+-    the aarch64 crypto extension (+aes), not baseline NEON — there is no
+-    `has_aes()` query, but every supported aarch64 target (Apple
+-    Silicon, Graviton, Ampere) ships it.
++    vs 5 for PCLMULQDQ, and 7 vs 5 on aarch64. Both are gated on the
++    exact target feature they need (`_PMULL`/`_PCLMUL`, see above) rather
++    than on the arch family, so a generic-CPU build degrades to the
++    portable scan instead of failing instruction selection.
+     """
+-    comptime if _NEON:
++    comptime if _PMULL:
+         if not __is_run_in_comptime_interpreter:
+             var prod = llvm_intrinsic["llvm.aarch64.neon.pmull64", _Chunk16](
+                 bitmask, UInt64.MAX
+             )
+             return bitcast[DType.uint64, 2](prod)[0]
+-    comptime if _AVX2:
++    comptime if _PCLMUL:
+         if not __is_run_in_comptime_interpreter:
+             # PCLMULQDQ against all-ones: the carryless product's low half
+             # is exactly the inclusive XOR-scan (simdjson's x86 kernels).
+@@ -140,19 +159,17 @@ def movemask64(a: _Bool16, b: _Bool16, c: _Bool16, d: _Bool16) -> UInt64:
+ struct SimdInput(Copyable, Movable):
+     """64 bytes loaded into four 16-byte registers, abstracting SIMD width."""
+ 
+-    var chunks: InlineArray[_Chunk16, 4]
++    var chunks: Array[_Chunk16, 4]
+ 
+     @always_inline("nodebug")
+     @staticmethod
+-    def load(ptr: UnsafePointer[UInt8, _]) -> SimdInput:
++    def load(ptr: Pointer[UInt8, _]) -> SimdInput:
+         """Loads 64 bytes from ptr (unaligned)."""
+-        var result = SimdInput(
+-            chunks=InlineArray[_Chunk16, 4](fill=_Chunk16(0))
+-        )
+-        result.chunks[0] = ptr.load[width=16]()
+-        result.chunks[1] = (ptr + 16).load[width=16]()
+-        result.chunks[2] = (ptr + 32).load[width=16]()
+-        result.chunks[3] = (ptr + 48).load[width=16]()
++        var result = SimdInput(chunks=Array[_Chunk16, 4](fill=_Chunk16(0)))
++        result.chunks[0] = ptr.unsafe_load[width=16]()
++        result.chunks[1] = (ptr.unsafe_offset(16)).unsafe_load[width=16]()
++        result.chunks[2] = (ptr.unsafe_offset(32)).unsafe_load[width=16]()
++        result.chunks[3] = (ptr.unsafe_offset(48)).unsafe_load[width=16]()
+         return result^
+ 
+     @always_inline("nodebug")
 diff --git a/emberjson/_pointer.mojo b/emberjson/_pointer.mojo
-index 62f33b7..25b6f7a 100644
+index 62f33b7..22a047d 100644
 --- a/emberjson/_pointer.mojo
 +++ b/emberjson/_pointer.mojo
-@@ -18,7 +18,7 @@ def parse_int(s: String) raises -> Int:
+@@ -4,7 +4,6 @@ from std.collections import List
+ from std.utils import Variant
+ from .object import Object
+ from .array import Array
+-from std.memory import UnsafePointer
+ from std.sys.intrinsics import unlikely
+ 
+ 
+@@ -18,7 +17,7 @@ def parse_int(s: String) raises -> Int:
          var b = bytes[i]
          if b < 48 or b > 57:
              raise Error("Invalid integer: " + s)
@@ -285,6 +1393,39 @@ index 62f33b7..25b6f7a 100644
          res = res * 10 + Int(b - 48)
  
          if res < old:
+@@ -139,12 +138,12 @@ def _resolve_ref(
+         return val
+ 
+     if val.is_object():
+-        var ptr = UnsafePointer[Object](to=val.object()).unsafe_origin_cast[
++        var ptr = Pointer[Object](to=val.object()).unsafe_origin_cast[
+             origin_of(val)
+         ]()
+         return _resolve_ref(ptr[], tokens, idx)
+     elif val.is_array():
+-        var ptr = UnsafePointer[Array](to=val.array()).unsafe_origin_cast[
++        var ptr = Pointer[Array](to=val.array()).unsafe_origin_cast[
+             origin_of(val)
+         ]()
+         return _resolve_ref(ptr[], tokens, idx)
+@@ -183,9 +182,7 @@ def _resolve_ref(
+         # obj[key] returns ref [obj._data] Value
+         # We need ref [obj] Value.
+         # Since obj owns _data, the lifetime of _data is at least as long as obj.
+-        var ptr = UnsafePointer(to=obj[key]).unsafe_origin_cast[
+-            origin_of(obj)
+-        ]()
++        var ptr = Pointer(to=obj[key]).unsafe_origin_cast[origin_of(obj)]()
+         return _resolve_ref(ptr[], tokens, idx + 1)
+ 
+     raise Error("Key not found: " + key)
+@@ -208,5 +205,5 @@ def _resolve_ref(
+     if unlikely(i >= arr_len):
+         raise Error("Index out of bounds")
+ 
+-    var ptr = UnsafePointer(to=arr[i]).unsafe_origin_cast[origin_of(arr)]()
++    var ptr = Pointer(to=arr[i]).unsafe_origin_cast[origin_of(arr)]()
+     return _resolve_ref(ptr[], tokens, idx + 1)
 diff --git a/emberjson/_serialize/reflection.mojo b/emberjson/_serialize/reflection.mojo
 index 804c396..cb1841a 100644
 --- a/emberjson/_serialize/reflection.mojo
@@ -349,31 +1490,94 @@ index 804c396..cb1841a 100644
                  else:
                      writer.write_item[False](self[i])
 diff --git a/emberjson/_utf8.mojo b/emberjson/_utf8.mojo
-index 4d4920d..28e98f8 100644
+index 4d4920d..9aa756c 100644
 --- a/emberjson/_utf8.mojo
 +++ b/emberjson/_utf8.mojo
-@@ -24,7 +24,7 @@ needed).
+@@ -22,9 +22,9 @@ needed).
+ """
+ 
  from emberjson._index.simd_ops import lookup16
- from std.memory import unsafe_memcpy, UnsafePointer
+-from std.memory import unsafe_memcpy, UnsafePointer
++from std.memory import unsafe_memcpy
  from std.sys.intrinsics import llvm_intrinsic
 -from std.collections import InlineArray
-+from std.collections import Array as InlineArray
++from std.collections import Array
  
  comptime _C16 = SIMD[DType.uint8, 16]
  
+@@ -129,14 +129,14 @@ def _all_ascii(cur: _C16) -> Bool:
+     return (cur & 0x80).reduce_or() == 0
+ 
+ 
+-def _is_valid_utf8_simd(ptr: UnsafePointer[UInt8, _], n: Int) -> Bool:
++def _is_valid_utf8_simd(ptr: Pointer[UInt8, _], n: Int) -> Bool:
+     var error = _C16(0)
+     var prev_chunk = _C16(0)
+     var prev_incomplete = _C16(0)
+ 
+     var i = 0
+     while i + 16 <= n:
+-        var cur = (ptr + i).load[width=16]()
++        var cur = (ptr.unsafe_offset(i)).unsafe_load[width=16]()
+         if _all_ascii(cur):
+             # All-ASCII chunk: only a dangling multi-byte sequence from
+             # the previous chunk can be wrong.
+@@ -151,8 +151,10 @@ def _is_valid_utf8_simd(ptr: UnsafePointer[UInt8, _], n: Int) -> Bool:
+         # Final partial chunk, staged through a zeroed buffer: the NUL
+         # padding is ASCII, so any sequence left dangling at the true end
+         # of input fails its continuation checks here.
+-        var tail = InlineArray[Byte, 16](fill=0)
+-        unsafe_memcpy(dest=tail.unsafe_ptr(), src=ptr + i, count=n - i)
++        var tail = Array[Byte, 16](fill=0)
++        unsafe_memcpy(
++            dest=tail.unsafe_ptr(), src=ptr.unsafe_offset(i), count=n - i
++        )
+         var cur = tail.unsafe_ptr().unsafe_load[width=16]()
+         _check_chunk(cur, prev_chunk, error)
+     else:
+@@ -163,11 +165,11 @@ def _is_valid_utf8_simd(ptr: UnsafePointer[UInt8, _], n: Int) -> Bool:
+     return error.reduce_max() == 0
+ 
+ 
+-def _is_valid_utf8_scalar(ptr: UnsafePointer[UInt8, _], n: Int) -> Bool:
++def _is_valid_utf8_scalar(ptr: Pointer[UInt8, _], n: Int) -> Bool:
+     """Reference validator: explicit RFC 3629 range checks."""
+     var i = 0
+     while i < n:
+-        var b = ptr[i]
++        var b = ptr[unsafe_offset=i]
+         if b < 0x80:
+             i += 1
+             continue
+@@ -199,11 +201,11 @@ def _is_valid_utf8_scalar(ptr: UnsafePointer[UInt8, _], n: Int) -> Bool:
+             return False
+         if i + need >= n:
+             return False
+-        var c1 = ptr[i + 1]
++        var c1 = ptr[unsafe_offset=i + 1]
+         if c1 < lo or c1 > hi:
+             return False
+         for k in range(2, need + 1):
+-            var ck = ptr[i + k]
++            var ck = ptr[unsafe_offset=i + k]
+             if ck < 0x80 or ck > 0xBF:
+                 return False
+         i += need + 1
 diff --git a/emberjson/document.mojo b/emberjson/document.mojo
-index aefe8e6..c6a3da3 100644
+index aefe8e6..25eaadf 100644
 --- a/emberjson/document.mojo
 +++ b/emberjson/document.mojo
-@@ -20,7 +20,7 @@ from ._deserialize.tape import (
+@@ -20,8 +20,8 @@ from ._deserialize.tape import (
  )
  from .teju import write_float
  from ._utf8 import is_valid_utf8
 -from std.format._utils import _WriteBufferStack
+-from std.memory import unsafe_memcmp, UnsafePointer
 +from std.format._utils import _FlushingWriteBuffer
- from std.memory import unsafe_memcmp, UnsafePointer
++from std.memory import unsafe_memcmp
  from std.memory.unsafe import bitcast
  from std.sys.intrinsics import unlikely, likely
+ 
 @@ -79,7 +79,7 @@ struct Document(Movable, Writable):
  
      def to_string(self, out s: String):
@@ -383,22 +1587,78 @@ index aefe8e6..c6a3da3 100644
          self.write_to(writer)
          writer.flush()
  
+@@ -258,7 +258,9 @@ struct DocObject[origin: ImmOrigin](Sized, TrivialRegisterPassable):
+             if (
+                 _arena_len(self._doc[]._strings, off) == n
+                 and unsafe_memcmp(
+-                    self._doc[]._strings._ptr + off + 4,
++                    self._doc[]
++                    ._strings._ptr.unsafe_offset(off)
++                    .unsafe_offset(4),
+                     needle.unsafe_ptr(),
+                     n,
+                 )
+@@ -407,7 +409,9 @@ def _arena_slice[
+ ](strings: _Arena, off: Int) -> StringSlice[origin]:
+     var n = _arena_len(strings, off)
+     var ptr = (
+-        (strings._ptr + off + 4).as_imm().unsafe_origin_cast[origin]()
++        (strings._ptr.unsafe_offset(off).unsafe_offset(4))
++        .as_imm()
++        .unsafe_origin_cast[origin]()
+     )
+     var span = Span[Byte, origin](unsafe_ptr=ptr, length=n)
+     return StringSlice(unsafe_from_utf8=span)
 diff --git a/emberjson/jsonl.mojo b/emberjson/jsonl.mojo
-index a3f25f8..26e3465 100644
+index a3f25f8..5469902 100644
 --- a/emberjson/jsonl.mojo
 +++ b/emberjson/jsonl.mojo
-@@ -1,5 +1,6 @@
- from std.pathlib import Path
- from std.collections import Span
-+from std.collections import Array as InlineArray
- from std.memory import ArcPointer, unsafe_memset, unsafe_memcpy
- from .constants import `\n`, `\r`
- from std.os import PathLike
+@@ -11,15 +11,15 @@ from emberjson import Value
+ 
+ struct _ReadBuffer(Copyable, Movable, Sized, Writable):
+     comptime BUFFER_SIZE = 4096
+-    var buf: InlineArray[Byte, Self.BUFFER_SIZE]
++    var buf: Array[Byte, Self.BUFFER_SIZE]
+     var length: Int
+ 
+     def __init__(out self):
+-        self.buf = InlineArray[Byte, Self.BUFFER_SIZE](fill=0)
++        self.buf = Array[Byte, Self.BUFFER_SIZE](fill=0)
+         self.length = 0
+ 
+     @always_inline
+-    def ptr(ref self) -> UnsafePointer[Byte, origin=origin_of(self.buf)]:
++    def ptr(ref self) -> Pointer[Byte, origin=origin_of(self.buf)]:
+         return self.buf.unsafe_ptr()
+ 
+     def index(self, b: Byte) -> Int:
+@@ -33,8 +33,10 @@ struct _ReadBuffer(Copyable, Movable, Sized, Writable):
+         self.length -= n
+         var p = self.ptr()
+         for i in range(self.length):
+-            p[i] = p[i + n]
+-        unsafe_memset(p + self.length, 0, Self.BUFFER_SIZE - self.length)
++            p[unsafe_offset=i] = p[unsafe_offset=i + n]
++        unsafe_memset(
++            p.unsafe_offset(self.length), 0, Self.BUFFER_SIZE - self.length
++        )
+ 
+     def clear(mut self):
+         unsafe_memset(self.ptr(), 0, Self.BUFFER_SIZE)
+@@ -118,7 +120,7 @@ struct JSONLinesIter(Iterator):
+             return line^
+ 
+         while True:
+-            buf_span = Span(
++            var buf_span = Span(
+                 unsafe_ptr=self.read_buf.ptr().unsafe_offset(
+                     self.read_buf.length
+                 ),
 diff --git a/emberjson/lazy.mojo b/emberjson/lazy.mojo
-index 02c6659..249fa48 100644
+index 02c6659..b26be98 100644
 --- a/emberjson/lazy.mojo
 +++ b/emberjson/lazy.mojo
-@@ -104,7 +104,7 @@ struct Lazy[
+@@ -104,14 +104,14 @@ struct Lazy[
  
      def __hash__(self, mut h: Some[Hasher]):
          comptime assert conforms_to(Self.T, Hashable)
@@ -407,6 +1667,26 @@ index 02c6659..249fa48 100644
  
      def unsafe_as_string_slice(
          self,
+     ) -> StringSlice[Self.origin]:
+         # TODO: Use where clause when that actually works
+         comptime assert Self.T == String
+-        return StringSlice(unsafe_from_utf8=self._data[1:-1])
++        return StringSlice(unsafe_from_utf8=self._data[1 : len(self._data) - 1])
+ 
+ 
+ comptime LazyString[origin: ImmOrigin] = Lazy[
+diff --git a/emberjson/object.mojo b/emberjson/object.mojo
+index da05601..9e319ab 100644
+--- a/emberjson/object.mojo
++++ b/emberjson/object.mojo
+@@ -8,7 +8,6 @@ from .utils import write_escaped_string, PaddedBuffer, PAD_INPUT_THRESHOLD
+ from ._utf8 import is_valid_utf8
+ from std.python import PythonObject, Python
+ from std.os import abort
+-from std.memory import UnsafePointer
+ from std.hashlib.hasher import Hasher
+ from std.hashlib import hash
+ 
 diff --git a/emberjson/schema.mojo b/emberjson/schema.mojo
 index 5392f45..c44ec6e 100644
 --- a/emberjson/schema.mojo
@@ -434,35 +1714,126 @@ index 5392f45..c44ec6e 100644
  
  
 diff --git a/emberjson/utils.mojo b/emberjson/utils.mojo
-index 9484298..5d3b8d9 100644
+index 9484298..eb4727f 100644
 --- a/emberjson/utils.mojo
 +++ b/emberjson/utils.mojo
-@@ -5,13 +5,14 @@ from std.utils import Variant
- from std.utils.numerics import FPUtils
- from std.math import log10, log2
- from std.collections import Span
-+from std.collections import Array as InlineArray
- from std.memory import (
+@@ -9,12 +9,12 @@ from std.memory import (
      unsafe_memcmp,
      unsafe_memcpy,
      unsafe_memset,
-     UnsafePointer,
+-    UnsafePointer,
  )
 -from std.format._utils import _WriteBufferStack
 +from std.format._utils import _FlushingWriteBuffer
  from .traits import JsonValue, PrettyPrintable
  from .object import Object
  from .array import Array
-@@ -192,7 +193,7 @@ struct PaddedBuffer(Movable):
++from std.collections import Array as StdArray
+ from .value import Null
+ from std.sys import size_of
+ from std.sys.intrinsics import unlikely
+@@ -24,7 +24,7 @@ from std.builtin.globals import global_constant
+ 
+ comptime ByteVec = SIMD[DType.uint8, _]
+ comptime ByteView = Span[Byte, _]
+-comptime BytePtr[origin: ImmOrigin] = UnsafePointer[Byte, origin]
++comptime BytePtr[origin: ImmOrigin] = Pointer[Byte, origin]
+ 
+ 
+ @always_inline
+@@ -40,11 +40,11 @@ struct CheckedPointer[origin: ImmOrigin](Comparable, TrivialRegisterPassable):
+ 
+     @always_inline("nodebug")
+     def __add__(self, v: Int) -> Self:
+-        return {self.p + v, self.start, self.end}
++        return {self.p.unsafe_offset(v), self.start, self.end}
+ 
+     @always_inline("nodebug")
+     def __iadd__(mut self, v: Int):
+-        self.p += v
++        self.p = self.p.unsafe_offset(v)
+ 
+     @always_inline("nodebug")
+     def __eq__(self, other: Self) -> Bool:
+@@ -73,20 +73,20 @@ struct CheckedPointer[origin: ImmOrigin](Comparable, TrivialRegisterPassable):
+     @always_inline("nodebug")
+     def __add__(self, v: SIMD) -> Self:
+         comptime assert v.dtype.is_integral()
+-        return {self.p + v, self.start, self.end}
++        return {self.p.unsafe_offset(v), self.start, self.end}
+ 
+     @always_inline("nodebug")
+     def __iadd__(mut self, v: SIMD):
+         comptime assert v.dtype.is_integral()
+-        self.p += v
++        self.p = self.p.unsafe_offset(v)
+ 
+     @always_inline("nodebug")
+     def __sub__(self, i: Int) -> Self:
+-        return {self.p - i, self.start, self.end}
++        return {self.p.unsafe_offset(-i), self.start, self.end}
+ 
+     @always_inline("nodebug")
+     def __isub__(mut self, i: Int):
+-        self.p -= i
++        self.p = self.p.unsafe_offset(-i)
+ 
+     @always_inline("nodebug")
+     def __getitem__(
+@@ -102,7 +102,7 @@ struct CheckedPointer[origin: ImmOrigin](Comparable, TrivialRegisterPassable):
+     ) raises -> ref[Self.origin, self.p.address_space] Byte:
+         if unlikely(self.dist() - i <= 0):
+             raise Error("Unexpected EOF")
+-        return self.p[i]
++        return self.p[unsafe_offset=i]
+ 
+     @always_inline("nodebug")
+     def unsafe_get(self) -> Byte:
+@@ -122,7 +122,7 @@ struct CheckedPointer[origin: ImmOrigin](Comparable, TrivialRegisterPassable):
+         Safety:
+             See `unsafe_get()`.
+         """
+-        return self.p[i]
++        return self.p[unsafe_offset=i]
+ 
+     @always_inline("nodebug")
+     def dist(self) -> Int:
+@@ -131,11 +131,11 @@ struct CheckedPointer[origin: ImmOrigin](Comparable, TrivialRegisterPassable):
+     @always_inline("nodebug")
+     def load_chunk(self) -> SIMD8xT:
+         if self.dist() < SIMD8_WIDTH:
+-            v = SIMD8xT(0)
++            var v = SIMD8xT(0)
+             for i in range(self.dist()):
+-                v[i] = self.p[i]
++                v[i] = self.p[unsafe_offset=i]
+             return v
+-        return self.p.load[width=SIMD8_WIDTH]()
++        return self.p.unsafe_load[width=SIMD8_WIDTH]()
+ 
+     @always_inline("nodebug")
+     def unsafe_load_chunk(self) -> SIMD8xT:
+@@ -145,7 +145,7 @@ struct CheckedPointer[origin: ImmOrigin](Comparable, TrivialRegisterPassable):
+             Only valid when the underlying buffer extends at least
+             `SIMD8_WIDTH` bytes past `end` (see `PaddedBuffer`).
+         """
+-        return self.p.load[width=SIMD8_WIDTH]()
++        return self.p.unsafe_load[width=SIMD8_WIDTH]()
+ 
+ 
+ comptime PAD_INPUT_THRESHOLD = 128
+@@ -192,9 +192,7 @@ struct PaddedBuffer(Movable):
  
  comptime DefaultPrettyIndent = 4
  
 -comptime StackArray[T: Copyable & ImplicitlyDeletable, size: Int] = InlineArray[
-+comptime StackArray[T: Copyable & Deinitable, size: Int] = InlineArray[
-     T, size
- ]
+-    T, size
+-]
++comptime StackArray[T: Copyable & Deinitable, size: Int] = StdArray[T, size]
  
-@@ -204,7 +205,7 @@ def will_overflow(i: UInt64) -> Bool:
+ 
+ @always_inline
+@@ -204,7 +202,7 @@ def will_overflow(i: UInt64) -> Bool:
  
  def write(out s: String, v: Some[JsonValue]):
      s = String()  # FIXME(modular/#4573): once it is optimized, return String(v)
@@ -471,7 +1842,7 @@ index 9484298..5d3b8d9 100644
      v.write_to(writer)
      writer.flush()
  
-@@ -217,7 +218,7 @@ def write_pretty(
+@@ -217,7 +215,7 @@ def write_pretty(
  ):
      var ind = String(" ") * indent[Int] if indent.isa[Int]() else indent[String]
      s = String()
@@ -480,28 +1851,130 @@ index 9484298..5d3b8d9 100644
      value.pretty_to(writer, ind)
      writer.flush()
  
-@@ -234,9 +235,9 @@ def to_string(b: ByteView[_]) -> StringSlice[b.origin]:
+@@ -234,15 +232,15 @@ def to_string(b: ByteView[_]) -> StringSlice[b.origin]:
  
  @always_inline
  def to_string(v: ByteVec, out s: String):
 -    s = String(capacity=v.size)
-+    s = String(capacity=v.length)
++    s = String(capacity_bytes=v.length)
  
 -    comptime for i in range(v.size):
 +    comptime for i in range(v.length):
          s.append(Codepoint(v[i]))
  
  
+ @always_inline
+ def to_string(b: Byte, out s: String):
+-    s = String(capacity=1)
++    s = String(capacity_bytes=1)
+     s.append(Codepoint(b))
+     return s^
+ 
+@@ -250,7 +248,9 @@ def to_string(b: Byte, out s: String):
+ @always_inline
+ def to_string(var i: UInt32) -> String:
+     # This is meant to be a sequence of 4 characters
+-    return to_string(UnsafePointer(to=i).bitcast[Byte]().load[width=4]())
++    return to_string(
++        Pointer(to=i).unsafe_bitcast[Byte]().unsafe_load[width=4]()
++    )
+ 
+ 
+ def constrain_json_type[T: Copyable]():
+@@ -281,15 +281,15 @@ def _handle_escape(c: Byte, mut writer: Some[Writer]):
+ 
+ @always_inline
+ def _needs_escape(bytes: Span[Byte, _], n: Int) -> Bool:
+-    var ptr = UnsafePointer(bytes.unsafe_ptr())
++    var ptr = Pointer(bytes.unsafe_ptr())
+     var i = 0
+     while i + SIMD8_WIDTH <= n:
+-        var chunk = ptr.load[width=SIMD8_WIDTH](i)
++        var chunk = ptr.unsafe_load[width=SIMD8_WIDTH](i)
+         if pack_bits(chunk.eq(`"`) | chunk.eq(`\\`) | chunk.lt(` `)) != 0:
+             return True
+         i += SIMD8_WIDTH
+     while i < n:
+-        var c = ptr[i]
++        var c = ptr[unsafe_offset=i]
+         if c == `"` or c == `\\` or c < 32:
+             return True
+         i += 1
+@@ -312,12 +312,12 @@ def write_escaped_string(s: StringSlice, mut writer: Some[Writer]):
+ 
+     # Slow path: string contains characters that need escaping
+     writer.write('"')
+-    var ptr = UnsafePointer(bytes.unsafe_ptr())
++    var ptr = Pointer(bytes.unsafe_ptr())
+     var i = 0
+     var start = 0
+ 
+     while i + SIMD8_WIDTH <= n:
+-        var chunk = ptr.load[width=SIMD8_WIDTH](i)
++        var chunk = ptr.unsafe_load[width=SIMD8_WIDTH](i)
+         var escape_bits = pack_bits(
+             chunk.eq(`"`) | chunk.eq(`\\`) | chunk.lt(` `)
+         )
+@@ -332,12 +332,12 @@ def write_escaped_string(s: StringSlice, mut writer: Some[Writer]):
+                     StringSlice(unsafe_from_utf8=bytes[start : i + pos])
+                 )
+             start = i + pos + 1
+-            _handle_escape(ptr[i + pos], writer)
++            _handle_escape(ptr[unsafe_offset=i + pos], writer)
+             bits &= bits - 1
+         i += SIMD8_WIDTH
+ 
+     while i < n:
+-        var c = ptr[i]
++        var c = ptr[unsafe_offset=i]
+         if c == `"` or c == `\\` or c < 32:
+             if i > start:
+                 writer.write(StringSlice(unsafe_from_utf8=bytes[start:i]))
 diff --git a/emberjson/value.mojo b/emberjson/value.mojo
-index 96a5cb4..5f40aa9 100644
+index 96a5cb4..e88d193 100644
 --- a/emberjson/value.mojo
 +++ b/emberjson/value.mojo
-@@ -10,7 +10,7 @@ from .utils import (
+@@ -10,8 +10,6 @@ from .utils import (
  )
  from std.utils.variant import Variant
  from .traits import JsonValue, PrettyPrintable, JsonSerializable
 -from std.collections import InlineArray
-+from std.collections import Array as InlineArray
- from std.memory import UnsafePointer
+-from std.memory import UnsafePointer
  from std.sys.intrinsics import unlikely, likely
  from ._deserialize import Parser, ParseOptions
+ from ._serialize import Serializer
+@@ -82,7 +80,7 @@ struct Value(JsonValue, Sized):
+     # deletable and refuses to synthesize the destructor/move. An explicit
+     # (empty) `__del__` breaks the cycle: fields are still destroyed
+     # automatically after it runs, and copy/move synthesis is re-enabled.
+-    def __del__(deinit self):
++    def __deinit__(deinit self):
+         pass
+ 
+     @always_inline
+@@ -280,14 +278,14 @@ struct Value(JsonValue, Sized):
+     def __getitem__(ref self, ind: Some[Indexer]) raises -> ref[self] Value:
+         if not self.is_array():
+             raise Error("Expected numerical index for array")
+-        return UnsafePointer(to=self.array()[ind]).unsafe_origin_cast[
++        return Pointer(to=self.array()[ind]).unsafe_origin_cast[
+             origin_of(self)
+         ]()[]
+ 
+     def __getitem__(ref self, key: String) raises -> ref[self] Value:
+         if not self.is_object():
+             raise Error("Expected string key for object")
+-        return UnsafePointer(to=self.object()[key]).unsafe_origin_cast[
++        return Pointer(to=self.object()[key]).unsafe_origin_cast[
+             origin_of(self)
+         ]()[]
+ 
+@@ -497,7 +495,7 @@ struct Value(JsonValue, Sized):
+             return self.get(materialize[index.value()]())
+         else:
+             if self.is_object():
+-                return UnsafePointer(to=self.object()[name]).unsafe_origin_cast[
++                return Pointer(to=self.object()[name]).unsafe_origin_cast[
+                     origin_of(self)
+                 ]()[]
+             else:
