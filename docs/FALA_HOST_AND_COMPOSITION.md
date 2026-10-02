@@ -107,7 +107,7 @@ another native boundary supplies one.
 and write `result.json`. It is the language-neutral wire helper, not a
 `python_function` adapter.
 
-The official Mojo 1.0 bridge is `PyInit_*` + `PythonModuleBuilder`.
+The official Mojo 1.1 bridge is `PyInit_*` + `PythonModuleBuilder`.
 `ensure_native` stays because `import mojo.importer` cannot pass package
 import paths.
 

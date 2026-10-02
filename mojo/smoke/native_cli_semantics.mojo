@@ -1,6 +1,6 @@
 from std.os import remove
 from std.ffi import CStringSlice, c_int, external_call
-from std.memory import UnsafePointer
+from std.origin import MutUntrackedOrigin
 from std.pathlib import Path
 from fala.json import parse_json
 from fala.native_cli_parse import _count, _word
@@ -56,7 +56,7 @@ def _remove_init_tree(path: Path) raises:
 def _fresh_init_root() raises -> String:
     var template = "/tmp/fala-native-cli-init-XXXXXX"
     var c_template = mutable_c_string(template)
-    var root_ptr = external_call["mkdtemp", UnsafePointer[UInt8, MutUntrackedOrigin]](c_template.unsafe_ptr())
+    var root_ptr = external_call["mkdtemp", Pointer[UInt8, MutUntrackedOrigin]](c_template.unsafe_ptr())
     if Int(root_ptr) == 0:
         raise Error("native CLI semantics: unable to create unique init workspace")
     return String(unsafe_from_utf8_ptr=c_template.unsafe_ptr())

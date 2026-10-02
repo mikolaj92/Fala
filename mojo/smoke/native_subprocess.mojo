@@ -1,6 +1,5 @@
 from std.collections import List
 from std.ffi import CStringSlice, c_int, external_call
-from std.memory import UnsafePointer
 from std.os import remove
 from std.pathlib import Path, cwd
 from fala import AdapterSpec, EffectorRequest, NativeFunctionRegistry, execute_subprocess

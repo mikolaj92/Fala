@@ -6,7 +6,7 @@ from fala.graph_tools import graph_expand, graph_validate, graph_fingerprint, gr
 from fala.explain import explain_run
 from fala.sqlite import Connection, Statement, SQLiteError
 from fala.json import parse_json, quote_json_string as _quote
-from fala.native_driver import diagnose_waits, observe_run_boundary
+from fala.native_driver import diagnose_wait_graph, observe_run_boundary
 from emberjson import Value, to_string
 from fala.native_cli_parse import (
     _flag, _validate, _bool_option, _limit, _after_sequence, _path,

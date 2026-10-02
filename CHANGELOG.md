@@ -1,5 +1,31 @@
 ## Unreleased
 
+**Toolchain: Mojo 1.1.0 (MAX 26.6).**
+
+- Pin `pixi.toml` to `mojo = "==1.1.0"`. Product version stays 0.9.4.
+- Keep the Python host on `PyInit_*` + `PythonModuleBuilder` and
+  `mojo build --emit shared-lib`. Do not switch to `mojo.importer`.
+- Replace `patches/emberjson-mojo-1.0.patch` with
+  `patches/emberjson-mojo-1.1.patch` on the same EmberJson revision
+  (`951f4ef`). The patch is EmberJson's own 1.1-nightly language port of
+  that architecture (`4eba24a`) plus MAX 26.6 follow-ups:
+  `_FlushingWriteBuffer`, `String(capacity_bytes=...)`, and `Lazy`
+  hashing bytes. Stdlib `Array` is imported as `StdArray` so it does
+  not shadow EmberJson's JSON `Array`.
+- sqlite.fire stays at upstream `v0.1.1` (`2cb4da9`). That tree already
+  uses `def`/`comptime`, and `CStringSlice` remains a 1.1 compatibility
+  alias. `v0.1.2` is still a Mojo 1.0.0 pin.
+- Mojo 1.1 rejects intra-package access without an explicit import.
+  `native_cli_inspect` now imports `diagnose_wait_graph` from
+  `native_driver` instead of relying on package-wide lookup.
+- Darwin-only `_NSGetExecutablePath` FFI is behind `comptime if
+  CompilationTarget.is_macos()`. A runtime `if` still emitted that
+  symbol into the Linux `_native` shared library.
+- Mojo 1.1 forbids implicit variable declarations. The thin-core-layers
+  smoke declares `var help_text`.
+- Process-host smokes use builtin `Pointer` instead of removed
+  `MutUnsafePointer` / `std.memory.UnsafePointer`.
+
 **Documentation: one picture, no leftover identity essays.**
 
 - README is the product picture: Fala composes small programs into a graph;
