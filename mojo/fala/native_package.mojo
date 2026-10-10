@@ -8,6 +8,7 @@ nested config/schema values as canonical JSON text for downstream native APIs.
 from emberjson import Object, Value, to_string
 from std.collections import Dict, List
 from std.pathlib import Path, cwd
+from std.utils.numerics import isfinite
 from fala.json import canonical_json_text
 
 @fieldwise_init
@@ -51,6 +52,9 @@ struct PackageEffector(Copyable, Movable):
     var child_path_json: String
     var config_json: String
     var retry_policy: String
+    var max_attempts: Int
+    var base_seconds: Float64
+    var max_seconds: Float64
     var output_schema_json: String
     var output_schema_declared: Bool
     var when_json: String
@@ -62,7 +66,7 @@ struct PackageEffector(Copyable, Movable):
     var description: String
     var tags: List[String]
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = "", output_schema_json: String = "{}", output_schema_declared: Bool = False):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = "", output_schema_json: String = "{}", output_schema_declared: Bool = False, max_attempts: Int = 1, base_seconds: Float64 = 0.0, max_seconds: Float64 = 3600.0):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
@@ -75,6 +79,9 @@ struct PackageEffector(Copyable, Movable):
         self.timeout_seconds = timeout_seconds
         self.child_path_json = child_path_json
         self.retry_policy = retry_policy
+        self.max_attempts = max_attempts
+        self.base_seconds = base_seconds
+        self.max_seconds = max_seconds
         self.output_schema_json = output_schema_json
         self.output_schema_declared = output_schema_declared
         self.when_json = when_json
@@ -86,6 +93,14 @@ struct PackageEffector(Copyable, Movable):
         self.title = title
         self.description = description
         self.tags = tags.copy()
+
+    def regulation_json(self) raises -> String:
+        var regulation = Object()
+        regulation["retry_policy"] = Value(self.retry_policy)
+        regulation["max_attempts"] = Value(self.max_attempts)
+        regulation["base_seconds"] = Value(self.base_seconds)
+        regulation["max_seconds"] = Value(self.max_seconds)
+        return to_string(Value(regulation^))
 
 
 @fieldwise_init
@@ -686,7 +701,7 @@ def _capability_secret_handles(capabilities: Value, capability: String) raises -
 
 def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), capability_contracts: Value = Value()) raises -> PackageEffector:
     if not value.is_object(): _error("manifest.type", path, "expected effector object")
-    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation", "output_schema"], path)
+    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "max_attempts", "base_seconds", "max_seconds", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation", "output_schema"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "effector id")
     var conduction = List[String]()
     var item = _optional(value, "conduction")
@@ -730,6 +745,16 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     if not item.is_null():
         retry_policy = _string(item^, path + "/retry_policy")
         if retry_policy != "automatic" and retry_policy != "none": _error("manifest.value", path + "/retry_policy", "expected automatic or none")
+    var max_attempts = 1
+    if "max_attempts" in value.object():
+        max_attempts = _integer(value.object()["max_attempts"].copy(), path + "/max_attempts")
+        if max_attempts < 1: _error("manifest.value", path + "/max_attempts", "must be at least one")
+    var base_seconds = Float64(0.0)
+    var max_seconds = Float64(3600.0)
+    if "base_seconds" in value.object(): base_seconds = _number(value.object()["base_seconds"].copy(), path + "/base_seconds")
+    if "max_seconds" in value.object(): max_seconds = _number(value.object()["max_seconds"].copy(), path + "/max_seconds")
+    if not isfinite(base_seconds) or base_seconds < 0.0: _error("manifest.value", path + "/base_seconds", "must be finite and not negative")
+    if not isfinite(max_seconds) or max_seconds < base_seconds: _error("manifest.value", path + "/max_seconds", "must be finite and at least base_seconds")
     var when_json = String("")
     item = _optional(value, "when")
     if not item.is_null():
@@ -787,7 +812,7 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json, output_schema_json=output_schema_json, output_schema_declared=output_schema_declared)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, max_attempts=max_attempts, base_seconds=base_seconds, max_seconds=max_seconds, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json, output_schema_json=output_schema_json, output_schema_declared=output_schema_declared)
 def _replace_all(source: String, needle: String, replacement: String) -> String:
     var result = String("")
     var rest = source
@@ -1046,6 +1071,9 @@ def _effector_json(effector: PackageEffector) raises -> Value:
         result["conduction"] = _json_value(conduction_json^)
     if effector.timeout_seconds > 0.0: result["timeout_seconds"] = Value(effector.timeout_seconds)
     if effector.retry_policy != "automatic": result["retry_policy"] = Value(effector.retry_policy)
+    if effector.max_attempts != 1: result["max_attempts"] = Value(effector.max_attempts)
+    if effector.base_seconds != 0.0: result["base_seconds"] = Value(effector.base_seconds)
+    if effector.max_seconds != 3600.0: result["max_seconds"] = Value(effector.max_seconds)
     if effector.when_json != "": result["when"] = _json_value(effector.when_json)
     if effector.context_policy != "": result["context_policy"] = Value(effector.context_policy)
     if effector.context_source != "": result["context_source"] = Value(effector.context_source)

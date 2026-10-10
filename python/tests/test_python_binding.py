@@ -339,6 +339,144 @@ def test_raw_native_host_run_preserves_explicit_now_without_realtime_opt_in(
     assert process_timestamps == (fixed_now, fixed_now, fixed_now, fixed_now)
 
 
+@pytest.mark.parametrize("suffix", ["json", "toml"])
+def test_host_run_package_retries_with_growing_backoff(tmp_path, suffix) -> None:
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    from fala import host
+    from fala._build import ensure_native
+
+    script = tmp_path / "transient.sh"
+    counter = tmp_path / "attempts"
+    script.write_text('''count=0
+if [ -f "$1" ]; then read -r count < "$1"; fi
+count=$((count + 1))
+printf '%s\\n' "$count" > "$1"
+if [ "$count" -lt 3 ]; then exit 7; fi
+exec /tmp/fala-native-subprocess-fixture success
+''', encoding="utf-8")
+    command = ["/bin/sh", str(script), str(counter)]
+    effector = {
+        "id": "step",
+        "capability": "step",
+        "retry_policy": "automatic",
+        "max_attempts": 3,
+        "base_seconds": 2,
+        "max_seconds": 5,
+        "output_schema": {
+            "type": "object",
+            "required": ["ok"],
+            "properties": {"ok": {"type": "boolean"}},
+        },
+        "adapter": {
+            "kind": "subprocess",
+            "command": command,
+            "env": {"SECRET": "retry-smoke"},
+        },
+    }
+    package = {
+        "version": "2", "id": "retry_smoke",
+        "capabilities": [{"id": "step"}],
+        "correlation_paths": [{"id": "path", "effectors": [effector]}],
+    }
+    package_path = tmp_path / f"retry.{suffix}"
+    if suffix == "json":
+        package_path.write_text(json.dumps(package), encoding="utf-8")
+    else:
+        package_path.write_text('''version = "2"
+id = "retry_smoke"
+[[capabilities]]
+id = "step"
+[[correlation_paths]]
+id = "path"
+[[correlation_paths.effectors]]
+id = "step"
+capability = "step"
+retry_policy = "automatic"
+max_attempts = 3
+base_seconds = 2
+max_seconds = 5
+output_schema = { type = "object", required = ["ok"], properties = { ok = { type = "boolean" } } }
+adapter = { kind = "subprocess", command = ["/tmp/fala-native-subprocess-fixture", "nonzero"], env = { SECRET = "retry-smoke" } }
+'''.replace('["/tmp/fala-native-subprocess-fixture", "nonzero"]', json.dumps(command)), encoding="utf-8")
+    db_path = tmp_path / "retry.sqlite"
+    request = {
+        "db_path": str(db_path), "package_path": str(package_path),
+        "path_id": "path", "run_id": "retry", "max_ticks": 8,
+        "worker_id": "retry-smoke", "created_at": "2028-02-28T23:59:59Z",
+        "now": "2028-02-28T23:59:59Z",
+        "lease_expires_at": "2099-01-01T00:00:00Z",
+    }
+    host.ensure_sqlite_fire_library()
+    process_host_library = host.ensure_process_host_library()
+    request["host_environment"] = {"FALA_PROCESS_HOST_LIBRARY": str(process_host_library.resolve())}
+    native = ensure_native()
+
+    def drive(at):
+        request["now"] = at
+        return host._with_sqlite_cwd(lambda: native.host_run_package(json.dumps(request)), process_host_library)
+
+    def row():
+        with sqlite3.connect(db_path) as db:
+            return db.execute(
+                "SELECT status,attempt,max_attempts,available_at,updated_at "
+                "FROM processes WHERE run_id='retry' AND id='path:step'"
+            ).fetchone()
+
+    attempts, delays = [], []
+    for at, early, due in [
+        ("2028-02-28T23:59:59Z", "2028-02-29T00:00:00Z", "2028-02-29T00:00:01Z"),
+        ("2028-02-29T00:00:01Z", "2028-02-29T00:00:04Z", "2028-02-29T00:00:05Z"),
+    ]:
+        drive(at)
+        waiting = row()
+        assert waiting[:3] == ("retry_wait", len(attempts) + 1, 3)
+        assert waiting[3] == due
+        attempts.append(waiting[1])
+        delays.append((datetime.fromisoformat(due) - datetime.fromisoformat(at)).total_seconds())
+        drive(early)
+        assert row() == waiting, "retry must not run before its due time"
+
+    # The same effector recovers on its third invocation.
+    result = drive("2028-02-29T00:00:05Z")
+    assert result["run_status"] == "completed"
+    assert row()[:3] == ("succeeded", 3, 3)
+    attempts.append(row()[1])
+    assert attempts == [1, 2, 3]
+    assert delays == [2.0, 4.0]
+    assert delays[1] > delays[0]
+    assert counter.read_text().strip() == "3"
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT count(*) FROM runtime_commands WHERE run_id='retry' AND command_type='process.retry'").fetchone()[0] == 2
+    print(f"package retry smoke ({suffix}): attempts={attempts}, delays={delays}s")
+
+
+@pytest.mark.parametrize("settings", [
+    {"max_attempts": 0}, {"max_attempts": 1.5}, {"max_attempts": True},
+    {"base_seconds": -1}, {"base_seconds": "2"},
+    {"base_seconds": 2, "max_seconds": 1}, {"max_seconds": None},
+])
+def test_host_run_package_rejects_invalid_retry_settings(tmp_path, settings) -> None:
+    import json
+    from fala import host
+    from fala._build import ensure_native
+
+    effector = {
+        "id": "step", "output_schema": {"type": "boolean"},
+        "adapter": {"kind": "native_function", "ref": "missing"}, **settings,
+    }
+    package = {"version": "2", "id": "invalid_retry", "correlation_paths": [{"id": "path", "effectors": [effector]}]}
+    package_path = tmp_path / "invalid.json"
+    package_path.write_text(json.dumps(package), encoding="utf-8")
+    request = {"db_path": str(tmp_path / "invalid.sqlite"), "package_path": str(package_path), "path_id": "path"}
+    host.ensure_sqlite_fire_library()
+    native = ensure_native()
+    with pytest.raises(Exception, match="max_attempts|base_seconds|max_seconds"):
+        host._with_sqlite_cwd(lambda: native.host_run_package(json.dumps(request)))
+
+
 def test_native_process_host_child_cwd_preserves_parent_cwd(tmp_path) -> None:
     """The native C host changes only the spawned child's working directory."""
     import ctypes

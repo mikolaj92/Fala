@@ -24,7 +24,10 @@ from fala.native_process_host import native_process_host_available
 from fala.host_journal import realtime_utc_timestamp
 from fala.journal import NativeJournal, ProcessRow
 from fala.sqlite import SQLiteError
-from fala.status import RunStatus
+from fala.status import RunStatus, ProcessStatus
+from fala.processes import ProcessRecord, retry_backoff_seconds
+from std.math import ceil
+from std.utils.numerics import isfinite
 from fala.correlation import CorrelationWaitDiagnostic, CorrelationInstantiationPlan, CorrelationProcessPlan
 from fala.models import WaitDiagnosticIssue, WaitGraphDiagnostic
 from fala.correlation_advance import advance_correlation
@@ -374,13 +377,37 @@ def _row_before(a: ProcessRow, b: ProcessRow) -> Bool:
     return a.id < b.id
 
 
-def _retry_due(process: ProcessRow, now: String) -> String:
-    """Make retry work available at the transition timestamp.
+def _backoff_number(value: Value) raises -> Float64:
+    if value.is_float(): return value.float()
+    if value.is_int(): return Float64(value.int())
+    if value.is_uint(): return Float64(value.uint())
+    raise Error("retry backoff must be a number")
 
-    The reference retry_process defaults availability to the transition time,
-    so a bounded drive can reclaim a retry on its next tick.
-    """
-    return now
+
+def _retry_due(mut journal: NativeJournal, process: ProcessRow, now: String) raises -> String:
+    """Apply optional backoff, keeping unconfigured retries immediate."""
+    if process.metadata.find("\"base_seconds\"") < 0 and process.metadata.find("\"max_seconds\"") < 0:
+        return now
+    var metadata = Value(parse_string=process.metadata)
+    var base_seconds = Float64(0.0)
+    var max_seconds = Float64(3600.0)
+    if metadata.is_object() and "regulation" in metadata.object():
+        var regulation = metadata.object()["regulation"].copy()
+        if regulation.is_object():
+            if "base_seconds" in regulation.object(): base_seconds = _backoff_number(regulation.object()["base_seconds"].copy())
+            if "max_seconds" in regulation.object(): max_seconds = _backoff_number(regulation.object()["max_seconds"].copy())
+    if not isfinite(base_seconds) or not isfinite(max_seconds): raise Error("retry backoff must be finite")
+    var record = ProcessRecord(process.id, process.run_id, ProcessStatus.running(), attempt=process.attempt)
+    var delay = retry_backoff_seconds(record, base_seconds, max_seconds)
+    if delay == 0.0: return now
+    # Journal clocks use whole UTC seconds. Round up so a retry is never early.
+    var stmt = journal.db.query("SELECT strftime('%Y-%m-%dT%H:%M:%SZ', ?, '+' || ? || ' seconds')")
+    stmt.bind_text(1, now)
+    stmt.bind_text(2, String(ceil(delay)))
+    if not stmt.step(): raise Error("retry backoff: cannot calculate due timestamp")
+    var due = journal._text(stmt, 0)
+    if due == "": raise Error("retry backoff: invalid due timestamp")
+    return due
 def _has_process_status(rows: List[ProcessRow], candidate: ProcessRow) -> Bool:
     for row in rows:
         if row.id == candidate.id and row.status == candidate.status and row.attempt == candidate.attempt:
@@ -1086,10 +1113,10 @@ def drive_once(
         failure_blame = "correlator"
     _record_contract_violation(journal, claimed, worker_id, transition_at, failure, failure_blame)
     var stored: ProcessRow
-    # Retry transitions are immediately claimable at the transition timestamp,
-    # matching reference retry_process and bounded-drive semantics.
-    var retry_due = _retry_due(claimed, transition_at)
     var retry_allowed = _automatic_retry_allowed(claimed.metadata)
+    var retry_due = transition_at
+    if retry_allowed and claimed.attempt < claimed.max_attempts:
+        retry_due = _retry_due(journal, claimed, transition_at)
     if timed_out and retry_allowed and claimed.attempt < claimed.max_attempts:
         stored = journal.retry_process(
             claimed.run_id, claimed.id, worker_id, transition_at, retry_due, error_json
