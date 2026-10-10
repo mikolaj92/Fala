@@ -16,7 +16,7 @@ from std.python import Python, PythonObject
 from std.python.bindings import PythonModuleBuilder
 from std.runtime import initialize_runtime
 
-from emberjson import Value, to_string
+from emberjson import Object, Value, to_string
 from fala.adapters import (
     AdapterSpec,
     NativeFunctionRegistry,
@@ -300,6 +300,14 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
     )
     var effectors = List[CorrelationEffectorSpec]()
     for item in package_path_spec.effectors:
+        # Package retry knobs become the effector regulation. The correlation
+        # engine reads max_attempts from it, and the durable driver reads the
+        # backoff window from the persisted metadata marker.
+        var regulation = Object(capacity=4)
+        regulation["retry_policy"] = Value(item.retry_policy)
+        regulation["max_attempts"] = Value(item.max_attempts)
+        regulation["retry_backoff_base_seconds"] = Value(item.retry_backoff_base_seconds)
+        regulation["retry_backoff_max_seconds"] = Value(item.retry_backoff_max_seconds)
         var spec = CorrelationEffectorSpec.create(
             item.id,
             item.capability,
@@ -307,7 +315,7 @@ def host_run_package_json(request: PythonObject) raises -> PythonObject:
             item.timeout_seconds,
             item.config_json,
             item.output_schema_json,
-            "{\"retry_policy\":\"" + item.retry_policy + "\"}",
+            to_string(Value(regulation^)),
             List[String](),
             item.when_json,
         )

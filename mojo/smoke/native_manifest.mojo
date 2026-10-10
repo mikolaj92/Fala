@@ -1,4 +1,6 @@
 from std.pathlib import Path
+from emberjson import Object, Value, to_string
+from fala.correlation import CorrelationEffectorSpec, CorrelationPathSpec, instantiate_correlation_path
 from fala.native_package import load_package_json, serialize_package_json
 
 
@@ -89,6 +91,33 @@ def main() raises:
     _check(no_retry.correlation_paths[0].effectors[0].retry_policy == "none" and serialize_package_json(no_retry).find("\"retry_policy\":\"none\"") >= 0, "retry policy round trip")
     _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"retry_policy\":\"sometimes\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
     _expect_error(valid, "expected automatic or none")
+
+    # Package retry knobs are optional, validated, and round trip; the host
+    # regulation built from them reaches the correlation plan unchanged.
+    _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"retry_policy\":\"automatic\",\"max_attempts\":3,\"retry_backoff_base_seconds\":2.0,\"retry_backoff_max_seconds\":30.0,\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    var paced = load_package_json(valid)
+    var paced_effector = paced.correlation_paths[0].effectors[0].copy()
+    _check(paced_effector.max_attempts == 3 and paced_effector.retry_backoff_base_seconds == 2.0 and paced_effector.retry_backoff_max_seconds == 30.0, "package retry knobs parse")
+    var paced_json = serialize_package_json(paced)
+    _check(paced_json.find("\"max_attempts\":3") >= 0 and paced_json.find("\"retry_backoff_base_seconds\":2.0") >= 0 and paced_json.find("\"retry_backoff_max_seconds\":30.0") >= 0, "package retry knobs round trip")
+    var paced_effectors = List[CorrelationEffectorSpec]()
+    for item in paced.correlation_paths[0].effectors:
+        var regulation = Object(capacity=4)
+        regulation["retry_policy"] = Value(item.retry_policy)
+        regulation["max_attempts"] = Value(item.max_attempts)
+        regulation["retry_backoff_base_seconds"] = Value(item.retry_backoff_base_seconds)
+        regulation["retry_backoff_max_seconds"] = Value(item.retry_backoff_max_seconds)
+        paced_effectors.append(CorrelationEffectorSpec.create(item.id, item.capability, item.conduction.copy(), item.timeout_seconds, item.config_json, item.output_schema_json, to_string(Value(regulation^)), List[String](), item.when_json).copy())
+    var paced_path = CorrelationPathSpec(paced.correlation_paths[0].id, paced_effectors^, paced.correlation_paths[0].accumulate_upstream_reactions)
+    var paced_plan = instantiate_correlation_path(paced_path, "manifest-retry-run")
+    _check(paced_plan.processes[0].max_attempts == 3, "regulation max_attempts reaches the process plan")
+    _check(paced_plan.processes[0].metadata_json.find("\"max_attempts\":3") >= 0 and paced_plan.processes[0].metadata_json.find("\"retry_backoff_base_seconds\":2.0") >= 0, "backoff window reaches process metadata")
+    _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"max_attempts\":0,\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    _expect_error(valid, "/max_attempts: must be at least one")
+    _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"retry_backoff_base_seconds\":-1.0,\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    _expect_error(valid, "/retry_backoff_base_seconds: must not be negative")
+    _write(valid, "{\"id\":\"pkg\",\"version\":\"1\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"eff\",\"retry_backoff_base_seconds\":10.0,\"retry_backoff_max_seconds\":5.0,\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")
+    _expect_error(valid, "/retry_backoff_max_seconds: must be at least the base backoff")
 
     # Conditional conduction is strict, direct-upstream-only, and canonical.
     _write(valid, "{\"id\":\"pkg\",\"correlation_paths\":[{\"id\":\"path\",\"effectors\":[{\"id\":\"source\",\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}},{\"id\":\"merge\",\"conduction\":[\"source\"],\"when\":{\"upstream\":\"source\",\"path\":\"decision.verdict\",\"equals\":\"approve\"},\"output_schema\":{\"type\":\"object\",\"required\":[\"ok\"],\"properties\":{\"ok\":{\"type\":\"boolean\"}}},\"adapter\":{\"kind\":\"manual_homeostat\"}}]}]}")

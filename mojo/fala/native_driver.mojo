@@ -23,6 +23,7 @@ from fala.durable_subprocess import wait_durable_subprocess
 from fala.native_process_host import native_process_host_available
 from fala.host_journal import realtime_utc_timestamp
 from fala.journal import NativeJournal, ProcessRow
+from fala.processes import ProcessRecord, retry_backoff_seconds
 from fala.sqlite import SQLiteError
 from fala.status import RunStatus
 from fala.correlation import CorrelationWaitDiagnostic, CorrelationInstantiationPlan, CorrelationProcessPlan
@@ -374,13 +375,135 @@ def _row_before(a: ProcessRow, b: ProcessRow) -> Bool:
     return a.id < b.id
 
 
-def _retry_due(process: ProcessRow, now: String) -> String:
-    """Make retry work available at the transition timestamp.
+def _ascii_digit(ch: String) raises -> Int:
+    if ch == "0": return 0
+    if ch == "1": return 1
+    if ch == "2": return 2
+    if ch == "3": return 3
+    if ch == "4": return 4
+    if ch == "5": return 5
+    if ch == "6": return 6
+    if ch == "7": return 7
+    if ch == "8": return 8
+    if ch == "9": return 9
+    raise Error("driver: retry availability must be a second-resolution UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)")
 
-    The reference retry_process defaults availability to the transition time,
-    so a bounded drive can reclaim a retry on its next tick.
+
+def _timestamp_group(timestamp: String, start: Int, count: Int) raises -> Int:
+    var value = 0
+    for index in range(count):
+        value = value * 10 + _ascii_digit(String(timestamp[byte=start + index]))
+    return value
+
+
+def _zero_padded(value: Int, width: Int) -> String:
+    var text = String(value)
+    while text.byte_length() < width:
+        text = "0" + text
+    return text
+
+
+def _days_from_civil(year: Int, month: Int, day: Int) -> Int:
+    """Days since 1970-01-01 on the proleptic Gregorian calendar."""
+    var y = year
+    var m = month
+    if m <= 2:
+        y -= 1
+        m += 12
+    var era = y // 400
+    var yoe = y - era * 400
+    var doy = (153 * (m - 3) + 2) // 5 + day - 1
+    var doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
+
+
+def _civil_from_days(day_number: Int) -> Tuple[Int, Int, Int]:
+    var z = day_number + 719468
+    var era = z // 146097
+    var doe = z - era * 146097
+    var yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    var y = yoe + era * 400
+    var doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+    var mp = (5 * doy + 2) // 153
+    var day = doy - (153 * mp + 2) // 5 + 1
+    var month = mp + 3
+    if mp >= 10: month = mp - 9
+    if month <= 2: y += 1
+    return (y, month, day)
+
+
+def _timestamp_after(timestamp: String, seconds: Int) raises -> String:
+    """Add whole seconds to a ``YYYY-MM-DDTHH:MM:SSZ`` UTC timestamp."""
+    if (
+        timestamp.byte_length() != 20
+        or String(timestamp[byte=4]) != "-"
+        or String(timestamp[byte=7]) != "-"
+        or String(timestamp[byte=10]) != "T"
+        or String(timestamp[byte=13]) != ":"
+        or String(timestamp[byte=16]) != ":"
+        or String(timestamp[byte=19]) != "Z"
+    ):
+        raise Error("driver: retry availability must be a second-resolution UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)")
+    var year = _timestamp_group(timestamp, 0, 4)
+    var month = _timestamp_group(timestamp, 5, 2)
+    var day = _timestamp_group(timestamp, 8, 2)
+    var hour = _timestamp_group(timestamp, 11, 2)
+    var minute = _timestamp_group(timestamp, 14, 2)
+    var second = _timestamp_group(timestamp, 17, 2)
+    if year < 1970 or month < 1 or month > 12 or day < 1 or day > 31 or hour > 23 or minute > 59 or second > 59:
+        raise Error("driver: retry availability timestamp is out of range")
+    var total = _days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second + seconds
+    var days = total // 86400
+    var rest = total - days * 86400
+    var y, m, d = _civil_from_days(days)
+    return (
+        _zero_padded(y, 4) + "-" + _zero_padded(m, 2) + "-" + _zero_padded(d, 2)
+        + "T" + _zero_padded(rest // 3600, 2) + ":" + _zero_padded((rest // 60) % 60, 2)
+        + ":" + _zero_padded(rest % 60, 2) + "Z"
+    )
+
+
+def _regulation_seconds(value: Value) raises -> Float64:
+    if value.is_float(): return value.float()
+    if value.is_int(): return Float64(value.int())
+    if value.is_uint(): return Float64(value.uint())
+    raise Error("driver: regulation backoff seconds must be a number")
+
+
+def _retry_backoff_window(metadata: String) raises -> Tuple[Float64, Float64]:
+    """Read the regulation's capped backoff window; defaults match the reference.
+
+    Malformed metadata keeps the defaults because the retry policy gate decides
+    whether a retry happens at all; present but non-numeric values fail closed.
     """
-    return now
+    var base = 1.0
+    var cap = 3600.0
+    var parsed: Value
+    try:
+        parsed = Value(parse_string=metadata)
+    except e:
+        return (base, cap)
+    if parsed.is_object() and "regulation" in parsed.object():
+        var regulation = parsed.object()["regulation"].copy()
+        if regulation.is_object():
+            if "retry_backoff_base_seconds" in regulation.object():
+                base = _regulation_seconds(regulation.object()["retry_backoff_base_seconds"].copy())
+            if "retry_backoff_max_seconds" in regulation.object():
+                cap = _regulation_seconds(regulation.object()["retry_backoff_max_seconds"].copy())
+    return (base, cap)
+
+
+def _retry_due(process: ProcessRow, now: String) raises -> String:
+    """Make the next automatic retry available after the regulation's backoff.
+
+    Mirrors the reference ``retry_process``: the first failed attempt waits
+    ``retry_backoff_base_seconds`` and each further attempt doubles the delay up
+    to ``retry_backoff_max_seconds``. Timestamps carry whole seconds, so
+    fractional delays floor to the transition second.
+    """
+    var base, cap = _retry_backoff_window(process.metadata)
+    var record = ProcessRecord(process.id, process.run_id, attempt=process.attempt, max_attempts=process.max_attempts)
+    return _timestamp_after(now, Int(retry_backoff_seconds(record, base, cap)))
 def _has_process_status(rows: List[ProcessRow], candidate: ProcessRow) -> Bool:
     for row in rows:
         if row.id == candidate.id and row.status == candidate.status and row.attempt == candidate.attempt:
@@ -1086,8 +1209,8 @@ def drive_once(
         failure_blame = "correlator"
     _record_contract_violation(journal, claimed, worker_id, transition_at, failure, failure_blame)
     var stored: ProcessRow
-    # Retry transitions are immediately claimable at the transition timestamp,
-    # matching reference retry_process and bounded-drive semantics.
+    # Retry transitions become claimable after the regulation's backoff window,
+    # matching reference retry_process; exhausted or disabled work fails now.
     var retry_due = _retry_due(claimed, transition_at)
     var retry_allowed = _automatic_retry_allowed(claimed.metadata)
     if timed_out and retry_allowed and claimed.attempt < claimed.max_attempts:

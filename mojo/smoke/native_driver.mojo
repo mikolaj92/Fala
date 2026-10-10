@@ -74,8 +74,8 @@ def main() raises:
     except err:
         rejected_backoff = True
     _check(rejected_backoff, "negative retry base is rejected")
-    # Retry due time follows the reference default: absent backoff is due at
-    # the transition timestamp, so the next bounded tick can reclaim it.
+    # Reference regulation defaults apply: base backoff 1s spaces the first
+    # retry after the transition timestamp; each further attempt doubles it.
     var journal = NativeJournal(":memory:\0")
     journal.initialize()
     _ = journal.create_run("driver-retry", "active", "{}", "2026-01-01T00:00:00Z")
@@ -98,7 +98,7 @@ def main() raises:
             and first.failure_rows[0].status == "retry_wait"
             and waiting.status == "retry_wait"
             and waiting.attempt == 1
-            and waiting.available_at == "2026-01-01T00:00:01Z"
+            and waiting.available_at == "2026-01-01T00:00:02Z"
             and waiting.error_json.find("native_function_not_registered") >= 0,
         "retry due timestamp and first persisted failure",
     )
@@ -140,6 +140,21 @@ def main() raises:
     var invalid_retry = drive_once(journal, journal.get_process("driver-invalid-retry", "marked"), missing, "driver-worker", "2026-01-01T00:04:33Z", "2026-01-01T00:05:00Z", registry)
     var invalid_retry_row = journal.get_process("driver-invalid-retry", "marked")
     _check(invalid_retry.failed and invalid_retry_row.status == "failed" and invalid_retry_row.attempt == 1 and len(journal.list_commands("driver-invalid-retry", "process.retry")) == 0, "unknown retry policy fails closed")
+
+    # A package regulation with max_attempts=3 and a base window paces retries:
+    # the driver waits 1s, then 2s, and exhausts on the third failed attempt.
+    _ = journal.create_run("driver-paced-retry", "active", "{}", "2026-01-01T00:10:00Z")
+    _ = journal.schedule_process("driver-paced-retry", "paced", "native", "2026-01-01T00:10:00Z", "{}", "{\"regulation\":{\"retry_policy\":\"automatic\",\"max_attempts\":3,\"retry_backoff_base_seconds\":1.0,\"retry_backoff_max_seconds\":60.0}}", "", 1, 3, "2026-01-01T00:10:00Z")
+    var paced_row = journal.get_process("driver-paced-retry", "paced")
+    _ = drive_once(journal, paced_row, missing, "driver-worker", "2026-01-01T00:10:01Z", "2026-01-01T00:11:00Z", registry)
+    var paced_wait = journal.get_process("driver-paced-retry", "paced")
+    _check(paced_wait.status == "retry_wait" and paced_wait.attempt == 1 and paced_wait.available_at == "2026-01-01T00:10:02Z", "paced retry waits the base backoff")
+    _ = drive_once(journal, paced_wait, missing, "driver-worker", "2026-01-01T00:10:02Z", "2026-01-01T00:11:00Z", registry)
+    var paced_twice = journal.get_process("driver-paced-retry", "paced")
+    _check(paced_twice.status == "retry_wait" and paced_twice.attempt == 2 and paced_twice.available_at == "2026-01-01T00:10:04Z", "paced retry doubles the delay")
+    _ = drive_once(journal, paced_twice, missing, "driver-worker", "2026-01-01T00:10:04Z", "2026-01-01T00:11:00Z", registry)
+    var paced_done = journal.get_process("driver-paced-retry", "paced")
+    _check(paced_done.status == "failed" and paced_done.attempt == 3 and len(journal.list_commands("driver-paced-retry", "process.retry")) == 2, "paced retries grow then exhaust at max_attempts")
 
     # Empty caller bindings reload the explicit durable mapping and dispatch
     # through the typed native registry without inferring an adapter.

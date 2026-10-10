@@ -61,8 +61,11 @@ struct PackageEffector(Copyable, Movable):
     var title: String
     var description: String
     var tags: List[String]
+    var max_attempts: Int
+    var retry_backoff_base_seconds: Float64
+    var retry_backoff_max_seconds: Float64
 
-    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = "", output_schema_json: String = "{}", output_schema_declared: Bool = False):
+    def __init__(out self, id: String, conduction: List[String] = List[String](), capability: String = "", adapter_kind: String = "", adapter_ref: String = "", adapter_command: List[String] = List[String](), adapter_cwd: String = "", adapter_env: Dict[String, String] = Dict[String, String](), adapter_inherit_env: List[String] = List[String](), timeout_seconds: Float64 = 0.0, child_path_json: String = "", config_json: String = "", title: String = "", description: String = "", tags: List[String] = List[String](), retry_policy: String = "automatic", when_json: String = "", context_policy: String = "", context_source: String = "", context_invalidation_digest: String = "", compensation_json: String = "", output_schema_json: String = "{}", output_schema_declared: Bool = False, max_attempts: Int = 1, retry_backoff_base_seconds: Float64 = 1.0, retry_backoff_max_seconds: Float64 = 3600.0):
         self.id = id
         self.conduction = conduction.copy()
         self.capability = capability
@@ -86,6 +89,9 @@ struct PackageEffector(Copyable, Movable):
         self.title = title
         self.description = description
         self.tags = tags.copy()
+        self.max_attempts = max_attempts
+        self.retry_backoff_base_seconds = retry_backoff_base_seconds
+        self.retry_backoff_max_seconds = retry_backoff_max_seconds
 
 
 @fieldwise_init
@@ -686,7 +692,7 @@ def _capability_secret_handles(capabilities: Value, capability: String) raises -
 
 def _effector(value: Value, path: String, manifest_parent: String, capabilities: List[String] = List[String](), capability_contracts: Value = Value()) raises -> PackageEffector:
     if not value.is_object(): _error("manifest.type", path, "expected effector object")
-    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation", "output_schema"], path)
+    _known(value, ["id", "title", "description", "tags", "capability", "adapter", "conduction", "timeout_seconds", "retry_policy", "max_attempts", "retry_backoff_base_seconds", "retry_backoff_max_seconds", "when", "config", "context_policy", "context_source", "context_invalidation_digest", "compensation", "output_schema"], path)
     var id = _runtime_id(_required_nonnull(value, "id", path), path + "/id", "effector id")
     var conduction = List[String]()
     var item = _optional(value, "conduction")
@@ -730,6 +736,21 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     if not item.is_null():
         retry_policy = _string(item^, path + "/retry_policy")
         if retry_policy != "automatic" and retry_policy != "none": _error("manifest.value", path + "/retry_policy", "expected automatic or none")
+    var max_attempts = 1
+    item = _optional(value, "max_attempts")
+    if not item.is_null():
+        max_attempts = _integer(item^, path + "/max_attempts")
+        if max_attempts < 1: _error("manifest.value", path + "/max_attempts", "must be at least one")
+    var retry_backoff_base_seconds = 1.0
+    item = _optional(value, "retry_backoff_base_seconds")
+    if not item.is_null():
+        retry_backoff_base_seconds = _number(item^, path + "/retry_backoff_base_seconds")
+        if retry_backoff_base_seconds < 0.0: _error("manifest.value", path + "/retry_backoff_base_seconds", "must not be negative")
+    var retry_backoff_max_seconds = 3600.0
+    item = _optional(value, "retry_backoff_max_seconds")
+    if not item.is_null():
+        retry_backoff_max_seconds = _number(item^, path + "/retry_backoff_max_seconds")
+        if retry_backoff_max_seconds < retry_backoff_base_seconds: _error("manifest.value", path + "/retry_backoff_max_seconds", "must be at least the base backoff")
     var when_json = String("")
     item = _optional(value, "when")
     if not item.is_null():
@@ -787,7 +808,7 @@ def _effector(value: Value, path: String, manifest_parent: String, capabilities:
     if not item.is_null():
         if not item.is_object(): _error("manifest.type", path + "/config", "expected object")
         config_json = canonical_json_text(to_string(item^))
-    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json, output_schema_json=output_schema_json, output_schema_declared=output_schema_declared)
+    return PackageEffector(id=id, conduction=conduction, capability=capability, adapter_kind=adapter.kind, adapter_ref=adapter.reference, adapter_command=adapter.command.copy(), adapter_cwd=adapter.cwd, adapter_env=adapter.env.copy(), adapter_inherit_env=adapter.inherit_env.copy(), timeout_seconds=timeout, child_path_json=adapter.child_path_json, config_json=config_json, title=title, description=description, tags=tags, retry_policy=retry_policy, when_json=when_json, context_policy=context_policy, context_source=context_source, context_invalidation_digest=context_invalidation_digest, compensation_json=compensation_json, output_schema_json=output_schema_json, output_schema_declared=output_schema_declared, max_attempts=max_attempts, retry_backoff_base_seconds=retry_backoff_base_seconds, retry_backoff_max_seconds=retry_backoff_max_seconds)
 def _replace_all(source: String, needle: String, replacement: String) -> String:
     var result = String("")
     var rest = source
@@ -1046,6 +1067,9 @@ def _effector_json(effector: PackageEffector) raises -> Value:
         result["conduction"] = _json_value(conduction_json^)
     if effector.timeout_seconds > 0.0: result["timeout_seconds"] = Value(effector.timeout_seconds)
     if effector.retry_policy != "automatic": result["retry_policy"] = Value(effector.retry_policy)
+    if effector.max_attempts != 1: result["max_attempts"] = Value(effector.max_attempts)
+    if effector.retry_backoff_base_seconds != 1.0: result["retry_backoff_base_seconds"] = Value(effector.retry_backoff_base_seconds)
+    if effector.retry_backoff_max_seconds != 3600.0: result["retry_backoff_max_seconds"] = Value(effector.retry_backoff_max_seconds)
     if effector.when_json != "": result["when"] = _json_value(effector.when_json)
     if effector.context_policy != "": result["context_policy"] = Value(effector.context_policy)
     if effector.context_source != "": result["context_source"] = Value(effector.context_source)

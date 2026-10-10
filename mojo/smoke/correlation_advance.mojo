@@ -315,8 +315,9 @@ def main() raises:
     _check(before_reopen.status == "pending", "unplanned homeostat terminal does not advance correlation")
     _ = reopen_homeostat(reopen_journal, "advance-reopen", "homeostat-open", reopen_root.id, "homeostat-worker", "2026-01-01T00:00:04Z")
     _check(reopen_journal.get_process("advance-reopen", "advance-reopen:chain:leaf").status == "pending", "homeostat reopen does not advance correlation")
-    # The native correlation driver retries a failed effector at the transition
-    # timestamp, then advances and drives its dependent from durable state.
+    # The native correlation driver retries a failed effector after the
+    # regulation backoff (reference default: 1s), then advances and drives its
+    # dependent from durable state.
     var driver_journal = NativeJournal(":memory:\0")
     driver_journal.initialize()
     _ = driver_journal.create_run("advance-driver", "created", "{}", "2026-01-01T00:00:00Z")
@@ -328,7 +329,7 @@ def main() raises:
     var first_attempt = drive_correlation_once(driver_journal, driver_root, driver_adapter, "driver-worker", "2026-01-01T00:00:01Z", "2026-01-01T00:10:00Z", driver_registry, driver_plan)
     _check(first_attempt.failed and first_attempt.error.code == "native_function_not_registered", "correlation driver first attempt fails")
     var retry_row = driver_journal.get_process("advance-driver", "advance-driver:chain:root")
-    _check(retry_row.status == "retry_wait" and retry_row.attempt == 1 and retry_row.available_at == "2026-01-01T00:00:01Z", "correlation driver retry is immediately available")
+    _check(retry_row.status == "retry_wait" and retry_row.attempt == 1 and retry_row.available_at == "2026-01-01T00:00:02Z", "correlation driver retry waits the regulation backoff")
     driver_registry.register("native.retry-once", _retry_once)
     var second_attempt = drive_correlation_once(driver_journal, retry_row, driver_adapter, "driver-worker", "2026-01-01T00:00:02Z", "2026-01-01T00:10:00Z", driver_registry, driver_plan)
     _check(second_attempt.completed, "correlation driver retry succeeds")
