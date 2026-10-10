@@ -3,7 +3,7 @@ from std.collections import List
 from fala.adapters import AdapterSpec, NativeFunctionRegistry
 from fala.journal import NativeJournal, ProcessRow
 from fala.status import ProcessStatus
-from fala.native_driver import AdapterBinding, _automatic_retry_allowed, drive_once, maintain_process, run_until_idle, finalize_run, drive_bound_queue, persist_adapter_binding
+from fala.native_driver import AdapterBinding, _automatic_retry_allowed, _retry_due, drive_once, maintain_process, run_until_idle, finalize_run, drive_bound_queue, persist_adapter_binding
 from fala.processes import ProcessRecord, retry_backoff_seconds
 from fala.effector_protocol import result_message
 
@@ -51,7 +51,17 @@ def _one_process(mut journal: NativeJournal, run_id: String, process_id: String,
     return journal.get_process(run_id, process_id)
 
 
+def _due_grows() raises:
+    var journal = NativeJournal.open(":memory:")
+    var first = _one_process(journal, "due", "due", 3)
+    first.attempt = 1
+    var second = first.copy()
+    second.attempt = 2
+    _check(_retry_due(first, "2026-01-01T00:00:00Z") != _retry_due(second, "2026-01-01T00:00:00Z"), "retry delay did not grow")
+
+
 def main() raises:
+    _due_grows()
     # Pure retry policy is deterministic and capped before any durable write.
     var backoff_one = ProcessRecord(
         "backoff-one", "driver-retry", ProcessStatus.running(), 0, 1, 8, 0.0, 0.0, "", 0.0

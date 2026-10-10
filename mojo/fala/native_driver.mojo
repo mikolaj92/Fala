@@ -375,12 +375,16 @@ def _row_before(a: ProcessRow, b: ProcessRow) -> Bool:
 
 
 def _retry_due(process: ProcessRow, now: String) -> String:
-    """Make retry work available at the transition timestamp.
-
-    The reference retry_process defaults availability to the transition time,
-    so a bounded drive can reclaim a retry on its next tick.
-    """
-    return now
+    """Delay the next attempt by capped exponential backoff."""
+    var delay = 1.0
+    var step = 1
+    while step < process.attempt:
+        if delay >= 1800.0:
+            delay = 3600.0
+            break
+        delay = delay * 2.0
+        step += 1
+    return now if process.attempt < 1 else now + "+" + String(delay) + "s"
 def _has_process_status(rows: List[ProcessRow], candidate: ProcessRow) -> Bool:
     for row in rows:
         if row.id == candidate.id and row.status == candidate.status and row.attempt == candidate.attempt:

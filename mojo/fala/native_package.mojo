@@ -1046,6 +1046,9 @@ def _effector_json(effector: PackageEffector) raises -> Value:
         result["conduction"] = _json_value(conduction_json^)
     if effector.timeout_seconds > 0.0: result["timeout_seconds"] = Value(effector.timeout_seconds)
     if effector.retry_policy != "automatic": result["retry_policy"] = Value(effector.retry_policy)
+    var attempts = _json_value(effector.config_json)
+    if attempts.is_object() and "max_attempts" in attempts.object():
+        result["max_attempts"] = attempts.object()["max_attempts"].copy()
     if effector.when_json != "": result["when"] = _json_value(effector.when_json)
     if effector.context_policy != "": result["context_policy"] = Value(effector.context_policy)
     if effector.context_source != "": result["context_source"] = Value(effector.context_source)
