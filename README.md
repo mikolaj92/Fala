@@ -28,6 +28,28 @@ SQLite is the bundled reference sink. Memory, JSONL, and tee implement the
 same port with weaker persistence. Reaction bytes live in a local store; the
 journal keeps metadata and references.
 
+## Programming model for humans and agents
+
+An Effector owns **one responsibility at its parent's boundary**. Use the
+smallest sufficient implementation: a native function, an existing Unix program,
+a typed subprocess (including an LLM client), or a child Fala with its own
+journal. Split stages when the parent must observe, retry, or regulate them;
+do not nest every trivial operation or hide unrelated work in a fat agent.
+
+Mazur's autonomous-system vocabulary is a working design language, not a claim
+of complete theoretical equivalence. Unix supplies the composition mechanism:
+argv children, structured file handoffs, and separate journal ownership.
+Localize nondeterminism behind explicit schemas, separate generation from
+verification, and gate irreversible effects with deterministic checks or an
+explicit homeostat. Retries are at least once: deduplicate external effects by
+stable `execution_id`.
+
+Before authoring a package or consumer, read
+[`skills/building-with-fala/SKILL.md`](skills/building-with-fala/SKILL.md).
+The rationale and responsibility-selection procedure are in
+[`docs/AGENT_PROGRAMMING_MODEL.md`](docs/AGENT_PROGRAMMING_MODEL.md).
+These are authoring guidance; the runtime contracts below remain authoritative.
+
 ## What it is for
 
 | Use | Example |
