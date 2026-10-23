@@ -16,8 +16,19 @@ jobs:
     name: Linux ARM64 full smoke
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
+    env:
+      PIXI_LOCKED: "true"
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
+      - name: Check lockfiles
+        run: |
+          mise exec -- uv --version
+          mise exec -- pixi --version
+          mise exec -- uv lock --check
+          mise exec -- pixi install --locked
       - name: Run product smoke suite
-        run: mise exec -- pixi run full-smoke
+        run: mise exec -- pixi run --locked full-smoke
+      - name: Check lockfiles remain unchanged
+        if: always()
+        run: git diff --exit-code -- uv.lock pixi.lock
