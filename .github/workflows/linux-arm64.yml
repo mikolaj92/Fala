@@ -19,5 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
+      - name: Check lockfiles
+        run: |
+          mise exec -- uv --version
+          mise exec -- pixi --version
+          mise exec -- uv lock --check
+          mise exec -- pixi install --locked
       - name: Run product smoke suite
-        run: mise exec -- pixi run full-smoke
+        env:
+          PIXI_LOCKED: "true"
+        run: mise exec -- pixi run --locked full-smoke
+      - name: Check lockfiles are unchanged
+        if: always()
+        run: git diff --exit-code -- uv.lock pixi.lock
