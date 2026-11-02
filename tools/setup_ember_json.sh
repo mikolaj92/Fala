@@ -4,11 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 destination="$root/vendor/EmberJson"
 revision=951f4ef28d0c2748a30b2c5e43e139411ccca5ef
-mojo_minor=$(mojo --version 2>/dev/null | sed -n 's/.*Mojo \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1.\2/p')
-case "$mojo_minor" in
-    1.[2-9]|[2-9].*) patch="$root/patches/emberjson-mojo-1.2.patch" ;;
-    *) patch="$root/patches/emberjson-mojo-1.1.patch" ;;
-esac
+patch="$root/patches/emberjson-mojo-1.2.patch"
 
 if [ ! -d "$destination/.git" ] ||
    [ "$(git -C "$destination" rev-parse HEAD 2>/dev/null || true)" != "$revision" ]; then

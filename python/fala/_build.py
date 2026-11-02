@@ -13,7 +13,6 @@ import fcntl
 import hashlib
 import importlib.util
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -336,24 +335,6 @@ def _source_is_pinned(source_dir: Path, revision: str) -> bool:
     return result.returncode == 0 and result.stdout.strip() == revision
 
 
-def _mojo_minor(root: Path) -> tuple[int, int]:
-    """Toolchain minor version; vendor patches follow the APIs of one Mojo minor."""
-    try:
-        env = _mojo_env(root)
-        result = subprocess.run(
-            [_mojo_bin(env), "--version"],
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        text = (result.stdout or "") + (result.stderr or "")
-    except (AttributeError, OSError, TypeError):
-        return (1, 1)
-    match = re.search(r"(\d+)\.(\d+)", text)
-    return (int(match.group(1)), int(match.group(2))) if match else (1, 1)
-
-
 def _apply_patch(source_dir: Path, patch: Path) -> None:
     if not patch.is_file():
         return
@@ -380,12 +361,7 @@ def _ensure_ember_json_sources(root: Path) -> None:
             revision=_EMBER_JSON_REV,
             destination=source_dir,
         )
-    patch = (
-        root / "patches" / "emberjson-mojo-1.2.patch"
-        if _mojo_minor(root) >= (1, 2)
-        else root / "patches" / "emberjson-mojo-1.1.patch"
-    )
-    _apply_patch(source_dir, patch)
+    _apply_patch(source_dir, root / "patches" / "emberjson-mojo-1.2.patch")
 
 
 def _ensure_sqlite_fire_sources(root: Path) -> None:
@@ -397,8 +373,7 @@ def _ensure_sqlite_fire_sources(root: Path) -> None:
             revision=_SQLITE_FIRE_REV,
             destination=source_dir,
         )
-    if _mojo_minor(root) >= (1, 2):
-        _apply_patch(source_dir, root / "patches" / "sqlite-fire-mojo-1.2.patch")
+    _apply_patch(source_dir, root / "patches" / "sqlite-fire-mojo-1.2.patch")
 
 
 def _build_native_extension(root: Path, so_path: Path) -> None:

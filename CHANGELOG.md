@@ -5,8 +5,8 @@
 - Port the Mojo extension, the EmberJson patch and the sqlite.fire patch to
   Mojo 1.2.0. Product version is 0.10.0.
 - `patches/emberjson-mojo-1.2.patch` and `patches/sqlite-fire-mojo-1.2.patch`
-  replace the 1.1 patch on the same pinned revisions. `_build.py` and both
-  vendor setup scripts choose the patch set from the Mojo minor version.
+  replace the 1.1 patch on the same pinned revisions. Mojo 1.2.0 is required;
+  the 1.1 patch file stays in the wheel as history and is not applied.
 - `String(unsafe_from_utf8_ptr=)` is gone. `fala.c_string.string_from_c_string`
   and `sqlite_fire.string_from_c_string` copy a null-terminated C string from
   an address. The owning buffer must stay alive across the copy.
