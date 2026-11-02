@@ -10,6 +10,7 @@ this is not a network transport and does not claim two-database atomicity.
 from std.ffi import CStringSlice, external_call
 from std.memory.alloc import alloc, Layout
 from std.pathlib import Path, cwd
+from fala.c_string import string_from_c_string
 from fala.domain import BridgeDelivery
 from fala.domain_store import NativeDomainStore
 from fala.json import canonical_json_text, quote_json_string as _json_quote
@@ -26,7 +27,7 @@ def _realpath(path: Path, label: String) raises -> Path:
     )
     if Int(resolved) == 0:
         raise Error(String(SQLiteError(code=2, message="bridge_transport: unable to resolve " + label + " path")))
-    var resolved_text = String(unsafe_from_utf8_ptr=resolved)
+    var resolved_text = string_from_c_string(Int(resolved))
     _ = buffer
     return Path(resolved_text)
 

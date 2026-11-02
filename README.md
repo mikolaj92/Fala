@@ -1,6 +1,6 @@
 # Fala
 
-**Version 0.9.4** — Mojo engine, optional thin Python host.
+**Version 0.10.0** — Mojo engine, optional thin Python host.
 
 Fala composes small programs into a graph. A node is one effector: one job,
 one structured answer. An LLM can sit on a node; it is not the spine.

@@ -1,5 +1,20 @@
 ## Unreleased
 
+**Toolchain: Mojo 1.2.0.**
+
+- Port the Mojo extension, the EmberJson patch and the sqlite.fire patch to
+  Mojo 1.2.0. Product version is 0.10.0.
+- `patches/emberjson-mojo-1.2.patch` and `patches/sqlite-fire-mojo-1.2.patch`
+  replace the 1.1 patch on the same pinned revisions. `_build.py` and both
+  vendor setup scripts choose the patch set from the Mojo minor version.
+- `String(unsafe_from_utf8_ptr=)` is gone. `fala.c_string.string_from_c_string`
+  and `sqlite_fire.string_from_c_string` copy a null-terminated C string from
+  an address. The owning buffer must stay alive across the copy.
+- `std.hashlib` is now `std.hash`; `Tuple.deinit_with` takes its handler as a
+  runtime argument instead of a compile-time parameter.
+
+### Mojo 1.1.0 toolchain (previous port)
+
 **Toolchain: Mojo 1.1.0 (MAX 26.6).**
 
 - Pin `pixi.toml` to `mojo = "==1.1.0"`. Product version stays 0.9.4.

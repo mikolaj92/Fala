@@ -1,0 +1,55 @@
+diff --git a/src/sqlite_fire/advanced.mojo b/src/sqlite_fire/advanced.mojo
+index 6dce958..de2fca1 100644
+--- a/src/sqlite_fire/advanced.mojo
++++ b/src/sqlite_fire/advanced.mojo
+@@ -10,7 +10,7 @@ from std.collections import List
+ from std.ffi import CStringSlice, OwnedDLHandle, c_int, c_long_long
+ from std.memory.alloc import alloc, Layout
+ from std.sys import CompilationTarget
+-from .sqlite import Connection, SQLiteError
++from .sqlite import Connection, SQLiteError, string_from_c_string
+ 
+ comptime SQLITE_OK: Int32 = 0
+ comptime SQLITE_ERROR: Int32 = 1
+@@ -248,7 +248,7 @@ struct AdvancedDatabase(Movable):
+         )
+         var detail = "sqlite.fire: failed to load extension"
+         if Int(error_holder.unsafe_ptr()[]) != 0:
+-            detail = String(unsafe_from_utf8_ptr=error_holder.unsafe_ptr()[])
++            detail = string_from_c_string(Int(error_holder.unsafe_ptr()[]))
+             self._library.get_function[NoneType]("sf_free")(BlobPtr(unsafe_from_address=Int(error_holder.unsafe_ptr()[])))
+         _check(result, detail)
+ 
+diff --git a/src/sqlite_fire/sqlite.mojo b/src/sqlite_fire/sqlite.mojo
+index 02f9164..a2382a6 100644
+--- a/src/sqlite_fire/sqlite.mojo
++++ b/src/sqlite_fire/sqlite.mojo
+@@ -1,6 +1,6 @@
+ """Small, direct SQLite wrapper for Mojo."""
+ from std.collections import List
+-from std.ffi import CStringSlice, OwnedDLHandle, c_double, c_int, c_long_long
++from std.ffi import CStringSlice, OwnedDLHandle, c_double, c_int, c_long_long, c_size_t, external_call
+ from std.memory.alloc import alloc, Layout
+ from std.sys import CompilationTarget
+ 
+@@ -266,10 +266,19 @@ def _cstring(mut value: String) raises -> CStringSlice[origin_of(value)]:
+         return CStringSlice(value)
+     except e:
+         raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message=String(e))))
++def string_from_c_string(address: Int) -> String:
++    """Copy a null-terminated C string; Mojo 1.2 removed String(unsafe_from_utf8_ptr=)."""
++    if address == 0:
++        return String()
++    var bytes = Pointer[Byte, MutUntrackedOrigin](unsafe_from_address=address)
++    var length = external_call["strlen", c_size_t](bytes.unsafe_bitcast[Int8]())
++    return String(from_utf8_lossy=Span(unsafe_ptr=bytes, length=Int(length)))
++
++
+ def _string_from_cstr(value: CStr) raises -> String:
+     if Int(value) == 0:
+         raise Error(String(SQLiteError(code=Int(SQLITE_MISUSE), message="sqlite.fire: null text pointer")))
+-    return String(unsafe_from_utf8_ptr=value)
++    return string_from_c_string(Int(value))
+ 
+ struct Connection(Movable):
+     var _library: OwnedDLHandle

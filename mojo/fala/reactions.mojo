@@ -12,7 +12,7 @@ from std.memory.alloc import alloc, Layout
 from std.os import listdir, makedirs, remove
 from std.pathlib import Path, cwd
 from emberjson import Array, Object, Value, to_string
-from fala.c_string import mutable_c_string
+from fala.c_string import mutable_c_string, string_from_c_string
 from fala.json import canonical_json_text, quote_json_string as _json_quote
 
 comptime FALA_REACTION_SCHEME = "fala-reaction"
@@ -75,7 +75,7 @@ def _realpath(path: Path) raises -> Path:
     )
     if Int(resolved) == 0:
         raise Error("Unable to resolve reaction path")
-    var resolved_text = String(unsafe_from_utf8_ptr=resolved)
+    var resolved_text = string_from_c_string(Int(resolved))
     _ = buffer
     return Path(resolved_text)
 
@@ -400,7 +400,7 @@ def _put_raw_bytes(root: String, content: List[UInt8], filename: String, metadat
     if temp_fd < 0:
         raise Error("Unable to create temporary reaction blob")
     _ = external_call["close", c_int](temp_fd)
-    var temp = Path(String(unsafe_from_utf8_ptr=temp_c.unsafe_ptr()))
+    var temp = Path(string_from_c_string(Int(temp_c.unsafe_ptr())))
     temp.write_bytes(content.copy())
     _atomic_rename(temp, target)
     var final_metadata = _reaction_metadata(digest, size_bytes, filename)

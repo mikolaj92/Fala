@@ -7,6 +7,7 @@ from std.memory.alloc import alloc, Layout
 from std.origin import MutUntrackedOrigin
 
 from emberjson import Object, to_string
+from fala.c_string import string_from_c_string
 from fala.journal import NativeJournal
 from fala.json import parse_json, quote_json_string
 from fala.schema_contract import ensure_host_journal
@@ -47,7 +48,9 @@ def realtime_utc_timestamp() raises -> String:
     )
     if formatted == 0:
         raise Error("fala host clock: strftime could not format UTC timestamp")
-    return String(unsafe_from_utf8_ptr=output.unsafe_ptr().as_unsafe_any_origin())
+    var text = string_from_c_string(Int(output.unsafe_ptr()))
+    _ = output
+    return text^
 
 
 def _error(message: String) raises:

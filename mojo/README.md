@@ -1,6 +1,6 @@
 # Native Fala core (Mojo)
 
-**Product version: 0.9.4** — Mojo-native engine.
+**Product version: 0.10.0** — Mojo-native engine.
 
 Fala composes small programs into a graph. A node is one effector with
 structured output. The LLM is not the spine.

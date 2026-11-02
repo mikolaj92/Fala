@@ -1,6 +1,6 @@
 # Fala Architecture Status
 
-**Product: 0.9.4** · Mojo engine + optional thin Python host binding.
+**Product: 0.10.0** · Mojo engine + optional thin Python host binding.
 
 Fala composes small programs into a graph. A node is one effector with a
 named `output_schema`. An LLM can be a node; it is not the runtime.

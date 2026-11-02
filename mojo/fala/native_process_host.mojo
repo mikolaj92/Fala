@@ -5,12 +5,13 @@ library for at least as long as each process handle and never invokes a shell.
 """
 
 from std.collections import List
-from std.ffi import CStringSlice, OwnedDLHandle, c_int, c_long_long, external_call
+from std.ffi import CStringSlice, OwnedDLHandle, c_int, c_long_long, c_size_t, external_call
 from std.memory.alloc import alloc, Layout
 from std.pathlib import Path
 from std.os import getenv
 from std.sys import CompilationTarget
 from std.sys import argv
+from fala.c_string import string_from_c_string
 
 comptime CStr = MutPointer[Int8, MutUntrackedOrigin]
 comptime HostPtr = MutPointer[UInt8, MutUntrackedOrigin]
@@ -120,7 +121,7 @@ def _realpath_string(path: String) raises -> String:
     )
     if Int(canonical) == 0:
         return path
-    var resolved = String(unsafe_from_utf8_ptr=canonical)
+    var resolved = string_from_c_string(Int(canonical))
     _ = canonical_buffer
     return resolved
 
@@ -144,7 +145,7 @@ def _executable_path() raises -> String:
         )
         if result != 0:
             raise Error("fala process host: unable to determine executable path")
-        var raw = String(unsafe_from_utf8_ptr=buffer.unsafe_ptr())
+        var raw = string_from_c_string(Int(buffer.unsafe_ptr()))
         _ = buffer
         return _realpath_string(raw)
     else:
@@ -159,7 +160,7 @@ def _executable_path() raises -> String:
         if n < 0:
             raise Error("fala process host: unable to read /proc/self/exe (POSIX host requires Linux or Darwin)")
         buffer.unsafe_ptr()[unsafe_offset=Int(n)] = 0
-        var raw = String(unsafe_from_utf8_ptr=buffer.unsafe_ptr())
+        var raw = string_from_c_string(Int(buffer.unsafe_ptr()))
         _ = buffer
         return _realpath_string(raw)
 
@@ -230,7 +231,7 @@ def host_getenv(name: String) -> HostEnvValue:
         var ptr = get_env(CStr(unsafe_from_address=Int(key.as_bytes().unsafe_ptr())))
         if Int(ptr) == 0:
             return HostEnvValue(0, "")
-        return HostEnvValue(1, String(unsafe_from_utf8_ptr=ptr))
+        return HostEnvValue(1, string_from_c_string(Int(ptr)))
     except:
         return HostEnvValue(0, "")
 
@@ -282,7 +283,7 @@ struct ProcessHost(Movable):
             var message = "native process operation failed"
             if self._process != 0:
                 var process_ptr = HostPtr(unsafe_from_address=self._process)
-                message = String(unsafe_from_utf8_ptr=self._library.get_function[CStr]("fala_process_get_error_message")(process_ptr))
+                message = string_from_c_string(Int(self._library.get_function[CStr]("fala_process_get_error_message")(process_ptr)))
                 self._library.get_function[NoneType]("fala_process_destroy")(process_ptr)
                 self._process = 0
             raise Error(ProcessHostError(code=code, message=message).__str__())
@@ -349,7 +350,7 @@ struct ProcessHost(Movable):
         return Int(self._library.get_function[c_int]("fala_process_get_error_code")(self._require()))
 
     def error_message(self) raises -> String:
-        return String(unsafe_from_utf8_ptr=self._library.get_function[CStr]("fala_process_get_error_message")(self._require()))
+        return string_from_c_string(Int(self._library.get_function[CStr]("fala_process_get_error_message")(self._require())))
 
 
 def start(
